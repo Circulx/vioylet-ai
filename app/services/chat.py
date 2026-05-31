@@ -13,6 +13,7 @@ from app.core.studio import resolve_studio_panel_defaults
 from app.core.exceptions import GenerationFailureError, GuardrailViolationError, LifecycleError, NotFoundError
 from app.integrations.object_storage import LocalObjectStorage
 from app.services.asset_delivery import AssetDeliveryService
+from app.services.conversation_memory import ConversationMemoryService
 from app.models.content import ChatMessage, ContentSession, GeneratedAsset
 from app.repositories.brand import BrandSpaceRepository
 from app.repositories.content import AssetRepository, ChatMessageRepository, ContentRepository, SessionRepository
@@ -103,6 +104,7 @@ class ChatService:
         self.artifacts = ArtifactStateService()
         self.text_content = TextContentService(session)
         self.delivery = AssetDeliveryService()
+        self.memory = ConversationMemoryService(session)
 
     @staticmethod
     def _generation_inheritance_policy(
@@ -282,8 +284,12 @@ class ChatService:
             citations=[],
         )
         await self.messages.add(user_message)
+        memory_service = getattr(self, "memory", None)
+        if memory_service is not None:
+            await memory_service.index_chat_message(message=user_message, session=session)
 
         content_version = None
+        memory_assets: list[GeneratedAsset] = []
         brand = await self.brands.get_scoped(tenant_id, brand_space_id)
         brand_name = getattr(brand, "name", None)
         review_result = None
@@ -325,6 +331,40 @@ class ChatService:
                     role="assistant",
                     message_text=str(evaluation.get("summary") or "").strip() or "Evaluation complete.",
                     structured_payload=self.make_json_safe(evaluation),
+                    citations=[],
+                )
+            elif intent.mode == "retrieval":
+                retrieval_result = (
+                    await memory_service.retrieve_image_assets(
+                        tenant_id=tenant_id,
+                        brand_space_id=brand_space_id,
+                        session_id=session.id,
+                        query=payload.message,
+                    )
+                    if memory_service is not None
+                    else {
+                        "status": "not_found",
+                        "message": "Conversation memory is not available yet for image retrieval.",
+                        "assets": [],
+                        "matched_entries": [],
+                    }
+                )
+                assistant_message = ChatMessage(
+                    tenant_id=tenant_id,
+                    brand_space_id=brand_space_id,
+                    session_id=session.id,
+                    user_id=None,
+                    role="assistant",
+                    message_text=str(retrieval_result.get("message") or "").strip() or "I couldn't find a matching image yet.",
+                    structured_payload=self.make_json_safe(
+                        {
+                            "mode": "retrieval",
+                            "retrieval_type": "generated_image",
+                            "retrieval_status": retrieval_result.get("status", "not_found"),
+                            "assets": retrieval_result.get("assets", []),
+                            "matched_entries": retrieval_result.get("matched_entries", []),
+                        }
+                    ),
                     citations=[],
                 )
             elif intent.mode == "content_only":
@@ -559,6 +599,7 @@ class ChatService:
                         studio_panel=studio_panel.model_dump(),
                     )
                 content_assets = await self.assets.list_by_content(content_version.id)
+                memory_assets = list(content_assets)
                 serialized_assets = [self.serialize_asset(asset) for asset in content_assets]
                 image_asset_count = len(
                     [
@@ -632,8 +673,22 @@ class ChatService:
                 citations=[],
             )
         await self.messages.add(assistant_message)
+        if memory_service is not None:
+            await memory_service.index_chat_message(message=assistant_message, session=session)
+            if content_version is not None:
+                await memory_service.index_content_version_summary(
+                    session=session,
+                    content_version=content_version,
+                )
+                if memory_assets:
+                    await memory_service.index_generated_assets(
+                        session=session,
+                        content_version=content_version,
+                        assets=memory_assets,
+                    )
         session.title = session.title or payload.message[:50]
         last_response_mode = str((assistant_message.structured_payload or {}).get("mode") or intent.mode).strip() or intent.mode
+        preserve_previous_state = last_response_mode in {"evaluation", "retrieval"}
         last_text_output = None
         if last_response_mode == "content_only":
             last_text_output = assistant_message.message_text
@@ -668,20 +723,20 @@ class ChatService:
             "last_response_mode": last_response_mode,
             "last_non_evaluation_response_mode": (
                 session.conversational_context.get("last_non_evaluation_response_mode")
-                if last_response_mode == "evaluation"
+                if preserve_previous_state
                 else last_response_mode
             ),
             "last_text_output": last_text_output or session.conversational_context.get("last_text_output"),
             "last_non_evaluation_text_output": (
                 session.conversational_context.get("last_non_evaluation_text_output")
-                if last_response_mode == "evaluation"
+                if preserve_previous_state
                 else (last_text_output or session.conversational_context.get("last_non_evaluation_text_output"))
             ),
             "last_text_deliverable_type": (assistant_message.structured_payload or {}).get("deliverable_type") or session.conversational_context.get("last_text_deliverable_type"),
             "last_content_version_id": str(content_version.id) if content_version else session.conversational_context.get("last_content_version_id"),
             "last_non_evaluation_content_version_id": (
                 session.conversational_context.get("last_non_evaluation_content_version_id")
-                if last_response_mode == "evaluation"
+                if preserve_previous_state
                 else (str(content_version.id) if content_version else session.conversational_context.get("last_non_evaluation_content_version_id"))
             ),
             "last_evaluation_summary": last_evaluation_summary or session.conversational_context.get("last_evaluation_summary"),

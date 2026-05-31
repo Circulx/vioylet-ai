@@ -11,6 +11,7 @@ def _router_with_llm(monkeypatch, **payload) -> IntentRouterService:
         "uses_previous_output": False,
         "workflow_type": None,
         "revision_scope": None,
+        "display_retrieved_asset": False,
     }
     response.update(payload)
     monkeypatch.setattr(router, "_classify_with_llm", lambda **kwargs: response)
@@ -297,12 +298,29 @@ def test_intent_router_allows_llm_to_select_retrieval(monkeypatch) -> None:
         mode="retrieval",
         uses_previous_output=True,
         reason="user_is_asking_for_a_previous_generated_image",
+        display_retrieved_asset=True,
     )
     decision = router.route("Can you show the image we created earlier?")
 
     assert decision.mode == "retrieval"
     assert decision.uses_previous_output is True
+    assert decision.display_retrieved_asset is True
     assert decision.reason.startswith("llm_selected:")
+
+
+def test_intent_router_keeps_retrieval_without_display_for_image_discussion(monkeypatch) -> None:
+    router = _router_with_llm(
+        monkeypatch,
+        mode="retrieval",
+        uses_previous_output=True,
+        reason="user_is_asking_about_a_previous_generated_image",
+        display_retrieved_asset=False,
+    )
+    decision = router.route("Explain the colors in that image.")
+
+    assert decision.mode == "retrieval"
+    assert decision.uses_previous_output is True
+    assert decision.display_retrieved_asset is False
 
 
 def test_intent_router_allows_llm_to_select_evaluation(monkeypatch) -> None:

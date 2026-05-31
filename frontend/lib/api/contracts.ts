@@ -513,6 +513,31 @@ export interface ChatAssistantStructuredPayload {
   image_generation_status?: string;
   image_asset_count?: number;
   brand_scoring?: BrandScoringPayload;
+  mode?: string;
+  retrieval_type?: string;
+  retrieval_status?: string;
+  matched_entries?: Array<{
+    memory_entry_id: UUID;
+    storage_path: string;
+    score: number;
+  }>;
+  selected_asset?: AssetReference | null;
+  selection_required?: boolean;
+  selection_prompt?: string | null;
+  display_retrieved_asset?: boolean;
+  selection_options?: Array<{
+    rank: number;
+    asset_id?: UUID | null;
+    content_version_id?: UUID | null;
+    memory_entry_id?: UUID | null;
+    asset_url?: string | null;
+    storage_path?: string | null;
+    label: string;
+    summary?: string | null;
+    asset_role?: string | null;
+    width?: number | null;
+    height?: number | null;
+  }>;
 }
 
 export interface ChatSendResponse {

@@ -117,9 +117,13 @@ class ConversationMemoryService:
         query: str,
         candidates: list[dict[str, Any]],
         limit: int,
-    ) -> list[int] | None:
+    ) -> dict[str, Any] | None:
         provider = self.providers.get_text_provider("generation")
-        fallback = {"selected_indexes": [], "reason": "provider_unavailable"}
+        fallback = {
+            "selected_indexes": [],
+            "reason": "provider_unavailable",
+            "selection_state": "provider_unavailable",
+        }
         try:
             response = provider.generate_structured_json(
                 PromptEnvelope(
@@ -128,16 +132,22 @@ class ConversationMemoryService:
                         "Return JSON only. "
                         "The candidates are ordered from newest to oldest. "
                         "Use the user's wording semantically, including references like previous, last, first, earlier, same, that one, or topic/style cues. "
+                        "If the user is clearly asking for the last or latest generated image without extra topic/entity qualifiers, "
+                        "prefer selecting a single best newest candidate and mark selection_state as generic_recency. "
+                        "If the request is ambiguous or could match multiple prior images, you may return up to the requested limit so the user can choose in the frontend. "
                         "Select up to the requested limit of candidate indexes. "
                         "Do not invent indexes. "
                         "Prefer exact semantic matches when available. "
-                        "If the user is generic, choose the most sensible existing asset from the conversation history."
+                        "If the query includes specific topical, entity, or subject cues and none of the candidates match them, "
+                        "return no indexes and mark selection_state as no_relevant_match. "
+                        "Do not select an unrelated image just because it is the newest one."
                     ),
                     user=(
                         f"User query: {query}\n"
                         f"Selection limit: {limit}\n"
                         f"Candidates: {candidates}\n"
-                        "Return a JSON object with keys: selected_indexes, reason."
+                        "Return a JSON object with keys: selected_indexes, reason, selection_state. "
+                        "selection_state must be one of: match_found, generic_recency, no_relevant_match."
                     ),
                 ),
                 fallback=fallback,
@@ -162,7 +172,12 @@ class ConversationMemoryService:
             selected.append(index)
             if len(selected) >= limit:
                 break
-        return selected or None
+        selection_state = self._clean_text(response.get("selection_state"), limit=40).lower() or "match_found"
+        return {
+            "selected_indexes": selected,
+            "reason": self._clean_text(response.get("reason"), limit=240),
+            "selection_state": selection_state,
+        }
 
     def _llm_describe_selected_asset(
         self,
@@ -432,6 +447,22 @@ class ConversationMemoryService:
             "memory_text": self._clean_text(entry.memory_text, limit=240),
         }
 
+    @staticmethod
+    def _selection_option_for_asset(asset: dict[str, Any], *, rank: int) -> dict[str, Any]:
+        return {
+            "rank": rank,
+            "asset_id": asset.get("asset_id"),
+            "content_version_id": asset.get("content_version_id"),
+            "memory_entry_id": asset.get("memory_entry_id"),
+            "asset_url": asset.get("asset_url"),
+            "storage_path": asset.get("storage_path"),
+            "label": f"Option {rank}",
+            "summary": asset.get("memory_text"),
+            "asset_role": asset.get("asset_role"),
+            "width": asset.get("width"),
+            "height": asset.get("height"),
+        }
+
     async def retrieve_image_assets(
         self,
         *,
@@ -464,22 +495,24 @@ class ConversationMemoryService:
             if entry_id:
                 search_by_entry_id[entry_id] = result
 
-        scored_entries: list[tuple[float, ConversationMemoryEntry]] = []
+        scored_entries: list[tuple[float, float, ConversationMemoryEntry]] = []
         total = len(entries)
         for position, entry in enumerate(entries):
             search_result = search_by_entry_id.get(str(entry.id))
+            vector_score = self._search_score(search_result)
+            overlap_score = self._overlap_score(query_text, entry.memory_text)
             score = 0.0
-            score += self._search_score(search_result) * 0.7
-            score += self._overlap_score(query_text, entry.memory_text) * 0.25
+            score += vector_score * 0.7
+            score += overlap_score * 0.25
             score += self._recency_score(position=position, total=total) * 0.05
-            scored_entries.append((score, entry))
+            scored_entries.append((score, overlap_score, entry))
 
-        scored_entries.sort(key=lambda item: (-item[0], item[1].created_at))
+        scored_entries.sort(key=lambda item: (-item[0], item[2].created_at))
         candidate_pool: list[dict[str, Any]] = []
         fallback_assets: list[dict[str, Any]] = []
         fallback_matches: list[dict[str, Any]] = []
         seen_storage_paths: set[str] = set()
-        for score, entry in scored_entries:
+        for score, overlap_score, entry in scored_entries:
             serialized = self._serialize_entry_asset(entry)
             if not serialized:
                 continue
@@ -492,6 +525,7 @@ class ConversationMemoryService:
                     "memory_entry_id": str(entry.id),
                     "storage_path": serialized["storage_path"],
                     "score": round(score, 4),
+                    "overlap_score": round(overlap_score, 4),
                 }
             )
             candidate_pool.append(
@@ -503,6 +537,7 @@ class ConversationMemoryService:
                     "asset_role": serialized["asset_role"],
                     "memory_text": self._clean_text(entry.memory_text, limit=320),
                     "fallback_score": round(score, 4),
+                    "overlap_score": round(overlap_score, 4),
                 }
             )
             if len(candidate_pool) >= max(limit * 4, 8):
@@ -516,11 +551,18 @@ class ConversationMemoryService:
                 "matched_entries": [],
             }
 
-        selected_indexes = self._llm_select_candidate_indexes(
+        selection_result = self._llm_select_candidate_indexes(
             query=query_text,
             candidates=candidate_pool,
             limit=limit,
         )
+        if selection_result is not None:
+            selected_indexes = selection_result.get("selected_indexes") or []
+            selection_state = selection_result.get("selection_state")
+        else:
+            selected_indexes = []
+            selection_state = None
+
         if selected_indexes:
             llm_assets: list[dict[str, Any]] = []
             llm_matches: list[dict[str, Any]] = []
@@ -546,6 +588,7 @@ class ConversationMemoryService:
                         "memory_entry_id": selected_candidate["memory_entry_id"],
                         "storage_path": selected_candidate["storage_path"],
                         "score": selected_candidate["fallback_score"],
+                        "overlap_score": selected_candidate["overlap_score"],
                     }
                 )
             if llm_assets:
@@ -560,9 +603,45 @@ class ConversationMemoryService:
                     "message": descriptive_message,
                     "assets": llm_assets,
                     "matched_entries": llm_matches,
+                    "selected_asset": llm_assets[0],
+                    "selection_required": len(llm_assets) > 1,
+                    "selection_prompt": (
+                        "I found a few relevant previously generated images. Choose the one you want to use."
+                        if len(llm_assets) > 1
+                        else None
+                    ),
+                    "selection_options": [
+                        self._selection_option_for_asset(asset, rank=index + 1)
+                        for index, asset in enumerate(llm_assets, start=0)
+                    ],
                 }
 
+        if selection_state == "no_relevant_match":
+            return {
+                "status": "not_found",
+                "message": "I found previously generated images in this conversation, but none of them match that request closely enough.",
+                "assets": [],
+                "matched_entries": [],
+                "selected_asset": None,
+                "selection_required": False,
+                "selection_prompt": None,
+                "selection_options": [],
+            }
+
         lead_candidate = candidate_pool[0] if candidate_pool else None
+        lead_overlap = float(lead_candidate.get("overlap_score", 0.0)) if lead_candidate is not None else 0.0
+        lead_score = float(lead_candidate.get("fallback_score", 0.0)) if lead_candidate is not None else 0.0
+        if lead_candidate is None or (lead_overlap < 0.25 and lead_score < 0.35):
+            return {
+                "status": "not_found",
+                "message": "I found previous image history, but nothing looked relevant enough to that request.",
+                "assets": [],
+                "matched_entries": [],
+                "selected_asset": None,
+                "selection_required": False,
+                "selection_prompt": None,
+                "selection_options": [],
+            }
         fallback_message = "Here is the most relevant previously generated image from this conversation history."
         if lead_candidate is not None:
             fallback_message = self._llm_describe_selected_asset(
@@ -575,4 +654,15 @@ class ConversationMemoryService:
             "message": fallback_message,
             "assets": fallback_assets[:limit],
             "matched_entries": fallback_matches[:limit],
+            "selected_asset": fallback_assets[0] if fallback_assets else None,
+            "selection_required": len(fallback_assets[:limit]) > 1,
+            "selection_prompt": (
+                "I found a few relevant previously generated images. Choose the one you want to use."
+                if len(fallback_assets[:limit]) > 1
+                else None
+            ),
+            "selection_options": [
+                self._selection_option_for_asset(asset, rank=index + 1)
+                for index, asset in enumerate(fallback_assets[:limit], start=0)
+            ],
         }

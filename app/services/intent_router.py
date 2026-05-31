@@ -19,6 +19,7 @@ class ChatIntentDecision:
     uses_previous_output: bool = False
     revision_scope: dict[str, Any] | None = None
     workflow_plan: dict[str, Any] | None = None
+    display_retrieved_asset: bool = False
 
 
 class IntentRouterService:
@@ -96,6 +97,7 @@ class IntentRouterService:
             "uses_previous_output": False,
             "workflow_type": None,
             "revision_scope": None,
+            "display_retrieved_asset": False,
         }
         try:
             response = provider.generate_structured_json(
@@ -111,6 +113,8 @@ class IntentRouterService:
                         "evaluation = asking to review, check, assess, score, audit, or analyze existing content, tone, brand alignment, compliance, or consistency. "
                         "retrieval = asking to show, find, fetch, retrieve, display, or bring back something already created earlier in the conversation, especially an image or visual asset. "
                         "If the user is asking about a previously generated image or visual, including prompts like tell me about the last image, describe the previous visual, what is the earlier carousel about, or explain the generated image, classify it as retrieval, not evaluation. "
+                        "Set display_retrieved_asset to true only when the user explicitly wants the old image shown again, such as show, display, open, fetch, retrieve, or bring back the image. "
+                        "Set display_retrieved_asset to false when the user only wants to discuss, explain, describe, analyze, or answer questions about the previous image without re-showing it. "
                         "Infer deliverable_type when mode is content_only. "
                         "Infer uses_previous_output when the user is modifying, continuing, reusing, or referring to earlier output. "
                         "Infer workflow_type only when the prompt is clearly one of: review_then_generate, repurpose_text_to_visual, apply_last_review. Otherwise use null. "
@@ -123,7 +127,7 @@ class IntentRouterService:
                     user=(
                         f"Session context: {session_context}\n"
                         f"User message: {text}\n"
-                        "Return a JSON object with keys: mode, confidence, reason, deliverable_type, uses_previous_output, workflow_type, revision_scope."
+                        "Return a JSON object with keys: mode, confidence, reason, deliverable_type, uses_previous_output, workflow_type, revision_scope, display_retrieved_asset."
                     ),
                 ),
                 fallback=fallback,
@@ -157,6 +161,7 @@ class IntentRouterService:
             "uses_previous_output": bool(response.get("uses_previous_output")),
             "workflow_type": workflow_type,
             "revision_scope": self._normalize_revision_scope(response.get("revision_scope")),
+            "display_retrieved_asset": bool(response.get("display_retrieved_asset")),
         }
 
     def _build_decision_from_llm(self, *, llm_decision: dict[str, Any]) -> ChatIntentDecision:
@@ -174,6 +179,7 @@ class IntentRouterService:
                 mode=mode,
                 uses_previous_output=uses_previous_output,
             ),
+            display_retrieved_asset=bool(llm_decision.get("display_retrieved_asset")),
         )
 
     def _normalize_revision_scope(self, value: Any) -> dict[str, Any] | None:

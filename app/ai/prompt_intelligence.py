@@ -240,11 +240,18 @@ class PromptIntelligenceService:
         for item in (brief.get("source_pack") or [])[:6]:
             if not isinstance(item, dict):
                 continue
+            label = str(item.get("label") or "").strip()
+            detail = str(item.get("detail") or "").strip()
+            if (
+                ContextCompilerService._looks_like_low_quality_web_snippet(label)
+                or ContextCompilerService._looks_like_low_quality_web_snippet(detail)
+            ):
+                continue
             source_pack.append(
                 {
                     "type": str(item.get("type") or "").strip(),
-                    "label": str(item.get("label") or "").strip(),
-                    "detail": str(item.get("detail") or "").strip(),
+                    "label": label,
+                    "detail": detail,
                     "source": str(item.get("source") or "").strip(),
                 }
             )
@@ -252,10 +259,17 @@ class PromptIntelligenceService:
         for item in (brief.get("ranked_sources") or [])[:4]:
             if not isinstance(item, dict):
                 continue
+            label = str(item.get("label") or "").strip()
+            detail = str(item.get("detail") or "").strip()
+            if (
+                ContextCompilerService._looks_like_low_quality_web_snippet(label)
+                or ContextCompilerService._looks_like_low_quality_web_snippet(detail)
+            ):
+                continue
             ranked_sources.append(
                 {
-                    "label": str(item.get("label") or "").strip(),
-                    "detail": str(item.get("detail") or "").strip(),
+                    "label": label,
+                    "detail": detail,
                     "source": str(item.get("source") or "").strip(),
                 }
             )
@@ -272,7 +286,11 @@ class PromptIntelligenceService:
             "thesis": str(brief.get("thesis") or "").strip(),
             "reader_payoff": str(brief.get("reader_payoff") or "").strip(),
             "hook_strategy": str(brief.get("hook_strategy") or "").strip(),
-            "insight_hierarchy": [str(item).strip() for item in (brief.get("insight_hierarchy") or []) if str(item).strip()][:6],
+            "insight_hierarchy": [
+                str(item).strip()
+                for item in (brief.get("insight_hierarchy") or [])
+                if str(item).strip() and not ContextCompilerService._looks_like_low_quality_web_snippet(item)
+            ][:6],
             "ordered_story_beats": [str(item).strip() for item in (brief.get("ordered_story_beats") or []) if str(item).strip()][:8],
             "narrative_contract": str(brief.get("narrative_contract") or "").strip(),
             "outline": outline,
@@ -323,8 +341,16 @@ class PromptIntelligenceService:
                     for item in (fact_model.get("verified_facts") or [])[:6]
                     if isinstance(item, dict)
                 ],
-                "inferences": [str(item).strip() for item in (fact_model.get("inferences") or []) if str(item).strip()][:4],
-                "uncertainties": [str(item).strip() for item in (fact_model.get("uncertainties") or []) if str(item).strip()][:4],
+                "inferences": [
+                    str(item).strip()
+                    for item in (fact_model.get("inferences") or [])
+                    if str(item).strip() and not ContextCompilerService._looks_like_low_quality_web_snippet(item)
+                ][:4],
+                "uncertainties": [
+                    str(item).strip()
+                    for item in (fact_model.get("uncertainties") or [])
+                    if str(item).strip() and not ContextCompilerService._looks_like_low_quality_web_snippet(item)
+                ][:4],
             },
             "ranked_sources": ranked_sources,
             "citation_rules": {

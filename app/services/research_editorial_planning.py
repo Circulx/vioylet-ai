@@ -53,6 +53,14 @@ class ResearchEditorialPlanningService:
         r")\b",
         re.IGNORECASE,
     )
+    LOW_QUALITY_WEB_SNIPPET_PATTERN = re.compile(
+        r"("
+        r"\b\d+(?:\.\d+)?\s*[km]?\s+views?\b|"
+        r"\b\d+\s+(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)\s+ago\b|"
+        r"\b(?:youtube|watch now|subscribe|subscribers?|shorts?|playlist|comments?|likes?|reels?|tiktok)\b"
+        r")",
+        re.IGNORECASE,
+    )
     EXACT_CLAIM_PATTERN = re.compile(
         r"("
         r"\b\d+(?:\.\d+)?\s*%|"
@@ -345,7 +353,7 @@ class ResearchEditorialPlanningService:
                 if not isinstance(item, dict):
                     continue
                 content = ResearchEditorialPlanningService._normalize_text(item.get("content"), limit=420)
-                if not content:
+                if not content or ResearchEditorialPlanningService._looks_like_low_quality_web_snippet(content):
                     continue
                 brief.append(
                     {
@@ -362,6 +370,21 @@ class ResearchEditorialPlanningService:
         if not text or limit is None:
             return text
         return text[:limit].rstrip(" ,.;:-")
+
+    @classmethod
+    def _looks_like_low_quality_web_snippet(cls, value: Any) -> bool:
+        text = cls._normalize_text(value, limit=520)
+        if not text:
+            return False
+        lowered = text.casefold()
+        if re.fullmatch(r"category\s+[a-z0-9_ -]{2,80}", lowered):
+            return True
+        if cls.LOW_QUALITY_WEB_SNIPPET_PATTERN.search(text):
+            return True
+        duration_hits = re.findall(r"\b\d{1,2}:\d{2}\b", text)
+        if len(duration_hits) >= 2 and any(token in lowered for token in ("views", "watch", "video", "youtube", "₹₹")):
+            return True
+        return False
 
     def _should_activate(
         self,
@@ -1019,7 +1042,11 @@ class ResearchEditorialPlanningService:
         return [
             item
             for item in (knowledge_brief or [])
-            if isinstance(item, dict) and not self._is_visual_or_template_knowledge(item)
+            if (
+                isinstance(item, dict)
+                and not self._is_visual_or_template_knowledge(item)
+                and not self._looks_like_low_quality_web_snippet(item.get("content"))
+            )
         ]
 
     def _is_visual_or_template_knowledge(self, item: dict[str, Any]) -> bool:

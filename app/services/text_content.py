@@ -202,7 +202,12 @@ class TextContentService:
         live_research = self.live_research.gather_sync(
             prompt=prompt,
             studio_panel=studio_panel.model_dump(),
-            compiled_context={"knowledge_brief": knowledge_brief},
+            compiled_context={
+                "knowledge_brief": knowledge_brief,
+                "brand_context": brand_context,
+                "persona_context": persona_context,
+                "objective_context": objective_context,
+            },
         )
         planning_bundle = self.content_planning.build_text_plan(
             prompt=prompt,

@@ -111,6 +111,14 @@ class ContextCompilerService:
         "h6",
         "px",
     }
+    LOW_QUALITY_WEB_SNIPPET_PATTERN = re.compile(
+        r"("
+        r"\b\d+(?:\.\d+)?\s*[km]?\s+views?\b|"
+        r"\b\d+\s+(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)\s+ago\b|"
+        r"\b(?:youtube|watch now|subscribe|subscribers?|shorts?|playlist|comments?|likes?|reels?|tiktok)\b"
+        r")",
+        re.IGNORECASE,
+    )
 
     @staticmethod
     def _repair_encoding_noise(text: str) -> str:
@@ -142,6 +150,21 @@ class ContextCompilerService:
         if not limit:
             return text
         return text[:limit].rstrip(" ,.;:")
+
+    @classmethod
+    def _looks_like_low_quality_web_snippet(cls, value: Any) -> bool:
+        text = cls._normalize_text(value, limit=520)
+        if not text:
+            return False
+        lowered = text.casefold()
+        if re.fullmatch(r"category\s+[a-z0-9_ -]{2,80}", lowered):
+            return True
+        if cls.LOW_QUALITY_WEB_SNIPPET_PATTERN.search(text):
+            return True
+        duration_hits = re.findall(r"\b\d{1,2}:\d{2}\b", text)
+        if len(duration_hits) >= 2 and any(token in lowered for token in ("views", "watch", "video", "youtube", "₹₹")):
+            return True
+        return False
 
     @staticmethod
     def _looks_like_weak_sequence_hint(text: str) -> bool:
@@ -219,7 +242,7 @@ class ContextCompilerService:
         normalized: list[str] = []
         for item in raw_items:
             text = cls._truncate_text_on_word_boundary(item, item_limit).strip()
-            if text:
+            if text and not cls._looks_like_low_quality_web_snippet(text):
                 normalized.append(text)
         return cls._dedupe_items(normalized, limit=limit)
 
@@ -1106,11 +1129,15 @@ class ContextCompilerService:
         for item in (brief.get("source_pack") or [])[:6]:
             if not isinstance(item, dict):
                 continue
+            detail = cls._truncate_text_on_word_boundary(item.get("detail"), 220)
+            label = cls._normalize_text(item.get("label"), limit=140)
+            if cls._looks_like_low_quality_web_snippet(detail) or cls._looks_like_low_quality_web_snippet(label):
+                continue
             source_pack.append(
                 {
                     "type": cls._normalize_text(item.get("type"), limit=24),
-                    "label": cls._normalize_text(item.get("label"), limit=140),
-                    "detail": cls._truncate_text_on_word_boundary(item.get("detail"), 220),
+                    "label": label,
+                    "detail": detail,
                     "source": cls._normalize_text(item.get("source"), limit=180),
                 }
             )
@@ -1118,10 +1145,14 @@ class ContextCompilerService:
         for item in (brief.get("ranked_sources") or [])[:4]:
             if not isinstance(item, dict):
                 continue
+            detail = cls._truncate_text_on_word_boundary(item.get("detail"), 180)
+            label = cls._normalize_text(item.get("label"), limit=140)
+            if cls._looks_like_low_quality_web_snippet(detail) or cls._looks_like_low_quality_web_snippet(label):
+                continue
             ranked_sources.append(
                 {
-                    "label": cls._normalize_text(item.get("label"), limit=140),
-                    "detail": cls._truncate_text_on_word_boundary(item.get("detail"), 180),
+                    "label": label,
+                    "detail": detail,
                     "source": cls._normalize_text(item.get("source"), limit=180),
                 }
             )
@@ -2030,7 +2061,11 @@ class ContextCompilerService:
     def _knowledge_brief(cls, ordered_knowledge: dict[str, list[dict[str, Any]]]) -> list[dict[str, str]]:
         brief: list[dict[str, str]] = []
         for channel, entries in ordered_knowledge.items():
+            if str(channel or "").strip().casefold() in cls.VISUAL_KNOWLEDGE_PRIORITY:
+                continue
             for content in cls._ranked_knowledge_entries(entries, per_channel_limit=2):
+                if cls._looks_like_low_quality_web_snippet(content):
+                    continue
                 brief.append(
                     {
                         "channel": channel,

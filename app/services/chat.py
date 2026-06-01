@@ -171,8 +171,11 @@ class ChatService:
         return session
 
     async def list_messages(self, session_id: UUID) -> list[ChatMessage]:
-        await self.get_session(session_id)
+        session = await self.get_session(session_id)
         items = await self.messages.list_recent_by_session(session_id, limit=CHAT_HISTORY_MESSAGE_LIMIT)
+        if await self.backfill_content_history_messages(session, items):
+            await self.session.commit()
+            items = await self.messages.list_recent_by_session(session_id, limit=CHAT_HISTORY_MESSAGE_LIMIT)
         for item in items:
             item.structured_payload = self.decorate_structured_payload_assets(item.structured_payload or {})
         return items

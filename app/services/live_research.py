@@ -61,6 +61,25 @@ class LiveResearchService:
             return text
         return text[:limit].rstrip(" ,.;:")
 
+    @classmethod
+    def _looks_like_low_quality_snippet(cls, value: Any) -> bool:
+        text = cls._normalize_text(value).casefold()
+        if not text:
+            return False
+        if re.search(r"\b\d+(?:\.\d+)?\s*[km]?\s+views?\b", text):
+            return True
+        if re.search(r"\b\d+\s+(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)\s+ago\b", text):
+            return True
+        return bool(
+            re.search(
+                r"\b("
+                r"youtube|watch now|subscribe|subscribers|shorts|playlist|"
+                r"posted by|comments?|likes?|reels?|instagram reel|tiktok|reddit thread"
+                r")\b",
+                text,
+            )
+        )
+
     def _urls_from_context(self, prompt: str, compiled_context: dict[str, Any]) -> list[str]:
         urls = self.URL_PATTERN.findall(prompt or "")
         knowledge_brief = compiled_context.get("knowledge_brief", []) or []
@@ -80,10 +99,60 @@ class LiveResearchService:
             deduped.append(normalized)
         return deduped[:6]
 
+    @classmethod
+    def _market_context(cls, compiled_context: dict[str, Any]) -> str:
+        brand_context = compiled_context.get("brand_context") if isinstance(compiled_context, dict) else {}
+        brand_context = brand_context if isinstance(brand_context, dict) else {}
+        identity = brand_context.get("identity") if isinstance(brand_context.get("identity"), dict) else {}
+        target_geo = identity.get("target_geography") if isinstance(identity.get("target_geography"), dict) else {}
+        country = cls._normalize_text(target_geo.get("country"), limit=64)
+        if country and country.casefold() not in {"national", "global", "multi-market", "multimarket"}:
+            return country
+        context_blob = json.dumps(brand_context, default=str).casefold()
+        if any(token in context_blob for token in ("india", "indian", "sebi", "inz000")):
+            return "India"
+        return ""
+
+    @staticmethod
+    def _prompt_explicitly_us(prompt: str) -> bool:
+        return bool(re.search(r"\b(?:us|u\.s\.|usa|u\.s\.a\.|united states|american|americans|401\(k\)|ira)\b", prompt or "", re.IGNORECASE))
+
+    @classmethod
+    def _filter_market_mismatched_facts(
+        cls,
+        *,
+        facts: list[dict[str, str]],
+        prompt: str,
+        compiled_context: dict[str, Any],
+    ) -> list[dict[str, str]]:
+        market = cls._market_context(compiled_context).casefold()
+        if market != "india" or cls._prompt_explicitly_us(prompt):
+            return facts
+        excluded_terms = (
+            "401(k)",
+            " ira",
+            "fidelity",
+            "united states",
+            "u.s.",
+            "usa",
+            "american",
+            "americans",
+            "us inflation",
+            "consumer price index (cpi)",
+        )
+        filtered: list[dict[str, str]] = []
+        for fact in facts:
+            blob = " ".join(str(fact.get(key) or "") for key in ("label", "value", "source_title", "source_url")).casefold()
+            if any(term in blob for term in excluded_terms) and "india" not in blob and "indian" not in blob:
+                continue
+            filtered.append(fact)
+        return filtered
+
     def _heuristic_query_plan(self, prompt: str, studio_panel: dict[str, Any], compiled_context: dict[str, Any]) -> dict[str, Any]:
         prompt_text = self._normalize_text(prompt, limit=300)
         platform = self._normalize_text(studio_panel.get("platform_preset"), limit=32)
         format_name = self._normalize_text(studio_panel.get("format"), limit=32)
+        market = self._market_context(compiled_context)
         knowledge = compiled_context.get("knowledge_brief", []) or []
         knowledge_line = ""
         if knowledge and isinstance(knowledge[0], dict):
@@ -92,7 +161,11 @@ class LiveResearchService:
         queries = [prompt_text]
         if knowledge_line:
             queries.append(f"{prompt_text} {knowledge_line}")
-        queries.append(f"{prompt_text} {platform} {format_name}")
+        if market and not self._prompt_explicitly_us(prompt_text):
+            queries.append(f"{prompt_text} {market} market {platform} {format_name}")
+            queries.append(f"{prompt_text} {market} retirement planning fixed income")
+        else:
+            queries.append(f"{prompt_text} {platform} {format_name}")
         return {
             "needs_live_research": needs_live,
             "queries": [query for query in queries if query][: self.settings.live_research_max_queries],
@@ -119,6 +192,8 @@ class LiveResearchService:
             source_title = self._normalize_text(fact.get("source_title"), limit=160)
             source_url = self._normalize_text(fact.get("source_url"), limit=400)
             if not value and not label:
+                continue
+            if self._looks_like_low_quality_snippet(" ".join([label, value, source_title])):
                 continue
             key = (label.casefold(), value.casefold(), (source_url or source_title).casefold())
             if key in seen:
@@ -278,7 +353,8 @@ class LiveResearchService:
             system=(
                 "You are a live research planner for social/content generation. "
                 "Return JSON only with keys: needs_live_research, queries, facts_to_verify, preferred_sources. "
-                "needs_live_research must be true when the prompt needs current values, dates, rankings, rates, market data, policy data, or chart numbers that should be externally verified."
+                "needs_live_research must be true when the prompt needs current values, dates, rankings, rates, market data, policy data, or chart numbers that should be externally verified. "
+                "Respect brand market and geography from compiled context. If the prompt does not explicitly ask for the United States, do not default to U.S. retirement systems, 401(k), IRA, or Fidelity benchmarks for a non-U.S. brand."
             ),
             user=(
                 f"Prompt: {prompt}\n"
@@ -302,6 +378,12 @@ class LiveResearchService:
             for query in (queries if isinstance(queries, list) else [])
             if self._normalize_text(query, limit=220)
         ][: self.settings.live_research_max_queries] or fallback["queries"]
+        market = self._market_context(compiled_context)
+        if market and not self._prompt_explicitly_us(prompt):
+            planned["queries"] = [
+                query if market.casefold() in query.casefold() else self._normalize_text(f"{query} {market}", limit=220)
+                for query in planned["queries"]
+            ][: self.settings.live_research_max_queries]
         if not isinstance(planned.get("facts_to_verify"), list):
             planned["facts_to_verify"] = fallback["facts_to_verify"]
         if not isinstance(planned.get("preferred_sources"), list):
@@ -591,11 +673,13 @@ class LiveResearchService:
                     "Return JSON only with keys: summary, verified_facts. "
                     "summary should state the most important exact values, dates, graph labels, and source-backed caveats. "
                     "verified_facts must be a list of objects with keys: label, value, source_title, source_url. "
-                    "Only include facts directly supported by the provided sources."
+                    "Only include facts directly supported by the provided sources. "
+                    "Respect brand market and geography from compiled context; if the prompt does not explicitly ask for the United States, exclude U.S.-specific retirement systems for non-U.S. brands."
                 ),
                 user=(
                     f"Prompt: {prompt}\n"
                     f"Studio panel: {studio_panel}\n"
+                    f"Compiled context: {compiled_context}\n"
                     f"Facts to verify: {plan.get('facts_to_verify', [])}\n"
                     f"Fetched sources: {json.dumps(raw_sources[:5], ensure_ascii=False)}"
                 ),
@@ -610,6 +694,11 @@ class LiveResearchService:
                 synthesis = synthesis_fallback
         summary = self._normalize_text((synthesis or {}).get("summary"), limit=1400)
         verified_facts = self._normalize_verified_facts((synthesis or {}).get("verified_facts"))
+        verified_facts = self._filter_market_mismatched_facts(
+            facts=verified_facts,
+            prompt=prompt,
+            compiled_context=compiled_context,
+        )
         sources = [
             {
                 "title": self._normalize_text(source.get("title"), limit=180),

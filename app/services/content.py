@@ -9405,6 +9405,66 @@ class ContentService:
             lines.append(current)
         return lines
 
+    @classmethod
+    def _clear_ai_footer_overlay_region(
+        cls,
+        image: Image.Image,
+        *,
+        clear_strip_top: int,
+        clear_strip_height: int,
+    ) -> tuple[Image.Image, bool]:
+        base = image.convert("RGBA").copy()
+        width, height = base.size
+        if width <= 0 or height <= 0:
+            return base, False
+        top = min(max(int(clear_strip_top), 0), height)
+        bottom = min(max(top + int(clear_strip_height), top), height)
+        if bottom <= top:
+            return base, False
+
+        sample_top = max(top - max(int(height * 0.035), 24), 0)
+        sample_bottom = max(top, sample_top + 1)
+        sample_rows = range(sample_top, sample_bottom, max((sample_bottom - sample_top) // 8, 1))
+        sample_xs = [
+            max(min(int(width * ratio), width - 1), 0)
+            for ratio in (0.04, 0.12, 0.24, 0.50, 0.76, 0.88, 0.96)
+        ]
+        red_values: list[int] = []
+        green_values: list[int] = []
+        blue_values: list[int] = []
+        for sample_y in sample_rows:
+            for sample_x in sample_xs:
+                red, green, blue, alpha = base.getpixel((sample_x, sample_y))
+                if alpha <= 16:
+                    continue
+                red_values.append(red)
+                green_values.append(green)
+                blue_values.append(blue)
+
+        if not red_values:
+            fill = (255, 255, 255, 255)
+        else:
+            fill = (
+                cls._median_channel(red_values),
+                cls._median_channel(green_values),
+                cls._median_channel(blue_values),
+                255,
+            )
+
+        original_region = base.crop((0, top, width, bottom))
+        fill_region = Image.new("RGBA", original_region.size, fill)
+        mask = Image.new("L", original_region.size, 255)
+        feather_height = min(max(int((bottom - top) * 0.10), 10), max((bottom - top) // 2, 1))
+        if feather_height > 1:
+            mask_pixels = mask.load()
+            for y in range(feather_height):
+                alpha = int(255 * (y + 1) / feather_height)
+                for x in range(width):
+                    mask_pixels[x, y] = alpha
+        cleaned_region = Image.composite(fill_region, original_region, mask)
+        base.alpha_composite(cleaned_region, (0, top))
+        return base, True
+
     def _build_ai_footer_fallback_asset(
         self,
         *,
@@ -9435,6 +9495,11 @@ class ContentService:
         text_strip_top = max(height - text_strip_height, 0)
         clear_strip_height = max(text_strip_height, int(height * 0.085))
         clear_strip_top = max(height - clear_strip_height, 0)
+        base, footer_background_cleaned = self._clear_ai_footer_overlay_region(
+            base,
+            clear_strip_top=clear_strip_top,
+            clear_strip_height=clear_strip_height,
+        )
         sample_y = min(max(text_strip_top + text_strip_height // 2, 0), height - 1)
         sample_points = [base.getpixel((x, sample_y))[:3] for x in (int(width * 0.12), int(width * 0.5), int(width * 0.88))]
         avg_luma = sum((0.2126 * r + 0.7152 * g + 0.0722 * b) for r, g, b in sample_points) / max(len(sample_points), 1)
@@ -9480,6 +9545,7 @@ class ContentService:
             "generation_stage": "final_render",
             "legal_footer_composited_by_service": True,
             "legal_footer_overlay_strategy": "transparent_exact_footer_text",
+            "legal_footer_background_cleaned": footer_background_cleaned,
             "source_storage_path": storage_path,
             "legal_footer_text_length": len(footer_text),
             "legal_footer_line_count": len(chosen_lines),
@@ -10322,7 +10388,12 @@ class ContentService:
         live_research = self.live_research.gather_sync(
             prompt=effective_prompt,
             studio_panel=payload.studio_panel.model_dump(),
-            compiled_context={"knowledge_brief": knowledge_brief},
+            compiled_context={
+                "knowledge_brief": knowledge_brief,
+                "brand_context": tracked_runtime_brand_context,
+                "persona_context": tracked_persona_context,
+                "objective_context": tracked_objective_context,
+            },
         )
         tracked_live_research = input_access_tracker.wrap_source("live_research", live_research)
         planning_bundle = self.visual_planning.build_visual_plan(

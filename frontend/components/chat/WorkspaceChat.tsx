@@ -61,6 +61,7 @@ type ActionMode = "none" | "idea" | "social" | "repurpose" | "alignment";
 type Platform = "instagram" | "linkedin" | "x" | "youtube_thumbnail";
 type FormatMode = "static" | "carousel" | "infographic" | "video";
 type FileType = "doc" | "pdf" | "jpg" | "png";
+type PendingExperience = "conversation" | "visual";
 
 const actionOptions = [
   { id: "idea", label: "Generate Campaign Idea", icon: Sparkles },
@@ -131,6 +132,19 @@ function formatGenerationStatusLine(entry: (typeof GENERATION_PROGRESS_MESSAGES)
   return entry.title;
 }
 
+function inferPendingExperience(message: string, actionMode: ActionMode): PendingExperience {
+  if (actionMode === "idea" || actionMode === "social" || actionMode === "repurpose") {
+    return "visual";
+  }
+  const text = message.trim().toLowerCase();
+  if (!text) {
+    return "conversation";
+  }
+  const visualIntentPattern =
+    /\b(image|visual|creative|carousel|poster|banner|infographic|slide|slides|post|linkedin)\b/;
+  return visualIntentPattern.test(text) ? "visual" : "conversation";
+}
+
 function useDebouncedValue<T>(value: T, delayMs: number) {
   const [debouncedValue, setDebouncedValue] = useState(value);
 
@@ -164,11 +178,34 @@ function dedupeImageAssets(assets: AssetReference[]) {
   });
 }
 
+function shouldDisplayGeneratedImages(payload: ChatAssistantStructuredPayload) {
+  const mode = typeof payload.mode === "string" ? payload.mode.toLowerCase() : "";
+  if (mode === "visual_generation") {
+    return true;
+  }
+  if (mode === "retrieval") {
+    return Boolean(payload.display_retrieved_asset);
+  }
+  if (payload.image_generation_requested) {
+    return true;
+  }
+  if (payload.display_retrieved_asset && (payload.retrieval_status || payload.selected_asset || (payload.selection_options?.length ?? 0) > 0)) {
+    return true;
+  }
+  return false;
+}
+
 function resolveGeneratedImageAssets(payload: ChatAssistantStructuredPayload | Record<string, unknown> | undefined) {
   if (!payload || Array.isArray(payload)) {
     return [];
   }
   const typedPayload = payload as ChatAssistantStructuredPayload;
+  if (!shouldDisplayGeneratedImages(typedPayload)) {
+    return [];
+  }
+  if (typedPayload.selected_asset?.asset_url && typedPayload.selected_asset.mime_type.startsWith("image/")) {
+    return [typedPayload.selected_asset];
+  }
   const exportImages = (typedPayload.export_assets || []).filter(
     (asset) => asset.mime_type.startsWith("image/") && Boolean(asset.asset_url),
   );
@@ -215,6 +252,25 @@ function resolveBrandScoring(payload: ChatAssistantStructuredPayload | Record<st
     return null;
   }
   return scoring;
+}
+
+function orderMessagesChronologically<T extends { created_at?: string; role?: string; id?: string }>(items: T[]) {
+  return [...items].sort((left, right) => {
+    const leftTime = left.created_at ? Date.parse(left.created_at) : 0;
+    const rightTime = right.created_at ? Date.parse(right.created_at) : 0;
+    if (leftTime !== rightTime) {
+      return leftTime - rightTime;
+    }
+    if (left.role !== right.role) {
+      if (left.role === "user") {
+        return -1;
+      }
+      if (right.role === "user") {
+        return 1;
+      }
+    }
+    return String(left.id || "").localeCompare(String(right.id || ""));
+  });
 }
 
 function ScorePill({ label, value }: { label: string; value: number }) {
@@ -509,6 +565,20 @@ function GenerationPreviewPlaceholder({
   );
 }
 
+function ConversationPendingPlaceholder({ message }: { message: string }) {
+  return (
+    <div className="rounded-[24px] border border-[#ECEFFA] bg-white px-5 py-4 text-slate-800 shadow-[0_16px_36px_-30px_rgba(15,23,42,0.35)]">
+      <div className="flex items-start gap-3">
+        <Loader2 className="mt-1 h-4 w-4 animate-spin text-primary" />
+        <div className="min-w-0 space-y-2">
+          <p className="text-sm font-medium text-slate-700">Thinking through your message...</p>
+          <p className="line-clamp-2 text-sm text-slate-500">{message}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function GenerationDecisionCard({ decision }: { decision: GenerationDecision | null }) {
   const templateLabel = getGenerationDecisionTemplate(decision);
   const templatePreview = getGenerationDecisionTemplatePreview(decision);
@@ -739,6 +809,8 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
   const [selectedTemplateName, setSelectedTemplateName] = useState("");
   const [attachmentError, setAttachmentError] = useState("");
   const [workspaceError, setWorkspaceError] = useState("");
+  const [pendingExperience, setPendingExperience] = useState<PendingExperience>("conversation");
+  const [pendingMessagePreview, setPendingMessagePreview] = useState("");
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const promptTextareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -807,7 +879,8 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
   const recentKnowledgeAssets = (knowledgeAssets || []).filter(
     (asset) => !attachedAssets.some((selected) => selected.id === asset.id),
   ).slice(0, 4);
-  const hasConversation = Boolean((messages || []).length);
+  const orderedMessages = useMemo(() => orderMessagesChronologically(messages || []), [messages]);
+  const hasConversation = Boolean(orderedMessages.length);
   const [generationProgressIndex, setGenerationProgressIndex] = useState(0);
   const activeGenerationMessage = isGeneratingMessage
     ? GENERATION_PROGRESS_MESSAGES[generationProgressIndex] || GENERATION_PROGRESS_MESSAGES[0]
@@ -816,6 +889,8 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
 
   useEffect(() => {
     if (!isGeneratingMessage) {
+      setPendingExperience("conversation");
+      setPendingMessagePreview("");
       return;
     }
 
@@ -892,6 +967,8 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
     try {
       setWorkspaceError("");
       setGenerationProgressIndex(0);
+      setPendingExperience(inferPendingExperience(message, selectedAction));
+      setPendingMessagePreview(message.trim());
       const sessionId = await ensureSession();
       await sendMessage.mutateAsync({
         sessionId,
@@ -1031,7 +1108,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
               <div className="grid flex-1 gap-6 xl:grid-cols-[minmax(0,1fr)_320px] xl:items-end">
                 <SurfaceCard className="flex flex-col rounded-[32px] border border-white/70 bg-white/90 px-4 py-4 shadow-[0_28px_72px_-42px_rgba(15,23,42,0.42)]">
                   <div className="space-y-4 px-2">
-                    {(messages || []).map((message) => {
+                    {orderedMessages.map((message) => {
                       const previewAssets = message.role === "assistant" ? resolveGeneratedImageAssets(message.structured_payload) : [];
                       const previewUrl = previewAssets[0]?.asset_url || undefined;
                       const generationDecision = message.role === "assistant" ? resolveGenerationDecision(message.structured_payload) : null;
@@ -1099,20 +1176,24 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                     })}
                     {isGeneratingMessage ? (
                       <div className="mr-auto max-w-[86%]">
-                        <div className="rounded-[24px] border border-[#ECEFFA] bg-white px-5 py-4 text-slate-800 shadow-[0_16px_36px_-30px_rgba(15,23,42,0.35)]">
-                          <div className="space-y-4">
-                            <GenerationPreviewPlaceholder
-                              width={studioPanel.size?.width ?? 1080}
-                              height={studioPanel.size?.height ?? 1080}
-                            />
-                            <div className="flex items-center gap-3">
-                              <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                              <p className="min-w-0 text-sm font-medium text-slate-700">
-                                <span className="block truncate">{activeGenerationStatusLine}</span>
-                              </p>
+                        {pendingExperience === "visual" ? (
+                          <div className="rounded-[24px] border border-[#ECEFFA] bg-white px-5 py-4 text-slate-800 shadow-[0_16px_36px_-30px_rgba(15,23,42,0.35)]">
+                            <div className="space-y-4">
+                              <GenerationPreviewPlaceholder
+                                width={studioPanel.size?.width ?? 1080}
+                                height={studioPanel.size?.height ?? 1080}
+                              />
+                              <div className="flex items-center gap-3">
+                                <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                                <p className="min-w-0 text-sm font-medium text-slate-700">
+                                  <span className="block truncate">{activeGenerationStatusLine}</span>
+                                </p>
+                              </div>
                             </div>
                           </div>
-                        </div>
+                        ) : (
+                          <ConversationPendingPlaceholder message={pendingMessagePreview || "Working on your request"} />
+                        )}
                       </div>
                     ) : null}
                   </div>

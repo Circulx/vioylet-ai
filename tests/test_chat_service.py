@@ -292,6 +292,173 @@ async def test_chat_service_routes_text_only_requests_without_visual_generation(
 
 
 @pytest.mark.asyncio
+async def test_chat_service_routes_image_retrieval_requests_through_memory_service() -> None:
+    session = ContentSession(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        title="Chat Session",
+        session_kind="chat",
+        studio_panel={"format": "static", "platform_preset": "linkedin", "file_type": "png"},
+        conversational_context={"last_content_version_id": str(uuid4())},
+        is_active=True,
+    )
+    chat = ChatService.__new__(ChatService)
+    chat.session = SimpleNamespace(commit=AsyncMock())
+    chat.messages = SimpleNamespace(add=AsyncMock())
+    chat.get_session = AsyncMock(return_value=session)
+    chat.intent_router = SimpleNamespace(
+        route=lambda message, context: ChatIntentDecision(
+            mode="retrieval",
+            reason="image_history_lookup",
+            uses_previous_output=True,
+            display_retrieved_asset=True,
+        )
+    )
+    chat.memory = SimpleNamespace(
+        index_chat_message=AsyncMock(),
+        index_content_version_summary=AsyncMock(),
+        index_generated_assets=AsyncMock(),
+        retrieve_image_assets=AsyncMock(
+            return_value={
+                "status": "found",
+                "message": "The last generated image is a finance carousel about FD Bonds, with a premium LinkedIn-style visual and concise educational copy.",
+                "assets": [
+                    {
+                        "asset_id": str(uuid4()),
+                        "mime_type": "image/png",
+                        "storage_path": "tenant/brand/generated/finance-carousel.png",
+                        "asset_url": "https://example.test/asset?token=abc",
+                        "asset_role": "ai_image",
+                    }
+                ],
+                "matched_entries": [{"memory_entry_id": str(uuid4()), "score": 0.91}],
+                "selected_asset": {
+                    "asset_id": str(uuid4()),
+                    "mime_type": "image/png",
+                    "storage_path": "tenant/brand/generated/finance-carousel.png",
+                    "asset_url": "https://example.test/asset?token=abc",
+                    "asset_role": "ai_image",
+                },
+                "selection_required": False,
+                "selection_prompt": None,
+                "selection_options": [
+                    {
+                        "rank": 1,
+                        "label": "Option 1",
+                        "summary": "Finance carousel about FD Bonds",
+                        "storage_path": "tenant/brand/generated/finance-carousel.png",
+                    }
+                ],
+            }
+        ),
+    )
+    chat.conversation = SimpleNamespace(reply=lambda **kwargs: pytest.fail("conversation path should not run"))
+    chat.text_content = SimpleNamespace(generate=AsyncMock(), evaluate=AsyncMock())
+    chat.content = SimpleNamespace(generate=AsyncMock(), rewrite=AsyncMock(), export=AsyncMock())
+    chat.assets = SimpleNamespace(list_by_content=AsyncMock(return_value=[]))
+    chat.brands = SimpleNamespace(get_scoped=AsyncMock(return_value=SimpleNamespace(name="Jiraaf")))
+
+    _, assistant = await chat.send_message(
+        tenant_id=session.tenant_id,
+        brand_space_id=session.brand_space_id,
+        user_id=session.user_id,
+        session_id=session.id,
+        payload=ChatMessageCreateRequest(message="Show me the previous image"),
+    )
+
+    assert assistant.structured_payload["mode"] == "retrieval"
+    assert assistant.structured_payload["retrieval_status"] == "found"
+    assert assistant.structured_payload["assets"][0]["storage_path"].endswith("finance-carousel.png")
+    assert "finance carousel about FD Bonds" in assistant.message_text
+    assert assistant.structured_payload["selection_required"] is False
+    assert assistant.structured_payload["selection_options"][0]["label"] == "Option 1"
+    assert assistant.structured_payload["display_retrieved_asset"] is True
+    chat.memory.retrieve_image_assets.assert_awaited()
+    chat.content.generate.assert_not_awaited()
+    chat.text_content.generate.assert_not_awaited()
+    assert session.conversational_context["last_non_evaluation_response_mode"] is None
+
+
+@pytest.mark.asyncio
+async def test_chat_service_hides_retrieved_assets_when_user_only_discusses_previous_image() -> None:
+    session = ContentSession(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        title="Chat Session",
+        session_kind="chat",
+        studio_panel={"format": "static", "platform_preset": "linkedin", "file_type": "png"},
+        conversational_context={},
+        is_active=True,
+    )
+    chat = ChatService.__new__(ChatService)
+    chat.session = SimpleNamespace(commit=AsyncMock())
+    chat.messages = SimpleNamespace(add=AsyncMock())
+    chat.get_session = AsyncMock(return_value=session)
+    chat.intent_router = SimpleNamespace(
+        route=lambda message, context: ChatIntentDecision(
+            mode="retrieval",
+            reason="image_history_explanation",
+            uses_previous_output=True,
+            display_retrieved_asset=False,
+        )
+    )
+    chat.memory = SimpleNamespace(
+        index_chat_message=AsyncMock(),
+        index_content_version_summary=AsyncMock(),
+        index_generated_assets=AsyncMock(),
+        retrieve_image_assets=AsyncMock(
+            return_value={
+                "status": "found",
+                "message": "The last generated image uses a dark blue background with warm gold accents to emphasize the FD penalty message.",
+                "assets": [
+                    {
+                        "asset_id": str(uuid4()),
+                        "mime_type": "image/png",
+                        "storage_path": "tenant/brand/generated/fd-colors.png",
+                        "asset_url": "https://example.test/asset?token=xyz",
+                        "asset_role": "ai_image",
+                    }
+                ],
+                "matched_entries": [{"memory_entry_id": str(uuid4()), "score": 0.94}],
+                "selected_asset": {
+                    "asset_id": str(uuid4()),
+                    "mime_type": "image/png",
+                    "storage_path": "tenant/brand/generated/fd-colors.png",
+                    "asset_url": "https://example.test/asset?token=xyz",
+                    "asset_role": "ai_image",
+                },
+                "selection_required": False,
+                "selection_prompt": None,
+                "selection_options": [],
+            }
+        ),
+    )
+    chat.conversation = SimpleNamespace(reply=lambda **kwargs: pytest.fail("conversation path should not run"))
+    chat.text_content = SimpleNamespace(generate=AsyncMock(), evaluate=AsyncMock())
+    chat.content = SimpleNamespace(generate=AsyncMock(), export=AsyncMock())
+    chat.assets = SimpleNamespace(list_by_content=AsyncMock(return_value=[]))
+    chat.brands = SimpleNamespace(get_scoped=AsyncMock(return_value=SimpleNamespace(name="Jiraaf")))
+
+    _, assistant = await chat.send_message(
+        tenant_id=session.tenant_id,
+        brand_space_id=session.brand_space_id,
+        user_id=session.user_id,
+        session_id=session.id,
+        payload=ChatMessageCreateRequest(message="Explain the colors in that image."),
+    )
+
+    assert assistant.structured_payload["mode"] == "retrieval"
+    assert assistant.structured_payload["display_retrieved_asset"] is False
+    assert assistant.structured_payload["assets"] == []
+    assert assistant.structured_payload["selected_asset"] is None
+    assert assistant.message_text.startswith("The last generated image uses a dark blue background")
+
+
+@pytest.mark.asyncio
 async def test_chat_service_routes_visual_requests_through_existing_generation_path() -> None:
     session = ContentSession(
         id=uuid4(),

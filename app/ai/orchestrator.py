@@ -4621,6 +4621,26 @@ class AIOrchestratorService:
         if not isinstance(scene_graph, GenerationSceneGraph):
             return ""
         geometry_manifest: list[dict[str, Any]] = []
+        has_legal_footer = any(
+            str(element.role or "").strip().casefold() in {"legal", "footer", "disclaimer"}
+            or "legal" in str(element.element_id or "").strip().casefold()
+            or "footer" in str(element.element_id or "").strip().casefold()
+            for element in scene_graph.elements
+            if element.visible
+        )
+        if has_legal_footer:
+            geometry_manifest.append(
+                {
+                    "role": "empty_bottom_safe_strip",
+                    "type": "reserved_safe_area",
+                    "x": 0.0,
+                    "y": 0.88,
+                    "w": 1.0,
+                    "h": 0.12,
+                    "hard_exclusion": True,
+                    "note": "backend legal footer text only; keep all AI content outside",
+                }
+            )
         for element in scene_graph.elements:
             if (
                 not element.visible
@@ -4651,10 +4671,23 @@ class AIOrchestratorService:
                     entry["text_role"] = text_role
             geometry_manifest.append(entry)
             if len(geometry_manifest) >= limit:
-                break
+                has_footer_entry = any(item.get("role") in {"legal", "footer", "disclaimer", "empty_bottom_safe_strip"} for item in geometry_manifest)
+                if has_footer_entry:
+                    break
         if not geometry_manifest:
             return ""
         return json.dumps(geometry_manifest, separators=(",", ":"), ensure_ascii=True)
+
+    @staticmethod
+    def _legal_footer_hard_exclusion_contract(legal_footer: Any) -> str:
+        normalized_footer = AIOrchestratorService._normalize_metadata_text(legal_footer, limit=80)
+        if not normalized_footer:
+            return ""
+        return (
+            "LEGAL FOOTER HARD EXCLUSION: reserve normalized canvas band y=0.88 to 1.00 as transparent empty background for backend legal text. "
+            "No AI-generated text, bullets, labels, icons, logos, cards, CTA shells, tables, charts, image subjects, shadows, crop marks, or decorative objects may enter or touch this bottom 12% band. "
+            "All non-legal content must end at or above y=0.88 with visible breathing room; shrink or simplify the layout instead of flowing into the footer."
+        )
 
     @classmethod
     def _compact_layout_dna_contract(cls, compiled_context: dict[str, Any] | None, limit: int = 8) -> str:
@@ -8016,6 +8049,10 @@ class AIOrchestratorService:
             request=request,
             canvas=canvas,
         )
+        payload["elements"] = self._enforce_legal_footer_safe_area(
+            elements=payload["elements"],
+            canvas=canvas,
+        )
         # Fix 3: Apply CTA template styling to CTA elements
         payload["elements"] = self._apply_cta_template_styling(
             elements=payload["elements"],
@@ -9143,6 +9180,128 @@ class AIOrchestratorService:
 
         # Add footer to elements list
         return [*elements, footer_element]
+
+    @classmethod
+    def _enforce_legal_footer_safe_area(
+        cls,
+        *,
+        elements: list[dict[str, Any]],
+        canvas: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        legal_roles = {"legal", "footer", "disclaimer"}
+
+        def _is_legal(element: dict[str, Any]) -> bool:
+            role = str(element.get("role") or element.get("element_type") or "").strip().lower()
+            element_id = str(element.get("element_id") or "").strip().lower()
+            return role in legal_roles or "legal" in element_id or "footer" in element_id
+
+        if not any(_is_legal(element) and str(element.get("text") or "").strip() for element in elements):
+            return elements
+
+        content_safe_bottom = 0.88
+        canvas = cls._coerce_mapping(canvas)
+        try:
+            canvas_width = max(float(canvas.get("width") or 1080), 1.0)
+        except (TypeError, ValueError):
+            canvas_width = 1080.0
+        try:
+            canvas_height = max(float(canvas.get("height") or 1080), 1.0)
+        except (TypeError, ValueError):
+            canvas_height = 1080.0
+        footer_geometry = {
+            "x": 0.02,
+            "y": 0.96,
+            "width": 0.96,
+            "height": 0.03,
+            "units": "normalized",
+            "anchor": "bottom_left",
+        }
+
+        def _float_value(value: Any, fallback: float) -> float:
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return fallback
+
+        def _normalized_geometry(geometry: dict[str, Any]) -> tuple[dict[str, float], bool]:
+            units = str(geometry.get("units") or "normalized").strip().casefold()
+            raw_x = _float_value(geometry.get("x"), 0.0)
+            raw_y = _float_value(geometry.get("y"), 0.0)
+            raw_width = _float_value(geometry.get("width"), 0.01)
+            raw_height = _float_value(geometry.get("height"), 0.01)
+            if units == "px":
+                x = raw_x / canvas_width if abs(raw_x) > 1.5 else raw_x
+                y = raw_y / canvas_height if abs(raw_y) > 1.5 else raw_y
+                width = raw_width / canvas_width if raw_width > 1.5 else raw_width
+                height = raw_height / canvas_height if raw_height > 1.5 else raw_height
+                mixed_units = raw_width <= 1.5 or raw_height <= 1.5
+            else:
+                x = raw_x
+                y = raw_y
+                width = raw_width
+                height = raw_height
+                mixed_units = False
+            return (
+                {
+                    "x": min(max(x, 0.0), 1.0),
+                    "y": min(max(y, 0.0), 1.0),
+                    "width": min(max(width, 0.01), 1.0),
+                    "height": min(max(height, 0.01), 1.0),
+                },
+                mixed_units,
+            )
+
+        adjusted: list[dict[str, Any]] = []
+        for item in elements:
+            element = dict(item)
+            geometry = dict(element.get("geometry") if isinstance(element.get("geometry"), dict) else {})
+            units = str(geometry.get("units") or "normalized").strip().casefold()
+            role = str(element.get("role") or element.get("element_type") or "").strip().lower()
+            if _is_legal(element):
+                element["geometry"] = footer_geometry
+                validation_hints = cls._coerce_mapping(element.get("validation_hints"))
+                validation_hints.update(
+                    {
+                        "legal_compliance": True,
+                        "required": True,
+                        "post_processing_footer_overlay": True,
+                    }
+                )
+                element["validation_hints"] = validation_hints
+                adjusted.append(element)
+                continue
+            if units != "normalized" or role in {"background", "logo"}:
+                if units != "px" or role in {"background", "logo"}:
+                    adjusted.append(element)
+                    continue
+            normalized, mixed_units = _normalized_geometry(geometry)
+            y = normalized["y"]
+            height = normalized["height"]
+            bottom = y + height
+            if bottom <= content_safe_bottom and not mixed_units:
+                adjusted.append(element)
+                continue
+            if bottom > content_safe_bottom:
+                if y < content_safe_bottom - 0.02:
+                    height = max(0.02, content_safe_bottom - y)
+                else:
+                    y = max(0.0, content_safe_bottom - height)
+                validation_hints = cls._coerce_mapping(element.get("validation_hints"))
+                validation_hints["clamped_above_legal_footer"] = True
+                element["validation_hints"] = validation_hints
+            if bottom > content_safe_bottom or mixed_units:
+                normalized["y"] = y
+                normalized["height"] = height
+                element["geometry"] = {
+                    **geometry,
+                    "x": round(normalized["x"], 4),
+                    "y": round(normalized["y"], 4),
+                    "width": round(normalized["width"], 4),
+                    "height": round(normalized["height"], 4),
+                    "units": "normalized",
+                }
+            adjusted.append(element)
+        return adjusted
 
     @classmethod
     def _apply_cta_template_styling(
@@ -18733,6 +18892,7 @@ class AIOrchestratorService:
         claim_evidence_pairs: Any = None,
         cta: Any = "",
         slide_role: Any = "",
+        legal_footer: Any = "",
     ) -> list[str]:
         normalized_headline = AIOrchestratorService._normalize_metadata_text(headline, limit=180)
         normalized_supporting = AIOrchestratorService._normalize_metadata_text(supporting_line, limit=220)
@@ -18747,6 +18907,7 @@ class AIOrchestratorService:
         )
         normalized_cta = AIOrchestratorService._normalize_metadata_text(cta, limit=80)
         normalized_role = AIOrchestratorService._normalize_metadata_text(slide_role, limit=48)
+        normalized_footer = AIOrchestratorService._normalize_metadata_text(legal_footer, limit=360)
         semantic_parts: list[str] = []
         if normalized_role:
             semantic_parts.append(f"role={normalized_role}")
@@ -18771,6 +18932,11 @@ class AIOrchestratorService:
         return [
             "TEXT OVERLAY CONTRACT: create a premium visual substrate for exact backend text overlay, not a finished text poster.",
             "Do not render any readable words, letters, numbers, bullets, labels, captions, CTA text, legal text, sample text, or pseudo-text anywhere in the AI image.",
+            (
+                "Reserve the bottom compliance strip as transparent empty background only: no assumptions, sources, footnotes, disclaimer labels, pseudo-legal copy, icons, cards, panels, or decorative texture may enter it."
+                if normalized_footer
+                else "Do not invent any source note, disclaimer, legal copy, assumptions line, or footer text."
+            ),
             f"Copy surface plan, with exact words intentionally withheld from image generation: {semantic_summary}.",
             "Design clean empty text-safe regions that visibly belong to the layout: quiet panels, soft cards, divider rules, accent tabs, callout shells, and calm negative space.",
             cta_guidance,
@@ -18981,6 +19147,8 @@ class AIOrchestratorService:
         infographic_sections = AIOrchestratorService._compact_infographic_section_specs(metadata.get("infographic_section_specs"))
         static_panel_spec = AIOrchestratorService._compact_static_panel_spec(metadata.get("static_panel_spec"))
         geometry_contract = AIOrchestratorService._compact_scene_graph_geometry(scene_graph)
+        legal_footer_text = AIOrchestratorService._scene_graph_legal_footer_text(scene_graph)
+        legal_footer_hard_exclusion = AIOrchestratorService._legal_footer_hard_exclusion_contract(legal_footer_text)
         layout_dna_contract = AIOrchestratorService._compact_layout_dna_contract(compiled_context)
         layout_archetype = AIOrchestratorService._normalize_metadata_text(
             (scene_graph.styles or {}).get("layout_archetype")
@@ -19102,11 +19270,13 @@ class AIOrchestratorService:
             proof_points=metadata.get("proof_points"),
             claim_evidence_pairs=metadata.get("claim_evidence_pairs"),
             cta=text_payload.cta,
+            legal_footer=legal_footer_text,
         )
         sections = [
             "Create one finished premium branded social creative.",
             f"Keep the {reserved_logo_area} area completely empty and visually clean. Do not place any headline, body copy, supporting text, proof point, CTA, icon, or visual element inside or immediately adjacent to this corner.",
             disclaimer_overlay_guidance,
+            legal_footer_hard_exclusion,
             f"Platform: {platform}.",
             f"Format: {format_name}.",
             f"Output type: {file_type}.",
@@ -22427,6 +22597,7 @@ class AIOrchestratorService:
         visual_plan_guidance = AIOrchestratorService._visual_explanation_guidance(visual_plan)
         disclaimer_overlay_guidance = AIOrchestratorService._disclaimer_overlay_guidance(request)
         legal_footer_text = AIOrchestratorService._scene_graph_legal_footer_text(scene_graph)
+        legal_footer_hard_exclusion = AIOrchestratorService._legal_footer_hard_exclusion_contract(legal_footer_text)
         palette_execution_contract = AIOrchestratorService._palette_role_execution_contract(
             visual_identity,
             has_cta=bool(AIOrchestratorService._normalize_metadata_text(slide.get("cta"), limit=80)),
@@ -22663,6 +22834,7 @@ class AIOrchestratorService:
                 claim_evidence_pairs=slide.get("claim_evidence_pairs"),
                 cta=slide.get("cta"),
                 slide_role=story_role or slide.get("role"),
+                legal_footer=legal_footer_text,
             )
             if use_backend_text_overlay
             else AIOrchestratorService._final_text_render_contract(
@@ -22885,6 +23057,7 @@ class AIOrchestratorService:
             "Never typeset the brand name in the corners.",
             f"Keep the {reserved_logo_area} area completely empty and visually clean. Do not place any headline, body copy, supporting text, proof point, CTA, icon, or visual element inside or immediately adjacent to this corner.",
             disclaimer_overlay_guidance,
+            legal_footer_hard_exclusion,
             f"Platform: {platform}.",
             f"Output type: {file_type}.",
             canvas_fit_guidance,

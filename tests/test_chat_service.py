@@ -853,6 +853,64 @@ async def test_chat_service_resets_distinct_visual_topic_instead_of_reusing_prev
     assert generate_kwargs["payload"].source_content_version_id is None
 
 
+@pytest.mark.asyncio
+async def test_chat_service_exports_visual_doc_requests_for_post_processing() -> None:
+    session = ContentSession(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        title="Chat Session",
+        session_kind="chat",
+        studio_panel={"format": "infographic", "platform_preset": "linkedin", "file_type": "doc"},
+        conversational_context={},
+        is_active=True,
+    )
+    content_version = ContentVersion(
+        id=uuid4(),
+        tenant_id=session.tenant_id,
+        brand_space_id=session.brand_space_id,
+        session_id=session.id,
+        created_by=session.user_id,
+        prompt="Create an infographic post.",
+        studio_panel=session.studio_panel,
+        generated_payload={"headline": "Retirement planning", "body": "Body", "cta": ""},
+        blueprint_payload={},
+        explainability_metadata={},
+        tone_feedback={},
+    )
+    chat = ChatService.__new__(ChatService)
+    chat.session = SimpleNamespace(commit=AsyncMock())
+    chat.messages = SimpleNamespace(add=AsyncMock())
+    chat.get_session = AsyncMock(return_value=session)
+    chat.intent_router = SimpleNamespace(
+        route=lambda message, context: ChatIntentDecision(mode="visual_generation", reason="visual_request")
+    )
+    chat.conversation = SimpleNamespace(reply=lambda **kwargs: pytest.fail("conversation path should not run"))
+    chat.text_content = SimpleNamespace(generate=AsyncMock(), rewrite=AsyncMock(), evaluate=AsyncMock())
+    chat.content = SimpleNamespace(
+        generate=AsyncMock(return_value=content_version),
+        rewrite=AsyncMock(),
+        export=AsyncMock(return_value={"export_assets": [], "renderer_metadata": {}, "preview_asset": None}),
+    )
+    chat.assets = SimpleNamespace(list_by_content=AsyncMock(return_value=[]))
+    chat.brands = SimpleNamespace(get_scoped=AsyncMock(return_value=SimpleNamespace(name="Jiraaf")))
+
+    await chat.send_message(
+        tenant_id=session.tenant_id,
+        brand_space_id=session.brand_space_id,
+        user_id=session.user_id,
+        session_id=session.id,
+        payload=ChatMessageCreateRequest(
+            message="Create an infographic post.",
+            studio_panel=StudioPanelSelection(format="infographic", platform_preset="linkedin", file_type="doc"),
+            generate_image=True,
+        ),
+    )
+
+    chat.content.export.assert_awaited_once()
+
+
 def test_chat_service_compose_visual_regeneration_prompt_uses_base_prompt_only_once() -> None:
     previous_content = ContentVersion(
         tenant_id=uuid4(),

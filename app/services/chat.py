@@ -544,7 +544,10 @@ class ChatService:
                         ),
                     )
                 render_payload = None
-                if studio_panel.file_type != ExportFileType.DOC:
+                should_export_visual = studio_panel.file_type != ExportFileType.DOC or (
+                    str(studio_panel.format or "").strip().casefold() in self.VISUAL_WORKSPACE_FORMATS
+                )
+                if should_export_visual:
                     logger.info(
                         "chat.send_message.visual_export session_id=%s content_version_id=%s studio_format=%s file_type=%s",
                         session.id,

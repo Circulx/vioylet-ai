@@ -7714,6 +7714,7 @@ class ContentService:
         format_name: str,
         anchor: tuple[str, str] | None,
         reference_box: tuple[int, int, int, int] | None = None,
+        bottom_edge_y: int | None = None,
     ) -> tuple[int, int, int, int]:
         vertical, horizontal = anchor or ("top", "right")
         margin_x = min(20, max(canvas_width - 1, 0))
@@ -7734,7 +7735,10 @@ class ContentService:
         else:
             x = max(canvas_width - width - margin_x, 0)
         if vertical == "bottom":
-            y = max(canvas_height - height - margin_y, 0)
+            if bottom_edge_y is not None:
+                y = max(min(int(bottom_edge_y), canvas_height) - height, 0)
+            else:
+                y = max(canvas_height - height - margin_y, 0)
         elif vertical == "middle":
             y = max((canvas_height - height) // 2, 0)
         else:
@@ -7750,6 +7754,7 @@ class ContentService:
         canvas_width: int,
         canvas_height: int,
         anchor: tuple[str, str],
+        bottom_edge_y: int | None = None,
     ) -> tuple[int, int, int, int]:
         x, y, width, height = box
         vertical, horizontal = anchor
@@ -7762,7 +7767,10 @@ class ContentService:
         if vertical == "top":
             y = min(20, max(canvas_height - height, 0))
         elif vertical == "bottom":
-            y = max(canvas_height - height - 20, 0)
+            if bottom_edge_y is not None:
+                y = max(min(int(bottom_edge_y), canvas_height) - height, 0)
+            else:
+                y = max(canvas_height - height - 20, 0)
         elif vertical == "middle":
             y = max((canvas_height - height) // 2, 0)
         width = min(width, max(canvas_width - x, 1))
@@ -7893,20 +7901,83 @@ class ContentService:
             )
             if box:
                 boxes.append({"box": box, "role": role, "source": "blueprint"})
-        footer_text = cls._ai_final_render_legal_footer_text(
+        footer_strip_box = cls._ai_final_render_legal_footer_strip_box(
             content=content,
             explainability=explainability,
+            canvas_width=canvas_width,
+            canvas_height=canvas_height,
         )
-        if footer_text:
-            strip_height = max(int(canvas_height * 0.052), 56)
+        if footer_strip_box:
             boxes.append(
                 {
-                    "box": (0, max(canvas_height - strip_height, 0), canvas_width, strip_height),
+                    "box": footer_strip_box,
                     "role": "legal_footer",
                     "source": "footer_fallback",
                 }
             )
         return boxes
+
+    @classmethod
+    def _ai_final_render_legal_footer_strip_box(
+        cls,
+        *,
+        content: ContentVersion,
+        explainability: dict,
+        canvas_width: int,
+        canvas_height: int,
+    ) -> tuple[int, int, int, int] | None:
+        footer_text = cls._ai_final_render_legal_footer_text(
+            content=content,
+            explainability=explainability,
+        )
+        if not footer_text:
+            return None
+
+        legal_tops: list[int] = []
+        for graph_key in ("final_render_scene_graph", "scene_graph"):
+            graph = explainability.get(graph_key) if isinstance(explainability, dict) else None
+            if not isinstance(graph, dict):
+                continue
+            for element in graph.get("elements") or []:
+                if not isinstance(element, dict):
+                    continue
+                role = str(element.get("role") or element.get("element_type") or "").strip().lower()
+                element_id = str(element.get("element_id") or "").strip().lower()
+                if role not in {"legal", "footer", "disclaimer"} and "legal" not in element_id and "footer" not in element_id:
+                    continue
+                box = cls._coerce_layout_obstruction_box(
+                    element,
+                    canvas_width=canvas_width,
+                    canvas_height=canvas_height,
+                )
+                if box and box[1] >= int(canvas_height * 0.9):
+                    legal_tops.append(box[1])
+
+        text_strip_height = max(int(canvas_height * 0.052), 56)
+        clear_strip_height = max(text_strip_height, int(canvas_height * 0.085))
+        fallback_top = max(canvas_height - clear_strip_height, 0)
+        strip_top = min([fallback_top, *legal_tops]) if legal_tops else fallback_top
+        return (0, max(strip_top, 0), canvas_width, max(canvas_height - max(strip_top, 0), 1))
+
+    @classmethod
+    def _logo_bottom_edge_limit_above_footer(
+        cls,
+        *,
+        content: ContentVersion,
+        explainability: dict,
+        canvas_width: int,
+        canvas_height: int,
+    ) -> int | None:
+        footer_strip_box = cls._ai_final_render_legal_footer_strip_box(
+            content=content,
+            explainability=explainability,
+            canvas_width=canvas_width,
+            canvas_height=canvas_height,
+        )
+        if not footer_strip_box:
+            return None
+        gap = max(int(canvas_height * 0.008), 12)
+        return max(footer_strip_box[1] - gap, 1)
 
     @classmethod
     def _layout_overlap_score(
@@ -8025,21 +8096,14 @@ class ContentService:
             for position in (policy.get("allowed_positions") or [])
             if (anchor := cls._logo_anchor_from_position(str(position)))
         }
-        if allowed_anchor_keys and policy.get("explicit"):
-            for position in (
-                "top-right",
-                "top-left",
-                "bottom-right",
-                "bottom-left",
-                "top-center",
-                "bottom-center",
-                "center",
-            ):
-                anchor = cls._logo_anchor_from_position(position)
-                if anchor and anchor not in anchors:
-                    anchors.append(anchor)
         preferred_anchor = anchors[0] if anchors else initial_anchor
         obstruction_boxes = cls._logo_layout_obstruction_boxes(
+            content=content,
+            explainability=explainability,
+            canvas_width=canvas_width,
+            canvas_height=canvas_height,
+        )
+        bottom_edge_y = cls._logo_bottom_edge_limit_above_footer(
             content=content,
             explainability=explainability,
             canvas_width=canvas_width,
@@ -8058,6 +8122,7 @@ class ContentService:
                     canvas_width=canvas_width,
                     canvas_height=canvas_height,
                     anchor=anchor,
+                    bottom_edge_y=bottom_edge_y if anchor[0] == "bottom" else None,
                 )
                 inner_width = max(candidate_box[2] - max(int(candidate_box[2] * 0.01), 2), 1)
                 inner_height = max(candidate_box[3] - max(int(candidate_box[3] * 0.015), 2), 1)
@@ -8312,6 +8377,12 @@ class ContentService:
             canvas_height=canvas_height,
             format_name=format_name,
         )
+        bottom_edge_y = cls._logo_bottom_edge_limit_above_footer(
+            content=content,
+            explainability=explainability,
+            canvas_width=canvas_width,
+            canvas_height=canvas_height,
+        )
         if box is None:
             return cls._default_ai_logo_box(
                 canvas_width=canvas_width,
@@ -8319,6 +8390,7 @@ class ContentService:
                 format_name=format_name,
                 anchor=hint_anchor,
                 reference_box=reference_box,
+                bottom_edge_y=bottom_edge_y if hint_anchor and hint_anchor[0] == "bottom" else None,
             )
         current_anchor = cls._logo_anchor_from_box(
             box,
@@ -8336,6 +8408,7 @@ class ContentService:
                 format_name=format_name,
                 anchor=anchor,
                 reference_box=reference_box,
+                bottom_edge_y=bottom_edge_y if anchor[0] == "bottom" else None,
             )
         if reference_box is not None:
             _ref_x, _ref_y, ref_width, ref_height = reference_box
@@ -8346,6 +8419,7 @@ class ContentService:
                     format_name=format_name,
                     anchor=anchor,
                     reference_box=reference_box,
+                    bottom_edge_y=bottom_edge_y if anchor[0] == "bottom" else None,
                 )
         box = cls._cap_logo_box_to_profile(
             box=box,
@@ -8358,6 +8432,7 @@ class ContentService:
             canvas_width=canvas_width,
             canvas_height=canvas_height,
             anchor=anchor,
+            bottom_edge_y=bottom_edge_y if anchor[0] == "bottom" else None,
         )
 
     @classmethod
@@ -9363,16 +9438,10 @@ class ContentService:
         sample_y = min(max(text_strip_top + text_strip_height // 2, 0), height - 1)
         sample_points = [base.getpixel((x, sample_y))[:3] for x in (int(width * 0.12), int(width * 0.5), int(width * 0.88))]
         avg_luma = sum((0.2126 * r + 0.7152 * g + 0.0722 * b) for r, g, b in sample_points) / max(len(sample_points), 1)
-        if avg_luma >= 145:
-            strip_fill = (255, 255, 255, 226)
-            text_fill = (0, 57, 117, 255)
-        else:
-            strip_fill = (0, 57, 117, 232)
-            text_fill = (255, 255, 255, 255)
+        text_fill = (0, 57, 117, 255) if avg_luma >= 145 else (255, 255, 255, 255)
 
         overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay)
-        draw.rectangle((0, clear_strip_top, width, height), fill=strip_fill)
         horizontal_padding = max(int(width * 0.04), 28)
         vertical_padding = max(int(text_strip_height * 0.16), 8)
         max_text_width = max(width - horizontal_padding * 2, 10)
@@ -9410,7 +9479,7 @@ class ContentService:
             "render_source": "ai",
             "generation_stage": "final_render",
             "legal_footer_composited_by_service": True,
-            "legal_footer_overlay_strategy": "exact_footer_strip",
+            "legal_footer_overlay_strategy": "transparent_exact_footer_text",
             "source_storage_path": storage_path,
             "legal_footer_text_length": len(footer_text),
             "legal_footer_line_count": len(chosen_lines),

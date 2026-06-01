@@ -141,7 +141,7 @@ function inferPendingExperience(message: string, actionMode: ActionMode): Pendin
     return "conversation";
   }
   const visualIntentPattern =
-    /\b(generate|create|design|make|build|draft|prepare)\b.*\b(image|visual|creative|carousel|poster|banner|infographic|slide|slides)\b/;
+    /\b(image|visual|creative|carousel|poster|banner|infographic|slide|slides|post|linkedin)\b/;
   return visualIntentPattern.test(text) ? "visual" : "conversation";
 }
 
@@ -252,6 +252,25 @@ function resolveBrandScoring(payload: ChatAssistantStructuredPayload | Record<st
     return null;
   }
   return scoring;
+}
+
+function orderMessagesChronologically<T extends { created_at?: string; role?: string; id?: string }>(items: T[]) {
+  return [...items].sort((left, right) => {
+    const leftTime = left.created_at ? Date.parse(left.created_at) : 0;
+    const rightTime = right.created_at ? Date.parse(right.created_at) : 0;
+    if (leftTime !== rightTime) {
+      return leftTime - rightTime;
+    }
+    if (left.role !== right.role) {
+      if (left.role === "user") {
+        return -1;
+      }
+      if (right.role === "user") {
+        return 1;
+      }
+    }
+    return String(left.id || "").localeCompare(String(right.id || ""));
+  });
 }
 
 function ScorePill({ label, value }: { label: string; value: number }) {
@@ -860,7 +879,8 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
   const recentKnowledgeAssets = (knowledgeAssets || []).filter(
     (asset) => !attachedAssets.some((selected) => selected.id === asset.id),
   ).slice(0, 4);
-  const hasConversation = Boolean((messages || []).length);
+  const orderedMessages = useMemo(() => orderMessagesChronologically(messages || []), [messages]);
+  const hasConversation = Boolean(orderedMessages.length);
   const [generationProgressIndex, setGenerationProgressIndex] = useState(0);
   const activeGenerationMessage = isGeneratingMessage
     ? GENERATION_PROGRESS_MESSAGES[generationProgressIndex] || GENERATION_PROGRESS_MESSAGES[0]
@@ -1088,7 +1108,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
               <div className="grid flex-1 gap-6 xl:grid-cols-[minmax(0,1fr)_320px] xl:items-end">
                 <SurfaceCard className="flex flex-col rounded-[32px] border border-white/70 bg-white/90 px-4 py-4 shadow-[0_28px_72px_-42px_rgba(15,23,42,0.42)]">
                   <div className="space-y-4 px-2">
-                    {(messages || []).map((message) => {
+                    {orderedMessages.map((message) => {
                       const previewAssets = message.role === "assistant" ? resolveGeneratedImageAssets(message.structured_payload) : [];
                       const previewUrl = previewAssets[0]?.asset_url || undefined;
                       const generationDecision = message.role === "assistant" ? resolveGenerationDecision(message.structured_payload) : null;

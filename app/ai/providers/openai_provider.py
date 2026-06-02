@@ -13,7 +13,7 @@ from PIL import Image
 
 from app.ai.providers.base import ImageGenerationBackend, PromptEnvelope, TextGenerationProvider
 from app.core.config import get_settings
-from app.integrations.object_storage import LocalObjectStorage
+from app.integrations.object_storage import get_object_storage
 
 
 class OpenAITextProvider(TextGenerationProvider):
@@ -123,7 +123,7 @@ class OpenAIImageProvider(ImageGenerationBackend):
     def __init__(self) -> None:
         self.settings = get_settings()
         self.client = OpenAI(api_key=self.settings.openai_api_key) if self.settings.openai_api_key else None
-        self.storage = LocalObjectStorage()
+        self.storage = get_object_storage()
 
     def _image_edit_options(self, size: str) -> dict[str, Any]:
         model_name = str(self.settings.image_model or "").strip().lower()

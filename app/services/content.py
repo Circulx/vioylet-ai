@@ -40,7 +40,7 @@ from app.core.enums import AssetRole, BrandSpaceLifecycle, JobType
 from app.core.enums import ContentLifecycle, KnowledgeChannel, UsageMetricCode
 from app.core.exceptions import GenerationFailureError, LifecycleError, NotFoundError
 from app.core.studio import resolve_studio_panel_defaults
-from app.integrations.object_storage import LocalObjectStorage
+from app.integrations.object_storage import get_object_storage
 from app.models.content import ContentSession, ContentVersion, GeneratedAsset
 from app.repositories.brand import BrandSectionRepository, BrandSpaceRepository, ObjectiveRepository, PersonaRepository
 from app.repositories.brand_assets import ReusableBrandAssetRepository
@@ -232,7 +232,7 @@ class ContentService:
         self.artifacts = ArtifactStateService()
         self.trace = GenerationTraceService()
         self.brand_scoring = BrandScoringService(session)
-        self.storage = LocalObjectStorage()
+        self.storage = get_object_storage()
 
     async def _enqueue_ragas_evaluation_after_generation(
         self,
@@ -4506,7 +4506,7 @@ class ContentService:
         if candidate_path.is_absolute() and candidate_path.exists():
             resolved_path = candidate_path
         else:
-            storage_client = storage or LocalObjectStorage()
+            storage_client = storage or get_object_storage()
             exists = getattr(storage_client, "exists", None)
             absolute_path = getattr(storage_client, "absolute_path", None)
             if not callable(exists) or not callable(absolute_path):
@@ -4574,7 +4574,7 @@ class ContentService:
         if candidate_path.is_absolute() and candidate_path.exists():
             resolved_path = candidate_path
         else:
-            storage_client = storage or LocalObjectStorage()
+            storage_client = storage or get_object_storage()
             exists = getattr(storage_client, "exists", None)
             absolute_path = getattr(storage_client, "absolute_path", None)
             if not callable(exists) or not callable(absolute_path):

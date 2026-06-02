@@ -4,7 +4,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Protocol
 
 import numpy as np
 from langchain_community.vectorstores import FAISS
@@ -38,16 +38,36 @@ class HashEmbeddings:
         return self._embed(text)
 
 
+class VectorStoreProvider(Protocol):
+    def upsert_documents(self, namespace: str, docs: list[dict[str, Any]]) -> None: ...
+    def delete_source(self, namespace: str, source_id: str) -> None: ...
+    def search(self, namespace: str, query: str, k: int = 4) -> list[SearchResult]: ...
+    def namespace(self, tenant_id: str, brand_space_id: str, channel: str) -> str: ...
+
+
+def _build_embeddings() -> OpenAIEmbeddings | HashEmbeddings:
+    settings = get_settings()
+    return (
+        OpenAIEmbeddings(model=settings.embedding_model, api_key=settings.openai_api_key)
+        if settings.openai_api_key
+        else HashEmbeddings()
+    )
+
+
+def _jsonb(value: dict[str, Any]) -> Any:
+    try:
+        from psycopg.types.json import Jsonb
+    except ImportError:
+        return json.dumps(value)
+    return Jsonb(value)
+
+
 class FaissVectorStoreProvider:
     def __init__(self) -> None:
         settings = get_settings()
         self.base_path = Path(settings.vector_store_base_path)
         self.base_path.mkdir(parents=True, exist_ok=True)
-        self._embeddings = (
-            OpenAIEmbeddings(model=settings.embedding_model, api_key=settings.openai_api_key)
-            if settings.openai_api_key
-            else HashEmbeddings()
-        )
+        self._embeddings = _build_embeddings()
 
     def _namespace_path(self, namespace: str) -> Path:
         path = self.base_path / namespace.replace("/", "__")
@@ -139,3 +159,150 @@ class FaissVectorStoreProvider:
 
     def namespace(self, tenant_id: str, brand_space_id: str, channel: str) -> str:
         return f"{tenant_id}/{brand_space_id}/{channel}"
+
+
+class PgVectorStoreProvider:
+    table_name = "retrieval_vector_documents"
+
+    def __init__(
+        self,
+        *,
+        connection_factory: Callable[[], Any] | None = None,
+        embeddings: Any | None = None,
+    ) -> None:
+        self.settings = get_settings()
+        self._connection_factory = connection_factory or self._connect
+        self._embeddings = embeddings or _build_embeddings()
+        self._ensure_schema()
+
+    def _database_url(self) -> str:
+        url = str(self.settings.alembic_database_url or self.settings.database_url)
+        return (
+            url.replace("postgresql+psycopg://", "postgresql://", 1)
+            .replace("postgresql+asyncpg://", "postgresql://", 1)
+            .replace("postgres+asyncpg://", "postgresql://", 1)
+        )
+
+    def _connect(self):
+        import psycopg
+
+        return psycopg.connect(self._database_url())
+
+    @staticmethod
+    def _vector_literal(values: list[float]) -> str:
+        return "[" + ",".join(repr(float(value)) for value in values) + "]"
+
+    def _execute_schema(self, cursor: Any) -> None:
+        cursor.execute("CREATE EXTENSION IF NOT EXISTS vector")
+        cursor.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {self.table_name} (
+                namespace TEXT NOT NULL,
+                chunk_id TEXT NOT NULL,
+                source_id TEXT NOT NULL,
+                content TEXT NOT NULL,
+                metadata JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                embedding vector NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                PRIMARY KEY (namespace, chunk_id)
+            )
+            """
+        )
+        cursor.execute(
+            f"CREATE INDEX IF NOT EXISTS ix_{self.table_name}_namespace ON {self.table_name} (namespace)"
+        )
+        cursor.execute(
+            f"CREATE INDEX IF NOT EXISTS ix_{self.table_name}_source ON {self.table_name} (namespace, source_id)"
+        )
+
+    def _ensure_schema(self) -> None:
+        try:
+            with self._connection_factory() as connection:
+                with connection.cursor() as cursor:
+                    self._execute_schema(cursor)
+                connection.commit()
+        except Exception as exc:  # noqa: BLE001 - psycopg exposes provider-specific errors
+            raise RuntimeError(
+                "pgvector vector store is unavailable. Ensure Postgres has the pgvector extension "
+                "and VECTOR_STORE_PROVIDER is set correctly."
+            ) from exc
+
+    def upsert_documents(self, namespace: str, docs: list[dict[str, Any]]) -> None:
+        prepared_docs = [
+            doc
+            for doc in docs
+            if str((doc.get("metadata") or {}).get("chunk_id") or "").strip()
+            and str(doc.get("content") or "").strip()
+        ]
+        if not prepared_docs:
+            return
+        texts = [str(doc["content"]) for doc in prepared_docs]
+        vectors = self._embeddings.embed_documents(texts)
+        with self._connection_factory() as connection:
+            with connection.cursor() as cursor:
+                for doc, vector in zip(prepared_docs, vectors, strict=False):
+                    metadata = dict(doc.get("metadata") or {})
+                    chunk_id = str(metadata["chunk_id"])
+                    source_id = str(metadata.get("source_id") or "")
+                    cursor.execute(
+                        f"""
+                        INSERT INTO {self.table_name}
+                            (namespace, chunk_id, source_id, content, metadata, embedding, updated_at)
+                        VALUES (%s, %s, %s, %s, %s, %s::vector, NOW())
+                        ON CONFLICT (namespace, chunk_id) DO UPDATE SET
+                            source_id = EXCLUDED.source_id,
+                            content = EXCLUDED.content,
+                            metadata = EXCLUDED.metadata,
+                            embedding = EXCLUDED.embedding,
+                            updated_at = NOW()
+                        """,
+                        (
+                            namespace,
+                            chunk_id,
+                            source_id,
+                            str(doc["content"]),
+                            _jsonb(metadata),
+                            self._vector_literal(vector),
+                        ),
+                    )
+            connection.commit()
+
+    def delete_source(self, namespace: str, source_id: str) -> None:
+        with self._connection_factory() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"DELETE FROM {self.table_name} WHERE namespace = %s AND source_id = %s",
+                    (namespace, source_id),
+                )
+            connection.commit()
+
+    def search(self, namespace: str, query: str, k: int = 4) -> list[SearchResult]:
+        query_vector = self._vector_literal(self._embeddings.embed_query(query or ""))
+        with self._connection_factory() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT content, metadata, embedding <=> %s::vector AS score
+                    FROM {self.table_name}
+                    WHERE namespace = %s
+                    ORDER BY embedding <=> %s::vector
+                    LIMIT %s
+                    """,
+                    (query_vector, namespace, query_vector, int(k)),
+                )
+                rows = cursor.fetchall()
+        return [
+            SearchResult(content=str(row[0]), score=float(row[2]), metadata=dict(row[1] or {}))
+            for row in rows
+        ]
+
+    def namespace(self, tenant_id: str, brand_space_id: str, channel: str) -> str:
+        return f"{tenant_id}/{brand_space_id}/{channel}"
+
+
+def get_vector_store_provider() -> VectorStoreProvider:
+    provider = str(get_settings().vector_store_provider or "faiss").strip().lower()
+    if provider == "pgvector":
+        return PgVectorStoreProvider()
+    return FaissVectorStoreProvider()

@@ -8,7 +8,7 @@ from PIL import Image, ImageDraw, ImageOps
 
 from app.ai.providers.base import ImageGenerationBackend
 from app.core.config import get_settings
-from app.integrations.object_storage import LocalObjectStorage
+from app.integrations.object_storage import get_object_storage
 from app.utils.image_assets import open_image_asset
 
 
@@ -17,7 +17,7 @@ class ImageGenerationProvider(ImageGenerationBackend):
 
     def __init__(self) -> None:
         self.settings = get_settings()
-        self.storage = LocalObjectStorage()
+        self.storage = get_object_storage()
 
     def generate(
         self,

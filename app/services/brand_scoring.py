@@ -11,7 +11,7 @@ from uuid import UUID
 from app.ai.rag.ocr import OCRService
 from app.ai.tone_intelligence import ToneIntelligenceService
 from app.core.config import get_settings
-from app.integrations.object_storage import LocalObjectStorage
+from app.integrations.object_storage import get_object_storage
 from PIL import Image
 
 logger = logging.getLogger(__name__)
@@ -250,7 +250,7 @@ class BrandScoringService:
 
     def __init__(self, session) -> None:
         self.session = session
-        self.storage = LocalObjectStorage()
+        self.storage = get_object_storage()
         self.ocr = OCRService()
         self.tone = ToneIntelligenceService()
         self.base_dir = Path(get_settings().object_storage_base_path)

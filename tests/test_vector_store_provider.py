@@ -8,16 +8,20 @@ from uuid import uuid4
 from app.ai.brand_asset_analysis import AssetProcessingOutcome
 from app.ai.rag.retrieval import KnowledgeRetrievalService
 from app.core.config import get_settings
-from app.integrations.vector_store import FaissVectorStoreProvider
+from app.integrations.vector_store import FaissVectorStoreProvider, PgVectorStoreProvider, get_vector_store_provider
 from app.services.brand_assets import BrandAssetService
 
 
 def test_vector_store_incremental_upsert_preserves_existing_documents() -> None:
     settings = get_settings()
+    original_provider = settings.vector_store_provider
     original_base_path = settings.vector_store_base_path
+    original_openai_key = settings.openai_api_key
     temp_root = Path("tests") / f"tmp-vector-store-{uuid4()}"
     temp_root.mkdir(parents=True, exist_ok=True)
+    settings.vector_store_provider = "faiss"
     settings.vector_store_base_path = str(temp_root)
+    settings.openai_api_key = None
     try:
         provider = FaissVectorStoreProvider()
         namespace = provider.namespace("tenant-1", "brand-1", "brand")
@@ -44,7 +48,9 @@ def test_vector_store_incremental_upsert_preserves_existing_documents() -> None:
 
         assert {doc["metadata"]["chunk_id"] for doc in docs} == {"chunk-1", "chunk-2"}
     finally:
+        settings.vector_store_provider = original_provider
         settings.vector_store_base_path = original_base_path
+        settings.openai_api_key = original_openai_key
         if temp_root.exists():
             for child in sorted(temp_root.rglob("*"), reverse=True):
                 if child.is_file():
@@ -56,10 +62,14 @@ def test_vector_store_incremental_upsert_preserves_existing_documents() -> None:
 
 def test_retrieval_service_indexes_structured_documents_with_metadata() -> None:
     settings = get_settings()
+    original_provider = settings.vector_store_provider
     original_base_path = settings.vector_store_base_path
+    original_openai_key = settings.openai_api_key
     temp_root = Path("tests") / f"tmp-retrieval-store-{uuid4()}"
     temp_root.mkdir(parents=True, exist_ok=True)
+    settings.vector_store_provider = "faiss"
     settings.vector_store_base_path = str(temp_root)
+    settings.openai_api_key = None
     try:
         retrieval = KnowledgeRetrievalService()
         retrieval.index_documents(
@@ -86,7 +96,102 @@ def test_retrieval_service_indexes_structured_documents_with_metadata() -> None:
         assert docs[0]["metadata"]["structured_signal_score"] == 5
         assert docs[0]["metadata"]["source_id"] == "asset-1"
     finally:
+        settings.vector_store_provider = original_provider
         settings.vector_store_base_path = original_base_path
+        settings.openai_api_key = original_openai_key
+        if temp_root.exists():
+            for child in sorted(temp_root.rglob("*"), reverse=True):
+                if child.is_file():
+                    child.unlink()
+                elif child.is_dir():
+                    child.rmdir()
+            temp_root.rmdir()
+
+
+class _TinyEmbeddings:
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [[1.0, 0.0] for _ in texts]
+
+    def embed_query(self, text: str) -> list[float]:
+        return [1.0, 0.0]
+
+
+class _FakeCursor:
+    def __init__(self) -> None:
+        self.executed: list[tuple[str, tuple | None]] = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args) -> None:
+        return None
+
+    def execute(self, sql: str, params: tuple | None = None) -> None:
+        self.executed.append((sql, params))
+
+    def fetchall(self):
+        return [("Matched visual rule", {"chunk_id": "chunk-1", "source_id": "asset-1"}, 0.12)]
+
+
+class _FakeConnection:
+    def __init__(self, cursor: _FakeCursor) -> None:
+        self._cursor = cursor
+        self.commits = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args) -> None:
+        return None
+
+    def cursor(self) -> _FakeCursor:
+        return self._cursor
+
+    def commit(self) -> None:
+        self.commits += 1
+
+
+def test_pgvector_provider_upserts_searches_and_deletes_with_shared_database() -> None:
+    cursor = _FakeCursor()
+    connection = _FakeConnection(cursor)
+    provider = PgVectorStoreProvider(
+        connection_factory=lambda: connection,
+        embeddings=_TinyEmbeddings(),
+    )
+
+    namespace = provider.namespace("tenant-1", "brand-1", "visual_identity")
+    provider.upsert_documents(
+        namespace,
+        [
+            {
+                "content": "Use the primary blue for investor education graphics.",
+                "metadata": {"chunk_id": "chunk-1", "source_id": "asset-1"},
+            }
+        ],
+    )
+    results = provider.search(namespace, "primary color", k=1)
+    provider.delete_source(namespace, "asset-1")
+
+    executed_sql = "\n".join(sql for sql, _params in cursor.executed)
+    assert "CREATE EXTENSION IF NOT EXISTS vector" in executed_sql
+    assert "INSERT INTO retrieval_vector_documents" in executed_sql
+    assert "ORDER BY embedding <=>" in executed_sql
+    assert "DELETE FROM retrieval_vector_documents" in executed_sql
+    assert results[0].content == "Matched visual rule"
+    assert results[0].metadata["source_id"] == "asset-1"
+    assert connection.commits >= 3
+
+
+def test_vector_store_factory_defaults_to_faiss(monkeypatch) -> None:
+    settings = get_settings()
+    temp_root = Path("tests") / f"tmp-factory-store-{uuid4()}"
+    monkeypatch.setattr(settings, "vector_store_provider", "faiss")
+    monkeypatch.setattr(settings, "vector_store_base_path", str(temp_root))
+    monkeypatch.setattr(settings, "openai_api_key", None)
+
+    try:
+        assert isinstance(get_vector_store_provider(), FaissVectorStoreProvider)
+    finally:
         if temp_root.exists():
             for child in sorted(temp_root.rglob("*"), reverse=True):
                 if child.is_file():

@@ -22,13 +22,40 @@ class OpenAITextProvider(TextGenerationProvider):
     def __init__(self) -> None:
         self.settings = get_settings()
         self.client = OpenAI(api_key=self.settings.openai_api_key) if self.settings.openai_api_key else None
+        self.last_usage: dict[str, int] | None = None
 
     def _supports_responses_api(self) -> bool:
         return bool(self.client and getattr(self.client, "responses", None))
 
+    @staticmethod
+    def _usage_dict(response: Any) -> dict[str, int] | None:
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return None
+
+        def value(name: str) -> int:
+            if isinstance(usage, dict):
+                return int(usage.get(name) or 0)
+            return int(getattr(usage, name, 0) or 0)
+
+        input_tokens = value("input_tokens") or value("prompt_tokens")
+        output_tokens = value("output_tokens") or value("completion_tokens")
+        total_tokens = value("total_tokens") or (input_tokens + output_tokens)
+        if not any((input_tokens, output_tokens, total_tokens)):
+            return None
+        return {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+        }
+
+    def _remember_usage(self, response: Any) -> None:
+        self.last_usage = self._usage_dict(response)
+
     def _chat_completion_text(self, *, system: str, user: str) -> str:
         if not self.client:
             return ""
+        self.last_usage = None
         response = self.client.chat.completions.create(
             model=self.settings.tone_model,
             messages=[
@@ -36,11 +63,13 @@ class OpenAITextProvider(TextGenerationProvider):
                 {"role": "user", "content": user},
             ],
         )
+        self._remember_usage(response)
         return (response.choices[0].message.content or "").strip() if getattr(response, "choices", None) else ""
 
     def _chat_completion_json(self, *, system: str, user: str) -> str:
         if not self.client:
             return ""
+        self.last_usage = None
         response = self.client.chat.completions.create(
             model=self.settings.llm_model,
             messages=[
@@ -49,11 +78,13 @@ class OpenAITextProvider(TextGenerationProvider):
             ],
             response_format={"type": "json_object"},
         )
+        self._remember_usage(response)
         return (response.choices[0].message.content or "").strip() if getattr(response, "choices", None) else ""
 
     def generate_structured_json(self, envelope: PromptEnvelope, fallback: dict[str, Any]) -> dict[str, Any]:
         if not self.client:
             return fallback
+        self.last_usage = None
         if self._supports_responses_api():
             response = self.client.responses.create(
                 model=self.settings.llm_model,
@@ -63,6 +94,7 @@ class OpenAITextProvider(TextGenerationProvider):
                 ],
                 text={"format": {"type": "json_object"}},
             )
+            self._remember_usage(response)
             text = response.output_text or json.dumps(fallback)
         else:
             text = self._chat_completion_json(system=envelope.system, user=envelope.user) or json.dumps(fallback)
@@ -71,6 +103,7 @@ class OpenAITextProvider(TextGenerationProvider):
     def generate_text(self, envelope: PromptEnvelope, fallback: str) -> str:
         if not self.client:
             return fallback
+        self.last_usage = None
         if self._supports_responses_api():
             response = self.client.responses.create(
                 model=self.settings.tone_model,
@@ -79,6 +112,7 @@ class OpenAITextProvider(TextGenerationProvider):
                     {"role": "user", "content": envelope.user},
                 ],
             )
+            self._remember_usage(response)
             return response.output_text or fallback
         return self._chat_completion_text(system=envelope.system, user=envelope.user) or fallback
 

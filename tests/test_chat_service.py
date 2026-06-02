@@ -52,6 +52,185 @@ def test_chat_service_serializes_generated_assets() -> None:
     assert "token=" in payload["asset_url"]
 
 
+def test_chat_service_prefers_export_assets_for_display_memory_selection() -> None:
+    content_version_id = uuid4()
+    preview_asset = GeneratedAsset(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        content_version_id=content_version_id,
+        asset_role=AssetRole.RENDER_PREVIEW,
+        mime_type="image/png",
+        storage_path="tenant/brand/generated/preview.png",
+        width=1200,
+        height=627,
+        metadata_json={},
+    )
+    export_asset_one = GeneratedAsset(
+        id=uuid4(),
+        tenant_id=preview_asset.tenant_id,
+        brand_space_id=preview_asset.brand_space_id,
+        content_version_id=content_version_id,
+        asset_role=AssetRole.RENDER_EXPORT,
+        mime_type="image/png",
+        storage_path="tenant/brand/generated/export-slide-1.png",
+        width=1200,
+        height=627,
+        metadata_json={},
+    )
+    export_asset_two = GeneratedAsset(
+        id=uuid4(),
+        tenant_id=preview_asset.tenant_id,
+        brand_space_id=preview_asset.brand_space_id,
+        content_version_id=content_version_id,
+        asset_role=AssetRole.RENDER_EXPORT,
+        mime_type="image/png",
+        storage_path="tenant/brand/generated/export-slide-2.png",
+        width=1200,
+        height=627,
+        metadata_json={},
+    )
+    ai_draft_asset = GeneratedAsset(
+        id=uuid4(),
+        tenant_id=preview_asset.tenant_id,
+        brand_space_id=preview_asset.brand_space_id,
+        content_version_id=content_version_id,
+        asset_role=AssetRole.AI_IMAGE,
+        mime_type="image/png",
+        storage_path="tenant/brand/generated/ai-draft.png",
+        width=1200,
+        height=627,
+        metadata_json={},
+    )
+
+    selected = ChatService._resolve_displayed_memory_assets(
+        content_assets=[ai_draft_asset, preview_asset, export_asset_one, export_asset_two],
+        render_payload={
+            "preview_asset": {
+                "storage_path": preview_asset.storage_path,
+                "asset_role": "render_preview",
+            },
+            "export_assets": [
+                {
+                    "storage_path": export_asset_one.storage_path,
+                    "asset_role": "render_export",
+                },
+                {
+                    "storage_path": export_asset_two.storage_path,
+                    "asset_role": "render_export",
+                },
+            ],
+        },
+    )
+
+    assert [asset.storage_path for asset in selected] == [
+        "tenant/brand/generated/export-slide-1.png",
+        "tenant/brand/generated/export-slide-2.png",
+    ]
+
+
+def test_chat_service_falls_back_to_preview_asset_for_display_memory_selection() -> None:
+    content_version_id = uuid4()
+    preview_asset = GeneratedAsset(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        content_version_id=content_version_id,
+        asset_role=AssetRole.RENDER_PREVIEW,
+        mime_type="image/png",
+        storage_path="tenant/brand/generated/preview.png",
+        width=1200,
+        height=627,
+        metadata_json={},
+    )
+    ai_draft_asset = GeneratedAsset(
+        id=uuid4(),
+        tenant_id=preview_asset.tenant_id,
+        brand_space_id=preview_asset.brand_space_id,
+        content_version_id=content_version_id,
+        asset_role=AssetRole.AI_IMAGE,
+        mime_type="image/png",
+        storage_path="tenant/brand/generated/ai-draft.png",
+        width=1200,
+        height=627,
+        metadata_json={},
+    )
+
+    selected = ChatService._resolve_displayed_memory_assets(
+        content_assets=[ai_draft_asset, preview_asset],
+        render_payload={
+            "preview_asset": {
+                "storage_path": preview_asset.storage_path,
+                "asset_role": "render_preview",
+            },
+            "export_assets": [],
+        },
+    )
+
+    assert [asset.storage_path for asset in selected] == ["tenant/brand/generated/preview.png"]
+
+
+def test_chat_service_keeps_unpersisted_render_payload_assets_for_display_memory_selection() -> None:
+    content_version_id = uuid4()
+    raw_ai_asset = GeneratedAsset(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        content_version_id=content_version_id,
+        asset_role=AssetRole.AI_IMAGE,
+        mime_type="image/png",
+        storage_path="tenant/brand/generated/raw-ai-draft.png",
+        width=1080,
+        height=1350,
+        metadata_json={},
+    )
+
+    selected = ChatService._resolve_displayed_memory_assets(
+        content_assets=[raw_ai_asset],
+        render_payload={
+            "preview_asset": {
+                "storage_path": "tenant/brand/generated/final-with-logo-and-disclaimer.png",
+                "asset_role": "render_preview",
+                "mime_type": "image/png",
+                "metadata": {
+                    "logo_composited_by_service": True,
+                    "legal_footer_composited_by_service": True,
+                },
+            },
+            "export_assets": [],
+        },
+    )
+
+    assert len(selected) == 1
+    assert isinstance(selected[0], dict)
+    assert selected[0]["storage_path"] == "tenant/brand/generated/final-with-logo-and-disclaimer.png"
+    assert selected[0]["asset_role"] == "render_preview"
+
+
+def test_chat_service_prefers_image_preview_when_export_asset_is_not_an_image_for_display_memory_selection() -> None:
+    selected = ChatService._resolve_displayed_memory_assets(
+        content_assets=[],
+        render_payload={
+            "preview_asset": {
+                "storage_path": "tenant/brand/generated/exact-footer-final.png",
+                "asset_role": "render_preview",
+                "mime_type": "image/png",
+            },
+            "export_assets": [
+                {
+                    "storage_path": "tenant/brand/generated/export-final.pdf",
+                    "asset_role": "render_export",
+                    "mime_type": "application/pdf",
+                }
+            ],
+        },
+    )
+
+    assert len(selected) == 1
+    assert isinstance(selected[0], dict)
+    assert selected[0]["storage_path"] == "tenant/brand/generated/exact-footer-final.png"
+
+
 def test_chat_service_makes_nested_uuid_payload_json_safe() -> None:
     payload = ChatService.make_json_safe(
         {
@@ -139,6 +318,67 @@ def test_chat_service_filters_missing_structured_payload_assets() -> None:
     assert payload["export_assets"] == []
 
 
+@pytest.mark.asyncio
+async def test_chat_service_backfills_displayed_asset_memory_from_old_visual_message_payload() -> None:
+    session = ContentSession(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        title="Chat Session",
+        session_kind="chat",
+        studio_panel={"format": "static", "platform_preset": "linkedin", "file_type": "png"},
+        conversational_context={},
+        is_active=True,
+    )
+    content_version = ContentVersion(
+        id=uuid4(),
+        tenant_id=session.tenant_id,
+        brand_space_id=session.brand_space_id,
+        session_id=session.id,
+        created_by=session.user_id,
+        prompt="Generate a static post about the FTA",
+        studio_panel=session.studio_panel,
+        generated_payload={"headline": "Why This FTA Matters", "body": "Trade strategy", "cta": "Small deal. Bigger shape."},
+        blueprint_payload={},
+        explainability_metadata={},
+        tone_feedback={},
+    )
+    old_visual_message = SimpleNamespace(
+        content_version_id=content_version.id,
+        structured_payload={
+            "mode": "visual_generation",
+            "preview_asset": {
+                "storage_path": "tenant/brand/generated/exact-footer-final.png",
+                "asset_role": "render_preview",
+                "mime_type": "image/png",
+                "metadata": {
+                    "logo_composited_by_service": True,
+                    "legal_footer_composited_by_service": True,
+                },
+            },
+            "export_assets": [],
+        },
+    )
+    chat = ChatService.__new__(ChatService)
+    chat.messages = SimpleNamespace(list_recent_by_session=AsyncMock(return_value=[old_visual_message]))
+    chat.contents = SimpleNamespace(get_scoped=AsyncMock(return_value=content_version))
+    memory_service = SimpleNamespace(index_generated_assets=AsyncMock())
+
+    await chat._backfill_displayed_asset_memory_from_history(
+        tenant_id=session.tenant_id,
+        brand_space_id=session.brand_space_id,
+        session=session,
+        memory_service=memory_service,
+    )
+
+    memory_service.index_generated_assets.assert_awaited_once()
+    indexed_assets = memory_service.index_generated_assets.await_args.kwargs["assets"]
+    assert indexed_assets[0]["storage_path"] == "tenant/brand/generated/exact-footer-final.png"
+    assert indexed_assets[0]["metadata"]["legal_footer_composited_by_service"] is True
+    chat.contents.get_scoped.assert_awaited_once_with(content_version.id, session.tenant_id, session.brand_space_id)
+
+
 def test_chat_service_builds_retryable_generation_failure_payload() -> None:
     exc = GenerationFailureError(
         "AI final render failed and backend fallback rendering is disabled for this format.",
@@ -195,18 +435,20 @@ async def test_chat_service_routes_greeting_without_triggering_generation() -> N
     )
     chat = ChatService.__new__(ChatService)
     chat.session = SimpleNamespace(commit=AsyncMock())
-    chat.messages = SimpleNamespace(add=AsyncMock())
+    chat.messages = SimpleNamespace(add=AsyncMock(), list_recent_by_session=AsyncMock(return_value=[]))
     chat.get_session = AsyncMock(return_value=session)
-    chat.intent_router = SimpleNamespace(route=lambda message, context: ChatIntentDecision(mode="small_talk", reason="greeting"))
-    chat.conversation = SimpleNamespace(
-        reply=lambda **kwargs: {
-            "message_text": "Hi! I'm ready to help.",
-            "structured_payload": {"mode": "conversation", "conversation_mode": "small_talk"},
-        }
+    chat.intent_router = SimpleNamespace(
+        route=lambda message, context: ChatIntentDecision(
+            mode="small_talk",
+            reason="llm_selected:greeting",
+            direct_reply="Hello! How can I help you today?",
+        )
     )
+    chat.conversation = SimpleNamespace(reply=lambda **kwargs: pytest.fail("conversation path should not run"))
     chat.text_content = SimpleNamespace(generate=AsyncMock(), evaluate=AsyncMock())
     chat.content = SimpleNamespace(generate=AsyncMock(), export=AsyncMock())
     chat.assets = SimpleNamespace(list_by_content=AsyncMock(return_value=[]))
+    chat.contents = SimpleNamespace(get_scoped=AsyncMock())
     chat.brands = SimpleNamespace(get_scoped=AsyncMock(return_value=SimpleNamespace(name="Jiraaf")))
 
     _, assistant = await chat.send_message(
@@ -217,8 +459,9 @@ async def test_chat_service_routes_greeting_without_triggering_generation() -> N
         payload=ChatMessageCreateRequest(message="Hi"),
     )
 
-    assert assistant.message_text == "Hi! I'm ready to help."
+    assert assistant.message_text == "Hello! How can I help you today?"
     assert assistant.structured_payload["mode"] == "conversation"
+    assert assistant.structured_payload["reply_source"] == "intent_router"
     chat.content.generate.assert_not_awaited()
     chat.text_content.generate.assert_not_awaited()
 
@@ -292,6 +535,146 @@ async def test_chat_service_routes_text_only_requests_without_visual_generation(
 
 
 @pytest.mark.asyncio
+async def test_chat_service_uses_router_direct_reply_for_small_talk_without_conversation_llm() -> None:
+    session = ContentSession(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        title="Chat Session",
+        session_kind="chat",
+        studio_panel={"format": "static", "platform_preset": "linkedin", "file_type": "png"},
+        conversational_context={},
+        is_active=True,
+    )
+    chat = ChatService.__new__(ChatService)
+    chat.session = SimpleNamespace(commit=AsyncMock())
+    chat.messages = SimpleNamespace(add=AsyncMock(), list_recent_by_session=AsyncMock(return_value=[]))
+    chat.get_session = AsyncMock(return_value=session)
+    chat.intent_router = SimpleNamespace(
+        route=lambda message, context: ChatIntentDecision(
+            mode="small_talk",
+            reason="llm_selected:pure_small_talk",
+            direct_reply="Hi there! What would you like to work on?",
+        )
+    )
+    chat.conversation = SimpleNamespace(reply=lambda **kwargs: pytest.fail("conversation path should not run for router direct reply"))
+    chat.text_content = SimpleNamespace(generate=AsyncMock(), evaluate=AsyncMock())
+    chat.content = SimpleNamespace(generate=AsyncMock(), export=AsyncMock())
+    chat.assets = SimpleNamespace(list_by_content=AsyncMock(return_value=[]))
+    chat.memory = SimpleNamespace(
+        index_chat_message=AsyncMock(),
+        index_content_version_summary=AsyncMock(),
+        index_generated_assets=AsyncMock(),
+    )
+    chat.brands = SimpleNamespace(get_scoped=AsyncMock(return_value=SimpleNamespace(name="Jiraaf")))
+
+    _, assistant = await chat.send_message(
+        tenant_id=session.tenant_id,
+        brand_space_id=session.brand_space_id,
+        user_id=session.user_id,
+        session_id=session.id,
+        payload=ChatMessageCreateRequest(message="Hi"),
+    )
+
+    assert assistant.message_text == "Hi there! What would you like to work on?"
+    assert assistant.structured_payload["mode"] == "conversation"
+    assert assistant.structured_payload["conversation_mode"] == "small_talk"
+    assert assistant.structured_payload["reply_source"] == "intent_router"
+    chat.content.generate.assert_not_awaited()
+    chat.text_content.generate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_chat_service_passes_brand_summary_and_recent_messages_to_conversation_service() -> None:
+    session = ContentSession(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        title="Chat Session",
+        session_kind="chat",
+        studio_panel={"format": "static", "platform_preset": "linkedin", "file_type": "png"},
+        conversational_context={"artifact_state": {"large": "context"}},
+        is_active=True,
+    )
+    brand = SimpleNamespace(
+        id=session.brand_space_id,
+        tenant_id=session.tenant_id,
+        name="Jiraaf",
+        resolved_brand_context={"audience_insights": {"target_audience": "salaried professionals"}},
+    )
+    recent = [
+        SimpleNamespace(role="user", message_text="Previous question"),
+        SimpleNamespace(role="assistant", message_text="Previous answer"),
+        SimpleNamespace(role="user", message_text="Another question"),
+        SimpleNamespace(role="assistant", message_text="Another answer"),
+    ]
+    brand_sections = [
+        SimpleNamespace(
+            section_code="personas",
+            payload={"personas": [{"name": "Salaried professionals"}]},
+        )
+    ]
+    captured: dict[str, object] = {}
+    brand_summary_calls: list[dict[str, object]] = []
+
+    def fake_reply(**kwargs):
+        captured.update(kwargs)
+        return {
+            "message_text": "The target audience is salaried professionals.",
+            "structured_payload": {"mode": "conversation", "conversation_mode": "strategy_chat"},
+        }
+
+    chat = ChatService.__new__(ChatService)
+    chat.session = SimpleNamespace(commit=AsyncMock())
+    chat.messages = SimpleNamespace(add=AsyncMock(), list_recent_by_session=AsyncMock(return_value=recent))
+    chat.get_session = AsyncMock(return_value=session)
+    chat.intent_router = SimpleNamespace(
+        route=lambda message, context: ChatIntentDecision(mode="strategy_chat", reason="brand_question")
+    )
+    chat.conversation = SimpleNamespace(reply=fake_reply)
+    chat.text_content = SimpleNamespace(generate=AsyncMock(), evaluate=AsyncMock())
+    chat.content = SimpleNamespace(generate=AsyncMock(), export=AsyncMock())
+    chat.assets = SimpleNamespace(list_by_content=AsyncMock(return_value=[]))
+    chat.memory = SimpleNamespace(
+        index_chat_message=AsyncMock(),
+        index_content_version_summary=AsyncMock(),
+        index_generated_assets=AsyncMock(),
+    )
+    chat.brands = SimpleNamespace(get_scoped=AsyncMock(return_value=brand))
+    chat.brand_sections = SimpleNamespace(list_current_sections=AsyncMock(return_value=brand_sections))
+
+    def fake_retrieve_brand_summary(**kwargs):
+        brand_summary_calls.append(kwargs)
+        return "Audience: salaried professionals. Tone: trustworthy."
+
+    chat.brand_summary_memory = SimpleNamespace(retrieve_brand_summary=fake_retrieve_brand_summary)
+
+    _, assistant = await chat.send_message(
+        tenant_id=session.tenant_id,
+        brand_space_id=session.brand_space_id,
+        user_id=session.user_id,
+        session_id=session.id,
+        payload=ChatMessageCreateRequest(message="Who is the target audience?"),
+    )
+
+    assert assistant.message_text == "The target audience is salaried professionals."
+    assert brand_summary_calls[0]["sections"] == brand_sections
+    assert captured["brand_summary"] == "Audience: salaried professionals. Tone: trustworthy."
+    assert captured["recent_messages"] == [
+        {"role": "user", "message": "Previous question"},
+        {"role": "assistant", "message": "Previous answer"},
+        {"role": "user", "message": "Another question"},
+        {"role": "assistant", "message": "Another answer"},
+    ]
+    assert "session_context" not in captured
+    chat.brand_sections.list_current_sections.assert_awaited_once_with(session.brand_space_id, session.tenant_id)
+    chat.text_content.generate.assert_not_awaited()
+    chat.content.generate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_chat_service_routes_image_retrieval_requests_through_memory_service() -> None:
     session = ContentSession(
         id=uuid4(),
@@ -306,7 +689,7 @@ async def test_chat_service_routes_image_retrieval_requests_through_memory_servi
     )
     chat = ChatService.__new__(ChatService)
     chat.session = SimpleNamespace(commit=AsyncMock())
-    chat.messages = SimpleNamespace(add=AsyncMock())
+    chat.messages = SimpleNamespace(add=AsyncMock(), list_recent_by_session=AsyncMock(return_value=[]))
     chat.get_session = AsyncMock(return_value=session)
     chat.intent_router = SimpleNamespace(
         route=lambda message, context: ChatIntentDecision(
@@ -358,6 +741,7 @@ async def test_chat_service_routes_image_retrieval_requests_through_memory_servi
     chat.text_content = SimpleNamespace(generate=AsyncMock(), evaluate=AsyncMock())
     chat.content = SimpleNamespace(generate=AsyncMock(), rewrite=AsyncMock(), export=AsyncMock())
     chat.assets = SimpleNamespace(list_by_content=AsyncMock(return_value=[]))
+    chat.contents = SimpleNamespace(get_scoped=AsyncMock())
     chat.brands = SimpleNamespace(get_scoped=AsyncMock(return_value=SimpleNamespace(name="Jiraaf")))
 
     _, assistant = await chat.send_message(
@@ -396,7 +780,7 @@ async def test_chat_service_hides_retrieved_assets_when_user_only_discusses_prev
     )
     chat = ChatService.__new__(ChatService)
     chat.session = SimpleNamespace(commit=AsyncMock())
-    chat.messages = SimpleNamespace(add=AsyncMock())
+    chat.messages = SimpleNamespace(add=AsyncMock(), list_recent_by_session=AsyncMock(return_value=[]))
     chat.get_session = AsyncMock(return_value=session)
     chat.intent_router = SimpleNamespace(
         route=lambda message, context: ChatIntentDecision(

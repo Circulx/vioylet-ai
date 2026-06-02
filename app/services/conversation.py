@@ -16,9 +16,11 @@ class ConversationService:
         message: str,
         brand_name: str | None = None,
         session_context: dict[str, Any] | None = None,
+        brand_summary: str | None = None,
+        recent_messages: list[dict[str, str]] | None = None,
         mode: str = "small_talk",
     ) -> dict[str, Any]:
-        session_context = session_context or {}
+        recent_messages = recent_messages or []
         provider = self.providers.get_text_provider("generation")
         fallback = self._fallback_reply(message=message, brand_name=brand_name, mode=mode)
         reply_text = provider.generate_text(
@@ -28,12 +30,16 @@ class ConversationService:
                     "Reply naturally like a thoughtful teammate. "
                     "Do not generate an image unless the user explicitly asks for one. "
                     "When the user is greeting you, greet them back and offer concise help. "
-                    "When the user is exploring a strategy, stay conversational and practical."
+                    "When the user is exploring a strategy, stay conversational and practical. "
+                    "Use the brand summary as the primary factual source for brand questions such as target audience, colors, tone, motivations, or positioning. "
+                    "Use only the recent messages for conversational continuity. "
+                    "If the brand summary does not contain a factual detail, say you do not have that detail yet instead of inventing it."
                 ),
                 user=(
                     f"Brand: {brand_name or 'the current brand'}\n"
                     f"Mode: {mode}\n"
-                    f"Session context: {session_context}\n"
+                    f"Brand summary: {brand_summary or 'No brand summary available.'}\n"
+                    f"Recent messages: {recent_messages}\n"
                     f"User message: {message}\n"
                     "Return only the assistant reply."
                 ),

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from datetime import datetime, timezone
+import hashlib
 from math import isfinite
 import logging
 import re
@@ -15,6 +16,7 @@ from app.integrations.object_storage import LocalObjectStorage
 from app.integrations.vector_store import FaissVectorStoreProvider, SearchResult
 from app.models.content import ChatMessage, ContentSession, ContentVersion, GeneratedAsset
 from app.models.memory import ConversationMemoryEntry
+from app.repositories.content import AssetRepository
 from app.repositories.memory import ConversationMemoryRepository
 from app.services.asset_delivery import AssetDeliveryService
 
@@ -48,10 +50,15 @@ class ConversationMemoryService:
         "we",
     }
     TOKEN_PATTERN = re.compile(r"[a-z0-9']+")
+    SLIDE_NUMBER_PATTERNS = (
+        re.compile(r"(?:^|[/_.-])(?:slide|page)[_.-]?(\d{1,3})(?=\D*$)", re.IGNORECASE),
+        re.compile(r"(?:^|[/_.-])(\d{1,3})(?=\D*$)", re.IGNORECASE),
+    )
 
     def __init__(self, session) -> None:
         self.session = session
         self.entries = ConversationMemoryRepository(session)
+        self.assets = AssetRepository(session)
         self.vectors = FaissVectorStoreProvider()
         self.providers = ProviderRouter()
         self.delivery = AssetDeliveryService()
@@ -193,6 +200,7 @@ class ConversationMemoryService:
                     system=(
                         "You answer a user's question about a previously generated image using only the provided memory summary. "
                         "Do not evaluate tone, score the asset, or give compliance feedback unless the user explicitly asks for evaluation. "
+                        "Never say you cannot display, show, open, or render the image; the application handles image display separately. "
                         "Describe what the image is about in a concise, helpful way based on the remembered prompt, headline, body, CTA, format, and platform. "
                         "If the memory is incomplete, say what is known from the saved generation context."
                     ),
@@ -207,7 +215,23 @@ class ConversationMemoryService:
         except Exception as exc:  # noqa: BLE001
             logger.warning("conversation_memory.llm_description_failed: %s", exc)
             return fallback
-        return self._clean_text(response, limit=600) or fallback
+        sanitized = self._remove_display_inability_claims(response)
+        return self._clean_text(sanitized, limit=600) or fallback
+
+    @classmethod
+    def _remove_display_inability_claims(cls, value: str | None) -> str:
+        text = str(value or "")
+        text = re.sub(
+            r"\b(?:unfortunately|sorry|however)?,?\s*(?:i\s+)?(?:can(?:not|'t)|am unable to)\s+"
+            r"(?:display|show|open|render)\s+(?:the\s+)?(?:image|asset|visual)(?:\s+itself)?(?:,?\s*but\s*)?",
+            "",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = cls._clean_text(text, limit=600)
+        if text:
+            return text[0].upper() + text[1:]
+        return text
 
     @classmethod
     def _message_memory_text(cls, message: ChatMessage, session: ContentSession) -> str:
@@ -275,6 +299,36 @@ class ConversationMemoryService:
                 f"Platform: {platform}. "
                 f"Asset role: {asset.asset_role}. "
                 f"Asset address: {asset.storage_path}."
+            ),
+            limit=4000,
+        )
+
+    @classmethod
+    def _displayed_asset_memory_text(
+        cls,
+        *,
+        asset: dict[str, Any],
+        content_version: ContentVersion,
+        session: ContentSession,
+    ) -> str:
+        payload = content_version.generated_payload or {}
+        headline = cls._clean_text(payload.get("headline"), limit=220)
+        body = cls._clean_text(payload.get("body"), limit=320)
+        cta = cls._clean_text(payload.get("cta"), limit=120)
+        format_name = cls._clean_text((content_version.studio_panel or {}).get("format"), limit=40)
+        platform = cls._clean_text((content_version.studio_panel or {}).get("platform_preset"), limit=40)
+        storage_path = cls._clean_text(asset.get("storage_path"), limit=512)
+        return cls._clean_text(
+            (
+                f"Final displayed image asset for session '{session.title or 'Chat Session'}'. "
+                f"Prompt: {content_version.prompt}. "
+                f"Headline: {headline}. "
+                f"Body: {body}. "
+                f"CTA: {cta}. "
+                f"Format: {format_name}. "
+                f"Platform: {platform}. "
+                f"Asset role: {asset.get('asset_role')}. "
+                f"Asset address: {storage_path}."
             ),
             limit=4000,
         )
@@ -391,10 +445,62 @@ class ConversationMemoryService:
         *,
         session: ContentSession,
         content_version: ContentVersion,
-        assets: Iterable[GeneratedAsset],
+        assets: Iterable[GeneratedAsset | dict[str, Any]],
     ) -> list[ConversationMemoryEntry]:
         indexed: list[ConversationMemoryEntry] = []
         for asset in assets:
+            if isinstance(asset, dict):
+                storage_path = self._clean_text(asset.get("storage_path"), limit=512)
+                if not storage_path:
+                    continue
+                metadata = {}
+                if isinstance(asset.get("metadata_json"), dict):
+                    metadata.update(asset["metadata_json"])
+                if isinstance(asset.get("metadata"), dict):
+                    metadata.update(asset["metadata"])
+                mime_type = self._clean_text(asset.get("mime_type") or metadata.get("mime_type"), limit=120) or "image/png"
+                if not mime_type.startswith("image/"):
+                    continue
+                asset_role = self._clean_text(
+                    asset.get("asset_role") or metadata.get("asset_role") or AssetRole.RENDER_EXPORT.value,
+                    limit=100,
+                )
+                if asset_role not in {role.value for role in self.IMAGE_ASSET_ROLES}:
+                    continue
+                width = asset.get("width", metadata.get("width"))
+                height = asset.get("height", metadata.get("height"))
+                metadata_json = {
+                    **metadata,
+                    "mime_type": mime_type,
+                    "width": width,
+                    "height": height,
+                    "asset_role": asset_role,
+                    "storage_path": storage_path,
+                    "displayed_asset": True,
+                    "source": "render_payload",
+                }
+                source_digest = hashlib.sha1(f"{storage_path}:{asset_role}".encode("utf-8")).hexdigest()[:16]
+                indexed.append(
+                    await self._upsert_entry(
+                        tenant_id=content_version.tenant_id,
+                        brand_space_id=content_version.brand_space_id,
+                        session_id=content_version.session_id,
+                        source_key=f"displayed_asset:{content_version.id}:{source_digest}",
+                        entry_type="generated_image",
+                        content_version_id=content_version.id,
+                        generated_asset_id=None,
+                        storage_path=storage_path,
+                        asset_role=asset_role,
+                        memory_text=self._displayed_asset_memory_text(
+                            asset={**asset, "storage_path": storage_path, "asset_role": asset_role},
+                            content_version=content_version,
+                            session=session,
+                        ),
+                        metadata_json=metadata_json,
+                    )
+                )
+                continue
+
             if not str(asset.mime_type or "").startswith("image/"):
                 continue
             if str(asset.asset_role) not in {role.value for role in self.IMAGE_ASSET_ROLES}:
@@ -431,6 +537,7 @@ class ConversationMemoryService:
         if not storage_path or not self.storage.exists(storage_path):
             return None
         metadata = entry.metadata_json or {}
+        displayed_asset = bool(metadata.get("displayed_asset"))
         return {
             "asset_id": str(entry.generated_asset_id) if entry.generated_asset_id else None,
             "content_version_id": str(entry.content_version_id) if entry.content_version_id else None,
@@ -445,7 +552,188 @@ class ConversationMemoryService:
             "asset_role": self._clean_text(entry.asset_role, limit=100) or AssetRole.AI_IMAGE.value,
             "memory_entry_id": str(entry.id),
             "memory_text": self._clean_text(entry.memory_text, limit=240),
+            "displayed_asset": displayed_asset,
+            "metadata": metadata,
+            "slide_index": metadata.get("slide_index")
+            or metadata.get("page_index")
+            or metadata.get("page_number")
+            or metadata.get("reference_slide_index"),
         }
+
+    def _serialize_generated_asset(self, asset: GeneratedAsset) -> dict[str, Any] | None:
+        storage_path = self._clean_text(asset.storage_path, limit=512)
+        if not storage_path or not self.storage.exists(storage_path):
+            return None
+        return {
+            "asset_id": str(asset.id),
+            "content_version_id": str(asset.content_version_id) if asset.content_version_id else None,
+            "mime_type": self._clean_text(asset.mime_type, limit=120) or "image/png",
+            "storage_path": storage_path,
+            "asset_url": self.delivery.build_signed_url(
+                storage_path=storage_path,
+                filename=storage_path.rsplit("/", 1)[-1],
+            ),
+            "width": asset.width,
+            "height": asset.height,
+            "asset_role": self._clean_text(asset.asset_role, limit=100) or AssetRole.AI_IMAGE.value,
+            "memory_entry_id": None,
+            "memory_text": None,
+        }
+
+    @classmethod
+    def _asset_slide_index(cls, asset: GeneratedAsset, *, fallback: int) -> int:
+        metadata = asset.metadata_json or {}
+        for key in ("slide_index", "page_index", "page_number", "reference_slide_index"):
+            try:
+                value = int(metadata.get(key) or 0)
+            except (TypeError, ValueError):
+                value = 0
+            if value > 0:
+                return value
+        storage_path = str(asset.storage_path or "")
+        for pattern in cls.SLIDE_NUMBER_PATTERNS:
+            match = pattern.search(storage_path)
+            if not match:
+                continue
+            try:
+                value = int(match.group(1))
+            except (TypeError, ValueError):
+                value = 0
+            if value > 0:
+                return value
+        return fallback
+
+    @staticmethod
+    def _asset_role_priority_value(role: str | None) -> int:
+        role = str(role or "")
+        if role == AssetRole.RENDER_PREVIEW.value:
+            return 0
+        if role == AssetRole.RENDER_EXPORT.value:
+            return 1
+        if role == AssetRole.AI_IMAGE.value:
+            return 2
+        return 3
+
+    @classmethod
+    def _asset_role_priority(cls, asset: GeneratedAsset) -> int:
+        return cls._asset_role_priority_value(str(asset.asset_role or ""))
+
+    @classmethod
+    def _sorted_slide_assets(cls, assets: list[GeneratedAsset]) -> list[GeneratedAsset]:
+        position_by_identity = {id(asset): index for index, asset in enumerate(assets, start=1)}
+        return sorted(
+            assets,
+            key=lambda item: (
+                cls._asset_slide_index(item, fallback=position_by_identity.get(id(item), 999)),
+                cls._asset_role_priority(item),
+                item.created_at,
+                str(item.id),
+            ),
+        )
+
+    @classmethod
+    def _serialized_asset_slide_index(cls, asset: dict[str, Any], *, fallback: int) -> int:
+        metadata = asset.get("metadata") if isinstance(asset.get("metadata"), dict) else {}
+        for key in ("slide_index", "page_index", "page_number", "reference_slide_index"):
+            try:
+                value = int(asset.get(key) or metadata.get(key) or 0)
+            except (TypeError, ValueError):
+                value = 0
+            if value > 0:
+                return value
+        storage_path = str(asset.get("storage_path") or "")
+        for pattern in cls.SLIDE_NUMBER_PATTERNS:
+            match = pattern.search(storage_path)
+            if not match:
+                continue
+            try:
+                value = int(match.group(1))
+            except (TypeError, ValueError):
+                value = 0
+            if value > 0:
+                return value
+        return fallback
+
+    @classmethod
+    def _sorted_serialized_assets(cls, assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        position_by_identity = {id(asset): index for index, asset in enumerate(assets, start=1)}
+        return sorted(
+            assets,
+            key=lambda item: (
+                cls._serialized_asset_slide_index(item, fallback=position_by_identity.get(id(item), 999)),
+                cls._asset_role_priority_value(str(item.get("asset_role") or "")),
+                str(item.get("storage_path") or ""),
+            ),
+        )
+
+    async def _expand_assets_for_content_version(self, asset: dict[str, Any]) -> list[dict[str, Any]]:
+        content_version_id = asset.get("content_version_id")
+        if not content_version_id:
+            return [asset]
+        try:
+            assets = await self.assets.list_by_content(UUID(str(content_version_id)))
+        except (TypeError, ValueError):
+            return [asset]
+
+        image_assets = [
+            item
+            for item in assets
+            if str(item.mime_type or "").startswith("image/")
+            and str(item.asset_role) in {role.value for role in self.IMAGE_ASSET_ROLES}
+        ]
+        if not image_assets:
+            return [asset]
+
+        render_exports = [item for item in image_assets if str(item.asset_role) == AssetRole.RENDER_EXPORT.value]
+        final_render_assets = [
+            item
+            for item in image_assets
+            if (item.metadata_json or {}).get("render_source") == "ai"
+            and (item.metadata_json or {}).get("generation_stage") == "final_render"
+        ]
+        final_render_slide_count = max(
+            [
+                int((item.metadata_json or {}).get("slide_count") or 0)
+                for item in final_render_assets
+                if str((item.metadata_json or {}).get("slide_count") or "").strip().isdigit()
+            ],
+            default=0,
+        )
+        if final_render_assets and (final_render_slide_count > 1 or len(final_render_assets) > 1):
+            preferred_assets = final_render_assets
+        elif render_exports:
+            preferred_assets = render_exports
+        else:
+            preferred_assets = image_assets
+        preferred_assets = self._sorted_slide_assets(preferred_assets)
+
+        expanded: list[dict[str, Any]] = []
+        seen_storage_paths: set[str] = set()
+        lead_memory_entry_id = asset.get("memory_entry_id")
+        lead_memory_text = asset.get("memory_text")
+        for item in preferred_assets:
+            serialized = self._serialize_generated_asset(item)
+            if not serialized:
+                continue
+            if serialized["storage_path"] in seen_storage_paths:
+                continue
+            seen_storage_paths.add(serialized["storage_path"])
+            serialized["memory_entry_id"] = lead_memory_entry_id
+            serialized["memory_text"] = lead_memory_text
+            expanded.append(serialized)
+        return expanded or [asset]
+
+    async def _expand_selected_asset(
+        self,
+        asset: dict[str, Any],
+        *,
+        displayed_assets_by_content_version: dict[str, list[dict[str, Any]]],
+    ) -> list[dict[str, Any]]:
+        content_version_id = str(asset.get("content_version_id") or "").strip()
+        displayed_assets = displayed_assets_by_content_version.get(content_version_id)
+        if displayed_assets:
+            return displayed_assets
+        return await self._expand_assets_for_content_version(asset)
 
     @staticmethod
     def _selection_option_for_asset(asset: dict[str, Any], *, rank: int) -> dict[str, Any]:
@@ -512,9 +800,22 @@ class ConversationMemoryService:
         fallback_assets: list[dict[str, Any]] = []
         fallback_matches: list[dict[str, Any]] = []
         seen_storage_paths: set[str] = set()
+        candidate_limit = max(limit * 4, 8)
+        displayed_assets_by_content_version: dict[str, list[dict[str, Any]]] = {}
+        displayed_storage_paths_by_content_version: dict[str, set[str]] = {}
         for score, overlap_score, entry in scored_entries:
             serialized = self._serialize_entry_asset(entry)
             if not serialized:
+                continue
+            if serialized.get("displayed_asset"):
+                content_version_id = str(serialized.get("content_version_id") or "").strip()
+                storage_path = str(serialized.get("storage_path") or "").strip()
+                if content_version_id and storage_path:
+                    seen_for_content = displayed_storage_paths_by_content_version.setdefault(content_version_id, set())
+                    if storage_path not in seen_for_content:
+                        seen_for_content.add(storage_path)
+                        displayed_assets_by_content_version.setdefault(content_version_id, []).append(serialized)
+            if len(candidate_pool) >= candidate_limit:
                 continue
             if serialized["storage_path"] in seen_storage_paths:
                 continue
@@ -540,8 +841,9 @@ class ConversationMemoryService:
                     "overlap_score": round(overlap_score, 4),
                 }
             )
-            if len(candidate_pool) >= max(limit * 4, 8):
-                break
+
+        for content_version_id, assets in displayed_assets_by_content_version.items():
+            displayed_assets_by_content_version[content_version_id] = self._sorted_serialized_assets(assets)
 
         if not fallback_assets:
             return {
@@ -593,6 +895,10 @@ class ConversationMemoryService:
                 )
             if llm_assets:
                 lead_candidate = selected_candidates[0] if selected_candidates else candidate_pool[0]
+                expanded_assets = await self._expand_selected_asset(
+                    llm_assets[0],
+                    displayed_assets_by_content_version=displayed_assets_by_content_version,
+                )
                 descriptive_message = self._llm_describe_selected_asset(
                     query=query_text,
                     candidate=lead_candidate,
@@ -601,9 +907,9 @@ class ConversationMemoryService:
                 return {
                     "status": "found",
                     "message": descriptive_message,
-                    "assets": llm_assets,
+                    "assets": expanded_assets,
                     "matched_entries": llm_matches,
-                    "selected_asset": llm_assets[0],
+                    "selected_asset": expanded_assets[0] if expanded_assets else None,
                     "selection_required": len(llm_assets) > 1,
                     "selection_prompt": (
                         "I found a few relevant previously generated images. Choose the one you want to use."
@@ -649,12 +955,20 @@ class ConversationMemoryService:
                 candidate=lead_candidate,
                 fallback=fallback_message,
             )
+        expanded_fallback_assets = (
+            await self._expand_selected_asset(
+                fallback_assets[0],
+                displayed_assets_by_content_version=displayed_assets_by_content_version,
+            )
+            if fallback_assets
+            else []
+        )
         return {
             "status": "found",
             "message": fallback_message,
-            "assets": fallback_assets[:limit],
+            "assets": expanded_fallback_assets or fallback_assets[:limit],
             "matched_entries": fallback_matches[:limit],
-            "selected_asset": fallback_assets[0] if fallback_assets else None,
+            "selected_asset": (expanded_fallback_assets[0] if expanded_fallback_assets else fallback_assets[0]) if fallback_assets else None,
             "selection_required": len(fallback_assets[:limit]) > 1,
             "selection_prompt": (
                 "I found a few relevant previously generated images. Choose the one you want to use."

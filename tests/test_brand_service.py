@@ -45,12 +45,16 @@ async def test_refresh_context_commits_and_refreshes_brand() -> None:
     service = BrandSpaceService(session)
     brand = build_brand()
     snapshot = SimpleNamespace(id=uuid4(), context_json={"identity": {"brand_name": "Acme"}})
+    sections = [SimpleNamespace(section_code="identity", payload={"audience_type": "Families"})]
     service.validator.refresh_brand_context = AsyncMock(return_value=(brand, snapshot))
+    service.sections.list_current_sections = AsyncMock(return_value=sections)
+    service.brand_summary_memory = SimpleNamespace(upsert_brand_summary=lambda **kwargs: None)
 
     refreshed = await service.refresh_context(brand.id)
 
     assert refreshed is brand
     service.validator.refresh_brand_context.assert_awaited_once_with(brand.id)
+    service.sections.list_current_sections.assert_awaited_once_with(brand.id, brand.tenant_id)
 
 
 async def test_update_brand_commits_and_refreshes_brand() -> None:

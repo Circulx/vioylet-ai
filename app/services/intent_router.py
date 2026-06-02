@@ -20,6 +20,7 @@ class ChatIntentDecision:
     revision_scope: dict[str, Any] | None = None
     workflow_plan: dict[str, Any] | None = None
     display_retrieved_asset: bool = False
+    direct_reply: str | None = None
 
 
 class IntentRouterService:
@@ -60,6 +61,62 @@ class IntentRouterService:
     }
     _LLM_ALLOWED_SLIDE_TARGETS = {"cover", "last"}
     _LLM_CONFIDENCE_THRESHOLD = 0.7
+    _IMAGE_REFERENCE_TERMS = {
+        "asset",
+        "banner",
+        "carousel",
+        "creative",
+        "image",
+        "images",
+        "poster",
+        "slide",
+        "slides",
+        "visual",
+        "visuals",
+    }
+    _PREVIOUS_REFERENCE_TERMS = {
+        "before",
+        "earlier",
+        "first",
+        "generated",
+        "last",
+        "previous",
+        "previously",
+        "recent",
+        "that",
+        "this",
+    }
+    _IMAGE_DISCUSSION_TERMS = {
+        "about",
+        "analyze",
+        "colors",
+        "colours",
+        "describe",
+        "explain",
+        "tell",
+        "what",
+    }
+    _IMAGE_DISPLAY_TERMS = {
+        "bring",
+        "display",
+        "fetch",
+        "open",
+        "retrieve",
+        "show",
+    }
+    _EXPLICIT_EVALUATION_TERMS = {
+        "aligned",
+        "alignment",
+        "assess",
+        "audit",
+        "check",
+        "compliance",
+        "consistent",
+        "consistency",
+        "evaluate",
+        "review",
+        "score",
+    }
 
     def __init__(self) -> None:
         self.providers = ProviderRouter()
@@ -80,7 +137,8 @@ class IntentRouterService:
                 deliverable_type="general_copy",
                 reason="emergency_default_content",
             )
-        return self._build_decision_from_llm(llm_decision=llm_decision)
+        decision = self._build_decision_from_llm(llm_decision=llm_decision)
+        return self._normalize_previous_image_reference(text=text, decision=decision)
 
     def _classify_with_llm(
         self,
@@ -98,6 +156,7 @@ class IntentRouterService:
             "workflow_type": None,
             "revision_scope": None,
             "display_retrieved_asset": False,
+            "direct_reply": None,
         }
         try:
             response = provider.generate_structured_json(
@@ -119,6 +178,10 @@ class IntentRouterService:
                         "Infer uses_previous_output when the user is modifying, continuing, reusing, or referring to earlier output. "
                         "Infer workflow_type only when the prompt is clearly one of: review_then_generate, repurpose_text_to_visual, apply_last_review. Otherwise use null. "
                         "Infer revision_scope only when the prompt is editing previous content or visuals. Otherwise use null. "
+                        "For pure small_talk only, also return direct_reply with a concise natural assistant reply. "
+                        "Pure small_talk means greetings, thanks, sign-offs, and lightweight casual chat with no brand factual question, no strategy question, no content request, no retrieval request, and no evaluation request. "
+                        "For every non-small_talk mode, direct_reply must be null. "
+                        "If a message asks about brand facts such as audience, colors, tone, motivations, positioning, or strategy, classify it as strategy_chat and set direct_reply to null. "
                         "Allowed deliverable_type values: null, blog, linkedin_post, instagram_caption, social_caption, x_post, x_thread, youtube_description, newsletter, email, script, long_description, general_copy. "
                         "revision_scope must be either null or an object with keys: targeted_fields, slide_indexes, slide_targets, preserve_visuals, preserve_copy, change_layout, change_tone, only_targeted. "
                         "targeted_fields must be an array using only: headline, body, cta, hashtags, layout, visuals. "
@@ -127,7 +190,7 @@ class IntentRouterService:
                     user=(
                         f"Session context: {session_context}\n"
                         f"User message: {text}\n"
-                        "Return a JSON object with keys: mode, confidence, reason, deliverable_type, uses_previous_output, workflow_type, revision_scope, display_retrieved_asset."
+                        "Return a JSON object with keys: mode, confidence, reason, deliverable_type, uses_previous_output, workflow_type, revision_scope, display_retrieved_asset, direct_reply."
                     ),
                 ),
                 fallback=fallback,
@@ -162,6 +225,7 @@ class IntentRouterService:
             "workflow_type": workflow_type,
             "revision_scope": self._normalize_revision_scope(response.get("revision_scope")),
             "display_retrieved_asset": bool(response.get("display_retrieved_asset")),
+            "direct_reply": self._normalize_direct_reply(mode=mode, value=response.get("direct_reply")),
         }
 
     def _build_decision_from_llm(self, *, llm_decision: dict[str, Any]) -> ChatIntentDecision:
@@ -180,7 +244,53 @@ class IntentRouterService:
                 uses_previous_output=uses_previous_output,
             ),
             display_retrieved_asset=bool(llm_decision.get("display_retrieved_asset")),
+            direct_reply=llm_decision.get("direct_reply"),
         )
+
+    @classmethod
+    def _normalize_previous_image_reference(
+        cls,
+        *,
+        text: str,
+        decision: ChatIntentDecision,
+    ) -> ChatIntentDecision:
+        if decision.mode == "visual_generation":
+            return decision
+        tokens = {
+            token.strip(".,!?;:\"'()[]{}").casefold()
+            for token in str(text or "").split()
+            if token.strip(".,!?;:\"'()[]{}")
+        }
+        if not tokens:
+            return decision
+        has_image_reference = bool(tokens & cls._IMAGE_REFERENCE_TERMS)
+        has_previous_reference = bool(tokens & cls._PREVIOUS_REFERENCE_TERMS)
+        if not has_image_reference or not has_previous_reference:
+            return decision
+        if tokens & cls._EXPLICIT_EVALUATION_TERMS:
+            return decision
+        if not (tokens & cls._IMAGE_DISCUSSION_TERMS or tokens & cls._IMAGE_DISPLAY_TERMS):
+            return decision
+        display_retrieved_asset = bool(tokens & cls._IMAGE_DISPLAY_TERMS)
+        return ChatIntentDecision(
+            mode="retrieval",
+            deliverable_type=None,
+            reason=f"{decision.reason}|previous_image_reference_guard",
+            uses_previous_output=True,
+            revision_scope=None,
+            workflow_plan=None,
+            display_retrieved_asset=display_retrieved_asset,
+            direct_reply=None,
+        )
+
+    @staticmethod
+    def _normalize_direct_reply(*, mode: str, value: Any) -> str | None:
+        if mode != "small_talk":
+            return None
+        text = " ".join(str(value or "").split()).strip()
+        if not text:
+            return None
+        return text[:600].rstrip()
 
     def _normalize_revision_scope(self, value: Any) -> dict[str, Any] | None:
         if not isinstance(value, dict):

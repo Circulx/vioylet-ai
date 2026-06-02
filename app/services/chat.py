@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import timedelta
 import logging
 import re
+from typing import Any
 from uuid import UUID
 
 from fastapi.encoders import jsonable_encoder
@@ -15,12 +16,13 @@ from app.integrations.object_storage import LocalObjectStorage
 from app.services.asset_delivery import AssetDeliveryService
 from app.services.conversation_memory import ConversationMemoryService
 from app.models.content import ChatMessage, ContentSession, GeneratedAsset
-from app.repositories.brand import BrandSpaceRepository
+from app.repositories.brand import BrandSectionRepository, BrandSpaceRepository
 from app.repositories.content import AssetRepository, ChatMessageRepository, ContentRepository, SessionRepository
 from app.schemas.common import StudioPanelSelection
 from app.schemas.chat import ChatMessageCreateRequest, ChatSessionCreateRequest
 from app.schemas.content import ContentGenerateRequest, ContentRewriteRequest, RequestInheritancePolicy
 from app.services.artifact_state import ArtifactStateService
+from app.services.brand_summary_memory import BrandSummaryMemoryService
 from app.services.conversation import ConversationService
 from app.services.content import ContentService
 from app.services.evaluation import EvaluationService
@@ -96,6 +98,7 @@ class ChatService:
         self.contents = ContentRepository(session)
         self.assets = AssetRepository(session)
         self.brands = BrandSpaceRepository(session)
+        self.brand_sections = BrandSectionRepository(session)
         self.content = ContentService(session)
         self.conversation = ConversationService()
         self.evaluation = EvaluationService(session)
@@ -105,6 +108,7 @@ class ChatService:
         self.text_content = TextContentService(session)
         self.delivery = AssetDeliveryService()
         self.memory = ConversationMemoryService(session)
+        self.brand_summary_memory = BrandSummaryMemoryService()
 
     @staticmethod
     def _generation_inheritance_policy(
@@ -244,6 +248,8 @@ class ChatService:
     ) -> tuple[ChatMessage, ChatMessage]:
         session = await self.get_session(session_id, tenant_id=tenant_id, brand_space_id=brand_space_id)
         studio_panel = self._resolve_studio_panel(payload, session)
+        brand = await self.brands.get_scoped(tenant_id, brand_space_id)
+        brand_name = getattr(brand, "name", None)
         intent = self.intent_router.route(payload.message, session.conversational_context)
         if self._should_override_text_intent_to_visual(intent=intent, payload=payload, studio_panel=studio_panel):
             intent = ChatIntentDecision(
@@ -290,20 +296,49 @@ class ChatService:
             await memory_service.index_chat_message(message=user_message, session=session)
 
         content_version = None
-        memory_assets: list[GeneratedAsset] = []
-        brand = await self.brands.get_scoped(tenant_id, brand_space_id)
-        brand_name = getattr(brand, "name", None)
+        memory_assets: list[GeneratedAsset | dict[str, Any]] = []
         review_result = None
         workflow_context = None
 
         try:
             if intent.mode in {"small_talk", "strategy_chat"}:
-                conversation = self.conversation.reply(
-                    message=payload.message,
-                    brand_name=brand_name,
-                    session_context=session.conversational_context,
-                    mode=intent.mode,
-                )
+                if intent.mode == "small_talk" and intent.direct_reply:
+                    conversation = {
+                        "message_text": intent.direct_reply,
+                        "structured_payload": {
+                            "mode": "conversation",
+                            "conversation_mode": "small_talk",
+                            "brand_name": brand_name,
+                            "reply_source": "intent_router",
+                        },
+                    }
+                else:
+                    recent_messages = await self.messages.list_recent_by_session(session.id, limit=4)
+                    brand_summary_service = getattr(self, "brand_summary_memory", None)
+                    if brand_summary_service is None:
+                        brand_summary_service = BrandSummaryMemoryService()
+                    brand_sections_repository = getattr(self, "brand_sections", None)
+                    brand_sections = (
+                        await brand_sections_repository.list_current_sections(brand_space_id, tenant_id)
+                        if brand is not None and brand_sections_repository is not None
+                        else []
+                    )
+                    brand_summary = (
+                        brand_summary_service.retrieve_brand_summary(
+                            brand=brand,
+                            query=payload.message,
+                            sections=brand_sections,
+                        )
+                        if brand is not None
+                        else ""
+                    )
+                    conversation = self.conversation.reply(
+                        message=payload.message,
+                        brand_name=brand_name,
+                        brand_summary=brand_summary,
+                        recent_messages=self._recent_conversation_messages(recent_messages),
+                        mode=intent.mode,
+                    )
                 assistant_message = ChatMessage(
                     tenant_id=tenant_id,
                     brand_space_id=brand_space_id,
@@ -335,6 +370,13 @@ class ChatService:
                     citations=[],
                 )
             elif intent.mode == "retrieval":
+                if memory_service is not None:
+                    await self._backfill_displayed_asset_memory_from_history(
+                        tenant_id=tenant_id,
+                        brand_space_id=brand_space_id,
+                        session=session,
+                        memory_service=memory_service,
+                    )
                 retrieval_result = (
                     await memory_service.retrieve_image_assets(
                         tenant_id=tenant_id,
@@ -605,7 +647,10 @@ class ChatService:
                         studio_panel=studio_panel.model_dump(),
                     )
                 content_assets = await self.assets.list_by_content(content_version.id)
-                memory_assets = list(content_assets)
+                memory_assets = self._resolve_displayed_memory_assets(
+                    content_assets=list(content_assets),
+                    render_payload=render_payload,
+                )
                 serialized_assets = [self.serialize_asset(asset) for asset in content_assets]
                 image_asset_count = len(
                     [
@@ -757,6 +802,24 @@ class ChatService:
                 else session.conversational_context.get("last_workflow_state")
             ),
             "artifact_state": session_artifact_state,
+            "last_displayed_asset_ids": (
+                [
+                    asset_id
+                    for asset in memory_assets
+                    if (asset_id := self._memory_asset_ref_id(asset))
+                ]
+                if memory_assets and last_response_mode == "visual_generation"
+                else session.conversational_context.get("last_displayed_asset_ids")
+            ),
+            "last_displayed_asset_paths": (
+                [
+                    storage_path
+                    for asset in memory_assets
+                    if (storage_path := self._memory_asset_ref_storage_path(asset))
+                ]
+                if memory_assets and last_response_mode == "visual_generation"
+                else session.conversational_context.get("last_displayed_asset_paths")
+            ),
         }
         await self.session.commit()
         return user_message, assistant_message
@@ -766,6 +829,17 @@ class ChatService:
         base = payload.studio_panel.model_dump() if payload.studio_panel else dict(session.studio_panel or {})
         resolved = resolve_studio_panel_defaults(base)
         return StudioPanelSelection.model_validate(resolved)
+
+    @staticmethod
+    def _recent_conversation_messages(messages: list[ChatMessage], *, limit: int = 4) -> list[dict[str, str]]:
+        return [
+            {
+                "role": str(item.role),
+                "message": " ".join(str(item.message_text or "").split()).strip(),
+            }
+            for item in messages[-limit:]
+            if str(item.message_text or "").strip()
+        ]
 
     @classmethod
     def _should_override_text_intent_to_visual(
@@ -794,6 +868,158 @@ class ChatService:
                 generated_payload.get("cta", ""),
             ]
         ).strip()
+
+    @staticmethod
+    def _normalize_storage_path(value: str | None) -> str:
+        return str(value or "").strip()
+
+    @staticmethod
+    def _memory_asset_ref_id(asset: GeneratedAsset | dict[str, Any]) -> str | None:
+        if isinstance(asset, dict):
+            asset_id = str(asset.get("asset_id") or "").strip()
+            return asset_id or None
+        return str(asset.id) if asset.id else None
+
+    @classmethod
+    def _memory_asset_ref_storage_path(cls, asset: GeneratedAsset | dict[str, Any]) -> str | None:
+        if isinstance(asset, dict):
+            storage_path = cls._normalize_storage_path(asset.get("storage_path"))
+        else:
+            storage_path = cls._normalize_storage_path(asset.storage_path)
+        return storage_path or None
+
+    async def _backfill_displayed_asset_memory_from_history(
+        self,
+        *,
+        tenant_id: UUID,
+        brand_space_id: UUID,
+        session: ContentSession,
+        memory_service: ConversationMemoryService,
+    ) -> None:
+        messages = await self.messages.list_recent_by_session(session.id, limit=CHAT_HISTORY_MESSAGE_LIMIT)
+        for message in messages:
+            payload = message.structured_payload if isinstance(message.structured_payload, dict) else {}
+            if payload.get("mode") != "visual_generation" or not message.content_version_id:
+                continue
+            render_payload = {
+                "preview_asset": payload.get("preview_asset") if isinstance(payload.get("preview_asset"), dict) else None,
+                "export_assets": payload.get("export_assets") if isinstance(payload.get("export_assets"), list) else [],
+            }
+            displayed_assets = self._resolve_displayed_memory_assets(
+                content_assets=[],
+                render_payload=render_payload,
+            )
+            if not displayed_assets:
+                continue
+            content_version = await self.contents.get_scoped(message.content_version_id, tenant_id, brand_space_id)
+            if content_version is None:
+                continue
+            await memory_service.index_generated_assets(
+                session=session,
+                content_version=content_version,
+                assets=displayed_assets,
+            )
+
+    @classmethod
+    def _resolve_displayed_memory_assets(
+        cls,
+        *,
+        content_assets: list[GeneratedAsset],
+        render_payload: dict | None,
+    ) -> list[GeneratedAsset | dict[str, Any]]:
+        asset_by_key: dict[tuple[str, str], GeneratedAsset] = {}
+        asset_by_path: dict[str, GeneratedAsset] = {}
+        for asset in content_assets:
+            storage_path = cls._normalize_storage_path(asset.storage_path)
+            if not storage_path:
+                continue
+            asset_by_key[(storage_path, str(asset.asset_role))] = asset
+            asset_by_path.setdefault(storage_path, asset)
+
+        def resolve_refs(refs: list[dict] | None) -> list[GeneratedAsset | dict[str, Any]]:
+            resolved: list[GeneratedAsset | dict[str, Any]] = []
+            seen_keys: set[tuple[str, str]] = set()
+            for ref in refs or []:
+                if not isinstance(ref, dict):
+                    continue
+                storage_path = cls._normalize_storage_path(ref.get("storage_path"))
+                asset_role = str(ref.get("asset_role") or "")
+                if not storage_path:
+                    continue
+                matched = asset_by_key.get((storage_path, asset_role)) or asset_by_path.get(storage_path)
+                if matched is not None:
+                    seen_key = ("asset", str(matched.id))
+                    if seen_key in seen_keys:
+                        continue
+                    seen_keys.add(seen_key)
+                    resolved.append(matched)
+                    continue
+
+                seen_key = ("path", f"{storage_path}:{asset_role}")
+                if seen_key in seen_keys:
+                    continue
+                seen_keys.add(seen_key)
+                resolved.append(
+                    {
+                        **ref,
+                        "storage_path": storage_path,
+                        "asset_role": asset_role,
+                    }
+                )
+            return resolved
+
+        def is_image_ref(asset: GeneratedAsset | dict[str, Any]) -> bool:
+            if isinstance(asset, dict):
+                return str(asset.get("mime_type") or "").startswith("image/")
+            return str(asset.mime_type or "").startswith("image/")
+
+        export_assets = resolve_refs(
+            render_payload.get("export_assets")
+            if isinstance(render_payload, dict) and isinstance(render_payload.get("export_assets"), list)
+            else []
+        )
+        image_export_assets = [asset for asset in export_assets if is_image_ref(asset)]
+        if image_export_assets:
+            return image_export_assets
+
+        preview_asset = resolve_refs(
+            [render_payload.get("preview_asset")]
+            if isinstance(render_payload, dict) and isinstance(render_payload.get("preview_asset"), dict)
+            else []
+        )
+        if preview_asset:
+            return preview_asset
+        if export_assets:
+            return export_assets
+
+        render_exports = [
+            asset
+            for asset in content_assets
+            if str(asset.mime_type or "").startswith("image/")
+            and str(asset.asset_role) == AssetRole.RENDER_EXPORT.value
+        ]
+        if render_exports:
+            return sorted(render_exports, key=lambda item: (item.created_at, str(item.id)))
+
+        render_previews = [
+            asset
+            for asset in content_assets
+            if str(asset.mime_type or "").startswith("image/")
+            and str(asset.asset_role) == AssetRole.RENDER_PREVIEW.value
+        ]
+        if render_previews:
+            return sorted(render_previews, key=lambda item: (item.created_at, str(item.id)))[:1]
+
+        ai_images = [
+            asset
+            for asset in content_assets
+            if str(asset.mime_type or "").startswith("image/")
+            and str(asset.asset_role) == AssetRole.AI_IMAGE.value
+        ]
+        if ai_images:
+            return sorted(ai_images, key=lambda item: (item.created_at, str(item.id)))
+
+        return []
 
     @staticmethod
     def build_generation_failure_message_text(exc: Exception) -> str:

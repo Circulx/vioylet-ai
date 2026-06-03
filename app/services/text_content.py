@@ -17,7 +17,7 @@ from app.ai.rag.ocr import OCRService
 from app.ai.tone_intelligence import ToneIntelligenceService
 from app.core.enums import BrandSpaceLifecycle
 from app.core.exceptions import GenerationFailureError, LifecycleError, NotFoundError
-from app.integrations.object_storage import LocalObjectStorage
+from app.integrations.object_storage import get_object_storage
 from app.models.content import ContentSession, ContentVersion
 from app.repositories.brand import BrandSpaceRepository, ObjectiveRepository, PersonaRepository
 from app.repositories.content import AssetRepository, ContentRepository
@@ -153,7 +153,7 @@ class TextContentService:
         self.format_family_planning = FormatFamilyPlanningService()
         self.content_planning = ContentPlanningService()
         self.artifacts = ArtifactStateService()
-        self.storage = LocalObjectStorage()
+        self.storage = get_object_storage()
         self.ocr = OCRService()
         self.tone = ToneIntelligenceService()
 
@@ -202,7 +202,12 @@ class TextContentService:
         live_research = self.live_research.gather_sync(
             prompt=prompt,
             studio_panel=studio_panel.model_dump(),
-            compiled_context={"knowledge_brief": knowledge_brief},
+            compiled_context={
+                "knowledge_brief": knowledge_brief,
+                "brand_context": brand_context,
+                "persona_context": persona_context,
+                "objective_context": objective_context,
+            },
         )
         planning_bundle = self.content_planning.build_text_plan(
             prompt=prompt,

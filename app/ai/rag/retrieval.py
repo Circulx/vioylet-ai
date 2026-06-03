@@ -2,15 +2,53 @@ from __future__ import annotations
 
 from typing import Any
 
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from app.integrations.vector_store import get_vector_store_provider
 
-from app.integrations.vector_store import FaissVectorStoreProvider
+
+class _FallbackTextSplitter:
+    def __init__(self, *, chunk_size: int, chunk_overlap: int) -> None:
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
+
+    def split_text(self, text: str) -> list[str]:
+        normalized = str(text or "").strip()
+        if not normalized:
+            return []
+        chunks: list[str] = []
+        start = 0
+        while start < len(normalized):
+            end = min(start + self.chunk_size, len(normalized))
+            if end < len(normalized):
+                boundary = max(
+                    normalized.rfind("\n\n", start, end),
+                    normalized.rfind("\n", start, end),
+                    normalized.rfind(". ", start, end),
+                    normalized.rfind(" ", start, end),
+                )
+                if boundary > start + max(self.chunk_size // 2, 1):
+                    end = boundary + 1
+            chunk = normalized[start:end].strip()
+            if chunk:
+                chunks.append(chunk)
+            if end >= len(normalized):
+                break
+            start = max(end - self.chunk_overlap, start + 1)
+        return chunks
+
+
+def _build_text_splitter(chunk_size: int = 900, chunk_overlap: int = 120):
+    try:
+        from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+        return RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    except Exception:  # noqa: BLE001 - optional ML dependencies can break package import
+        return _FallbackTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
 
 
 class KnowledgeRetrievalService:
     def __init__(self) -> None:
-        self.vector_store = FaissVectorStoreProvider()
-        self.splitter = RecursiveCharacterTextSplitter(chunk_size=900, chunk_overlap=120)
+        self.vector_store = get_vector_store_provider()
+        self.splitter = _build_text_splitter(chunk_size=900, chunk_overlap=120)
 
     def index_documents(
         self,

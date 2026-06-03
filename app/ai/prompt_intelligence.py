@@ -152,6 +152,175 @@ class PromptIntelligenceService:
         }
 
     @staticmethod
+    def _drop_empty(value: Any) -> Any:
+        if isinstance(value, dict):
+            cleaned = {
+                key: PromptIntelligenceService._drop_empty(item)
+                for key, item in value.items()
+            }
+            return {
+                key: item
+                for key, item in cleaned.items()
+                if item not in ("", None, [], {})
+            }
+        if isinstance(value, list):
+            cleaned = [PromptIntelligenceService._drop_empty(item) for item in value]
+            return [item for item in cleaned if item not in ("", None, [], {})]
+        return value
+
+    @staticmethod
+    def _compact_sequence_pack(value: Any) -> dict[str, Any]:
+        pack = value if isinstance(value, dict) else {}
+        slides = []
+        for item in (pack.get("slides") or [])[:12]:
+            if not isinstance(item, dict):
+                continue
+            slides.append(
+                PromptIntelligenceService._drop_empty(
+                    {
+                        "slide_index": item.get("slide_index"),
+                        "story_role": item.get("story_role"),
+                        "headline_hint": item.get("headline_hint"),
+                        "structural_cues": item.get("structural_cues"),
+                        "sequence_summary": item.get("sequence_summary"),
+                        "sample_page_headline": item.get("sample_page_headline"),
+                        "sample_page_supporting": item.get("sample_page_supporting"),
+                        "sample_page_copy": item.get("sample_page_copy"),
+                        "sample_page_editorial_role": item.get("sample_page_editorial_role"),
+                        "sample_page_copy_behavior": item.get("sample_page_copy_behavior"),
+                        "sample_page_copy_density": item.get("sample_page_copy_density"),
+                        "sample_page_closing_grammar": item.get("sample_page_closing_grammar"),
+                        "sample_page_has_question_hook": item.get("sample_page_has_question_hook"),
+                        "sample_page_has_source_labels": item.get("sample_page_has_source_labels"),
+                    }
+                )
+            )
+        return PromptIntelligenceService._drop_empty(
+            {
+                "family_name": pack.get("family_name"),
+                "sequence_kind": pack.get("sequence_kind"),
+                "surface_policy": pack.get("surface_policy"),
+                "slide_count": pack.get("slide_count"),
+                "story_roles": pack.get("story_roles"),
+                "headline_hints": (pack.get("headline_hints") or [])[:12],
+                "sequence_cues": (pack.get("sequence_cues") or [])[:12],
+                "slides": slides,
+            }
+        )
+
+    @staticmethod
+    def _template_fit_prompt_payload(value: Any) -> dict[str, Any]:
+        brief = value if isinstance(value, dict) else {}
+        return PromptIntelligenceService._drop_empty(
+            {
+                "mode": brief.get("mode"),
+                "confidence": brief.get("confidence"),
+                "selected_template_id": brief.get("selected_template_id"),
+                "template_name": brief.get("template_name"),
+                "rationale": (brief.get("rationale") or [])[:4],
+                "adaptation_plan": brief.get("adaptation_plan"),
+                "template_zone_roles": (brief.get("template_zone_roles") or [])[:8],
+                "template_layout_dna": brief.get("template_layout_dna"),
+                "template_composition_logic": brief.get("template_composition_logic"),
+                "template_visual_craft": brief.get("template_visual_craft"),
+                "template_subject_semantics": brief.get("template_subject_semantics"),
+                "template_editorial_dna": brief.get("template_editorial_dna"),
+                "sequence_pack": PromptIntelligenceService._compact_sequence_pack(brief.get("sequence_pack")),
+            }
+        )
+
+    @staticmethod
+    def _brand_visual_prompt_payload(value: Any) -> dict[str, Any]:
+        brief = value if isinstance(value, dict) else {}
+        design_system = brief.get("design_system") if isinstance(brief.get("design_system"), dict) else {}
+        return PromptIntelligenceService._drop_empty(
+            {
+                "mode": brief.get("mode"),
+                "template_name": brief.get("template_name"),
+                "template_rationale": (brief.get("template_rationale") or [])[:4],
+                "sequence_template_family": brief.get("sequence_template_family"),
+                "sequence_slide_count": brief.get("sequence_slide_count"),
+                "palette_roles": brief.get("palette_roles"),
+                "font_families": brief.get("font_families"),
+                "dominant_layout_family": brief.get("dominant_layout_family"),
+                "preferred_zone_roles": (brief.get("preferred_zone_roles") or [])[:8],
+                "background_style_summary": brief.get("background_style_summary"),
+                "motif_summary": brief.get("motif_summary"),
+                "typography_summary": brief.get("typography_summary"),
+                "hierarchy_summary": brief.get("hierarchy_summary"),
+                "content_structure_summary": brief.get("content_structure_summary"),
+                "image_treatment_summary": brief.get("image_treatment_summary"),
+                "visual_craft_summary": brief.get("visual_craft_summary"),
+                "composition_logic_summary": brief.get("composition_logic_summary"),
+                "subject_semantics_summary": brief.get("subject_semantics_summary"),
+                "brand_cue_summary": brief.get("brand_cue_summary"),
+                "editorial_story_arc_summary": brief.get("editorial_story_arc_summary"),
+                "editorial_style_summary": brief.get("editorial_style_summary"),
+                "visual_style_summary": brief.get("visual_style_summary"),
+                "logo_position": brief.get("logo_position"),
+                "template_layout_dna": brief.get("template_layout_dna"),
+                "template_editorial_dna": brief.get("template_editorial_dna"),
+                "template_sequence_pack": PromptIntelligenceService._compact_sequence_pack(
+                    brief.get("template_sequence_pack")
+                ),
+                "visual_style_policy": brief.get("visual_style_policy"),
+                "visual_craft": brief.get("visual_craft"),
+                "composition_logic": brief.get("composition_logic"),
+                "subject_semantics": brief.get("subject_semantics"),
+                "style_direction": brief.get("style_direction"),
+                "reference_asset_roles": (brief.get("reference_asset_roles") or [])[:8],
+                "design_system": PromptIntelligenceService._drop_empty(
+                    {
+                        "sample_count": design_system.get("sample_count"),
+                        "dominant_layout_family": design_system.get("dominant_layout_family"),
+                        "preferred_zone_roles": (design_system.get("preferred_zone_roles") or [])[:8],
+                        "background_style_summary": design_system.get("background_style_summary"),
+                        "motif_summary": design_system.get("motif_summary"),
+                        "typography_summary": design_system.get("typography_summary"),
+                        "hierarchy_summary": design_system.get("hierarchy_summary"),
+                        "content_structure_summary": design_system.get("content_structure_summary"),
+                        "image_treatment_summary": design_system.get("image_treatment_summary"),
+                        "visual_craft_summary": design_system.get("visual_craft_summary"),
+                        "composition_logic_summary": design_system.get("composition_logic_summary"),
+                        "subject_semantics_summary": design_system.get("subject_semantics_summary"),
+                        "brand_cue_summary": design_system.get("brand_cue_summary"),
+                        "logo_position": design_system.get("logo_position"),
+                    }
+                ),
+            }
+        )
+
+    @staticmethod
+    def _reference_asset_prompt_payload(value: Any, *, limit: int = 8) -> list[dict[str, Any]]:
+        assets = value if isinstance(value, list) else []
+        compact = []
+        for item in assets[: max(1, limit)]:
+            if not isinstance(item, dict):
+                continue
+            structural_cues = item.get("structural_cues")
+            if not isinstance(structural_cues, list):
+                structural_cues = []
+            compact.append(
+                PromptIntelligenceService._drop_empty(
+                    {
+                        "asset_id": item.get("asset_id"),
+                        "role": item.get("role"),
+                        "label": item.get("label"),
+                        "name": item.get("name"),
+                        "storage_path": item.get("storage_path") or item.get("path") or item.get("asset_url"),
+                        "trust_level": item.get("trust_level"),
+                        "format": item.get("format"),
+                        "page_count": item.get("page_count"),
+                        "sequence_kind": item.get("sequence_kind"),
+                        "structural_cues": structural_cues[:6],
+                        "summary": item.get("summary"),
+                        "editorial_dna": item.get("editorial_dna"),
+                    }
+                )
+            )
+        return compact
+
+    @staticmethod
     def _prompt_intelligence_rule_block(
         *,
         brief_name: str = "prompt_intelligence_brief",
@@ -240,11 +409,18 @@ class PromptIntelligenceService:
         for item in (brief.get("source_pack") or [])[:6]:
             if not isinstance(item, dict):
                 continue
+            label = str(item.get("label") or "").strip()
+            detail = str(item.get("detail") or "").strip()
+            if (
+                ContextCompilerService._looks_like_low_quality_web_snippet(label)
+                or ContextCompilerService._looks_like_low_quality_web_snippet(detail)
+            ):
+                continue
             source_pack.append(
                 {
                     "type": str(item.get("type") or "").strip(),
-                    "label": str(item.get("label") or "").strip(),
-                    "detail": str(item.get("detail") or "").strip(),
+                    "label": label,
+                    "detail": detail,
                     "source": str(item.get("source") or "").strip(),
                 }
             )
@@ -252,10 +428,17 @@ class PromptIntelligenceService:
         for item in (brief.get("ranked_sources") or [])[:4]:
             if not isinstance(item, dict):
                 continue
+            label = str(item.get("label") or "").strip()
+            detail = str(item.get("detail") or "").strip()
+            if (
+                ContextCompilerService._looks_like_low_quality_web_snippet(label)
+                or ContextCompilerService._looks_like_low_quality_web_snippet(detail)
+            ):
+                continue
             ranked_sources.append(
                 {
-                    "label": str(item.get("label") or "").strip(),
-                    "detail": str(item.get("detail") or "").strip(),
+                    "label": label,
+                    "detail": detail,
                     "source": str(item.get("source") or "").strip(),
                 }
             )
@@ -272,7 +455,11 @@ class PromptIntelligenceService:
             "thesis": str(brief.get("thesis") or "").strip(),
             "reader_payoff": str(brief.get("reader_payoff") or "").strip(),
             "hook_strategy": str(brief.get("hook_strategy") or "").strip(),
-            "insight_hierarchy": [str(item).strip() for item in (brief.get("insight_hierarchy") or []) if str(item).strip()][:6],
+            "insight_hierarchy": [
+                str(item).strip()
+                for item in (brief.get("insight_hierarchy") or [])
+                if str(item).strip() and not ContextCompilerService._looks_like_low_quality_web_snippet(item)
+            ][:6],
             "ordered_story_beats": [str(item).strip() for item in (brief.get("ordered_story_beats") or []) if str(item).strip()][:8],
             "narrative_contract": str(brief.get("narrative_contract") or "").strip(),
             "outline": outline,
@@ -323,8 +510,16 @@ class PromptIntelligenceService:
                     for item in (fact_model.get("verified_facts") or [])[:6]
                     if isinstance(item, dict)
                 ],
-                "inferences": [str(item).strip() for item in (fact_model.get("inferences") or []) if str(item).strip()][:4],
-                "uncertainties": [str(item).strip() for item in (fact_model.get("uncertainties") or []) if str(item).strip()][:4],
+                "inferences": [
+                    str(item).strip()
+                    for item in (fact_model.get("inferences") or [])
+                    if str(item).strip() and not ContextCompilerService._looks_like_low_quality_web_snippet(item)
+                ][:4],
+                "uncertainties": [
+                    str(item).strip()
+                    for item in (fact_model.get("uncertainties") or [])
+                    if str(item).strip() and not ContextCompilerService._looks_like_low_quality_web_snippet(item)
+                ][:4],
             },
             "ranked_sources": ranked_sources,
             "citation_rules": {
@@ -433,6 +628,265 @@ class PromptIntelligenceService:
             "visual_sequence_expectation": str(plan.get("visual_sequence_expectation") or "").strip(),
             "research_mode": str(plan.get("research_mode") or "").strip(),
         }
+
+    @staticmethod
+    def _compact_repair_text(value: Any, *, limit: int = 420) -> str:
+        text = " ".join(str(value or "").split())
+        if len(text) <= limit:
+            return text
+        return f"{text[: max(0, limit - 3)].rstrip(' ,.;:')}..."
+
+    @staticmethod
+    def _compact_repair_list(value: Any, *, limit: int = 4, text_limit: int = 220) -> list[Any]:
+        items = value if isinstance(value, list) else []
+        compact: list[Any] = []
+        for item in items[: max(0, limit)]:
+            if isinstance(item, dict):
+                compact.append(PromptIntelligenceService._compact_repair_mapping(item, field_limit=8, text_limit=text_limit))
+            elif isinstance(item, list):
+                compact.append(PromptIntelligenceService._compact_repair_list(item, limit=limit, text_limit=text_limit))
+            else:
+                text = PromptIntelligenceService._compact_repair_text(item, limit=text_limit)
+                if text:
+                    compact.append(text)
+        return compact
+
+    @staticmethod
+    def _compact_repair_mapping(value: Any, *, field_limit: int = 16, text_limit: int = 420) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            return {}
+        compact: dict[str, Any] = {}
+        for key, item in list(value.items())[: max(0, field_limit)]:
+            if isinstance(item, dict):
+                compact[key] = PromptIntelligenceService._compact_repair_mapping(
+                    item,
+                    field_limit=field_limit,
+                    text_limit=text_limit,
+                )
+            elif isinstance(item, list):
+                compact[key] = PromptIntelligenceService._compact_repair_list(
+                    item,
+                    limit=6,
+                    text_limit=text_limit,
+                )
+            else:
+                compact[key] = PromptIntelligenceService._compact_repair_text(item, limit=text_limit)
+        return PromptIntelligenceService._drop_empty(compact)
+
+    @staticmethod
+    def _repair_issue_element_ids(validation_report: Any) -> set[str]:
+        report = validation_report if isinstance(validation_report, dict) else {}
+        ids: set[str] = set()
+        for issue in report.get("issues") or []:
+            if not isinstance(issue, dict):
+                continue
+            element_id = str(issue.get("element_id") or "").strip()
+            if element_id:
+                ids.add(element_id)
+        return ids
+
+    @staticmethod
+    def _repair_issue_summary(validation_report: Any) -> dict[str, Any]:
+        report = validation_report if isinstance(validation_report, dict) else {}
+        issues = []
+        for issue in (report.get("issues") or [])[:16]:
+            if not isinstance(issue, dict):
+                continue
+            issues.append(
+                PromptIntelligenceService._drop_empty(
+                    {
+                        "severity": issue.get("severity"),
+                        "rule_id": issue.get("rule_id"),
+                        "element_id": issue.get("element_id"),
+                        "message": PromptIntelligenceService._compact_repair_text(issue.get("message"), limit=260),
+                        "expected_correction": PromptIntelligenceService._compact_repair_text(
+                            issue.get("expected_correction"),
+                            limit=220,
+                        ),
+                    }
+                )
+            )
+        return PromptIntelligenceService._drop_empty(
+            {
+                "status": report.get("status"),
+                "repairable": report.get("repairable"),
+                "issues": issues,
+                "summary": PromptIntelligenceService._compact_repair_list(
+                    report.get("summary") or report.get("violations"),
+                    limit=8,
+                    text_limit=220,
+                ),
+            }
+        )
+
+    @staticmethod
+    def _compact_repair_element(element: Any) -> dict[str, Any]:
+        if not isinstance(element, dict):
+            return {}
+        style = element.get("style") if isinstance(element.get("style"), dict) else {}
+        validation_hints = element.get("validation_hints") if isinstance(element.get("validation_hints"), dict) else {}
+        asset = element.get("asset") if isinstance(element.get("asset"), dict) else {}
+        return PromptIntelligenceService._drop_empty(
+            {
+                "element_id": element.get("element_id"),
+                "element_type": element.get("element_type"),
+                "role": element.get("role"),
+                "layer": element.get("layer"),
+                "geometry": element.get("geometry"),
+                "text": element.get("text"),
+                "visible": element.get("visible"),
+                "style": PromptIntelligenceService._compact_repair_mapping(style, field_limit=12, text_limit=180),
+                "asset": PromptIntelligenceService._drop_empty(
+                    {
+                        "asset_id": asset.get("asset_id"),
+                        "asset_role": asset.get("asset_role"),
+                        "storage_path": asset.get("storage_path"),
+                        "trust_level": asset.get("trust_level"),
+                        "variant": asset.get("variant"),
+                        "notes": PromptIntelligenceService._compact_repair_text(asset.get("notes"), limit=180),
+                    }
+                ),
+                "validation_hints": PromptIntelligenceService._compact_repair_mapping(
+                    validation_hints,
+                    field_limit=10,
+                    text_limit=180,
+                ),
+            }
+        )
+
+    @staticmethod
+    def _compact_repair_scene_graph(current_scene_graph: Any, validation_report: Any) -> dict[str, Any]:
+        scene_graph = current_scene_graph if isinstance(current_scene_graph, dict) else {}
+        target_ids = PromptIntelligenceService._repair_issue_element_ids(validation_report)
+        elements = scene_graph.get("elements") if isinstance(scene_graph.get("elements"), list) else []
+        layers = scene_graph.get("layers") if isinstance(scene_graph.get("layers"), list) else []
+        selected: list[dict[str, Any]] = []
+        critical_roles = {
+            "headline",
+            "supporting_line",
+            "body",
+            "proof_points",
+            "cta",
+            "background",
+            "image",
+            "hero_visual",
+            "icon",
+            "decorative_shape",
+            "brand_mark",
+            "corner_safe_zone",
+        }
+        for element in elements:
+            if not isinstance(element, dict):
+                continue
+            element_id = str(element.get("element_id") or "").strip()
+            role = str(element.get("role") or element.get("element_type") or "").strip()
+            has_text = element.get("text") not in (None, "", [])
+            is_target = element_id in target_ids
+            if is_target or has_text or role in critical_roles or len(selected) < 8:
+                compact = PromptIntelligenceService._compact_repair_element(element)
+                if compact:
+                    selected.append(compact)
+            if len(selected) >= 18 and target_ids:
+                break
+        return PromptIntelligenceService._drop_empty(
+            {
+                "canvas": scene_graph.get("canvas"),
+                "layout_mode": scene_graph.get("layout_mode"),
+                "confidence": scene_graph.get("confidence"),
+                "layers": layers[:12],
+                "styles": PromptIntelligenceService._compact_repair_mapping(
+                    scene_graph.get("styles"),
+                    field_limit=14,
+                    text_limit=180,
+                ),
+                "assets": PromptIntelligenceService._compact_repair_list(
+                    scene_graph.get("assets"),
+                    limit=6,
+                    text_limit=180,
+                ),
+                "elements": selected,
+                "template_adaptation": PromptIntelligenceService._compact_repair_mapping(
+                    scene_graph.get("template_adaptation"),
+                    field_limit=14,
+                    text_limit=220,
+                ),
+                "validation_hints": PromptIntelligenceService._compact_repair_mapping(
+                    scene_graph.get("validation_hints"),
+                    field_limit=14,
+                    text_limit=220,
+                ),
+                "omitted_unchanged_element_count": max(0, len(elements) - len(selected)),
+            }
+        )
+
+    @staticmethod
+    def _compact_repair_creative_decision(value: Any) -> dict[str, Any]:
+        decision = value if isinstance(value, dict) else {}
+        return PromptIntelligenceService._drop_empty(
+            {
+                "layout_mode": decision.get("layout_mode"),
+                "selected_template_id": decision.get("selected_template_id"),
+                "confidence": decision.get("confidence"),
+                "reasoning": PromptIntelligenceService._compact_repair_list(
+                    decision.get("reasoning"),
+                    limit=4,
+                    text_limit=220,
+                ),
+                "adaptations": PromptIntelligenceService._compact_repair_mapping(
+                    decision.get("adaptations"),
+                    field_limit=12,
+                    text_limit=180,
+                ),
+                "asset_strategy": PromptIntelligenceService._compact_repair_mapping(
+                    decision.get("asset_strategy"),
+                    field_limit=16,
+                    text_limit=220,
+                ),
+            }
+        )
+
+    @staticmethod
+    def _compact_repair_context_payload(compiled_context: Any) -> dict[str, Any]:
+        context = compiled_context if isinstance(compiled_context, dict) else {}
+        return PromptIntelligenceService._drop_empty(
+            {
+                "brand_copy_brief": PromptIntelligenceService._compact_repair_mapping(
+                    context.get("brand_copy_brief"),
+                    field_limit=18,
+                    text_limit=260,
+                ),
+                "brand_visual_brief": PromptIntelligenceService._brand_visual_prompt_payload(
+                    context.get("brand_visual_brief")
+                ),
+                "audience_brief": PromptIntelligenceService._compact_repair_mapping(
+                    context.get("audience_brief"),
+                    field_limit=14,
+                    text_limit=260,
+                ),
+                "objective_brief": PromptIntelligenceService._compact_repair_mapping(
+                    context.get("objective_brief"),
+                    field_limit=10,
+                    text_limit=260,
+                ),
+                "template_fit_brief": PromptIntelligenceService._template_fit_prompt_payload(
+                    context.get("template_fit_brief")
+                ),
+                "reference_asset_brief": PromptIntelligenceService._reference_asset_prompt_payload(
+                    context.get("reference_asset_brief"),
+                    limit=4,
+                ),
+                "render_constraints": context.get("render_constraints"),
+                "research_summary": PromptIntelligenceService._compact_repair_text(
+                    context.get("research_summary"),
+                    limit=900,
+                ),
+                "knowledge_brief": PromptIntelligenceService._compact_repair_list(
+                    context.get("knowledge_brief"),
+                    limit=4,
+                    text_limit=260,
+                ),
+            }
+        )
 
     @staticmethod
     def _format_family_rule_block(
@@ -732,14 +1186,14 @@ class PromptIntelligenceService:
         studio_panel: dict[str, Any],
     ) -> PromptEnvelope:
         brand_copy_brief = compiled_context.get("brand_copy_brief", {}) or {}
-        brand_visual_brief = compiled_context.get("brand_visual_brief", {}) or {}
+        brand_visual_brief = self._brand_visual_prompt_payload(compiled_context.get("brand_visual_brief"))
         audience_brief = compiled_context.get("audience_brief", {}) or {}
         knowledge_brief = compiled_context.get("knowledge_brief", []) or []
         visual_knowledge_brief = self._visual_knowledge_prompt_payload(compiled_context.get("visual_knowledge_brief"))
         render_constraints = compiled_context.get("render_constraints", {}) or {}
         session_brief = compiled_context.get("session_brief", {}) or {}
-        template_fit_brief = compiled_context.get("template_fit_brief", {}) or {}
-        reference_asset_brief = compiled_context.get("reference_asset_brief", []) or []
+        template_fit_brief = self._template_fit_prompt_payload(compiled_context.get("template_fit_brief"))
+        reference_asset_brief = self._reference_asset_prompt_payload(compiled_context.get("reference_asset_brief"))
         prompt_intelligence_brief = self._prompt_intelligence_prompt_payload(compiled_context.get("prompt_intelligence_brief"))
         content_format_brief = self._content_format_prompt_payload(compiled_context.get("content_format_brief"))
         research_editorial_brief = self._research_editorial_prompt_payload(compiled_context.get("research_editorial_brief"))
@@ -909,7 +1363,7 @@ class PromptIntelligenceService:
         replan_note: str | None = None,
     ) -> PromptEnvelope:
         brand_copy_brief = compiled_context.get("brand_copy_brief", {}) or {}
-        brand_visual_brief = compiled_context.get("brand_visual_brief", {}) or {}
+        brand_visual_brief = self._brand_visual_prompt_payload(compiled_context.get("brand_visual_brief"))
         audience_brief = compiled_context.get("audience_brief", {}) or {}
         visual_knowledge_brief = self._visual_knowledge_prompt_payload(compiled_context.get("visual_knowledge_brief"))
         visual_grounding_rules = self._visual_grounding_rule_block(
@@ -921,8 +1375,8 @@ class PromptIntelligenceService:
         )
         render_constraints = compiled_context.get("render_constraints", {}) or {}
         session_brief = compiled_context.get("session_brief", {}) or {}
-        template_fit_brief = compiled_context.get("template_fit_brief", {}) or {}
-        reference_asset_brief = compiled_context.get("reference_asset_brief", []) or []
+        template_fit_brief = self._template_fit_prompt_payload(compiled_context.get("template_fit_brief"))
+        reference_asset_brief = self._reference_asset_prompt_payload(compiled_context.get("reference_asset_brief"))
         objective_brief = compiled_context.get("objective_brief", {}) or {}
         prompt_intelligence_brief = self._prompt_intelligence_prompt_payload(compiled_context.get("prompt_intelligence_brief"))
         content_format_brief = self._content_format_prompt_payload(compiled_context.get("content_format_brief"))
@@ -1040,7 +1494,7 @@ class PromptIntelligenceService:
         Use brand_visual_brief.subject_semantics_summary and any structured subject_semantics fields to choose the right scene type, subject matter, abstraction level, and finance objects.
         Use brand_visual_brief.motif_summary and brand_visual_brief.design_system motif signals only when they reinforce the topic; never force every motif into the composition.
         Use brand_visual_brief.image_treatment_summary to avoid generic portraits when the reference system implies diagrams, icon-led explainers, editorial compositions, or non-photo treatment.
-        Use brand_visual_brief.brand_mark_position and background_style_summary to reserve the correct safe region and keep that surface calm.
+        Use brand_visual_brief.logo_position and background_style_summary to reserve the correct safe region and keep that surface calm.
         If template_fit_brief.template_editorial_dna, template_fit_brief.template_layout_dna, or template_fit_brief.sequence_pack are present, treat them as concrete sample-specific guidance for sequence rhythm, layout structure, and spatial pacing.
         For Instagram, LinkedIn, X, and other social creatives, do not return a sparse poster with only headline/body/cta unless the prompt explicitly asks for extreme minimalism.
         For social outputs, include a visibly structured composition with:
@@ -1056,21 +1510,12 @@ class PromptIntelligenceService:
         Avoid flat poster filler, random icon stamping, weak clip-art grids, or placeholder compositions.
         If follow-up_mode is variant_of_previous and session_brief.prior_layout_archetype is present, choose a materially different layout_archetype and composition rhythm from that prior archetype.
         If multiple approved uploaded images are available, choose only the strongest subset for the requested format and avoid forcing all of them into one cluttered composition.
+        Use the complete brand, audience, objective, visual, template, reference, plan, and validation context supplied in the user message as authoritative input.
         Platform preset: {platform_preset}
         Format: {format_name}
         File type: {studio_panel.get("file_type")}
         Platform guidance: {self.PLATFORM_GUIDANCE.get(platform_preset, "Keep the copy platform-appropriate.")}
         Format guidance: {self.FORMAT_GUIDANCE.get(format_name, "Keep the content structured and renderer-friendly.")}
-        Copy brief: {brand_copy_brief}
-        Audience brief: {audience_brief}
-        Objective brief: {objective_brief}
-        Visual brief: {brand_visual_brief}
-        Template fit brief: {template_fit_brief}
-        Render constraints: {render_constraints}
-        Session brief: {session_brief}
-        Reference asset brief: {reference_asset_brief}
-        Prompt intelligence brief: {prompt_intelligence_brief}
-        Content format brief: {content_format_brief}
         Prompt intelligence rules: {prompt_intelligence_rules}
         Persona depth rules: {persona_depth_rules}
         Audience research rules: {audience_research_rules}
@@ -1078,14 +1523,8 @@ class PromptIntelligenceService:
         Planning contract rules: {planning_contract_rules}
         Client quality rules: {client_quality_rules or "No client-specific quality overrides are active."}
         Mistake-style carousel rules: {mistake_carousel_rules or "No mistake-specific carousel override is active."}
-        Research editorial brief: {research_editorial_brief}
-        Format family plan: {format_family_plan}
-        Content plan: {content_plan}
-        Visual plan: {visual_plan}
         Format family rules: {format_family_rules}
-        Visual knowledge brief: {visual_knowledge_brief}
         Visual grounding rules: {visual_grounding_rules}
-        Validation report to repair against: {validation_report or {}}
         If validation report issues are present, repair the scene graph rather than restating the same plan.
         {replan_note or ""}
         Match copy density to the requested format and platform. Do not flatten carousel or infographic thinking into a static poster.
@@ -1223,13 +1662,10 @@ class PromptIntelligenceService:
         - important_keywords
         - emotional_messaging_direction
         - what_must_be_avoided_in_messaging
+        Use the complete brand, audience, objective, knowledge, prompt-intelligence, content-format, research-editorial, format-family, and session context supplied in the user message as authoritative input.
         Platform preset: {studio_panel.get("platform_preset")}
         Format: {studio_panel.get("format")}
-        Prompt intelligence brief: {prompt_intelligence_brief}
-        Content format brief: {content_format_brief}
-        Research editorial brief: {research_editorial_brief}
         Research-editorial rules: {research_editorial_rules}
-        Format family plan: {format_family_plan}
         Format family rules: {format_family_rules}
         Client quality rules: {client_quality_rules or "No client-specific quality overrides are active."}
         Mistake-style carousel rules: {mistake_carousel_rules or "No mistake-specific carousel override is active."}
@@ -1278,7 +1714,7 @@ class PromptIntelligenceService:
         replan_note: str | None = None,
     ) -> PromptEnvelope:
         brand_copy_brief = compiled_context.get("brand_copy_brief", {}) or {}
-        brand_visual_brief = compiled_context.get("brand_visual_brief", {}) or {}
+        brand_visual_brief = self._brand_visual_prompt_payload(compiled_context.get("brand_visual_brief"))
         audience_brief = compiled_context.get("audience_brief", {}) or {}
         visual_knowledge_brief = self._visual_knowledge_prompt_payload(compiled_context.get("visual_knowledge_brief"))
         visual_grounding_rules = self._visual_grounding_rule_block(
@@ -1290,8 +1726,8 @@ class PromptIntelligenceService:
         )
         render_constraints = compiled_context.get("render_constraints", {}) or {}
         session_brief = compiled_context.get("session_brief", {}) or {}
-        template_fit_brief = compiled_context.get("template_fit_brief", {}) or {}
-        reference_asset_brief = compiled_context.get("reference_asset_brief", []) or []
+        template_fit_brief = self._template_fit_prompt_payload(compiled_context.get("template_fit_brief"))
+        reference_asset_brief = self._reference_asset_prompt_payload(compiled_context.get("reference_asset_brief"))
         objective_brief = compiled_context.get("objective_brief", {}) or {}
         prompt_intelligence_brief = self._prompt_intelligence_prompt_payload(compiled_context.get("prompt_intelligence_brief"))
         content_format_brief = self._content_format_prompt_payload(compiled_context.get("content_format_brief"))
@@ -1369,7 +1805,7 @@ class PromptIntelligenceService:
         Use brand_visual_brief.subject_semantics_summary and any structured subject_semantics fields to choose the right scene type, subject matter, abstraction level, and finance objects.
         Use brand_visual_brief.motif_summary only when the motif naturally supports the topic.
         Use brand_visual_brief.image_treatment_summary to avoid generic business-person imagery when the brand references imply diagram-led, icon-led, editorial, or abstract treatment.
-        Use brand_visual_brief.brand_mark_position and background_style_summary to reserve the correct corner_safe_zone on a calm surface.
+        Use brand_visual_brief.logo_position and background_style_summary to reserve the correct corner_safe_zone on a calm surface.
         If template_fit_brief.template_editorial_dna, template_fit_brief.template_layout_dna, or template_fit_brief.sequence_pack are present, treat them as concrete sample-specific guidance for sequence rhythm, layout structure, and spatial pacing.
         {replan_note or ""}
         creative_decision must include:
@@ -1397,17 +1833,7 @@ class PromptIntelligenceService:
         Do not summarize the topic when the sample interprets it. Generate non-obvious, researched, audience-aware slide beats that answer why the topic matters, what most people missed, and what strategic pattern it signals when the sample uses that structure.
         Do not turn the final slide into brand/platform promotion unless the user asks for promotion or the sample final slide is itself a CTA/product surface.
         Write like a brand strategist making a premium creative: memorable headline, compact insight modules, strategic implication, and visual copy that can sit on a designed slide. Do not write like a research paper writer; avoid essay paragraphs, bibliography-like source mentions, and generic "verified facts" filler.
-        Validation report to repair against: {validation_report or {}}
-        Brand copy brief: {brand_copy_brief}
-        Brand visual brief: {brand_visual_brief}
-        Audience brief: {audience_brief}
-        Objective brief: {objective_brief}
-        Template fit brief: {template_fit_brief}
-        Render constraints: {render_constraints}
-        Session brief: {session_brief}
-        Reference asset brief: {reference_asset_brief}
-        Prompt intelligence brief: {prompt_intelligence_brief}
-        Content format brief: {content_format_brief}
+        Use the complete message strategy, brand visual brief, template fit brief, reference asset brief, render constraints, prompt intelligence, format plan, content plan, visual plan, visual knowledge brief, studio panel, and validation report supplied in the user message as authoritative input.
         Prompt intelligence rules: {prompt_intelligence_rules}
         Persona depth rules: {persona_depth_rules}
         Audience research rules: {audience_research_rules}
@@ -1415,12 +1841,7 @@ class PromptIntelligenceService:
         Planning contract rules: {planning_contract_rules}
         Client quality rules: {client_quality_rules or "No client-specific quality overrides are active."}
         Mistake-style carousel rules: {mistake_carousel_rules or "No mistake-specific carousel override is active."}
-        Research editorial brief: {research_editorial_brief}
-        Format family plan: {format_family_plan}
-        Content plan: {content_plan}
-        Visual plan: {visual_plan}
         Format family rules: {format_family_rules}
-        Visual knowledge brief: {visual_knowledge_brief}
         Visual grounding rules: {visual_grounding_rules}
         """.strip()
         user = f"""
@@ -1596,21 +2017,28 @@ class PromptIntelligenceService:
         Client quality rules: {client_quality_rules or "No client-specific quality overrides are active."}
         Mistake-style carousel rules: {mistake_carousel_rules or "No mistake-specific carousel override is active."}
         """.strip()
+        repair_context_payload = self._compact_repair_context_payload(compiled_context)
+        compact_creative_decision = self._compact_repair_creative_decision(creative_decision)
+        compact_scene_graph = self._compact_repair_scene_graph(current_scene_graph, validation_report)
+        compact_validation_report = self._repair_issue_summary(validation_report)
         user = f"""
         User prompt:
         {user_prompt}
 
-        Current creative decision:
-        {json.dumps(creative_decision, ensure_ascii=True)}
+        Repair mode:
+        Surgical scene-graph repair. Preserve all omitted unchanged elements; the backend will merge repaired elements into the existing graph. Return only elements, styles, assets, and creative_decision fields that must change to satisfy the validation report or prevent quality regression.
 
-        Current scene graph:
-        {json.dumps(current_scene_graph, ensure_ascii=True)}
+        Compact creative decision:
+        {json.dumps(compact_creative_decision, ensure_ascii=True)}
+
+        Compact scene graph:
+        {json.dumps(compact_scene_graph, ensure_ascii=True)}
 
         Studio panel:
         {json.dumps(studio_panel, ensure_ascii=True)}
 
-        Compiled context:
-        {json.dumps(compiled_context, ensure_ascii=True)}
+        Compact repair context:
+        {json.dumps(repair_context_payload, ensure_ascii=True)}
 
         Format family plan:
         {json.dumps(format_family_plan, ensure_ascii=True)}
@@ -1622,7 +2050,7 @@ class PromptIntelligenceService:
         {json.dumps(visual_plan, ensure_ascii=True)}
 
         Validation report:
-        {json.dumps(validation_report, ensure_ascii=True)}
+        {json.dumps(compact_validation_report, ensure_ascii=True)}
         """
 
         # Add quality history if available

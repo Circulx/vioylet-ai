@@ -1026,6 +1026,89 @@ def test_scene_graph_repair_envelope_blocks_unrelated_assets_for_style_reference
     assert "If the selected sample page does not visibly use a dashboard" in combined
 
 
+def test_scene_graph_repair_envelope_uses_compact_targeted_payload() -> None:
+    service = PromptIntelligenceService()
+
+    bulky_asset_catalog = [
+        {
+            "asset_id": f"asset-{index}",
+            "role": "unused_reference",
+            "storage_path": f"storage/path/{index}.png",
+            "ocr_text": "SHOULD_NOT_BE_INCLUDED " * 80,
+        }
+        for index in range(20)
+    ]
+    envelope = service.compose_scene_graph_repair_envelope(
+        user_prompt="Create a premium static post about risk-adjusted investing.",
+        compiled_context={
+            "brand_copy_brief": {
+                "brand_name": "Jiraaf",
+                "primary_emotion": "Trust",
+                "blocked_words": ["risk-free", "guaranteed returns"],
+            },
+            "brand_visual_brief": {
+                "hierarchy_summary": "Large headline, compact proof row, calm reserved corner.",
+                "content_structure_summary": "single-panel education surface",
+                "visual_craft_summary": "premium dimensional finance illustration",
+            },
+            "content_format_brief": {"format": "static", "quality_priorities": ["single dominant message"]},
+            "format_family_plan": {"family": "static", "body_shape": "single_panel"},
+            "content_plan": {"format_family": "static", "sequence_contract": "single_surface_hierarchy"},
+            "visual_plan": {"format_family": "static", "execution_mode": "single_surface"},
+            "research_summary": "Lead with trust and proof, not fear.",
+            "asset_catalog": bulky_asset_catalog,
+            "reference_asset_brief": bulky_asset_catalog,
+        },
+        studio_panel={"platform_preset": "instagram", "format": "static", "file_type": "png"},
+        current_scene_graph={
+            "canvas": {"width": 1080, "height": 1080},
+            "elements": [
+                {
+                    "element_id": "headline",
+                    "element_type": "text",
+                    "role": "headline",
+                    "text": "Risk has a smarter side",
+                    "geometry": {"x": None, "y": None, "width": None, "height": None},
+                },
+                {
+                    "element_id": "decorative_37",
+                    "element_type": "decorative_shape",
+                    "role": "decorative_shape",
+                    "style": {"notes": "large unused flourish"},
+                },
+            ],
+        },
+        creative_decision={
+            "layout_mode": "synthesized_layout",
+            "reasoning": ["Preserve a premium proof-led single panel."],
+            "asset_strategy": {"dominant_visual_system": "generated_image"},
+            "template_candidates": bulky_asset_catalog,
+        },
+        validation_report={
+            "status": "needs_repair",
+            "repairable": True,
+            "issues": [
+                {
+                    "severity": "error",
+                    "rule_id": "missing_geometry",
+                    "element_id": "headline",
+                    "message": "Element 'headline' is missing normalized geometry.",
+                    "expected_correction": "Provide x, y, width, and height.",
+                }
+            ],
+        },
+    )
+
+    assert "Surgical scene-graph repair" in envelope.user
+    assert "Risk has a smarter side" in envelope.user
+    assert "single_surface_hierarchy" in envelope.user
+    assert "Large headline, compact proof row" in envelope.user
+    assert "asset_catalog" not in envelope.user
+    assert "template_candidates" not in envelope.user
+    assert "SHOULD_NOT_BE_INCLUDED" not in envelope.user
+    assert len(envelope.user) < 9000
+
+
 def test_generation_envelope_includes_native_infographic_and_static_contracts() -> None:
     service = PromptIntelligenceService()
 

@@ -3236,9 +3236,15 @@ def test_build_ai_footer_fallback_asset_stamps_exact_legal_footer() -> None:
 
     assert payload is not None
     assert payload["metadata"]["legal_footer_composited_by_service"] is True
+    assert payload["metadata"]["legal_footer_overlay_strategy"] == "transparent_exact_footer_text"
     assert payload["metadata"]["legal_footer_text_length"] == len(footer_text)
     assert "image" in captured
-    assert captured["image"].getpixel((40, 1510))[:3] != base.getpixel((40, 1510))[:3]
+    assert captured["image"].getpixel((1000, 1510)) == base.getpixel((1000, 1510))
+    assert any(
+        captured["image"].getpixel((x, y)) != base.getpixel((x, y))
+        for x in range(30, 960, 20)
+        for y in range(1460, 1528, 8)
+    )
 
 
 def test_strip_logo_background_if_safe_removes_dark_matte_edges() -> None:
@@ -3608,7 +3614,7 @@ def test_logo_collision_guard_avoids_near_top_title_bar_contact() -> None:
     assert ContentService._rect_overlap_area(result["safe_box"], title_bar) == 0
 
 
-def test_logo_collision_guard_can_override_allowed_position_for_hard_collision() -> None:
+def test_logo_collision_guard_respects_explicit_allowed_position_for_hard_collision() -> None:
     base = Image.new("RGBA", (1024, 1024), (255, 255, 255, 255))
     draw = ImageDraw.Draw(base)
     draw.rectangle((760, 0, 1024, 160), fill=(0, 57, 117, 255))
@@ -3651,9 +3657,166 @@ def test_logo_collision_guard_can_override_allowed_position_for_hard_collision()
         preferred_hint="top-right",
     )
 
-    assert result["policy_override"] is True
-    assert result["anchor"] != "top-right"
-    assert result["image_score"] < 0.1
+    assert result["policy_override"] is False
+    assert result["anchor"] == "top-right"
+
+
+def test_logo_collision_guard_respects_explicit_bottom_right_policy() -> None:
+    base = Image.new("RGBA", (1024, 1536), (255, 255, 255, 255))
+    draw = ImageDraw.Draw(base)
+    draw.rectangle((760, 1390, 1024, 1536), fill=(0, 57, 117, 255))
+    logo = Image.new("RGBA", (1001, 292), (0, 0, 0, 0))
+    ImageDraw.Draw(logo).rectangle((0, 0, 1000, 291), fill=(0, 57, 117, 255))
+    content = ContentVersion(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        session_id=uuid4(),
+        created_by=uuid4(),
+        prompt="Create an infographic post",
+        studio_panel={"format": "infographic", "platform_preset": "linkedin", "file_type": "png"},
+        generated_payload={"metadata": {"logo_position": "top-right"}},
+        blueprint_payload={},
+        explainability_metadata={
+            "brand_context_snapshot": {
+                "visual_identity": {
+                    "logo_placement": {
+                        "allowed_positions": ["bottom-right"],
+                        "default_position": "bottom-right",
+                    }
+                }
+            }
+        },
+    )
+    initial_box = ContentService._default_ai_logo_box(
+        canvas_width=1024,
+        canvas_height=1536,
+        format_name="infographic",
+        anchor=("bottom", "right"),
+    )
+
+    result = ContentService._resolve_logo_collision_guard(
+        base_image=base,
+        logo_image=logo,
+        logo_box=initial_box,
+        content=content,
+        explainability=content.explainability_metadata,
+        format_name="infographic",
+        preferred_hint="bottom-right",
+    )
+
+    assert result["policy_override"] is False
+    assert result["anchor"] == "bottom-right"
+
+
+def test_logo_collision_guard_places_bottom_logo_above_legal_footer_strip() -> None:
+    base = Image.new("RGBA", (1024, 1536), (255, 255, 255, 255))
+    draw = ImageDraw.Draw(base)
+    footer_top = 1406
+    draw.rectangle((0, footer_top, 1024, 1536), fill=(245, 248, 252, 255))
+    logo = Image.new("RGBA", (1001, 292), (0, 0, 0, 0))
+    ImageDraw.Draw(logo).rectangle((0, 0, 1000, 291), fill=(0, 57, 117, 255))
+    footer_text = "Investments are subject to credit risks and market risks. Read all offer documents carefully."
+    content = ContentVersion(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        session_id=uuid4(),
+        created_by=uuid4(),
+        prompt="Create an infographic post",
+        studio_panel={"format": "infographic", "platform_preset": "linkedin", "file_type": "png"},
+        generated_payload={"metadata": {"logo_position": "bottom-right", "footer": footer_text}},
+        blueprint_payload={},
+        explainability_metadata={
+            "brand_context_snapshot": {
+                "visual_identity": {
+                    "logo_placement": {
+                        "allowed_positions": ["bottom-right"],
+                        "default_position": "bottom-right",
+                    }
+                }
+            }
+        },
+    )
+    initial_box = ContentService._default_ai_logo_box(
+        canvas_width=1024,
+        canvas_height=1536,
+        format_name="infographic",
+        anchor=("bottom", "right"),
+    )
+
+    result = ContentService._resolve_logo_collision_guard(
+        base_image=base,
+        logo_image=logo,
+        logo_box=initial_box,
+        content=content,
+        explainability=content.explainability_metadata,
+        format_name="infographic",
+        preferred_hint="bottom-right",
+    )
+
+    footprint = result["footprint"]
+    safe_box = result["safe_box"]
+    assert result["policy_override"] is False
+    assert result["anchor"] == "bottom-right"
+    assert footprint[1] + footprint[3] <= footer_top - 12
+    assert safe_box[1] + safe_box[3] <= footer_top
+
+
+def test_logo_collision_guard_ignores_early_legal_geometry_for_footer_floor() -> None:
+    base = Image.new("RGBA", (1024, 1536), (255, 255, 255, 255))
+    logo = Image.new("RGBA", (1001, 292), (0, 0, 0, 0))
+    ImageDraw.Draw(logo).rectangle((0, 0, 1000, 291), fill=(0, 57, 117, 255))
+    footer_text = "Investments are subject to credit risks and market risks. Read all offer documents carefully."
+    content = ContentVersion(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        session_id=uuid4(),
+        created_by=uuid4(),
+        prompt="Create an infographic post",
+        studio_panel={"format": "infographic", "platform_preset": "linkedin", "file_type": "png"},
+        generated_payload={"metadata": {"logo_position": "bottom-left", "footer": footer_text}},
+        blueprint_payload={},
+        explainability_metadata={
+            "scene_graph": {
+                "elements": [
+                    {
+                        "role": "legal",
+                        "element_id": "legal_footer",
+                        "text": footer_text,
+                        "geometry": {"x": 0.02, "y": 0.8352, "width": 0.96, "height": 0.05, "units": "normalized"},
+                    }
+                ]
+            },
+            "brand_context_snapshot": {
+                "visual_identity": {
+                    "logo_placement": {
+                        "allowed_positions": ["bottom-left"],
+                        "default_position": "bottom-left",
+                    }
+                }
+            },
+        },
+    )
+    initial_box = ContentService._default_ai_logo_box(
+        canvas_width=1024,
+        canvas_height=1536,
+        format_name="infographic",
+        anchor=("bottom", "left"),
+    )
+
+    result = ContentService._resolve_logo_collision_guard(
+        base_image=base,
+        logo_image=logo,
+        logo_box=initial_box,
+        content=content,
+        explainability=content.explainability_metadata,
+        format_name="infographic",
+        preferred_hint="bottom-left",
+    )
+
+    footprint = result["footprint"]
+    assert result["anchor"] == "bottom-left"
+    assert footprint[1] > 1300
+    assert footprint[1] + footprint[3] <= 1406 - 12
 
 
 def test_logo_collision_guard_reserves_legal_footer_band() -> None:

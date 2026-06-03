@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.enums import AssetRole, BrandSpaceLifecycle, ExportFileType
 from app.core.studio import resolve_studio_panel_defaults
 from app.core.exceptions import GenerationFailureError, GuardrailViolationError, LifecycleError, NotFoundError
-from app.integrations.object_storage import LocalObjectStorage
+from app.integrations.object_storage import get_object_storage
 from app.services.asset_delivery import AssetDeliveryService
 from app.services.conversation_memory import ConversationMemoryService
 from app.models.content import ChatMessage, ContentSession, GeneratedAsset
@@ -173,8 +173,11 @@ class ChatService:
         return session
 
     async def list_messages(self, session_id: UUID) -> list[ChatMessage]:
-        await self.get_session(session_id)
+        session = await self.get_session(session_id)
         items = await self.messages.list_recent_by_session(session_id, limit=CHAT_HISTORY_MESSAGE_LIMIT)
+        if await self.backfill_content_history_messages(session, items):
+            await self.session.commit()
+            items = await self.messages.list_recent_by_session(session_id, limit=CHAT_HISTORY_MESSAGE_LIMIT)
         for item in items:
             item.structured_payload = self.decorate_structured_payload_assets(item.structured_payload or {})
         return items
@@ -590,7 +593,10 @@ class ChatService:
                         ),
                     )
                 render_payload = None
-                if studio_panel.file_type != ExportFileType.DOC:
+                should_export_visual = studio_panel.file_type != ExportFileType.DOC or (
+                    str(studio_panel.format or "").strip().casefold() in self.VISUAL_WORKSPACE_FORMATS
+                )
+                if should_export_visual:
                     logger.info(
                         "chat.send_message.visual_export session_id=%s content_version_id=%s studio_format=%s file_type=%s",
                         session.id,
@@ -934,7 +940,7 @@ class ChatService:
         storage_path = str(asset.get("storage_path", "")).strip()
         if not storage_path:
             return asset
-        storage = LocalObjectStorage()
+        storage = get_object_storage()
         if not storage.exists(storage_path):
             return {
                 **asset,

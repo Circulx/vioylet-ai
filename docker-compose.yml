@@ -9,10 +9,17 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://violyt:violyt@postgres:5432/violyt
       ALEMBIC_DATABASE_URL: postgresql+psycopg://violyt:violyt@postgres:5432/violyt
+      OBJECT_STORAGE_PROVIDER: ${OBJECT_STORAGE_PROVIDER:-local}
       OBJECT_STORAGE_BASE_PATH: /app/storage
+      OBJECT_STORAGE_CACHE_PATH: /tmp/violyt-object-storage-cache
+      AWS_REGION: ${AWS_REGION:-}
+      AWS_S3_BUCKET: ${AWS_S3_BUCKET:-}
+      AWS_S3_PREFIX: ${AWS_S3_PREFIX:-}
+      VECTOR_STORE_PROVIDER: ${VECTOR_STORE_PROVIDER:-faiss}
       VECTOR_STORE_BASE_PATH: /app/vector_store
       GENERATION_TRACE_BASE_PATH: /app/storage/generation_traces
       GENERATED_ASSETS_BASE_URL: http://localhost:8000/storage
+      EXPOSE_PUBLIC_STORAGE: "true"
     ports:
       - "8000:8000"
     depends_on:
@@ -36,10 +43,17 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://violyt:violyt@postgres:5432/violyt
       ALEMBIC_DATABASE_URL: postgresql+psycopg://violyt:violyt@postgres:5432/violyt
+      OBJECT_STORAGE_PROVIDER: ${OBJECT_STORAGE_PROVIDER:-local}
       OBJECT_STORAGE_BASE_PATH: /app/storage
+      OBJECT_STORAGE_CACHE_PATH: /tmp/violyt-object-storage-cache
+      AWS_REGION: ${AWS_REGION:-}
+      AWS_S3_BUCKET: ${AWS_S3_BUCKET:-}
+      AWS_S3_PREFIX: ${AWS_S3_PREFIX:-}
+      VECTOR_STORE_PROVIDER: ${VECTOR_STORE_PROVIDER:-faiss}
       VECTOR_STORE_BASE_PATH: /app/vector_store
       GENERATION_TRACE_BASE_PATH: /app/storage/generation_traces
       GENERATED_ASSETS_BASE_URL: http://localhost:8000/storage
+      EXPOSE_PUBLIC_STORAGE: "true"
     depends_on:
       postgres:
         condition: service_healthy
@@ -74,7 +88,7 @@ services:
       - api
 
   postgres:
-    image: postgres:16
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_DB: violyt
       POSTGRES_USER: violyt

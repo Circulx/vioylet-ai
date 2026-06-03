@@ -203,9 +203,6 @@ function resolveGeneratedImageAssets(payload: ChatAssistantStructuredPayload | R
   if (!shouldDisplayGeneratedImages(typedPayload)) {
     return [];
   }
-  if (typedPayload.selected_asset?.asset_url && typedPayload.selected_asset.mime_type.startsWith("image/")) {
-    return [typedPayload.selected_asset];
-  }
   const exportImages = (typedPayload.export_assets || []).filter(
     (asset) => asset.mime_type.startsWith("image/") && Boolean(asset.asset_url),
   );
@@ -215,13 +212,20 @@ function resolveGeneratedImageAssets(payload: ChatAssistantStructuredPayload | R
   if (typedPayload.preview_asset?.asset_url && typedPayload.preview_asset.mime_type.startsWith("image/")) {
     return [typedPayload.preview_asset];
   }
-  return dedupeImageAssets(
+  const assetImages = dedupeImageAssets(
     (typedPayload.assets || []).filter((asset) =>
       asset.mime_type.startsWith("image/") &&
       Boolean(asset.asset_url) &&
       ["render_export", "render_preview", "ai_image"].includes(asset.asset_role),
     ),
   );
+  if (assetImages.length) {
+    return assetImages;
+  }
+  if (typedPayload.selected_asset?.asset_url && typedPayload.selected_asset.mime_type.startsWith("image/")) {
+    return [typedPayload.selected_asset];
+  }
+  return [];
 }
 
 function resolveGenerationDecision(payload: ChatAssistantStructuredPayload | Record<string, unknown> | undefined) {

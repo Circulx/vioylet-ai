@@ -12,6 +12,7 @@ def _router_with_llm(monkeypatch, **payload) -> IntentRouterService:
         "workflow_type": None,
         "revision_scope": None,
         "display_retrieved_asset": False,
+        "direct_reply": None,
     }
     response.update(payload)
     monkeypatch.setattr(router, "_classify_with_llm", lambda **kwargs: response)
@@ -19,9 +20,27 @@ def _router_with_llm(monkeypatch, **payload) -> IntentRouterService:
 
 
 def test_intent_router_routes_greeting_to_small_talk(monkeypatch) -> None:
-    router = _router_with_llm(monkeypatch, mode="small_talk", reason="greeting")
+    router = _router_with_llm(
+        monkeypatch,
+        mode="small_talk",
+        reason="greeting",
+        direct_reply="Hello! How can I help today?",
+    )
     decision = router.route("Hi")
     assert decision.mode == "small_talk"
+    assert decision.direct_reply == "Hello! How can I help today?"
+
+
+def test_intent_router_ignores_direct_reply_for_non_small_talk(monkeypatch) -> None:
+    router = _router_with_llm(
+        monkeypatch,
+        mode="strategy_chat",
+        reason="brand_question",
+        direct_reply="This should not be used.",
+    )
+    decision = router.route("Who is the target audience?")
+    assert decision.mode == "strategy_chat"
+    assert decision.direct_reply is None
 
 
 def test_intent_router_routes_text_deliverable_to_content_only(monkeypatch) -> None:
@@ -321,6 +340,34 @@ def test_intent_router_keeps_retrieval_without_display_for_image_discussion(monk
     assert decision.mode == "retrieval"
     assert decision.uses_previous_output is True
     assert decision.display_retrieved_asset is False
+
+
+def test_intent_router_overrides_previous_image_explanation_misclassified_as_evaluation(monkeypatch) -> None:
+    router = _router_with_llm(
+        monkeypatch,
+        mode="evaluation",
+        uses_previous_output=True,
+        reason="misread_as_analysis",
+    )
+    decision = router.route("Can you explain the last generated image?")
+
+    assert decision.mode == "retrieval"
+    assert decision.uses_previous_output is True
+    assert decision.display_retrieved_asset is False
+    assert "previous_image_reference_guard" in decision.reason
+
+
+def test_intent_router_keeps_explicit_previous_image_review_as_evaluation(monkeypatch) -> None:
+    router = _router_with_llm(
+        monkeypatch,
+        mode="evaluation",
+        uses_previous_output=True,
+        reason="explicit_review",
+    )
+    decision = router.route("Review whether the last generated image is aligned with brand tone.")
+
+    assert decision.mode == "evaluation"
+    assert decision.uses_previous_output is True
 
 
 def test_intent_router_allows_llm_to_select_evaluation(monkeypatch) -> None:

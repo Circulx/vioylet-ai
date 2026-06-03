@@ -995,7 +995,12 @@ class ChatService:
             return None
         payload = content_version.generated_payload or {}
         studio_panel = content_version.studio_panel or {}
-        format_name = cls._compact_context_text(studio_panel.get("format"), limit=40)
+        format_name = cls._resolved_visual_memory_format(
+            panel_format=studio_panel.get("format"),
+            prompt=getattr(content_version, "prompt", None),
+            generated_payload=payload,
+            asset_refs=asset_refs,
+        )
         return {
             "content_version_id": str(content_version.id),
             "format": format_name,
@@ -1013,6 +1018,49 @@ class ChatService:
                 else None
             ),
         }
+
+    @classmethod
+    def _resolved_visual_memory_format(
+        cls,
+        *,
+        panel_format: Any,
+        prompt: Any,
+        generated_payload: dict[str, Any],
+        asset_refs: list[dict[str, Any]],
+    ) -> str:
+        panel_format_name = cls._compact_context_text(panel_format, limit=40).casefold()
+        if len(asset_refs) > 1:
+            return "carousel"
+        for asset_ref in asset_refs:
+            try:
+                slide_count = int(asset_ref.get("slide_count") or 0)
+            except (TypeError, ValueError):
+                slide_count = 0
+            if slide_count > 1:
+                return "carousel"
+
+        metadata = generated_payload.get("metadata") if isinstance(generated_payload.get("metadata"), dict) else {}
+        carousel_specs = metadata.get("carousel_slide_specs") if isinstance(metadata.get("carousel_slide_specs"), list) else []
+        if carousel_specs:
+            return "carousel"
+
+        combined_text = " ".join(
+            cls._compact_context_text(value, limit=500)
+            for value in (
+                prompt,
+                generated_payload.get("headline"),
+                generated_payload.get("body"),
+                generated_payload.get("cta"),
+            )
+            if value
+        ).casefold()
+        if "carousel" in combined_text or "slides" in combined_text or "slide " in combined_text:
+            return "carousel"
+        if "infographic" in combined_text:
+            return "infographic"
+        if "static" in combined_text:
+            return "static"
+        return panel_format_name
 
     @staticmethod
     def _updated_visuals_by_format(

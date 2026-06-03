@@ -796,7 +796,88 @@ class ConversationMemoryService:
             limit=1200,
         )
 
-    def _session_visual_candidates(self, session_context: dict[str, Any] | None) -> list[dict[str, Any]]:
+    @staticmethod
+    def _requested_visual_format(query: str | None) -> str | None:
+        lowered = str(query or "").casefold()
+        if "infographic" in lowered:
+            return "infographic"
+        if "carousel" in lowered:
+            return "carousel"
+        if "static" in lowered:
+            return "static"
+        return None
+
+    @staticmethod
+    def _missing_visual_format_response(format_name: str) -> dict[str, Any]:
+        label = {
+            "static": "static image",
+            "infographic": "infographic",
+            "carousel": "carousel",
+        }.get(format_name, "image")
+        return {
+            "status": "not_found",
+            "message": f"No {label} has been generated yet.",
+            "assets": [],
+            "matched_entries": [],
+            "selected_asset": None,
+            "selection_required": False,
+            "selection_prompt": None,
+            "selection_options": [],
+        }
+
+    @classmethod
+    def _visual_state_matches_requested_format(
+        cls,
+        *,
+        visual_state: dict[str, Any],
+        requested_format: str | None,
+    ) -> bool:
+        if not requested_format:
+            return True
+        format_name = cls._clean_text(visual_state.get("format"), limit=40).casefold()
+        raw_assets = visual_state.get("assets") if isinstance(visual_state.get("assets"), list) else []
+        asset_count = len(raw_assets)
+        try:
+            stored_asset_count = int(visual_state.get("asset_count") or 0)
+        except (TypeError, ValueError):
+            stored_asset_count = 0
+        max_slide_count = 0
+        for asset in raw_assets:
+            if not isinstance(asset, dict):
+                continue
+            try:
+                max_slide_count = max(max_slide_count, int(asset.get("slide_count") or 0))
+            except (TypeError, ValueError):
+                continue
+        looks_like_carousel = asset_count > 1 or stored_asset_count > 1 or max_slide_count > 1
+        combined_text = " ".join(
+            cls._clean_text(value, limit=500).casefold()
+            for value in (
+                visual_state.get("prompt"),
+                visual_state.get("headline"),
+                visual_state.get("body"),
+                visual_state.get("cta"),
+            )
+            if value
+        )
+        if "carousel" in combined_text or "slides" in combined_text or "slide " in combined_text:
+            looks_like_carousel = True
+        if looks_like_carousel:
+            actual_format = "carousel"
+        elif "infographic" in combined_text:
+            actual_format = "infographic"
+        elif "static" in combined_text:
+            actual_format = "static"
+        else:
+            actual_format = format_name
+        return actual_format == requested_format
+
+    def _session_visual_candidates(
+        self,
+        session_context: dict[str, Any] | None,
+        *,
+        requested_format: str | None = None,
+    ) -> list[dict[str, Any]]:
         if not isinstance(session_context, dict):
             return []
         raw_candidates: list[tuple[str, dict[str, Any]]] = []
@@ -805,38 +886,56 @@ class ConversationMemoryService:
             if isinstance(session_context.get("generated_asset_memory"), dict)
             else {}
         )
-        latest_visual = generated_asset_memory.get("latest")
-        if isinstance(latest_visual, dict):
-            raw_candidates.append(("generated_asset_memory.latest", latest_visual))
-        for format_name in ("static", "infographic", "carousel"):
+        format_names = (requested_format,) if requested_format else ("static", "infographic", "carousel")
+        if not requested_format:
+            latest_visual = generated_asset_memory.get("latest")
+            if isinstance(latest_visual, dict):
+                raw_candidates.append(("generated_asset_memory.latest", latest_visual))
+        for format_name in format_names:
+            if not format_name:
+                continue
             visual_state = generated_asset_memory.get(format_name)
             if isinstance(visual_state, dict):
                 raw_candidates.append((f"generated_asset_memory.{format_name}", visual_state))
 
-        for key, source_key in (
+        legacy_keys = {
+            "static": (("last_generated_static_image", "last_generated_static_image"),),
+            "infographic": (("last_generated_infographic", "last_generated_infographic"),),
+            "carousel": (("last_generated_carousel", "last_generated_carousel"),),
+        }
+        all_legacy_keys = (
             ("last_generated_static_image", "last_generated_static_image"),
             ("last_generated_infographic", "last_generated_infographic"),
             ("last_generated_carousel", "last_generated_carousel"),
-        ):
+        )
+        for key, source_key in legacy_keys.get(requested_format or "", all_legacy_keys):
             visual_state = session_context.get(key)
             if isinstance(visual_state, dict):
                 raw_candidates.append((source_key, visual_state))
 
-        last_visual = session_context.get("last_generated_visual")
-        if isinstance(last_visual, dict):
-            raw_candidates.append(("last_generated_visual", last_visual))
+        if not requested_format:
+            last_visual = session_context.get("last_generated_visual")
+            if isinstance(last_visual, dict):
+                raw_candidates.append(("last_generated_visual", last_visual))
         visuals_by_format = (
             session_context.get("last_generated_visuals_by_format")
             if isinstance(session_context.get("last_generated_visuals_by_format"), dict)
             else {}
         )
-        for format_name, visual_state in visuals_by_format.items():
+        visual_format_names = format_names if requested_format else visuals_by_format.keys()
+        for format_name in visual_format_names:
+            visual_state = visuals_by_format.get(format_name)
             if isinstance(visual_state, dict):
                 raw_candidates.append((f"last_generated_visuals_by_format.{format_name}", visual_state))
 
         candidates: list[dict[str, Any]] = []
         seen_keys: set[str] = set()
         for source_key, visual_state in raw_candidates:
+            if not self._visual_state_matches_requested_format(
+                visual_state=visual_state,
+                requested_format=requested_format,
+            ):
+                continue
             raw_assets = visual_state.get("assets") if isinstance(visual_state.get("assets"), list) else []
             assets = [
                 serialized
@@ -883,11 +982,49 @@ class ConversationMemoryService:
         session_context: dict[str, Any] | None,
         limit: int,
     ) -> dict[str, Any] | None:
-        candidates = self._session_visual_candidates(session_context)
+        requested_format = self._requested_visual_format(query)
+        candidates = self._session_visual_candidates(
+            session_context,
+            requested_format=requested_format,
+        )
+        if requested_format and not candidates:
+            return self._missing_visual_format_response(requested_format)
         if not candidates:
             return None
         for candidate in candidates:
             candidate["overlap_score"] = round(self._overlap_score(query, candidate.get("memory_text", "")), 4)
+        if requested_format and len(candidates) == 1:
+            selected = candidates[0]
+            assets = selected.get("assets") if isinstance(selected.get("assets"), list) else []
+            if not assets:
+                return self._missing_visual_format_response(requested_format)
+            message = self._llm_describe_selected_asset(
+                query=query,
+                candidate={key: value for key, value in selected.items() if key != "assets"},
+                fallback=f"Here is the last generated {requested_format if requested_format != 'static' else 'static image'}.",
+            )
+            return {
+                "status": "found",
+                "message": message,
+                "assets": assets,
+                "matched_entries": [
+                    {
+                        "memory_entry_id": None,
+                        "storage_path": asset.get("storage_path"),
+                        "score": selected.get("fallback_score"),
+                        "overlap_score": selected.get("overlap_score"),
+                        "source": selected.get("source"),
+                    }
+                    for asset in assets[:limit]
+                ],
+                "selected_asset": assets[0],
+                "selection_required": False,
+                "selection_prompt": None,
+                "selection_options": [
+                    self._selection_option_for_asset(asset, rank=index + 1)
+                    for index, asset in enumerate(assets[:limit], start=0)
+                ],
+            }
         selection_result = self._llm_select_candidate_indexes(
             query=query,
             candidates=[
@@ -898,6 +1035,8 @@ class ConversationMemoryService:
         )
         selected_indexes = selection_result.get("selected_indexes") if selection_result else []
         if not selected_indexes:
+            if requested_format:
+                return self._missing_visual_format_response(requested_format)
             return None
         selected_index = selected_indexes[0]
         if selected_index >= len(candidates):

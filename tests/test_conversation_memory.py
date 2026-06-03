@@ -630,22 +630,7 @@ async def test_retrieve_image_assets_uses_generated_asset_memory_format_slots() 
         build_signed_url=lambda storage_path, filename: f"https://example.test/{filename}"
     )
     service.storage = SimpleNamespace(exists=lambda storage_path: True)
-    captured_candidates: list[dict] = []
-
-    def fake_select(**kwargs):
-        captured_candidates.extend(kwargs["candidates"])
-        selected_index = next(
-            item["index"]
-            for item in kwargs["candidates"]
-            if item.get("format") == "static"
-        )
-        return {
-            "selected_indexes": [selected_index],
-            "reason": "The user specifically asked for the last generated static image.",
-            "selection_state": "match_found",
-        }
-
-    service._llm_select_candidate_indexes = fake_select
+    service._llm_select_candidate_indexes = lambda **kwargs: pytest.fail("exact format retrieval should not need selector")
     service._llm_describe_selected_asset = lambda **kwargs: "Here is the last generated static image."
 
     result = await service.retrieve_image_assets(
@@ -692,6 +677,129 @@ async def test_retrieve_image_assets_uses_generated_asset_memory_format_slots() 
     assert result["status"] == "found"
     assert result["message"] == "Here is the last generated static image."
     assert result["selected_asset"]["storage_path"].endswith("static-final.png")
-    assert any(item.get("format") == "static" for item in captured_candidates)
-    assert any(item.get("format") == "carousel" for item in captured_candidates)
+    assert all(asset["storage_path"].endswith("static-final.png") for asset in result["assets"])
+    service.entries.list_image_entries.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_retrieve_image_assets_returns_missing_message_for_unstored_requested_format() -> None:
+    service = ConversationMemoryService.__new__(ConversationMemoryService)
+    service.entries = SimpleNamespace(list_image_entries=AsyncMock(return_value=[]))
+    service.vectors = SimpleNamespace(search=lambda namespace, query, k: [])
+    service.delivery = SimpleNamespace(
+        build_signed_url=lambda storage_path, filename: f"https://example.test/{filename}"
+    )
+    service.storage = SimpleNamespace(exists=lambda storage_path: True)
+    service._llm_select_candidate_indexes = lambda **kwargs: pytest.fail("missing exact format should not use selector")
+    service._llm_describe_selected_asset = lambda **kwargs: pytest.fail("missing exact format should not describe unrelated asset")
+
+    result = await service.retrieve_image_assets(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        session_id=uuid4(),
+        query="can you show me the last generated infographic?",
+        session_context={
+            "generated_asset_memory": {
+                "latest_type": "carousel",
+                "latest": {
+                    "content_version_id": str(uuid4()),
+                    "format": "carousel",
+                    "prompt": "Generate a carousel.",
+                    "headline": "Carousel",
+                    "asset_count": 1,
+                    "assets": [
+                        {
+                            "storage_path": "tenant/brand/generated/carousel-slide-1.png",
+                            "asset_role": "render_export",
+                            "mime_type": "image/png",
+                            "slide_index": 1,
+                        }
+                    ],
+                },
+                "carousel": {
+                    "content_version_id": str(uuid4()),
+                    "format": "carousel",
+                    "prompt": "Generate a carousel.",
+                    "headline": "Carousel",
+                    "asset_count": 1,
+                    "assets": [
+                        {
+                            "storage_path": "tenant/brand/generated/carousel-slide-1.png",
+                            "asset_role": "render_export",
+                            "mime_type": "image/png",
+                            "slide_index": 1,
+                        }
+                    ],
+                },
+            }
+        },
+    )
+
+    assert result["status"] == "not_found"
+    assert result["message"] == "No infographic has been generated yet."
+    assert result["assets"] == []
+    service.entries.list_image_entries.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_retrieve_image_assets_rejects_polluted_infographic_slot_that_is_really_carousel() -> None:
+    service = ConversationMemoryService.__new__(ConversationMemoryService)
+    service.entries = SimpleNamespace(list_image_entries=AsyncMock(return_value=[]))
+    service.vectors = SimpleNamespace(search=lambda namespace, query, k: [])
+    service.delivery = SimpleNamespace(
+        build_signed_url=lambda storage_path, filename: f"https://example.test/{filename}"
+    )
+    service.storage = SimpleNamespace(exists=lambda storage_path: True)
+    service._llm_select_candidate_indexes = lambda **kwargs: pytest.fail("polluted exact format should not use selector")
+    service._llm_describe_selected_asset = lambda **kwargs: pytest.fail("polluted exact format should not be described")
+
+    result = await service.retrieve_image_assets(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        session_id=uuid4(),
+        query="can you show me the last generated infographic?",
+        session_context={
+            "generated_asset_memory": {
+                "latest_type": "carousel",
+                "latest": {
+                    "content_version_id": str(uuid4()),
+                    "format": "carousel",
+                    "prompt": "Generate a LinkedIn carousel about the India-New Zealand FTA.",
+                    "headline": "Carousel",
+                    "asset_count": 4,
+                    "assets": [
+                        {
+                            "storage_path": f"tenant/brand/generated/carousel-slide-{index}.png",
+                            "asset_role": "render_export",
+                            "mime_type": "image/png",
+                            "slide_index": index,
+                            "slide_count": 4,
+                        }
+                        for index in range(1, 5)
+                    ],
+                },
+                "infographic": {
+                    "content_version_id": str(uuid4()),
+                    "format": "infographic",
+                    "prompt": "Generate a LinkedIn carousel about the India-New Zealand FTA.",
+                    "headline": "Carousel",
+                    "asset_count": 4,
+                    "assets": [
+                        {
+                            "storage_path": f"tenant/brand/generated/carousel-slide-{index}.png",
+                            "asset_role": "render_export",
+                            "mime_type": "image/png",
+                            "slide_index": index,
+                            "slide_count": 4,
+                        }
+                        for index in range(1, 5)
+                    ],
+                },
+            }
+        },
+    )
+
+    assert result["status"] == "not_found"
+    assert result["message"] == "No infographic has been generated yet."
+    assert result["assets"] == []
     service.entries.list_image_entries.assert_not_awaited()

@@ -714,6 +714,43 @@ def test_chat_service_builds_compact_last_generated_visual_state() -> None:
     ]
 
 
+def test_chat_service_stores_multi_asset_visual_as_carousel_even_when_panel_format_is_stale() -> None:
+    content_version = ContentVersion(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        session_id=uuid4(),
+        created_by=uuid4(),
+        prompt="Generate a LinkedIn carousel about FD Bonds.",
+        studio_panel={"format": "infographic", "platform_preset": "linkedin", "file_type": "png"},
+        generated_payload={"headline": "FD Bonds explained", "body": "Body copy", "cta": "Read more"},
+        blueprint_payload={},
+        explainability_metadata={},
+        tone_feedback={},
+    )
+
+    state = ChatService._build_last_generated_visual_state(
+        content_version=content_version,
+        assets=[
+            {
+                "storage_path": "tenant/brand/generated/final-slide-1.png",
+                "asset_role": "render_preview",
+                "mime_type": "image/png",
+                "metadata": {"slide_index": 1, "slide_count": 2},
+            },
+            {
+                "storage_path": "tenant/brand/generated/final-slide-2.png",
+                "asset_role": "render_export",
+                "mime_type": "image/png",
+                "metadata": {"slide_index": 2, "slide_count": 2},
+            },
+        ],
+    )
+
+    assert state is not None
+    assert state["format"] == "carousel"
+
+
 def test_chat_service_updates_generated_asset_memory_by_format() -> None:
     static_state = {
         "content_version_id": str(uuid4()),

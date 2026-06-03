@@ -2048,6 +2048,646 @@ def test_orchestrator_build_image_prompt_pushes_premium_visual_quality() -> None
     assert "Do not default to a standalone professional portrait" in prompt
 
 
+def _dynamic_visual_art_direction_from_prompt(prompt: str) -> str:
+    marker = "Dynamic visual art direction: "
+    assert marker in prompt
+    return prompt.split(marker, 1)[1].split("Brand knowledge grounding", 1)[0]
+
+
+def _layout_quality_guard_from_prompt(prompt: str) -> str:
+    marker = "Layout quality guard: "
+    assert marker in prompt
+    return prompt.split(marker, 1)[1].split("Dynamic visual art direction", 1)[0]
+
+
+def test_build_image_prompt_adds_dynamic_direction_without_forcing_bad_output_terms() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a LinkedIn visual about growth through clearer onboarding.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"visual_identity": {"brand_color_palette": {"primary": "#123456"}}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        reference_assets=[],
+        layout_decision={"mode": "synthesized_layout"},
+    )
+    payload = StructuredTextPayload(
+        headline="Growth starts with clarity",
+        body="Show how a cleaner onboarding path helps teams move with confidence.",
+        cta="",
+        hashtags=[],
+        metadata={
+            "proof_points": ["Clear onboarding improves completion quality."],
+            "visual_direction": "Show customer trust improving through an onboarding progression.",
+        },
+    )
+
+    prompt = AIOrchestratorService.build_image_prompt(
+        request=request,
+        text_payload=payload,
+        creative_decision=CreativeDecisionPayload(asset_strategy={"use_generated_image": True}),
+        visual_explanation_plan={"mode": "process_steps", "need": "medium", "density": "medium", "rationale": "onboarding path"},
+    )
+    direction = _dynamic_visual_art_direction_from_prompt(prompt)
+
+    assert "growth through clearer onboarding" in direction.lower()
+    assert "process_steps" in direction
+    assert "yellow bars" not in prompt.casefold()
+    assert "blue arrow" not in prompt.casefold()
+    assert "hourglass" not in prompt.casefold()
+    assert "3d growth chart" not in prompt.casefold()
+
+
+def test_build_image_prompt_dynamic_direction_changes_by_prompt_intent() -> None:
+    base_context = {
+        "studio_panel": {"platform_preset": "linkedin", "format": "static", "file_type": "png"},
+        "conversation_context": {},
+        "session_memory": {},
+        "resolved_brand_context": {"visual_identity": {"brand_color_palette": {"primary": "#123456"}}},
+        "persona_context": {},
+        "objective_context": {},
+        "retrieved_knowledge": {},
+        "reference_assets": [],
+        "layout_decision": {"mode": "synthesized_layout"},
+    }
+    process_request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a process visual for onboarding three customer steps.",
+        **base_context,
+    )
+    comparison_request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a comparison visual showing two planning approaches.",
+        **base_context,
+    )
+    process_payload = StructuredTextPayload(
+        headline="Three steps to start",
+        body="Guide the viewer through setup, review, and action.",
+        cta="",
+        hashtags=[],
+        metadata={"visual_direction": "Step-by-step onboarding path."},
+    )
+    comparison_payload = StructuredTextPayload(
+        headline="Compare both approaches",
+        body="Show how the choices differ before a team commits.",
+        cta="",
+        hashtags=[],
+        metadata={"visual_direction": "Side-by-side comparison of two planning paths."},
+    )
+
+    process_prompt = AIOrchestratorService.build_image_prompt(
+        request=process_request,
+        text_payload=process_payload,
+        visual_explanation_plan={"mode": "process_steps", "need": "medium", "density": "medium", "rationale": "steps"},
+    )
+    comparison_prompt = AIOrchestratorService.build_image_prompt(
+        request=comparison_request,
+        text_payload=comparison_payload,
+        visual_explanation_plan={"mode": "comparison", "need": "medium", "density": "medium", "rationale": "two approaches"},
+    )
+
+    process_direction = _dynamic_visual_art_direction_from_prompt(process_prompt)
+    comparison_direction = _dynamic_visual_art_direction_from_prompt(comparison_prompt)
+
+    assert process_direction != comparison_direction
+    assert "process_steps" in process_direction
+    assert "comparison" in comparison_direction
+    assert "onboarding" in process_direction.casefold()
+    assert "two planning approaches" in comparison_direction.casefold()
+
+
+def test_build_image_prompt_dynamic_direction_uses_brand_assets_when_available() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a dynamic visual about fixed-income planning.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={
+            "visual_identity": {
+                "brand_color_palette": {"primary": "#123456"},
+                "reusable_design_assets": [
+                    {
+                        "name": "Dimensional planning-card system",
+                        "asset_kind": "illustration",
+                        "style": "layered depth surfaces",
+                    }
+                ],
+            }
+        },
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        reference_assets=[],
+        layout_decision={"mode": "synthesized_layout"},
+    )
+    payload = StructuredTextPayload(
+        headline="Plan with context",
+        body="Show planning confidence without invented numbers.",
+        cta="",
+        hashtags=[],
+        metadata={"visual_direction": "Use brand-led depth for a planning visual."},
+    )
+
+    prompt = AIOrchestratorService.build_image_prompt(request=request, text_payload=payload)
+    direction = _dynamic_visual_art_direction_from_prompt(prompt)
+
+    assert "Dimensional planning-card system" in direction
+    assert "brand cues=" in direction
+
+
+def test_build_image_prompt_dynamic_direction_has_context_fallback_without_brand_assets() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a CTA visual for a calmer planning close.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"visual_identity": {}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        reference_assets=[],
+        layout_decision={"mode": "synthesized_layout"},
+    )
+    payload = StructuredTextPayload(
+        headline="Plan the next step",
+        body="Leave space for a direct call to action.",
+        cta="",
+        hashtags=[],
+        metadata={},
+    )
+
+    prompt = AIOrchestratorService.build_image_prompt(request=request, text_payload=payload)
+    direction = _dynamic_visual_art_direction_from_prompt(prompt)
+
+    assert "derive from approved copy, palette, typography, and current visual identity" in direction
+    assert "cta visual" in direction.casefold()
+    assert "layout=stay inside approved visual, image, and module slots" in direction
+
+
+def test_carousel_render_prompt_reserves_footer_cta_safe_area_and_caps_rows_dynamically() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a carousel slide with a compact approval checklist and a required disclaimer.",
+        studio_panel={"platform_preset": "linkedin", "format": "carousel", "file_type": "png", "size": {"width": 1080, "height": 1350}},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"visual_identity": {"brand_color_palette": {"primary": "#123456"}}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        research_editorial_brief={"disclaimer_requested": True, "disclaimer_placement": "bottom_footer"},
+        reference_assets=[],
+        layout_decision={"mode": "adapted_template"},
+    )
+    slide = {
+        "slide_index": 2,
+        "slide_count": 5,
+        "role": "detail",
+        "headline": "Approval checklist",
+        "supporting_line": "Keep the list visible without crowding the disclaimer.",
+        "body_points": [
+            "Confirm request scope",
+            "Review risk notes",
+            "Review risk notes",
+            "Approve final handoff",
+            "Share follow-up owner",
+            "Archive decision trail",
+        ],
+        "cta": "Continue",
+        "metadata": {
+            "story_role": "mechanism",
+            "sample_page_blueprint": {
+                "layout_category": "numbered_or_icon_row_list",
+                "module_counts": {"horizontal_band_count": 3, "footer_band_count": 1, "cta_count": 0},
+                "visual_permissions": {"cta_allowed": False, "chart_or_graph_allowed": False, "table_allowed": False},
+                "image_zones": [{"role": "small_icon_region"}],
+            },
+        },
+    }
+    scene_graph = GenerationSceneGraph.model_validate(
+        {
+            "canvas": {"width": 1080, "height": 1350, "platform": "linkedin", "file_type": "png"},
+            "elements": [
+                {
+                    "element_id": "legal",
+                    "element_type": "text",
+                    "role": "legal",
+                    "geometry": {"x": 0.05, "y": 0.92, "width": 0.9, "height": 0.05},
+                    "text": "Approved legal footer text.",
+                }
+            ],
+        }
+    )
+
+    prompt = AIOrchestratorService.build_carousel_slide_render_prompt(
+        request=request,
+        creative_decision=CreativeDecisionPayload(layout_mode="adapted_template", asset_strategy={"use_generated_image": True}),
+        message_strategy=None,
+        slide=slide,
+        scene_graph=scene_graph,
+        visual_explanation_plan={"mode": "sample_page_adaptation", "need": "medium", "density": "match_sample", "rationale": "row list sample"},
+    )
+    guard = _layout_quality_guard_from_prompt(prompt)
+
+    assert "brand header slot=required readable reserved slot" in guard
+    assert "safe areas=reserve footer/disclaimer safe area before content and CTA" in guard
+    assert "actual footer_safe_area reserves" in guard
+    assert "CTA policy=no approved CTA slot" in guard
+    assert "visible item capacity=3 derived from sample_page_blueprint module_counts.horizontal_band_count after reserving brand header and footer/disclaimer safe areas" in guard
+    assert "overflow=2" in guard
+    assert "duplicate guard=dedupe checked approved list/card items; no repeated visible rows" in guard
+    assert "never render hidden, clipped, or partially visible rows" in guard
+
+
+def test_layout_budget_uses_actual_footer_safe_area_to_reduce_dense_rows() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a carousel slide with a dense list and a long required compliance footer.",
+        studio_panel={"platform_preset": "linkedin", "format": "carousel", "file_type": "png", "size": {"width": 720, "height": 900}},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"visual_identity": {"brand_color_palette": {"primary": "#123456"}}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        research_editorial_brief={"disclaimer_requested": True, "disclaimer_placement": "bottom_footer"},
+        reference_assets=[],
+        layout_decision={"mode": "adapted_template"},
+    )
+    slide = {
+        "slide_index": 2,
+        "slide_count": 4,
+        "role": "detail",
+        "headline": "Spending pause checklist",
+        "supporting_line": "Keep visible rows above the footer-safe area.",
+        "body_points": [
+            "Pause before discretionary purchases",
+            "Separate wants from recurring goals",
+            "Automate consistent investing",
+            "Review spending triggers",
+            "Rebalance habits monthly",
+            "Keep emergency cash separate",
+        ],
+        "metadata": {
+            "sample_page_blueprint": {
+                "layout_category": "numbered_or_icon_row_list",
+                "module_counts": {"horizontal_band_count": 8, "footer_band_count": 1, "cta_count": 0},
+                "visual_permissions": {"cta_allowed": False, "chart_or_graph_allowed": False, "table_allowed": False},
+            },
+        },
+    }
+    scene_graph = GenerationSceneGraph.model_validate(
+        {
+            "canvas": {"width": 720, "height": 900, "platform": "linkedin", "file_type": "png"},
+            "elements": [
+                {
+                    "element_id": "legal_footer",
+                    "element_type": "text",
+                    "role": "legal",
+                    "geometry": {"x": 0.05, "y": 0.9, "width": 0.9, "height": 0.08},
+                    "text": (
+                        "Long compliance disclosure explaining eligibility, risk, limitations, educational scope, "
+                        "and the need to review source documents before acting on any financial example. "
+                        "This additional disclosure language is included so the footer wraps into more lines, "
+                        "uses a larger measured safe area, and reduces the prompt-visible content budget dynamically."
+                    ),
+                }
+            ],
+        }
+    )
+
+    prompt = AIOrchestratorService.build_carousel_slide_render_prompt(
+        request=request,
+        creative_decision=CreativeDecisionPayload(layout_mode="adapted_template", asset_strategy={"use_generated_image": True}),
+        message_strategy=None,
+        slide=slide,
+        scene_graph=scene_graph,
+        visual_explanation_plan={"mode": "sample_page_adaptation", "need": "medium", "density": "match_sample", "rationale": "row list sample"},
+    )
+    guard = _layout_quality_guard_from_prompt(prompt)
+    capacity = int(guard.split("visible item capacity=", 1)[1].split(" ", 1)[0])
+
+    assert "actual footer_safe_area reserves" in guard
+    assert capacity < 8
+
+
+def test_build_image_prompt_layout_guard_flags_density_and_official_symbol_without_asset() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a service explainer that mentions an official logo and protected symbol.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png", "size": {"width": 1080, "height": 1080}},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"visual_identity": {"brand_color_palette": {"primary": "#123456"}}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        reference_assets=[],
+        layout_decision={"mode": "synthesized_layout"},
+    )
+    payload = StructuredTextPayload(
+        headline="A very detailed operational explanation that needs to stay readable",
+        body=(
+            "This paragraph intentionally carries many words so the layout-quality guard must reduce density, "
+            "prioritize the message, and keep the visual simpler instead of squeezing every sentence into the image."
+        ),
+        cta="Start review",
+        hashtags=[],
+        metadata={
+            "proof_points": [
+                "Approved proof point one should remain concise.",
+                "Approved proof point two should remain concise.",
+                "Approved proof point three should remain concise.",
+                "Approved proof point four should remain concise.",
+            ],
+        },
+    )
+
+    prompt = AIOrchestratorService.build_image_prompt(
+        request=request,
+        text_payload=payload,
+        creative_decision=CreativeDecisionPayload(asset_strategy={"use_generated_image": True}),
+        visual_explanation_plan={"mode": "process_steps", "need": "medium", "density": "medium", "rationale": "service flow"},
+    )
+    guard = _layout_quality_guard_from_prompt(prompt)
+
+    assert "text density=high" in guard
+    assert "compress copy surfaces" in guard
+    assert "official symbol policy=no approved official-symbol asset available" in guard
+    assert "use abstract geographic, institutional, or partnership cues" in guard
+
+
+def test_build_image_prompt_layout_guard_keeps_chart_safety_separate_from_broad_context() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a static visual with chart-like momentum cues.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"visual_identity": {"brand_color_palette": {"primary": "#123456"}}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        reference_assets=[],
+        layout_decision={"mode": "synthesized_layout"},
+    )
+    payload = StructuredTextPayload(
+        headline="Momentum needs context",
+        body="Generated body copy mentions an attractive dashboard but is not approved evidence.",
+        cta="",
+        hashtags=[],
+        metadata={
+            "supporting_line": "Generated supporting copy should guide broad context only.",
+            "static_panel_spec": {
+                "body": "Generated panel body mentions 75% but should not unlock data visuals.",
+                "body_points": ["Generated nested body point should not become an anchor."],
+            },
+            "visual_direction": "Chart-like dashboard modules and metric icons.",
+        },
+    )
+
+    prompt = AIOrchestratorService.build_image_prompt(
+        request=request,
+        text_payload=payload,
+        creative_decision=CreativeDecisionPayload(asset_strategy={"use_generated_image": True}),
+    )
+    guard = _layout_quality_guard_from_prompt(prompt)
+    structured_json = prompt.split("Structured visual metadata contract JSON: ", 1)[1].split(
+        ". Layout obedience",
+        1,
+    )[0]
+    structured = json.loads(structured_json)
+
+    assert "data visual gate=blocked" in guard
+    assert "broad layout/body context cannot unlock charts" in guard
+    assert structured["data_anchors"] == []
+    assert "Generated nested body point should not become an anchor." not in json.dumps(structured)
+
+
+def test_layout_quality_guard_varies_capacity_by_sample_blueprint() -> None:
+    def prompt_for_count(count: int) -> str:
+        request = AIOrchestrationRequest(
+            tenant_id=uuid4(),
+            brand_space_id=uuid4(),
+            user_id=uuid4(),
+            prompt="Create a compact list slide.",
+            studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png"},
+            conversation_context={},
+            session_memory={},
+            resolved_brand_context={"visual_identity": {"brand_color_palette": {"primary": "#123456"}}},
+            persona_context={},
+            objective_context={},
+            retrieved_knowledge={},
+            reference_assets=[],
+            layout_decision={"mode": "adapted_template"},
+        )
+        payload = StructuredTextPayload(
+            headline="List slide",
+            body="Use the sample modules.",
+            cta="",
+            hashtags=[],
+            metadata={
+                "body_points": ["First point", "Second point", "Third point", "Fourth point"],
+                "sample_page_blueprint": {
+                    "module_counts": {"horizontal_band_count": count},
+                    "visual_permissions": {"chart_or_graph_allowed": False, "table_allowed": False},
+                },
+            },
+        )
+        return AIOrchestratorService.build_image_prompt(
+            request=request,
+            text_payload=payload,
+            creative_decision=CreativeDecisionPayload(asset_strategy={"use_generated_image": True}),
+        )
+
+    compact_guard = _layout_quality_guard_from_prompt(prompt_for_count(2))
+    roomier_guard = _layout_quality_guard_from_prompt(prompt_for_count(4))
+
+    assert "visible item capacity=2 derived from sample_page_blueprint module_counts.horizontal_band_count after reserving brand header and footer/disclaimer safe areas" in compact_guard
+    assert "visible item capacity=4 derived from sample_page_blueprint module_counts.horizontal_band_count after reserving brand header and footer/disclaimer safe areas" in roomier_guard
+    assert compact_guard != roomier_guard
+
+
+def test_layout_quality_guard_survives_final_prompt_assembly_for_image_and_carousel() -> None:
+    blueprint = {
+        "module_counts": {"horizontal_band_count": 3, "footer_band_count": 1, "cta_count": 0},
+        "visual_permissions": {"cta_allowed": False, "chart_or_graph_allowed": False, "table_allowed": False},
+    }
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a carousel slide with disclaimer, safe footer, and a compact proof list.",
+        studio_panel={"platform_preset": "linkedin", "format": "carousel", "file_type": "png", "size": {"width": 1080, "height": 1350}},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"visual_identity": {"visual_style": "structured editorial"}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        reference_assets=[],
+        layout_decision={"mode": "adapted_template"},
+    )
+    payload = StructuredTextPayload(
+        headline="Keep the proof visible",
+        body="The image prompt must keep the layout-quality guard after final assembly.",
+        cta="Continue",
+        hashtags=[],
+        metadata={
+            "body_points": ["First proof", "Second proof", "Third proof", "Fourth proof"],
+            "sample_page_blueprint": blueprint,
+        },
+    )
+    image_prompt = AIOrchestratorService.build_image_prompt(
+        request=request,
+        text_payload=payload,
+        creative_decision=CreativeDecisionPayload(asset_strategy={"use_generated_image": True}),
+    )
+    carousel_prompt = AIOrchestratorService.build_carousel_slide_render_prompt(
+        request=request,
+        creative_decision=CreativeDecisionPayload(layout_mode="adapted_template", asset_strategy={"use_generated_image": True}),
+        message_strategy=None,
+        slide={
+            "slide_index": 2,
+            "slide_count": 4,
+            "role": "detail",
+            "headline": payload.headline,
+            "body_points": payload.metadata["body_points"],
+            "cta": payload.cta,
+            "metadata": {"sample_page_blueprint": blueprint},
+        },
+        compiled_context={},
+    )
+
+    assert "Layout quality guard: " in image_prompt
+    assert "Layout quality guard: " in carousel_prompt
+    assert "brand header slot=required readable reserved slot" in image_prompt
+    assert "brand header slot=required readable reserved slot" in carousel_prompt
+    assert "reserve footer/disclaimer safe area before content and CTA" in image_prompt
+    assert "reserve footer/disclaimer safe area before content and CTA" in carousel_prompt
+
+
+def test_layout_budget_caps_prompt_visible_rows_and_removes_unsafe_cta() -> None:
+    blueprint = {
+        "module_counts": {"horizontal_band_count": 2, "footer_band_count": 1, "cta_count": 0},
+        "visual_permissions": {"cta_allowed": False, "chart_or_graph_allowed": False, "table_allowed": False},
+    }
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a carousel slide with a footer disclaimer and no safe CTA slot.",
+        studio_panel={"platform_preset": "linkedin", "format": "carousel", "file_type": "png", "size": {"width": 1080, "height": 1350}},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"visual_identity": {"visual_style": "structured editorial"}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        research_editorial_brief={"disclaimer_requested": True, "disclaimer_placement": "bottom_footer"},
+        reference_assets=[],
+        layout_decision={"mode": "adapted_template"},
+    )
+    prompt = AIOrchestratorService.build_carousel_slide_render_prompt(
+        request=request,
+        creative_decision=CreativeDecisionPayload(layout_mode="adapted_template", asset_strategy={"use_generated_image": True}),
+        message_strategy=None,
+        slide={
+            "slide_index": 2,
+            "slide_count": 4,
+            "role": "detail",
+            "headline": "Visible rows only",
+            "body_points": [
+                "Visible approved row one",
+                "Visible approved row two",
+                "Overflow row three must not render",
+                "Overflow row four must not render",
+            ],
+            "cta": "Unsafe capacity CTA",
+            "metadata": {"sample_page_blueprint": blueprint},
+        },
+        compiled_context={},
+    )
+    guard = _layout_quality_guard_from_prompt(prompt)
+
+    assert "visible item capacity=2 derived from sample_page_blueprint module_counts.horizontal_band_count after reserving brand header and footer/disclaimer safe areas" in guard
+    assert "overflow=2" in guard
+    assert "Visible approved row one" in prompt
+    assert "Visible approved row two" in prompt
+    assert "Overflow row three must not render" not in prompt
+    assert "Overflow row four must not render" not in prompt
+    assert "Unsafe capacity CTA" not in prompt
+
+
+def test_brand_header_logo_slot_uses_blueprint_position_consistently_across_carousel() -> None:
+    blueprint = {
+        "brand_header_position": "top-left",
+        "module_counts": {"horizontal_band_count": 2, "footer_band_count": 1},
+        "visual_permissions": {"chart_or_graph_allowed": False, "table_allowed": False},
+    }
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create two carousel slides with consistent brand header placement.",
+        studio_panel={"platform_preset": "linkedin", "format": "carousel", "file_type": "png", "size": {"width": 1080, "height": 1350}},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"visual_identity": {"visual_style": "structured editorial"}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        reference_assets=[],
+        layout_decision={"mode": "adapted_template"},
+    )
+
+    def prompt_for(index: int) -> str:
+        return AIOrchestratorService.build_carousel_slide_render_prompt(
+            request=request,
+            creative_decision=CreativeDecisionPayload(layout_mode="adapted_template", asset_strategy={"use_generated_image": True}),
+            message_strategy=None,
+            slide={
+                "slide_index": index,
+                "slide_count": 2,
+                "role": "detail",
+                "headline": f"Slide {index}",
+                "body_points": [f"Point {index}"],
+                "metadata": {"sample_page_blueprint": blueprint},
+            },
+            compiled_context={},
+        )
+
+    first_guard = _layout_quality_guard_from_prompt(prompt_for(1))
+    second_guard = _layout_quality_guard_from_prompt(prompt_for(2))
+
+    assert "brand header slot=required readable reserved slot at top-left" in first_guard
+    assert "brand header slot=required readable reserved slot at top-left" in second_guard
+    assert "keep placement consistent across carousel slides unless the sample blueprint overrides it" in first_guard
+
+
 def test_visual_explanation_plan_uses_beginner_path_for_first_time_investors() -> None:
     request = AIOrchestrationRequest(
         tenant_id=uuid4(),
@@ -5605,8 +6245,6 @@ def test_merge_vision_page_blueprint_translates_ocr_craft_and_counts() -> None:
     assert merged["premium_quality"]["overall_score"] == 0.91
     assert merged["vision_analysis_status"] == "openai_vision_enhanced"
 
-<<<<<<< dev2-kushal
-
 def test_adapt_slide_copy_to_sample_blueprint_enforces_capacity_and_cta_permission() -> None:
     slide = {
         "headline": "A policy shift investors should understand",
@@ -5621,62 +6259,18 @@ def test_adapt_slide_copy_to_sample_blueprint_enforces_capacity_and_cta_permissi
                 "density": "balanced",
                 "module_counts": {"card_like_count": 2, "horizontal_band_count": 0},
                 "visual_permissions": {"cta_allowed": False},
-=======
-def test_orchestrator_default_logo_safe_zone_geometry_uses_20px_edge_margin() -> None:
-    request = AIOrchestrationRequest(
-        tenant_id=uuid4(),
-        brand_space_id=uuid4(),
-        user_id=uuid4(),
-        prompt="Create a branded post",
-        studio_panel={"size": {"width": 1080, "height": 1350}, "platform_preset": "linkedin", "format": "static", "file_type": "png"},
-        resolved_brand_context={
-            "visual_identity": {
-                "reference_creatives": [
-                    {"layout_structure": {"zones": [{"role": "logo", "x": 0.03, "y": 0.03, "w": 0.14, "h": 0.08}]}}
-                ]
->>>>>>> dev-ai
             }
         },
     }
 
     adapted = AIOrchestratorService._adapt_slide_copy_to_sample_blueprint(slide)
 
-<<<<<<< dev2-kushal
     assert adapted["cta"] == ""
     assert len(adapted["proof_points"]) == 2
     assert adapted["body_points"] == []
     assert adapted["stat_highlights"] == []
     assert len(adapted["supporting_line"]) <= 140
     assert adapted["metadata"]["sample_copy_density_enforced"]["max_items"] == 2
-=======
-    assert round(geometry[0], 4) == round(20 / 1080, 4)
-    assert round(geometry[1], 4) == round(20 / 1350, 4)
-    assert geometry[2] >= 0.14
-
-
-def test_orchestrator_normalized_logo_safe_zone_snaps_viable_box_to_20px_edge() -> None:
-    request = AIOrchestrationRequest(
-        tenant_id=uuid4(),
-        brand_space_id=uuid4(),
-        user_id=uuid4(),
-        prompt="Create a branded post",
-        studio_panel={"size": {"width": 1024, "height": 1536}, "platform_preset": "linkedin", "format": "static", "file_type": "png"},
-        resolved_brand_context={},
-        persona_context={},
-        objective_context={},
-        retrieved_knowledge={},
-    )
-
-    geometry = AIOrchestratorService._normalize_logo_safe_zone_geometry(
-        request=request,
-        geometry=(0.08, 0.09, 0.2, 0.08),
-        hint="top-left",
-    )
-
-    assert round(geometry[0], 4) == round(20 / 1024, 4)
-    assert round(geometry[1], 4) == round(20 / 1536, 4)
-    assert geometry[2] == 0.17
->>>>>>> dev-ai
 
 
 def test_adapt_slide_copy_to_sample_blueprint_expands_numbered_rows_from_approved_facts() -> None:
@@ -5725,16 +6319,11 @@ def test_adapt_slide_copy_to_sample_blueprint_expands_numbered_rows_from_approve
         content_metadata=content_metadata,
     )
 
-<<<<<<< dev2-kushal
     assert adapted["metadata"]["sample_row_list_target_count"] == 7
     assert len(adapted["proof_points"]) == 7
     assert adapted["body_points"] == []
     assert "line graph" not in adapted["visual_focus"].lower()
     assert "observed row/list module structure" in adapted["visual_focus"]
-=======
-    assert geometry[2] >= 0.15
-    assert geometry[3] >= 0.085
->>>>>>> dev-ai
 
 
 def test_adapt_slide_copy_to_sample_blueprint_prefers_derived_rows_over_cover_label() -> None:
@@ -13123,8 +13712,6 @@ def test_style_reference_only_final_asset_metadata_strips_backend_overlay_payloa
     assert "render_overlay_scene_graph" not in metadata
     assert "render_overlay_text" not in metadata
 
-<<<<<<< dev2-kushal
-
 def test_assess_creative_quality_flags_unrelated_selected_reference_when_topic_pdf_exists() -> None:
     fta_asset = {
         "asset_id": "fta-pdf",
@@ -13146,150 +13733,6 @@ def test_assess_creative_quality_flags_unrelated_selected_reference_when_topic_p
             "summary": "OPEC oil production template with unrelated commodity market layout.",
         },
     }
-=======
-def test_generation_trace_service_enriches_readable_json_without_touching_text_output() -> None:
-    trace_base = Path("storage") / "generation_traces" / "test-traces" / str(uuid4())
-    readable_base = Path("storage") / "readable_generation_traces"
-    service = GenerationTraceService(base_dir=trace_base, enabled=True)
-
-    try:
-        trace = service.start_trace(
-            prompt="Create a seafood brand campaign visual.",
-            tenant_id=uuid4(),
-            brand_space_id=uuid4(),
-        )
-        assert trace is not None
-
-        trace_id = trace["trace_id"]
-        readable_bundle = service.build_visual_generation_readable_bundle(
-            trace_id=trace_id,
-            prompt="Create a seafood brand campaign visual.",
-            tenant_id=uuid4(),
-            brand_space_id=uuid4(),
-            studio_panel={"platform_preset": "instagram", "format": "static", "file_type": "png"},
-            request_payload={"prompt": "Create a seafood brand campaign visual.", "generate_image": True},
-            section_payloads={
-                "identity": {
-                    "brand_name": "The Good Fish Company",
-                    "brand_description": "Seafood-first trusted sourcing platform.",
-                },
-                "visual_identity": {
-                    "brand_mood": "fresh, clean, premium",
-                    "brand_color_palette": {"primary": "#1CA9C9"},
-                },
-            },
-            runtime_brand_context={
-                "identity": {
-                    "brand_name": "The Good Fish Company",
-                    "brand_description": "Seafood-first trusted sourcing platform.",
-                },
-                "visual_identity": {
-                    "brand_mood": "fresh, clean, premium",
-                    "brand_color_palette": {"primary": "#1CA9C9"},
-                },
-            },
-            persona_context={"name": "Urban seafood buyer", "audience_goals": ["trust online seafood freshness"]},
-            objective_context={"name": "Trust building", "configuration": {"cta_bias": "learn_more"}},
-            reference_assets=[
-                {
-                    "asset_id": str(uuid4()),
-                    "asset_role": "reference_creative",
-                    "storage_path": "tenant/brand/reference/reference-1.png",
-                    "trust_level": "trusted",
-                    "metadata": {"label": "Premium seafood reference"},
-                }
-            ],
-            template_candidates=[
-                {
-                    "template_id": str(uuid4()),
-                    "name": "Editorial seafood template",
-                    "score": 9.2,
-                    "match_type": "adapted_template",
-                }
-            ],
-            template_context={"selected_template_id": str(uuid4()), "selected_template_name": "Editorial seafood template"},
-            retrieved_knowledge={
-                "visual_identity": [
-                    {
-                        "score": 0.11,
-                        "content": "Use clean editorial seafood textures with aqua-led accents.",
-                        "metadata": {"source_id": "knowledge-1"},
-                    }
-                ]
-            },
-            planning_hints={"mode": "adapted_template", "template_name": "Editorial seafood template"},
-            logo_candidates=[{"asset_id": "logo-1", "storage_path": "tenant/brand/logo/logo.png"}],
-            logo_selection={"storage_path": "tenant/brand/logo/logo.png"},
-            generated_payload={"headline": "Fresh seafood, sourced with trust."},
-            blueprint_payload={"layout": "single_panel"},
-            explainability={
-                "compiled_context": {
-                    "brand_copy_brief": {"brand_name": "The Good Fish Company"},
-                    "brand_visual_brief": {"brand_mood": "fresh, clean, premium"},
-                },
-                "input_access_summary": {
-                    "brand_context": {
-                        "used_paths": ["identity.brand_name", "visual_identity.brand_mood"],
-                        "unused_paths": ["identity.brand_description", "visual_identity.brand_color_palette.primary"],
-                        "read_counts": {
-                            "identity.brand_name": 2,
-                            "visual_identity.brand_mood": 1,
-                        },
-                        "access_types": {
-                            "identity.brand_name": ["get", "__getitem__"],
-                            "visual_identity.brand_mood": ["get"],
-                        },
-                        "events": [
-                            {"timestamp": "2026-05-20T12:00:00", "path": "identity.brand_name", "access_type": "get"},
-                            {"timestamp": "2026-05-20T12:00:01", "path": "visual_identity.brand_mood", "access_type": "get"},
-                        ],
-                    },
-                },
-                "selected_reference_images": [
-                    {
-                        "asset_id": str(uuid4()),
-                        "asset_role": "reference_creative",
-                        "storage_path": "tenant/brand/reference/reference-1.png",
-                        "trust_level": "trusted",
-                        "metadata": {"label": "Premium seafood reference"},
-                    }
-                ],
-                "generation_trace": {"layout_source": "reference_template"},
-                "render_authority": "ai",
-                "generation_path": "image_led_social",
-            },
-        )
-
-        written_files = service.write_visual_generation_readable_bundle(trace_id, readable_bundle)
-        assert written_files
-
-        readable_dir = readable_base / trace_id
-        json_path = readable_dir / "planning_strategy.json"
-        text_path = readable_dir / "planning_strategy.txt"
-        assert json_path.exists()
-        assert text_path.exists()
-
-        payload = json.loads(json_path.read_text(encoding="utf-8"))
-        assert "full_trace_logs" in payload
-        assert payload["full_trace_logs"]["trace_manifest"]["trace_id"] == trace_id
-        assert payload["full_trace_logs"]["runtime_brand_context"]["identity"]["brand_name"] == "The Good Fish Company"
-        assert payload["full_trace_logs"]["input_access_summary"]["brand_context"]["used_paths"] == [
-            "identity.brand_name",
-            "visual_identity.brand_mood",
-        ]
-        assert payload["full_trace_logs"]["brand_usage_snapshot"]["sources_used"]["brand_form_data"]["identity"]["used"] is True
-        assert "Brand Following Score" in text_path.read_text(encoding="utf-8")
-    finally:
-        if trace_base.exists():
-            rmtree(trace_base, ignore_errors=True)
-        readable_dir = readable_base / trace_id if trace is not None else None
-        if readable_dir and readable_dir.exists():
-            rmtree(readable_dir, ignore_errors=True)
-
-
-def test_orchestrator_selects_multiple_reference_images_for_carousel() -> None:
-    service = AIOrchestratorService()
->>>>>>> dev-ai
     request = AIOrchestrationRequest(
         tenant_id=uuid4(),
         brand_space_id=uuid4(),
@@ -16494,3 +16937,840 @@ def test_build_image_prompt_strictly_prohibits_data_visuals_without_valid_anchor
     assert "no approved data/content anchors are available" in prompt
     assert "Strict prohibition: do not render a table, tabular layout, chart, graph" in prompt
     assert "Use a non-data visual treatment tied to the approved headline/body instead" in prompt
+
+
+def test_normalize_metadata_payload_adds_stable_structured_visual_metadata_schema() -> None:
+    repaired = AIOrchestratorService.normalize_metadata_payload(
+        {
+            "supporting_line": "Compare the strategy before choosing the product.",
+            "proof_points": ["Cash-flow need, reinvestment risk, and flexibility define the right strategy."],
+            "visual_direction": "Premium 3D comparison table with evidence modules.",
+        },
+        fallback={},
+        body="Different bond strategies solve different portfolio problems.",
+        compiled_context={"content_format_brief": {"format": "infographic"}},
+        prompt="Create an infographic with a comparison table about bond strategy.",
+    )
+
+    structured = repaired["structured_visual_metadata"]
+
+    assert set(structured) == {
+        "schema_version",
+        "table_intent",
+        "chart_intent",
+        "data_anchors",
+        "creativity_signals",
+        "visual_treatment_preference",
+    }
+    assert structured["schema_version"] == "visual_metadata_v1"
+    assert set(structured["table_intent"]) == {
+        "requested",
+        "allowed",
+        "requires_data_anchors",
+        "anchor_count",
+        "source",
+    }
+    assert set(structured["chart_intent"]) == {
+        "requested",
+        "allowed",
+        "numeric",
+        "requires_data_anchors",
+        "anchor_count",
+        "source",
+    }
+    assert set(structured["creativity_signals"]) == {"needs_attractive_visual", "signals", "source"}
+    assert set(structured["visual_treatment_preference"]) == {
+        "preferred",
+        "allowed",
+        "source",
+        "brand_asset_grounding",
+        "layout_obedience",
+        "decision_evidence",
+        "blocked_reasons",
+        "fallback_reason",
+        "confidence",
+    }
+    assert structured["table_intent"]["requested"] is True
+    assert structured["data_anchors"]
+
+
+def _structured_visual_metadata_from_prompt(prompt: str) -> dict:
+    structured_json = prompt.split("Structured visual metadata contract JSON: ", 1)[1].split(
+        ". Layout obedience",
+        1,
+    )[0]
+    return json.loads(structured_json)
+
+
+def _reference_creative_profile_from_prompt(prompt: str) -> dict:
+    profile_json = prompt.split("Reference creative profile JSON: ", 1)[1].split(
+        ". Use this as source-aware creative DNA",
+        1,
+    )[0]
+    return json.loads(profile_json)
+
+
+def test_structured_visual_metadata_data_anchors_use_only_approved_sources() -> None:
+    repaired = AIOrchestratorService.normalize_metadata_payload(
+        {
+            "supporting_line": "Generated supporting copy must stay out of strict anchors.",
+            "proof_points": ["Approved proof point: credit quality, tenure, and repayment structure are decision inputs."],
+            "body_points": ["Approved body point: compare cash-flow need against reinvestment risk."],
+            "stat_highlights": ["Approved stat highlight: 42% of sampled plans needed laddering."],
+            "claim_evidence_pairs": [
+                {
+                    "claim": "Approved claim: strategy choice depends on portfolio context.",
+                    "evidence": "Approved evidence: user-provided comparison criteria include cash-flow need.",
+                }
+            ],
+            "infographic_section_specs": [
+                {
+                    "headline": "Generated section headline must stay out.",
+                    "supporting_line": "Generated section supporting copy must stay out.",
+                    "body": "Generated section body copy must stay out.",
+                    "body_points": ["Generated section body point must stay out."],
+                }
+            ],
+            "static_panel_spec": {
+                "headline": "Generated panel headline must stay out.",
+                "supporting_lines": ["Generated panel supporting copy must stay out."],
+                "body_points": ["Generated panel body point must stay out."],
+                "claim_evidence_pairs": [
+                    {
+                        "claim": "Nested approved claim: shorter duration reduced volatility exposure.",
+                        "evidence": "Nested approved evidence: user data showed 18% shorter-duration need.",
+                    }
+                ],
+            },
+            "visual_direction": "Premium comparison table with evidence modules.",
+        },
+        fallback={},
+        body="Generated body copy must stay out of strict anchors.",
+        prompt="Create a comparison table using user-provided values: laddering 42% and shorter duration 18%.",
+    )
+
+    anchors = repaired["structured_visual_metadata"]["data_anchors"]
+    anchor_text = " ".join(anchor["text"] for anchor in anchors)
+    anchor_sources = {anchor["source"] for anchor in anchors}
+
+    assert "user_prompt" in anchor_sources
+    assert "stat_highlights" in anchor_sources
+    assert "claim_evidence_pairs" in anchor_sources
+    assert "proof_points" in anchor_sources
+    assert "body_points" in anchor_sources
+    assert "nested_claim_evidence_pairs" in anchor_sources
+
+    assert "Approved proof point" in anchor_text
+    assert "Approved body point" in anchor_text
+    assert "Approved stat highlight" in anchor_text
+    assert "Approved claim" in anchor_text
+    assert "Approved evidence" in anchor_text
+    assert "Nested approved claim" in anchor_text
+    assert "Nested approved evidence" in anchor_text
+
+    assert "Generated supporting copy" not in anchor_text
+    assert "Generated body copy" not in anchor_text
+    assert "Generated section headline" not in anchor_text
+    assert "Generated section supporting copy" not in anchor_text
+    assert "Generated section body copy" not in anchor_text
+    assert "Generated section body point" not in anchor_text
+    assert "Generated panel headline" not in anchor_text
+    assert "Generated panel supporting copy" not in anchor_text
+    assert "Generated panel body point" not in anchor_text
+
+
+def test_structured_visual_metadata_raw_fallback_drops_unapproved_anchor_sources() -> None:
+    repaired = AIOrchestratorService.normalize_metadata_payload(
+        {
+            "visual_direction": "Premium comparison table with approved evidence.",
+            "structured_visual_metadata": {
+                "data_anchors": [
+                    {
+                        "source": "supporting_line",
+                        "text": "Generated supporting copy must not survive raw fallback.",
+                    },
+                    {
+                        "source": "body",
+                        "text": "Generated body copy must not survive raw fallback.",
+                    },
+                    {
+                        "source": "body_points",
+                        "text": "Approved top-level body point survives raw fallback.",
+                    },
+                ],
+            },
+        },
+        fallback={},
+        prompt="Create a comparison table.",
+    )
+
+    anchor_text = " ".join(
+        anchor["text"] for anchor in repaired["structured_visual_metadata"]["data_anchors"]
+    )
+
+    assert "Approved top-level body point survives raw fallback." in anchor_text
+    assert "Generated supporting copy must not survive raw fallback." not in anchor_text
+    assert "Generated body copy must not survive raw fallback." not in anchor_text
+
+
+def test_build_image_prompt_keeps_broad_context_outside_structured_data_anchors() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a LinkedIn infographic with a comparison table using value A 42% and value B 18%.",
+        studio_panel={"platform_preset": "linkedin", "format": "infographic", "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"brand_name": "Jiraaf", "visual_identity": {"brand_color_palette": {"primary": "#003975"}}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+    payload = StructuredTextPayload(
+        headline="Generated headline must not become an anchor",
+        body="Generated body context should still be available to visual prompting.",
+        cta="Explore more",
+        hashtags=["#Investing"],
+        metadata={
+            "supporting_line": "Generated supporting context should still guide the visual.",
+            "proof_points": ["Approved proof point: value A is 42% and value B is 18%."],
+            "infographic_section_specs": [
+                {
+                    "headline": "Generated section headline should remain broad context only.",
+                    "body": "Generated section body should remain broad context only.",
+                    "body_points": ["Generated section body point should remain broad context only."],
+                }
+            ],
+            "static_panel_spec": {
+                "headline": "Generated panel headline should remain broad context only.",
+                "body_points": ["Generated panel body point should remain broad context only."],
+            },
+            "visual_direction": "Premium table-led infographic with contextual support copy.",
+        },
+    )
+
+    prompt = AIOrchestratorService.build_image_prompt(
+        request=request,
+        text_payload=payload,
+        creative_decision=CreativeDecisionPayload(asset_strategy={"use_generated_image": True}),
+    )
+
+    structured_json = prompt.split("Structured visual metadata contract JSON: ", 1)[1].split(
+        ". Layout obedience",
+        1,
+    )[0]
+    structured = json.loads(structured_json)
+    anchor_text = " ".join(anchor["text"] for anchor in structured["data_anchors"])
+
+    assert "Generated supporting context should still guide the visual." in prompt
+    assert "Generated body context should still be available to visual prompting." in prompt
+    assert "Generated section body should remain broad context only." in prompt
+    assert "Generated panel headline should remain broad context only." in prompt
+    assert "Dynamic visual art direction" in prompt
+    assert "Generated supporting context should still guide the visual." not in anchor_text
+    assert "Generated body context should still be available to visual prompting." not in anchor_text
+    assert "Generated section body should remain broad context only." not in anchor_text
+    assert "Generated panel headline should remain broad context only." not in anchor_text
+    assert "Generated section body point should remain broad context only." not in anchor_text
+    assert "Generated panel body point should remain broad context only." not in anchor_text
+    assert "Approved proof point" in anchor_text
+
+
+def test_build_image_prompt_structured_contract_blocks_chart_without_data_anchors() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a LinkedIn static post with a chart.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"brand_name": "Jiraaf", "visual_identity": {"brand_color_palette": {"primary": "#003975"}}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+    payload = StructuredTextPayload(
+        headline="A smarter way to read the market",
+        body="Visual support.",
+        cta="Explore more",
+        hashtags=["#Investing"],
+        metadata={"visual_direction": "Premium chart-led finance visual with dashboard tiles."},
+    )
+
+    prompt = AIOrchestratorService.build_image_prompt(
+        request=request,
+        text_payload=payload,
+        creative_decision=CreativeDecisionPayload(asset_strategy={"use_generated_image": True}),
+    )
+
+    assert "Structured visual metadata contract JSON" in prompt
+    assert '"schema_version":"visual_metadata_v1"' in prompt
+    assert '"chart_intent":{"requested":true,"allowed":false' in prompt
+    assert '"anchor_count":0' in prompt
+    assert "Table/chart request is blocked for this surface" in prompt
+
+
+def test_build_image_prompt_uses_brand_assets_for_dynamic_3d_treatment() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a more attractive dynamic 3D visual about planning context.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={
+            "visual_identity": {
+                "brand_color_palette": {"primary": "#003975"},
+                "reusable_design_assets": [
+                    {
+                        "name": "Volumetric product-card illustration",
+                        "asset_kind": "illustration",
+                        "style": "3D depth with soft surfaces",
+                    }
+                ],
+            },
+        },
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+    payload = StructuredTextPayload(
+        headline="Plan decisions with more context",
+        body="A premium visual should show structured planning without fake numbers.",
+        cta="Explore more",
+        hashtags=["#Investing"],
+        metadata={
+            "supporting_line": "Use brand assets to make the visual feel dimensional and polished.",
+            "proof_points": ["Planning context, tenure, and repayment visibility shape the decision."],
+            "visual_direction": "Dynamic 3D product-card visual with brand-led depth.",
+        },
+    )
+
+    prompt = AIOrchestratorService.build_image_prompt(
+        request=request,
+        text_payload=payload,
+        creative_decision=CreativeDecisionPayload(asset_strategy={"use_generated_image": True}),
+    )
+    structured = _structured_visual_metadata_from_prompt(prompt)
+    preference = structured["visual_treatment_preference"]
+
+    assert "Brand-grounded visual treatment preference: 3d" in prompt
+    assert "Volumetric product-card illustration" in prompt
+    assert "Layout obedience is stronger than creativity" in prompt
+    assert preference["preferred"] == "3d"
+    assert preference["source"] in {"user_prompt", "brand_context"}
+    assert preference["brand_asset_grounding"]
+    assert preference["decision_evidence"]
+
+
+def test_build_image_prompt_flat_editorial_brand_evidence_avoids_forced_3d_quality_prompt() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a more attractive visual about planning decisions.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={
+            "visual_identity": {
+                "brand_color_palette": {"primary": "#003975"},
+                "visual_style": "flat editorial illustration",
+                "reusable_design_assets": [
+                    {
+                        "name": "Flat editorial planning cards",
+                        "asset_kind": "illustration",
+                        "style": "minimal 2D editorial surfaces",
+                    }
+                ],
+            },
+        },
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+    payload = StructuredTextPayload(
+        headline="Planning beats impulse",
+        body="Show a clear decision moment without fake metrics.",
+        cta="Explore more",
+        hashtags=[],
+        metadata={"visual_direction": "Clean editorial decision visual."},
+    )
+
+    prompt = AIOrchestratorService.build_image_prompt(
+        request=request,
+        text_payload=payload,
+        creative_decision=CreativeDecisionPayload(asset_strategy={"use_generated_image": True}),
+    )
+    structured = _structured_visual_metadata_from_prompt(prompt)
+    preference = structured["visual_treatment_preference"]
+
+    assert preference["preferred"] == "flat_editorial"
+    assert preference["source"] == "brand_context"
+    assert "Visual quality bar: polished flat/editorial composition" in prompt
+    assert "Visual quality bar: polished dimensional treatment" not in prompt
+    assert "premium 3D" not in prompt
+
+
+def test_build_image_prompt_process_workflow_uses_supported_isometric_treatment() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a process workflow visual that explains the service steps.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={
+            "visual_identity": {
+                "brand_color_palette": {"primary": "#003975"},
+                "reusable_design_assets": [
+                    {
+                        "name": "Isometric workflow node system",
+                        "asset_kind": "illustration",
+                        "style": "isometric process modules",
+                    }
+                ],
+            },
+        },
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+    payload = StructuredTextPayload(
+        headline="A cleaner workflow",
+        body="Show the steps as a clear progression.",
+        cta="Explore",
+        hashtags=[],
+        metadata={
+            "visual_direction": "Isometric workflow with connected service steps.",
+            "sample_page_blueprint": {
+                "layout_category": "process_explainer",
+                "module_counts": {"small_icon_like_count": 3, "text_block_count": 3},
+                "visual_permissions": {"isometric_allowed": True, "icons_allowed": True},
+            },
+        },
+    )
+
+    prompt = AIOrchestratorService.build_image_prompt(
+        request=request,
+        text_payload=payload,
+        creative_decision=CreativeDecisionPayload(asset_strategy={"use_generated_image": True}),
+    )
+    structured = _structured_visual_metadata_from_prompt(prompt)
+
+    assert structured["visual_treatment_preference"]["preferred"] == "isometric"
+    assert "Isometric workflow node system" in prompt
+    assert "sample_layout_first" in prompt
+
+
+def test_build_image_prompt_healthcare_service_stays_clarity_first_without_data_dashboard() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a healthcare service explanation slide for appointment follow-up.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={
+            "visual_identity": {
+                "brand_color_palette": {"primary": "#245C6F"},
+                "visual_style": "flat editorial service explainer",
+            },
+        },
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+    payload = StructuredTextPayload(
+        headline="Follow-up made easier",
+        body="Explain the service clearly with calm visual hierarchy.",
+        cta="Learn more",
+        hashtags=[],
+        metadata={"visual_direction": "Clarity-first service explainer."},
+    )
+
+    prompt = AIOrchestratorService.build_image_prompt(
+        request=request,
+        text_payload=payload,
+        creative_decision=CreativeDecisionPayload(asset_strategy={"use_generated_image": True}),
+    )
+    structured = _structured_visual_metadata_from_prompt(prompt)
+    preference = structured["visual_treatment_preference"]
+
+    assert preference["preferred"] == "flat_editorial"
+    assert preference["preferred"] not in {"3d", "product_dashboard", "data_module"}
+    assert "data visual gate=blocked for chart-like visuals unless strict approved data_anchors allow them" in prompt
+    assert "Visual quality bar: polished dimensional treatment" not in prompt
+
+
+def test_build_image_prompt_structured_contract_does_not_bypass_sample_visual_permissions() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a LinkedIn static post about reading portfolio context.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"visual_identity": {"brand_color_palette": {"primary": "#003975"}}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+    payload = StructuredTextPayload(
+        headline="Read the context before the return",
+        body="Portfolio decisions need credit quality, tenure, and repayment context.",
+        cta="Explore more",
+        hashtags=["#Investing"],
+        metadata={
+            "proof_points": ["Credit quality, tenure, and repayment structure should be compared before investing."],
+            "visual_direction": "Product dashboard with a chart and metric tiles.",
+            "sample_page_blueprint": {
+                "layout_category": "editorial_explainer",
+                "module_counts": {"large_visual_count": 1, "text_block_count": 2},
+                "visual_permissions": {
+                    "chart_or_graph_allowed": False,
+                    "table_allowed": False,
+                    "dashboard_allowed": False,
+                    "metric_tiles_allowed": False,
+                },
+            },
+        },
+    )
+
+    prompt = AIOrchestratorService.build_image_prompt(
+        request=request,
+        text_payload=payload,
+        creative_decision=CreativeDecisionPayload(asset_strategy={"use_generated_image": True}),
+    )
+    structured = _structured_visual_metadata_from_prompt(prompt)
+    preference = structured["visual_treatment_preference"]
+
+    assert preference["preferred"] != "product_dashboard"
+    assert any("product_dashboard blocked" in reason for reason in preference["blocked_reasons"])
+    assert "Do not bypass sample visual_permissions" in prompt
+    assert "Table/chart request is blocked for this surface" in prompt
+
+
+def test_build_image_prompt_chart_data_module_allowed_with_strict_anchors_and_sample_permission() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a comparison chart using value A 42% and value B 18%.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"visual_identity": {"brand_color_palette": {"primary": "#003975"}}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+    payload = StructuredTextPayload(
+        headline="Compare the values",
+        body="Use only the approved values.",
+        cta="Explore",
+        hashtags=[],
+        metadata={
+            "proof_points": ["Approved proof point: value A is 42% and value B is 18%."],
+            "visual_direction": "Sparse chart module using only the approved values.",
+            "sample_page_blueprint": {
+                "layout_category": "data_explainer",
+                "module_counts": {"card_like_count": 2, "text_block_count": 2},
+                "visual_permissions": {
+                    "chart_or_graph_allowed": True,
+                    "metric_tiles_allowed": True,
+                    "dashboard_allowed": True,
+                },
+            },
+        },
+    )
+
+    prompt = AIOrchestratorService.build_image_prompt(
+        request=request,
+        text_payload=payload,
+        creative_decision=CreativeDecisionPayload(asset_strategy={"use_generated_image": True}),
+    )
+    structured = _structured_visual_metadata_from_prompt(prompt)
+    preference = structured["visual_treatment_preference"]
+
+    assert structured["chart_intent"]["allowed"] is True
+    assert structured["data_anchors"]
+    assert preference["preferred"] == "data_module"
+    assert preference["source"] == "data_anchors"
+    assert "Visual quality bar: sparse data/module composition tied only to approved anchors" in prompt
+
+
+def test_build_image_prompt_sample_permission_blocks_3d_even_when_prompt_asks() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a 3D dimensional visual for a service explanation.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={
+            "visual_identity": {
+                "brand_color_palette": {"primary": "#003975"},
+                "reusable_design_assets": [
+                    {
+                        "name": "Dimensional service object",
+                        "asset_kind": "illustration",
+                        "style": "3D rendered object",
+                    }
+                ],
+            },
+        },
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+    payload = StructuredTextPayload(
+        headline="Explain the service",
+        body="Keep the layout aligned to the sample.",
+        cta="Explore",
+        hashtags=[],
+        metadata={
+            "sample_page_blueprint": {
+                "layout_category": "editorial_explainer",
+                "module_counts": {"large_visual_count": 1, "text_block_count": 2},
+                "visual_permissions": {"3d_allowed": False, "isometric_allowed": False},
+            }
+        },
+    )
+
+    prompt = AIOrchestratorService.build_image_prompt(
+        request=request,
+        text_payload=payload,
+        creative_decision=CreativeDecisionPayload(asset_strategy={"use_generated_image": True}),
+    )
+    structured = _structured_visual_metadata_from_prompt(prompt)
+    preference = structured["visual_treatment_preference"]
+
+    assert preference["preferred"] != "3d"
+    assert any("3d blocked by sample visual_permissions" in reason for reason in preference["blocked_reasons"])
+    assert "Visual quality bar: polished dimensional treatment" not in prompt
+
+
+def test_build_image_prompt_no_brand_assets_uses_context_derived_fallback_without_global_style() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a service explanation visual that shows a simple workflow.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"visual_identity": {}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+    payload = StructuredTextPayload(
+        headline="How the service works",
+        body="Explain the steps clearly.",
+        cta="Learn more",
+        hashtags=[],
+        metadata={},
+    )
+
+    prompt = AIOrchestratorService.build_image_prompt(
+        request=request,
+        text_payload=payload,
+        creative_decision=CreativeDecisionPayload(asset_strategy={"use_generated_image": True}),
+    )
+    structured = _structured_visual_metadata_from_prompt(prompt)
+    preference = structured["visual_treatment_preference"]
+
+    assert preference["preferred"] in {"icon_system", "flat_editorial", "isometric"}
+    assert preference["source"] == "fallback_context"
+    assert preference["fallback_reason"] in {"context-derived fallback", ""}
+    assert "yellow bars" not in prompt.casefold()
+    assert "blue arrow" not in prompt.casefold()
+    assert "hourglass" not in prompt.casefold()
+
+
+def test_reference_creative_profile_derives_layout_color_typography_footer_density_without_sample_hardcoding() -> None:
+    profile = AIOrchestratorService._resolve_reference_creative_profile(
+        format_name="carousel slide",
+        sample_page_blueprint={
+            "layout_category": "editorial_explainer",
+            "density": "moderate",
+            "module_counts": {
+                "large_visual_count": 1,
+                "small_icon_like_count": 3,
+                "card_like_count": 2,
+                "footer_band_count": 1,
+            },
+            "visual_permissions": {"3d_allowed": False, "icons_allowed": True},
+            "zones": [
+                {"role": "brand_header", "x": 0.74, "y": 0.04, "w": 0.16, "h": 0.08},
+                {"role": "hero_visual", "x": 0.12, "y": 0.34, "w": 0.72, "h": 0.32},
+                {"role": "footer", "x": 0.0, "y": 0.9, "w": 1.0, "h": 0.1},
+            ],
+            "must_match": ["brand header above content", "single hero visual", "quiet footer band"],
+        },
+        visual_identity={
+            "palette_roles": {
+                "background": "#F7F4EA",
+                "primary": "#123456",
+                "accent": "#D88421",
+            },
+            "typography": {
+                "headline": "condensed authority headline",
+                "body": "plain body",
+                "footer": "small legal copy",
+            },
+        },
+        visual_plan={"mode": "story-driven visual", "rationale": "match reference object hierarchy"},
+        structured_visual_metadata={
+            "visual_treatment_preference": {
+                "preferred": "flat_editorial",
+                "allowed": True,
+            }
+        },
+        layout_budget={
+            "brand_header_policy": "reserve observed brand-header slot above content",
+            "footer_policy": "reserve footer/disclaimer safe area before content",
+            "visible_capacity": 3,
+        },
+        slide={"role": "hook"},
+        metadata={"story_role": "hook"},
+    )
+
+    assert profile["layout_system"]
+    assert profile["color_roles"]["background"] == "#F7F4EA"
+    assert profile["color_roles"]["accent"] == "#D88421"
+    assert profile["typography_roles"]["headline"] == "condensed authority headline"
+    assert profile["typography_roles"]["footer"] == "small legal copy"
+    assert profile["image_style"].startswith("treatment=flat_editorial")
+    assert profile["logo_header_policy"] == "reserve observed brand-header slot above content"
+    assert profile["footer_safe_policy"] == "reserve footer/disclaimer safe area before content"
+    assert profile["slide_archetype"] == "hook/opener"
+    assert "large_visual_count=1" in profile["object_density"]
+    assert "visible_content_capacity=3" in profile["object_density"]
+    assert profile["reference_obedience"] == "sample_first"
+
+    serialized = json.dumps(profile)
+    for forbidden in ("JIRAAF", "Arjun", "Most People Earn Well", "Stanford", "Marshmallow", "10 Years"):
+        assert forbidden not in serialized
+
+
+def test_build_carousel_slide_render_prompt_uses_reference_profile_for_slide_archetype_and_density() -> None:
+    sample_page_blueprint = {
+        "layout_category": "editorial_explainer",
+        "density": "moderate",
+        "module_counts": {
+            "large_visual_count": 1,
+            "small_icon_like_count": 2,
+            "card_like_count": 2,
+            "footer_band_count": 1,
+        },
+        "visual_permissions": {"icons_allowed": True, "chart_or_graph_allowed": False},
+        "zones": [
+            {"role": "brand_header", "x": 0.76, "y": 0.04, "w": 0.14, "h": 0.08},
+            {"role": "hero_visual", "x": 0.12, "y": 0.32, "w": 0.76, "h": 0.34},
+            {"role": "footer", "x": 0.0, "y": 0.9, "w": 1.0, "h": 0.1},
+        ],
+        "must_match": ["single hero visual", "two callout modules", "quiet footer band"],
+    }
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a carousel explaining a planning workflow for a professional audience.",
+        studio_panel={
+            "platform_preset": "linkedin",
+            "format": "carousel",
+            "file_type": "png",
+            "size": {"width": 1080, "height": 1350},
+        },
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={
+            "visual_identity": {
+                "palette_roles": {
+                    "background": "#F7F4EA",
+                    "primary": "#123456",
+                    "accent": "#D88421",
+                },
+                "typography": {"headline": "authority headline", "body": "clear body", "footer": "legal footer"},
+                "visual_style": "flat editorial story system",
+            }
+        },
+        persona_context={
+            "persona_summary": "Decision maker comparing options",
+            "pain_points": ["Needs clearer tradeoffs"],
+        },
+        objective_context={},
+        retrieved_knowledge={},
+        reference_assets=[],
+        asset_catalog=[],
+    )
+    creative_decision = CreativeDecisionPayload(
+        asset_strategy={"use_generated_image": True},
+        planning_hints={"logo_position": "top-right"},
+    )
+    hook_slide = {
+        "slide_index": 1,
+        "slide_count": 2,
+        "role": "hook",
+        "headline": "Start with the decision",
+        "supporting_line": "A clear opener with one visual metaphor.",
+        "proof_points": ["Use one approved callout."],
+        "metadata": {
+            "story_role": "hook",
+            "sample_page_blueprint": sample_page_blueprint,
+            "visual_direction": "Flat editorial opener with a single metaphor visual.",
+        },
+    }
+    process_slide = {
+        **hook_slide,
+        "slide_index": 2,
+        "role": "process",
+        "headline": "Follow the steps",
+        "supporting_line": "A workflow slide with two linked modules.",
+        "metadata": {
+            "story_role": "process",
+            "sample_page_blueprint": sample_page_blueprint,
+            "visual_direction": "Process explainer using the same editorial visual system.",
+        },
+    }
+
+    hook_prompt = AIOrchestratorService.build_carousel_slide_render_prompt(
+        request=request,
+        creative_decision=creative_decision,
+        message_strategy=None,
+        slide=hook_slide,
+    )
+    process_prompt = AIOrchestratorService.build_carousel_slide_render_prompt(
+        request=request,
+        creative_decision=creative_decision,
+        message_strategy=None,
+        slide=process_slide,
+    )
+    hook_profile = _reference_creative_profile_from_prompt(hook_prompt)
+    process_profile = _reference_creative_profile_from_prompt(process_prompt)
+
+    assert "Reference creative profile JSON" in hook_prompt
+    assert hook_profile["slide_archetype"] == "hook/opener"
+    assert process_profile["slide_archetype"] == "behavior change/process"
+    assert hook_profile["color_roles"]["background"] == "#F7F4EA"
+    assert hook_profile["typography_roles"]["headline"] == "authority headline"
+    assert "small_icon_like_count=2" in hook_profile["object_density"]
+    assert "footer" in hook_profile["footer_safe_policy"].casefold()
+    assert "brand-header" in hook_profile["logo_header_policy"].casefold()
+    assert hook_profile["persona_policy"] == process_profile["persona_policy"]
+    assert hook_profile["visual_treatment_consistency"] == process_profile["visual_treatment_consistency"]
+    assert "structured_visual_metadata.data_anchors" in hook_prompt
+    assert "premium 3D" not in hook_prompt
+    assert "cinematic depth" not in hook_prompt.casefold()
+
+    for forbidden in ("JIRAAF", "Arjun", "Most People Earn Well", "Stanford", "Marshmallow", "10 Years"):
+        assert forbidden not in hook_prompt

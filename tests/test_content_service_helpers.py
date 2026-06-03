@@ -14,6 +14,7 @@ from app.models.knowledge import TemplateMetadata
 from app.ai.layout_decision import LayoutDecision
 from app.schemas.content import ToneCheckRequest
 from app.services.content import ContentService
+from app.utils.footer_safe_area import calculate_footer_safe_area
 
 
 def _build_content_version(*, explainability_metadata: dict | None = None) -> ContentVersion:
@@ -3236,9 +3237,147 @@ def test_build_ai_footer_fallback_asset_stamps_exact_legal_footer() -> None:
 
     assert payload is not None
     assert payload["metadata"]["legal_footer_composited_by_service"] is True
+    assert payload["metadata"]["legal_footer_reserved_before_composite"] is True
+    assert payload["metadata"]["legal_footer_safe_area"]["reserved_height"] == payload["metadata"]["legal_footer_strip_box"]["height"]
     assert payload["metadata"]["legal_footer_text_length"] == len(footer_text)
     assert "image" in captured
     assert captured["image"].getpixel((40, 1510))[:3] != base.getpixel((40, 1510))[:3]
+
+
+def test_footer_safe_area_height_is_derived_from_wrapped_text_and_canvas() -> None:
+    short = calculate_footer_safe_area(
+        canvas_width=1080,
+        canvas_height=1350,
+        footer_text="Short compliance note.",
+    )
+    long = calculate_footer_safe_area(
+        canvas_width=540,
+        canvas_height=1350,
+        footer_text=(
+            "This compliance note is intentionally longer so it wraps across several lines, "
+            "requires more vertical room, and produces a larger reserved footer-safe area "
+            "without relying on a fixed footer height. "
+            "It includes additional dynamically wrapped language about educational scope, "
+            "risk limitations, source review, eligibility, and user responsibility so the "
+            "footer-safe area grows from measured text instead of a static strip."
+        ),
+    )
+    narrow = calculate_footer_safe_area(
+        canvas_width=360,
+        canvas_height=1350,
+        footer_text=(
+            "This compliance note is intentionally longer so it wraps across several lines, "
+            "requires more vertical room, and produces a larger reserved footer-safe area "
+            "without relying on a fixed footer height. "
+            "It includes additional dynamically wrapped language about educational scope, "
+            "risk limitations, source review, eligibility, and user responsibility so the "
+            "footer-safe area grows from measured text instead of a static strip."
+        ),
+    )
+
+    assert short["enabled"] is True
+    assert long["reserved_height"] > short["reserved_height"]
+    assert narrow["footer_line_count"] >= long["footer_line_count"]
+    assert narrow["content_safe_area"]["height"] == narrow["content_canvas_height"]
+
+
+def test_build_ai_footer_fallback_asset_reserves_content_canvas_before_footer() -> None:
+    service = ContentService(session=None)  # type: ignore[arg-type]
+    tenant_id = uuid4()
+    brand_space_id = uuid4()
+    final_render_path = f"{tenant_id}/{brand_space_id}/generated/final-render.png"
+    base = Image.new("RGBA", (800, 1000), (245, 250, 255, 255))
+    draw = ImageDraw.Draw(base)
+    draw.rectangle((0, 930, 800, 999), fill=(220, 20, 20, 255))
+    footer_text = (
+        "Compliance note with enough detail to reserve space dynamically instead of "
+        "covering visual content at the bottom of the generated image."
+    )
+    content = ContentVersion(
+        id=uuid4(),
+        tenant_id=tenant_id,
+        brand_space_id=brand_space_id,
+        session_id=uuid4(),
+        created_by=uuid4(),
+        prompt="Create a carousel",
+        studio_panel={"format": "carousel", "platform_preset": "linkedin", "file_type": "png"},
+        generated_payload={},
+        blueprint_payload={},
+        explainability_metadata={},
+    )
+    asset = GeneratedAsset(
+        id=uuid4(),
+        tenant_id=tenant_id,
+        brand_space_id=brand_space_id,
+        content_version_id=uuid4(),
+        asset_role="render_preview",
+        mime_type="image/png",
+        storage_path=final_render_path,
+        width=800,
+        height=1000,
+        metadata_json={"render_source": "ai", "generation_stage": "final_render"},
+    )
+
+    class _Storage:
+        def exists(self, storage_path: str) -> bool:
+            return storage_path == final_render_path
+
+        def absolute_path(self, storage_path: str) -> str:
+            return storage_path
+
+    @contextmanager
+    def _open_image_asset(path: str):
+        if path == final_render_path:
+            yield base.copy()
+            return
+        raise OSError(path)
+
+    captured: dict[str, Image.Image] = {}
+
+    def _store_image(**kwargs):  # type: ignore[no-untyped-def]
+        captured["image"] = kwargs["image"].copy()
+        return {
+            "asset_id": str(uuid4()),
+            "mime_type": "image/png",
+            "storage_path": "generated/exact-footer.png",
+            "width": 800,
+            "height": 1000,
+        }
+
+    service.storage = _Storage()
+    service._store_ai_final_render_image = _store_image  # type: ignore[method-assign]
+
+    import app.services.content as content_module
+
+    original_open_image_asset = content_module.open_image_asset
+    content_module.open_image_asset = _open_image_asset
+
+    try:
+        payload = service._build_ai_footer_fallback_asset(
+            content=content,
+            asset=asset,
+            explainability={
+                "scene_graph": {
+                    "elements": [
+                        {
+                            "element_id": "legal_footer",
+                            "role": "legal",
+                            "text": footer_text,
+                        }
+                    ]
+                }
+            },
+            studio_panel={"format": "carousel", "platform_preset": "linkedin", "file_type": "png"},
+        )
+    finally:
+        content_module.open_image_asset = original_open_image_asset
+
+    assert payload is not None
+    safe_area = payload["metadata"]["legal_footer_safe_area"]
+    content_height = int(safe_area["content_canvas_height"])
+    assert content_height < 1000
+    assert captured["image"].getpixel((400, max(content_height - 2, 0)))[0] > 150
+    assert captured["image"].getpixel((400, content_height + 2))[0] != 220
 
 
 def test_strip_logo_background_if_safe_removes_dark_matte_edges() -> None:

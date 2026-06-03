@@ -65,6 +65,7 @@ from app.services.jobs import JobService
 from app.services.visual_planning import VisualPlanningService
 from app.utils.input_access_tracking import InputAccessTracker
 from app.utils.image_assets import open_image_asset
+from app.utils.footer_safe_area import calculate_footer_safe_area, wrap_footer_lines
 from app.utils.palette_roles import derive_palette_roles
 
 logger = logging.getLogger(__name__)
@@ -7898,10 +7899,18 @@ class ContentService:
             explainability=explainability,
         )
         if footer_text:
-            strip_height = max(int(canvas_height * 0.052), 56)
+            footer_safe_area = calculate_footer_safe_area(
+                canvas_width=canvas_width,
+                canvas_height=canvas_height,
+                footer_text=footer_text,
+                font_loader=cls._load_footer_font,
+            )
+            strip_box = footer_safe_area.get("footer_strip_box") if isinstance(footer_safe_area, dict) else {}
+            strip_height = int(strip_box.get("height") or 0) if isinstance(strip_box, dict) else 0
+            strip_top = int(strip_box.get("y") or max(canvas_height - strip_height, 0)) if isinstance(strip_box, dict) else max(canvas_height - strip_height, 0)
             boxes.append(
                 {
-                    "box": (0, max(canvas_height - strip_height, 0), canvas_width, strip_height),
+                    "box": (0, strip_top, canvas_width, strip_height),
                     "role": "legal_footer",
                     "source": "footer_fallback",
                 }
@@ -9315,20 +9324,7 @@ class ContentService:
         *,
         max_width: int,
     ) -> list[str]:
-        words = text.split()
-        lines: list[str] = []
-        current = ""
-        for word in words:
-            candidate = f"{current} {word}".strip()
-            left, _top, right, _bottom = draw.textbbox((0, 0), candidate, font=font)
-            if current and (right - left) > max_width:
-                lines.append(current)
-                current = word
-            else:
-                current = candidate
-        if current:
-            lines.append(current)
-        return lines
+        return wrap_footer_lines(draw, text, font, max_width=max_width)
 
     def _build_ai_footer_fallback_asset(
         self,
@@ -9356,11 +9352,21 @@ class ContentService:
             return None
 
         width, height = base.size
-        text_strip_height = max(int(height * 0.052), 56)
-        text_strip_top = max(height - text_strip_height, 0)
-        clear_strip_height = max(text_strip_height, int(height * 0.085))
-        clear_strip_top = max(height - clear_strip_height, 0)
-        sample_y = min(max(text_strip_top + text_strip_height // 2, 0), height - 1)
+        footer_safe_area = calculate_footer_safe_area(
+            canvas_width=width,
+            canvas_height=height,
+            footer_text=footer_text,
+            font_loader=self._load_footer_font,
+        )
+        strip_box = footer_safe_area.get("footer_strip_box") if isinstance(footer_safe_area, dict) else {}
+        text_box = footer_safe_area.get("footer_text_box") if isinstance(footer_safe_area, dict) else {}
+        content_safe_area = footer_safe_area.get("content_safe_area") if isinstance(footer_safe_area, dict) else {}
+        clear_strip_top = int(strip_box.get("y") or height) if isinstance(strip_box, dict) else height
+        clear_strip_height = int(strip_box.get("height") or 0) if isinstance(strip_box, dict) else 0
+        text_strip_top = int(text_box.get("y") or clear_strip_top) if isinstance(text_box, dict) else clear_strip_top
+        text_strip_height = int(text_box.get("height") or clear_strip_height) if isinstance(text_box, dict) else clear_strip_height
+        content_height = int(content_safe_area.get("height") or clear_strip_top) if isinstance(content_safe_area, dict) else clear_strip_top
+        sample_y = min(max(text_strip_top + max(text_strip_height // 2, 0), 0), height - 1)
         sample_points = [base.getpixel((x, sample_y))[:3] for x in (int(width * 0.12), int(width * 0.5), int(width * 0.88))]
         avg_luma = sum((0.2126 * r + 0.7152 * g + 0.0722 * b) for r, g, b in sample_points) / max(len(sample_points), 1)
         if avg_luma >= 145:
@@ -9370,27 +9376,25 @@ class ContentService:
             strip_fill = (0, 57, 117, 232)
             text_fill = (255, 255, 255, 255)
 
+        if 0 < content_height < height:
+            resampling = getattr(getattr(Image, "Resampling", Image), "LANCZOS", Image.BICUBIC)
+            content_area = base.resize((width, content_height), resampling)
+            reserved_canvas = Image.new("RGBA", base.size, strip_fill)
+            reserved_canvas.paste(content_area, (0, 0))
+            base = reserved_canvas
+
         overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay)
         draw.rectangle((0, clear_strip_top, width, height), fill=strip_fill)
-        horizontal_padding = max(int(width * 0.04), 28)
-        vertical_padding = max(int(text_strip_height * 0.16), 8)
-        max_text_width = max(width - horizontal_padding * 2, 10)
-        max_text_height = max(text_strip_height - vertical_padding * 2, 10)
-
-        chosen_font = self._load_footer_font(max(int(height * 0.009), 9))
-        chosen_lines = self._wrap_footer_lines(draw, footer_text, chosen_font, max_width=max_text_width)
-        for size in range(max(int(height * 0.0095), 11), 6, -1):
-            font = self._load_footer_font(size)
-            lines = self._wrap_footer_lines(draw, footer_text, font, max_width=max_text_width)
-            line_heights = [draw.textbbox((0, 0), line, font=font)[3] - draw.textbbox((0, 0), line, font=font)[1] for line in lines]
-            total_height = sum(line_heights) + max(len(lines) - 1, 0) * max(size // 3, 2)
-            chosen_font = font
-            chosen_lines = lines
-            if total_height <= max_text_height:
-                break
-
-        spacing = max(getattr(chosen_font, "size", 9) // 3, 2)
+        horizontal_padding = int(text_box.get("x") or max(int(width * 0.04), 28)) if isinstance(text_box, dict) else max(int(width * 0.04), 28)
+        vertical_padding = int((footer_safe_area.get("footer_padding") or {}).get("y") or max(int(text_strip_height * 0.16), 8))
+        max_text_width = int(text_box.get("width") or max(width - horizontal_padding * 2, 10)) if isinstance(text_box, dict) else max(width - horizontal_padding * 2, 10)
+        chosen_font_size = int(footer_safe_area.get("footer_font_size") or max(int(height * 0.0095), 11))
+        chosen_font = self._load_footer_font(chosen_font_size)
+        chosen_lines = [str(line) for line in footer_safe_area.get("_lines") or []]
+        if not chosen_lines:
+            chosen_lines = self._wrap_footer_lines(draw, footer_text, chosen_font, max_width=max_text_width)
+        spacing = max(chosen_font_size // 3, 2)
         line_boxes = [draw.textbbox((0, 0), line, font=chosen_font) for line in chosen_lines]
         total_height = sum(box[3] - box[1] for box in line_boxes) + max(len(chosen_lines) - 1, 0) * spacing
         cursor_y = text_strip_top + max((text_strip_height - total_height) // 2, vertical_padding // 2)
@@ -9411,6 +9415,12 @@ class ContentService:
             "generation_stage": "final_render",
             "legal_footer_composited_by_service": True,
             "legal_footer_overlay_strategy": "exact_footer_strip",
+            "legal_footer_reserved_before_composite": True,
+            "legal_footer_safe_area": {
+                key: value
+                for key, value in footer_safe_area.items()
+                if not str(key).startswith("_")
+            },
             "source_storage_path": storage_path,
             "legal_footer_text_length": len(footer_text),
             "legal_footer_line_count": len(chosen_lines),

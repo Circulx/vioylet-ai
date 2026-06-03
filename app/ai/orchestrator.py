@@ -43,6 +43,7 @@ from app.ai.tone_intelligence import ToneIntelligenceService
 from app.integrations.object_storage import LocalObjectStorage
 from app.services.generation_trace import GenerationTraceService
 from app.utils.input_access_tracking import InputAccessTracker
+from app.utils.footer_safe_area import calculate_footer_safe_area
 from app.services.research_editorial_planning import ResearchEditorialPlanningService
 from app.utils.palette_roles import derive_palette_roles, hex_to_rgb, is_soft_neutral_color, normalize_hex
 
@@ -301,6 +302,66 @@ class AIOrchestratorService:
         "ranking",
         "time series",
         "trend line",
+    )
+    STRUCTURED_VISUAL_METADATA_SCHEMA_VERSION = "visual_metadata_v1"
+    VISUAL_TREATMENT_PREFERENCE_VALUES = (
+        "2d",
+        "3d",
+        "isometric",
+        "flat_editorial",
+        "product_dashboard",
+        "icon_system",
+        "photo_composite",
+        "document_evidence",
+        "data_module",
+        "brand_led",
+    )
+    STRUCTURED_VISUAL_PRIMARY_ANCHOR_KEYS = (
+        "stat_highlights",
+        "claim_evidence_pairs",
+        "proof_points",
+        "body_points",
+        "verified_facts",
+        "evidence",
+        "verified_evidence",
+        "approved_evidence",
+    )
+    STRUCTURED_VISUAL_NESTED_ANCHOR_KEYS = (
+        "stat_highlights",
+        "claim_evidence_pairs",
+        "proof_points",
+        "verified_facts",
+        "evidence",
+        "verified_evidence",
+        "approved_evidence",
+    )
+    STRUCTURED_VISUAL_APPROVED_ANCHOR_SOURCES = frozenset(
+        {
+            "user_prompt",
+            "user-provided",
+            "user_provided",
+            "stat_highlight",
+            "stat_highlights",
+            "nested_stat_highlights",
+            "claim_evidence",
+            "claim_evidence_pairs",
+            "nested_claim_evidence_pairs",
+            "proof_point",
+            "proof_points",
+            "nested_proof_points",
+            "body_point",
+            "body_points",
+            "verified",
+            "verified_fact",
+            "verified_facts",
+            "nested_verified_facts",
+            "evidence",
+            "nested_evidence",
+            "verified_evidence",
+            "nested_verified_evidence",
+            "approved_evidence",
+            "nested_approved_evidence",
+        }
     )
     DISALLOWED_GLYPH_PATTERN = re.compile(
         r"[\u2600-\u27BF\U0001F300-\U0001FAFF\ufe0e\ufe0f\u200d]"
@@ -2390,6 +2451,45 @@ class AIOrchestratorService:
         return priority
 
     @classmethod
+    def _sample_blueprint_logo_position(cls, sample_page_blueprint: Any) -> str:
+        blueprint = sample_page_blueprint if isinstance(sample_page_blueprint, dict) else {}
+        if not blueprint:
+            return ""
+        for key in ("logo_position", "brand_header_position", "brand_logo_position"):
+            normalized = cls._normalize_logo_position_option(blueprint.get(key))
+            if normalized:
+                return normalized
+        zones: list[Any] = []
+        for key in ("zones", "image_zones", "content_zones"):
+            value = blueprint.get(key)
+            if isinstance(value, list):
+                zones.extend(value)
+        for zone in zones:
+            payload = zone if isinstance(zone, dict) else {}
+            role_text = " ".join(
+                cls._normalize_metadata_text(payload.get(key), limit=80)
+                for key in ("role", "name", "label", "zone_role", "type")
+            ).casefold()
+            if "logo" not in role_text and "brand header" not in role_text:
+                continue
+            normalized = cls._normalize_logo_position_option(role_text)
+            if normalized:
+                return normalized
+            try:
+                x = float(payload.get("x"))
+                y = float(payload.get("y"))
+                width = float(payload.get("width") if payload.get("width") is not None else payload.get("w"))
+                height = float(payload.get("height") if payload.get("height") is not None else payload.get("h"))
+            except (TypeError, ValueError):
+                continue
+            if min(x, y, width, height) < 0:
+                continue
+            if max(x, y, width, height) > 1.5:
+                continue
+            return cls._normalize_logo_position_option(cls._anchor_from_logo_geometry((x, y, width, height)))
+        return ""
+
+    @classmethod
     def _effective_logo_position_hint(
         cls,
         *,
@@ -2407,7 +2507,9 @@ class AIOrchestratorService:
         scene_graph_payload = scene_graph_payload or {}
         styles = scene_graph_payload.get("styles") if isinstance(scene_graph_payload.get("styles"), dict) else {}
         validation_hints = scene_graph_payload.get("validation_hints") if isinstance(scene_graph_payload.get("validation_hints"), dict) else {}
+        sample_logo_position = cls._sample_blueprint_logo_position(metadata.get("sample_page_blueprint"))
         for candidate in (
+            sample_logo_position,
             metadata.get("logo_position"),
             planning_hints.get("logo_position"),
             asset_strategy.get("logo_position"),
@@ -6975,6 +7077,1771 @@ class AIOrchestratorService:
         return (
             f"Data visualization execution contract for {format_name}: approved data/content anchors are {anchor_summary}. "
             f"{value_rule} {type_rule} Every row, column, axis, legend, label, metric, or module heading must map to one approved anchor; never render generic bars, fake axes, random dashboard tiles, placeholder numbers, or unlabeled chart shapes."
+        )
+
+    @classmethod
+    def _broad_visual_context_prompt_section(cls, lines: Any, *, limit: int = 5) -> str:
+        context_lines = cls._normalize_metadata_list(lines, limit=limit)
+        if not context_lines:
+            return ""
+        return (
+            "Broad visual/layout context hints, not strict data anchors: "
+            + "; ".join(context_lines)
+            + ". Use these only for composition, hierarchy, and subject context; they cannot unlock charts, dashboards, numeric callouts, or data visuals."
+        )
+
+    @classmethod
+    def _sample_visual_permissions(cls, sample_page_blueprint: Any) -> dict[str, Any]:
+        blueprint = sample_page_blueprint if isinstance(sample_page_blueprint, dict) else {}
+        permissions = blueprint.get("visual_permissions") if isinstance(blueprint.get("visual_permissions"), dict) else {}
+        return dict(permissions)
+
+    @classmethod
+    def _sample_permission_allows_visual_type(
+        cls,
+        *,
+        sample_page_blueprint: Any,
+        visual_type: str,
+    ) -> bool:
+        blueprint = sample_page_blueprint if isinstance(sample_page_blueprint, dict) else {}
+        permissions = cls._sample_visual_permissions(blueprint)
+        if not blueprint or not permissions:
+            return True
+        normalized_type = visual_type.strip().casefold()
+        if normalized_type == "table":
+            return bool(permissions.get("table_allowed", True))
+        if normalized_type == "dashboard":
+            return bool(permissions.get("dashboard_allowed", True))
+        if normalized_type == "chart":
+            observed_keys = [
+                key
+                for key in ("chart_or_graph_allowed", "metric_tiles_allowed", "dashboard_allowed")
+                if key in permissions
+            ]
+            if not observed_keys:
+                return True
+            return any(bool(permissions.get(key)) for key in observed_keys)
+        if normalized_type in {"3d", "isometric"}:
+            observed_keys = [
+                key
+                for key in (
+                    "three_d_allowed",
+                    "3d_allowed",
+                    "dimensional_allowed",
+                    "depth_allowed",
+                    "isometric_allowed",
+                )
+                if key in permissions
+            ]
+            if not observed_keys:
+                return True
+            return any(bool(permissions.get(key)) for key in observed_keys)
+        if normalized_type == "icon_system":
+            observed_keys = [
+                key
+                for key in ("icon_system_allowed", "icons_allowed", "iconography_allowed")
+                if key in permissions
+            ]
+            if not observed_keys:
+                return True
+            return any(bool(permissions.get(key)) for key in observed_keys)
+        if normalized_type == "photo_composite":
+            observed_keys = [
+                key
+                for key in ("photo_allowed", "photography_allowed", "image_composite_allowed")
+                if key in permissions
+            ]
+            if not observed_keys:
+                return True
+            return any(bool(permissions.get(key)) for key in observed_keys)
+        return True
+
+    @classmethod
+    def _prompt_has_explicit_data_anchor(cls, prompt: Any) -> bool:
+        text = cls._normalize_metadata_text(prompt, limit=520)
+        if not text:
+            return False
+        if cls._exact_claim_markers(text):
+            return True
+        return bool(
+            re.search(
+                r"\b(?:table|matrix|comparison|compare|versus|vs\.?)\b.{0,120}\b(?:by|across|between|for)\b",
+                text,
+                flags=re.IGNORECASE,
+            )
+        )
+
+    @classmethod
+    def _structured_visual_anchor_source_allowed(cls, source: Any) -> bool:
+        source_label = cls._normalize_metadata_text(source, limit=64).casefold()
+        return source_label in cls.STRUCTURED_VISUAL_APPROVED_ANCHOR_SOURCES
+
+    @classmethod
+    def _structured_visual_anchor_lines(
+        cls,
+        value: Any,
+        *,
+        source_label: str,
+        limit: int = 8,
+    ) -> list[str]:
+        lines: list[str] = []
+        seen: set[str] = set()
+        normalized_source = cls._normalize_metadata_text(source_label, limit=64).casefold()
+
+        def append_line(candidate: Any) -> None:
+            if len(lines) >= limit:
+                return
+            text = cls._normalize_metadata_text(candidate, limit=260)
+            if not text:
+                return
+            key = text.casefold()
+            if key in seen:
+                return
+            seen.add(key)
+            lines.append(text)
+
+        def collect(item: Any) -> None:
+            if len(lines) >= limit:
+                return
+            if isinstance(item, dict):
+                if normalized_source in {"claim_evidence", "claim_evidence_pairs", "nested_claim_evidence_pairs"}:
+                    for key in ("claim", "evidence"):
+                        append_line(item.get(key))
+                    return
+                if "verified" in normalized_source or normalized_source.endswith("evidence"):
+                    for key in ("fact", "statement", "text", "claim", "evidence", "value"):
+                        append_line(item.get(key))
+                    return
+                if normalized_source in {"stat_highlight", "stat_highlights", "nested_stat_highlights"}:
+                    for key in ("text", "value", "stat", "fact", "evidence"):
+                        append_line(item.get(key))
+                    return
+                for key in ("text", "value", "fact", "statement"):
+                    append_line(item.get(key))
+                return
+            if isinstance(item, (list, tuple, set)):
+                for nested in item:
+                    collect(nested)
+                    if len(lines) >= limit:
+                        break
+                return
+            append_line(item)
+
+        collect(value)
+        return lines[:limit]
+
+    @classmethod
+    def _structured_visual_nested_anchor_sources(cls, *containers: Any) -> list[tuple[str, Any]]:
+        buckets: dict[str, list[Any]] = {}
+
+        def add(source: str, value: Any) -> None:
+            if value is None:
+                return
+            buckets.setdefault(source, []).append(value)
+
+        def collect(value: Any) -> None:
+            if isinstance(value, dict):
+                for key in cls.STRUCTURED_VISUAL_NESTED_ANCHOR_KEYS:
+                    if key in value:
+                        add(f"nested_{key}", value.get(key))
+                fact_model = value.get("fact_model") if isinstance(value.get("fact_model"), dict) else {}
+                if fact_model:
+                    for key in ("verified_facts", "evidence", "verified_evidence", "approved_evidence"):
+                        if key in fact_model:
+                            add(f"nested_{key}", fact_model.get(key))
+                return
+            if isinstance(value, (list, tuple, set)):
+                for item in value:
+                    collect(item)
+
+        for container in containers:
+            collect(container)
+        return [(source, values) for source, values in buckets.items() if values]
+
+    @classmethod
+    def _structured_visual_data_anchor_sources(
+        cls,
+        metadata: Any,
+        *,
+        prompt: Any = "",
+        request: AIOrchestrationRequest | None = None,
+    ) -> list[tuple[str, Any]]:
+        sources: list[tuple[str, Any]] = []
+        prompt_text = prompt
+        if not prompt_text and request is not None:
+            prompt_text = request.prompt
+        if prompt_text and cls._prompt_has_explicit_data_anchor(prompt_text):
+            sources.append(("user_prompt", prompt_text))
+        if not isinstance(metadata, dict):
+            return sources
+
+        for key in cls.STRUCTURED_VISUAL_PRIMARY_ANCHOR_KEYS:
+            sources.append((key, metadata.get(key)))
+
+        fact_model = metadata.get("fact_model") if isinstance(metadata.get("fact_model"), dict) else {}
+        if fact_model:
+            for key in ("verified_facts", "evidence", "verified_evidence", "approved_evidence"):
+                if key in fact_model:
+                    sources.append((key, fact_model.get(key)))
+
+        sources.extend(
+            cls._structured_visual_nested_anchor_sources(
+                metadata.get("infographic_section_specs"),
+                metadata.get("static_panel_spec"),
+            )
+        )
+        return sources
+
+    @classmethod
+    def _structured_visual_anchor_entries(
+        cls,
+        sources: list[tuple[str, Any]],
+        *,
+        request: AIOrchestrationRequest | None = None,
+        limit: int = 8,
+    ) -> list[dict[str, Any]]:
+        entries: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for source, value in sources:
+            source_label = cls._normalize_metadata_text(source, limit=48) or "metadata"
+            if not cls._structured_visual_anchor_source_allowed(source_label):
+                continue
+            for line in cls._structured_visual_anchor_lines(value, source_label=source_label, limit=limit):
+                normalized = cls._normalize_metadata_text(line, limit=260)
+                if not normalized:
+                    continue
+                key = normalized.casefold()
+                if key in seen:
+                    continue
+                seen.add(key)
+                entries.append(
+                    {
+                        "source": source_label,
+                        "text": normalized,
+                        "has_exact_value": bool(cls._exact_claim_markers(normalized)),
+                    }
+                )
+                if len(entries) >= limit:
+                    break
+            if len(entries) >= limit:
+                break
+        if not entries:
+            return []
+        if request is not None and not cls._data_visualization_has_content_anchor(
+            request=request,
+            anchors=[entry["text"] for entry in entries],
+        ):
+            return []
+        return entries[:limit]
+
+    @classmethod
+    def _brand_visual_grounding_evidence(
+        cls,
+        *,
+        visual_identity: Any,
+        reference_assets: Any = None,
+        asset_catalog: Any = None,
+        compiled_context: dict[str, Any] | None = None,
+        limit: int = 5,
+    ) -> list[str]:
+        evidence: list[str] = []
+
+        def add(value: Any, *, item_limit: int = 120) -> None:
+            normalized = cls._normalize_metadata_text(value, limit=item_limit)
+            if not normalized:
+                return
+            if any(normalized.casefold() == item.casefold() for item in evidence):
+                return
+            evidence.append(cls._scrub_image_prompt_brand_mark_triggers(normalized, replacement="reserved space"))
+
+        if isinstance(visual_identity, dict):
+            for key in ("visual_style", "brand_mood", "illustration_style", "design_style", "composition_style"):
+                add(visual_identity.get(key), item_limit=90)
+            reusable_assets = visual_identity.get("reusable_design_assets")
+            if isinstance(reusable_assets, list):
+                for asset in reusable_assets[:6]:
+                    if not isinstance(asset, dict):
+                        add(asset, item_limit=80)
+                        continue
+                    asset_parts = [
+                        asset.get("name"),
+                        asset.get("label"),
+                        asset.get("asset_kind"),
+                        asset.get("style"),
+                        ", ".join(str(tag) for tag in asset.get("tags", [])[:4]) if isinstance(asset.get("tags"), list) else "",
+                    ]
+                    add(" ".join(str(part).strip() for part in asset_parts if str(part or "").strip()), item_limit=120)
+                    if len(evidence) >= limit:
+                        break
+
+        reference_asset_items = reference_assets if isinstance(reference_assets, list) else []
+        asset_catalog_items = asset_catalog if isinstance(asset_catalog, list) else []
+        for asset in [*reference_asset_items[:4], *asset_catalog_items[:4]]:
+            if not isinstance(asset, dict):
+                continue
+            label = cls._reference_asset_display_label(asset)
+            role = cls._normalize_metadata_text(asset.get("asset_role"), limit=48)
+            add(" ".join(part for part in [role, label] if part), item_limit=120)
+            if len(evidence) >= limit:
+                break
+
+        visual_knowledge_brief = ContextCompilerService.coerce_visual_knowledge_brief(
+            (compiled_context or {}).get("visual_knowledge_brief"),
+        )
+        for item in (visual_knowledge_brief.get("items") or [])[:4]:
+            if not isinstance(item, dict):
+                continue
+            add(item.get("content"), item_limit=140)
+            if len(evidence) >= limit:
+                break
+
+        return evidence[:limit]
+
+    @classmethod
+    def _visual_treatment_from_text(cls, value: Any) -> tuple[str, str]:
+        text = cls._normalize_metadata_text(value, limit=900).casefold()
+        if not text:
+            return "brand_led", "default"
+        if re.search(r"\b(isometric|2\.5d|2-5d|axonometric)\b", text):
+            return "isometric", "text"
+        if re.search(r"\b(3d|three[- ]dimensional|volumetric|depth|dimensional|rendered object)\b", text):
+            return "3d", "text"
+        if re.search(r"\b(product dashboard|dashboard|analytics panel|platform surface|app surface|laptop|screen ui|ui panel)\b", text):
+            return "product_dashboard", "text"
+        if re.search(r"\b(icon system|icon set|icons|pictogram|glyph)\b", text):
+            return "icon_system", "text"
+        if re.search(r"\b(table|chart|graph|scorecard|metric module|data module|matrix)\b", text):
+            return "data_module", "text"
+        if re.search(r"\b(photo|photographic|image-led|lifestyle|portrait|environment)\b", text):
+            return "photo_composite", "text"
+        if re.search(r"\b(document|evidence|paper|report|contract|file|certificate)\b", text):
+            return "document_evidence", "text"
+        if re.search(r"\b(flat|editorial|magazine|poster|minimal|minimalist|illustration)\b", text):
+            return "flat_editorial", "text"
+        if re.search(r"\b(2d|two[- ]dimensional)\b", text):
+            return "2d", "text"
+        return "brand_led", "default"
+
+    @classmethod
+    def _resolve_visual_treatment_preference(
+        cls,
+        *,
+        prompt_text: Any = "",
+        combined_intent: Any = "",
+        visual_plan: dict[str, Any] | None = None,
+        raw_preference: Any = None,
+        sample_page_blueprint: Any = None,
+        brand_grounding: list[str] | None = None,
+        table_requested: bool = False,
+        chart_requested: bool = False,
+        table_allowed: bool = False,
+        chart_allowed: bool = False,
+        anchor_count: int = 0,
+        format_name: str = "",
+    ) -> dict[str, Any]:
+        blueprint = sample_page_blueprint if isinstance(sample_page_blueprint, dict) else {}
+        plan = visual_plan if isinstance(visual_plan, dict) else {}
+        grounding = list(brand_grounding or [])
+        scores = {value: 0.0 for value in cls.VISUAL_TREATMENT_PREFERENCE_VALUES}
+        evidence: dict[str, list[str]] = {value: [] for value in cls.VISUAL_TREATMENT_PREFERENCE_VALUES}
+        evidence_sources: dict[str, list[str]] = {value: [] for value in cls.VISUAL_TREATMENT_PREFERENCE_VALUES}
+
+        def add_score(treatment: str, amount: float, source: str, reason: str) -> None:
+            if treatment not in scores or amount <= 0:
+                return
+            scores[treatment] += amount
+            compact_reason = cls._normalize_metadata_text(reason, limit=80)
+            if compact_reason and compact_reason not in evidence[treatment]:
+                evidence[treatment].append(compact_reason)
+            if source and source not in evidence_sources[treatment]:
+                evidence_sources[treatment].append(source)
+
+        treatment_patterns: tuple[tuple[str, str, str], ...] = (
+            ("isometric", r"\b(isometric|2\.5d|2-5d|axonometric)\b", "isometric/dimensional system cue"),
+            ("3d", r"\b(3d|three[- ]dimensional|volumetric|true[- ]3d|rendered object|soft surfaces|depth)\b", "3d/depth cue"),
+            ("product_dashboard", r"\b(product dashboard|dashboard|analytics panel|platform surface|app surface|laptop|screen ui|ui panel|product surface)\b", "product/ui surface cue"),
+            ("icon_system", r"\b(icon system|icon set|icons|pictogram|glyph|iconography|symbol system)\b", "icon-system cue"),
+            ("data_module", r"\b(table|chart|graph|scorecard|metric module|data module|matrix|dashboard tile|axis|axes)\b", "data/module cue"),
+            ("photo_composite", r"\b(photo|photographic|image-led|lifestyle|portrait|environment|realistic scene)\b", "photo/composite cue"),
+            ("document_evidence", r"\b(document|evidence|paper|report|contract|file|certificate|record)\b", "document/evidence cue"),
+            ("flat_editorial", r"\b(flat|editorial|magazine|poster|minimal|minimalist|illustration|campaign)\b", "flat/editorial cue"),
+            ("2d", r"\b(2d|two[- ]dimensional|vector|line art)\b", "2d cue"),
+        )
+
+        def score_text(source: str, value: Any, weight: float) -> None:
+            text = cls._normalize_metadata_text(value, limit=900)
+            if not text:
+                return
+            lowered = text.casefold()
+            matched = False
+            for treatment, pattern, reason in treatment_patterns:
+                if re.search(pattern, lowered):
+                    add_score(treatment, weight, source, reason)
+                    matched = True
+            if not matched and source in {"sample_layout", "fallback_context"}:
+                add_score("brand_led", max(weight * 0.4, 1.0), source, "general context fit")
+
+        score_text("user_prompt", prompt_text, 90.0)
+        score_text("metadata", combined_intent, 42.0)
+        score_text(
+            "visual_plan",
+            " ".join(
+                cls._coerce_text_value(plan.get(key))
+                for key in ("mode", "need", "rationale", "density")
+                if cls._coerce_text_value(plan.get(key)).strip()
+            ),
+            28.0,
+        )
+
+        existing = raw_preference if isinstance(raw_preference, dict) else {}
+        existing_preferred = cls._normalize_metadata_text(existing.get("preferred"), limit=40).casefold()
+        if existing_preferred in cls.VISUAL_TREATMENT_PREFERENCE_VALUES:
+            add_score(existing_preferred, 36.0, "structured_metadata", "existing structured preference")
+
+        for item in grounding[:6]:
+            score_text("brand_context", item, 62.0)
+
+        counts = blueprint.get("module_counts") if isinstance(blueprint.get("module_counts"), dict) else {}
+        layout_parts: list[str] = [
+            cls._normalize_metadata_text(blueprint.get("layout_category"), limit=80),
+            cls._normalize_metadata_text(blueprint.get("layout_mode"), limit=80),
+            cls._normalize_metadata_text(blueprint.get("density"), limit=32),
+        ]
+        for zone_key in ("image_zones", "zones", "content_zones"):
+            zones = blueprint.get(zone_key)
+            if isinstance(zones, list):
+                for zone in zones[:6]:
+                    if isinstance(zone, dict):
+                        layout_parts.extend(
+                            cls._normalize_metadata_text(zone.get(key), limit=40)
+                            for key in ("role", "name", "label", "zone_role")
+                            if cls._normalize_metadata_text(zone.get(key), limit=40)
+                        )
+        score_text("sample_layout", " ".join(part for part in layout_parts if part), 30.0)
+        try:
+            small_icon_count = int(counts.get("small_icon_like_count") or 0)
+            card_count = int(counts.get("card_like_count") or 0)
+            visual_count = int(counts.get("large_visual_count") or 0)
+        except (TypeError, ValueError):
+            small_icon_count = card_count = visual_count = 0
+        if small_icon_count > 0:
+            add_score("icon_system", 22.0, "sample_layout", "sample has icon-like modules")
+        if card_count > 0:
+            add_score("flat_editorial", 12.0, "sample_layout", "sample has card/callout modules")
+        if visual_count > 0 and not any(scores[value] for value in ("3d", "isometric", "photo_composite")):
+            add_score("brand_led", 8.0, "sample_layout", "sample has visual slot")
+
+        intent_text = cls._normalize_metadata_text(" ".join([cls._coerce_text_value(prompt_text), cls._coerce_text_value(combined_intent)]), limit=900).casefold()
+        if re.search(r"\b(process|workflow|steps|sequence|journey|system|flow)\b", intent_text):
+            add_score("icon_system", 20.0, "fallback_context", "process/workflow clarity cue")
+            add_score("isometric", 12.0, "fallback_context", "process/workflow dimensional cue")
+        if re.search(r"\b(compare|comparison|versus|vs\.?|before[- ]after|trade[- ]off)\b", intent_text):
+            add_score("flat_editorial", 20.0, "fallback_context", "comparison clarity cue")
+        if re.search(r"\b(service|explain|explanation|educat|guide|clarity)\b", intent_text):
+            add_score("flat_editorial", 16.0, "fallback_context", "clarity-first explanation cue")
+        if str(format_name or "").strip().casefold() in {"carousel", "infographic", "poster"}:
+            add_score("flat_editorial", 8.0, "fallback_context", "format needs clear composition")
+
+        if (table_requested or chart_requested) and anchor_count and (table_allowed or chart_allowed):
+            add_score("data_module", 110.0, "approved_data_anchors", "strict data anchors and permissions")
+
+        def product_context_present() -> bool:
+            return bool(
+                re.search(
+                    r"\b(product|platform|app|screen|dashboard|ui|interface|analytics panel|laptop)\b",
+                    intent_text + " " + " ".join(item.casefold() for item in grounding[:4]),
+                )
+            )
+
+        blocked_reasons: list[str] = []
+
+        def permission_allowed(treatment: str) -> bool:
+            if treatment == "product_dashboard":
+                if not product_context_present():
+                    blocked_reasons.append("product_dashboard blocked: no product/ui context evidence")
+                    return False
+                if not cls._sample_permission_allows_visual_type(sample_page_blueprint=blueprint, visual_type="dashboard"):
+                    blocked_reasons.append("product_dashboard blocked by sample visual_permissions")
+                    return False
+                return True
+            if treatment == "data_module":
+                if not anchor_count:
+                    blocked_reasons.append("data_module blocked: no strict data anchors")
+                    return False
+                if not ((table_requested and table_allowed) or (chart_requested and chart_allowed)):
+                    blocked_reasons.append("data_module blocked by data intent or sample permissions")
+                    return False
+                return True
+            if treatment in {"3d", "isometric", "icon_system", "photo_composite"}:
+                if not cls._sample_permission_allows_visual_type(sample_page_blueprint=blueprint, visual_type=treatment):
+                    blocked_reasons.append(f"{treatment} blocked by sample visual_permissions")
+                    return False
+            return True
+
+        ranked = sorted(
+            ((treatment, score) for treatment, score in scores.items() if score > 0),
+            key=lambda item: item[1],
+            reverse=True,
+        )
+        preferred = ""
+        preferred_score = 0.0
+        for treatment, score in ranked:
+            if permission_allowed(treatment):
+                preferred = treatment
+                preferred_score = score
+                break
+
+        fallback_reason = ""
+        if not preferred:
+            if blueprint:
+                preferred = "flat_editorial"
+                fallback_reason = "sample layout present without stronger allowed treatment evidence"
+            else:
+                preferred = "brand_led"
+                fallback_reason = "no stronger treatment evidence"
+            preferred_score = scores.get(preferred, 0.0)
+            if preferred_score <= 0:
+                add_score(preferred, 12.0, "fallback_context", fallback_reason)
+                preferred_score = scores.get(preferred, 12.0)
+
+        source_priority = ("user_prompt", "brand_context", "approved_data_anchors", "metadata", "visual_plan", "structured_metadata", "sample_layout", "fallback_context")
+        preferred_sources = evidence_sources.get(preferred) or ["fallback_context"]
+        if preferred == "data_module" and anchor_count:
+            source = "data_anchors"
+        else:
+            source = next((candidate for candidate in source_priority if candidate in preferred_sources), preferred_sources[0])
+            if source == "approved_data_anchors":
+                source = "data_anchors"
+        confidence = round(min(max(preferred_score / 120.0, 0.05), 0.99), 2)
+        decision_evidence = evidence.get(preferred)[:5]
+        if not fallback_reason and "fallback_context" in preferred_sources and source == "fallback_context":
+            fallback_reason = "context-derived fallback"
+
+        return {
+            "preferred": preferred,
+            "allowed": True,
+            "source": source,
+            "brand_asset_grounding": grounding,
+            "layout_obedience": "sample_layout_first" if blueprint else "approved_layout_slots_first",
+            "decision_evidence": decision_evidence,
+            "blocked_reasons": list(dict.fromkeys(blocked_reasons))[:5],
+            "fallback_reason": fallback_reason,
+            "confidence": confidence,
+        }
+
+    @classmethod
+    def _creativity_signal_lines(cls, value: Any, *, brand_grounding: list[str], limit: int = 5) -> list[str]:
+        text = cls._normalize_metadata_text(value, limit=900)
+        lowered = text.casefold()
+        signals: list[str] = []
+        for label, pattern in (
+            ("creative_prompt", r"\b(creative|attractive|premium|high-end|polished|dynamic|engaging|attention-grabbing)\b"),
+            ("dimensional_visual", r"\b(3d|three[- ]dimensional|isometric|2\.5d|depth|volumetric)\b"),
+            ("editorial_visual", r"\b(editorial|magazine|campaign|poster|flat|minimal)\b"),
+            ("structured_visual", r"\b(table|chart|graph|dashboard|matrix|scorecard|comparison)\b"),
+            ("asset_grounded", r"\b(reference|asset|visual identity|brand system|icon|illustration)\b"),
+        ):
+            if re.search(pattern, lowered):
+                signals.append(label)
+        if brand_grounding:
+            signals.append("brand_asset_context")
+        deduped: list[str] = []
+        for signal in signals:
+            if signal not in deduped:
+                deduped.append(signal)
+            if len(deduped) >= limit:
+                break
+        return deduped
+
+    @classmethod
+    def _normalize_structured_visual_metadata(
+        cls,
+        *,
+        metadata: dict[str, Any],
+        request: AIOrchestrationRequest | None = None,
+        visual_intent: Any = "",
+        anchor_entries: list[dict[str, Any]] | None = None,
+        format_name: str = "",
+        sample_page_blueprint: Any = None,
+        visual_plan: dict[str, Any] | None = None,
+        visual_identity: Any = None,
+        reference_assets: Any = None,
+        asset_catalog: Any = None,
+        compiled_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        raw = metadata.get("structured_visual_metadata") if isinstance(metadata, dict) else {}
+        raw = raw if isinstance(raw, dict) else {}
+        blueprint = (
+            sample_page_blueprint
+            if isinstance(sample_page_blueprint, dict)
+            else metadata.get("sample_page_blueprint")
+            if isinstance(metadata.get("sample_page_blueprint"), dict)
+            else {}
+        )
+        prompt_text = request.prompt if request is not None else ""
+        combined_intent = " ".join(
+            part
+            for part in [
+                cls._coerce_text_value(prompt_text),
+                cls._coerce_text_value(visual_intent),
+                cls._coerce_text_value(metadata.get("visual_focus")),
+                cls._coerce_text_value(metadata.get("visual_direction")),
+                cls._coerce_text_value(metadata.get("design_style")),
+                cls._coerce_text_value(metadata.get("image_prompt")),
+            ]
+            if cls._coerce_text_value(part).strip()
+        )
+        lowered_intent = combined_intent.casefold()
+        table_requested = bool(re.search(r"\b(table|tabular|matrix|comparison grid)\b", lowered_intent))
+        chart_requested = bool(
+            re.search(
+                r"\b(chart|graph|dashboard|scorecard|metric module|metrics module|timeline|axis|axes|data visuali[sz]ation|data viz)\b",
+                lowered_intent,
+            )
+        )
+        numeric_requested = cls._numeric_data_visualization_requested(combined_intent)
+        data_anchors = list(anchor_entries or [])
+        if not data_anchors and isinstance(raw.get("data_anchors"), list):
+            for item in raw.get("data_anchors", [])[:8]:
+                if isinstance(item, dict):
+                    text = cls._normalize_metadata_text(item.get("text"), limit=260)
+                    source_label = cls._normalize_metadata_text(item.get("source"), limit=48) or "structured_visual_metadata"
+                else:
+                    text = cls._normalize_metadata_text(item, limit=260)
+                    source_label = "structured_visual_metadata"
+                if text and cls._structured_visual_anchor_source_allowed(source_label):
+                    data_anchors.append(
+                        {
+                            "source": source_label,
+                            "text": text,
+                            "has_exact_value": bool(cls._exact_claim_markers(text)),
+                        }
+                    )
+        anchor_count = len(data_anchors)
+        prompt_explicit_visual = bool(request and cls._has_explicit_data_visual_request(prompt_text, text_payload=None))
+        explicit_anchor_override = bool(prompt_explicit_visual and anchor_count)
+        sample_table_allowed = cls._sample_permission_allows_visual_type(
+            sample_page_blueprint=blueprint,
+            visual_type="table",
+        )
+        sample_chart_allowed = cls._sample_permission_allows_visual_type(
+            sample_page_blueprint=blueprint,
+            visual_type="chart",
+        )
+        table_allowed = bool(table_requested and anchor_count and (sample_table_allowed or explicit_anchor_override))
+        chart_allowed = bool(chart_requested and anchor_count and (sample_chart_allowed or explicit_anchor_override))
+        brand_grounding = cls._brand_visual_grounding_evidence(
+            visual_identity=visual_identity,
+            reference_assets=reference_assets,
+            asset_catalog=asset_catalog,
+            compiled_context=compiled_context,
+        )
+        existing_preference = raw.get("visual_treatment_preference") if isinstance(raw.get("visual_treatment_preference"), dict) else {}
+        treatment_preference = cls._resolve_visual_treatment_preference(
+            prompt_text=prompt_text,
+            combined_intent=combined_intent,
+            visual_plan=visual_plan,
+            raw_preference=existing_preference,
+            sample_page_blueprint=blueprint,
+            brand_grounding=brand_grounding,
+            table_requested=table_requested,
+            chart_requested=chart_requested,
+            table_allowed=table_allowed,
+            chart_allowed=chart_allowed,
+            anchor_count=anchor_count,
+            format_name=format_name,
+        )
+        preferred_treatment = cls._normalize_metadata_text(
+            treatment_preference.get("preferred"),
+            limit=40,
+        ).casefold()
+        creativity_signals = cls._creativity_signal_lines(
+            combined_intent,
+            brand_grounding=brand_grounding,
+        )
+        needs_attractive_visual = bool(
+            creativity_signals
+            or preferred_treatment in {"3d", "isometric", "flat_editorial", "photo_composite", "document_evidence"}
+            or str(format_name or "").strip().casefold() in {"carousel", "infographic", "poster"}
+        )
+        source = "user_prompt" if prompt_explicit_visual else "metadata" if (table_requested or chart_requested) else "none"
+        return {
+            "schema_version": cls.STRUCTURED_VISUAL_METADATA_SCHEMA_VERSION,
+            "table_intent": {
+                "requested": table_requested,
+                "allowed": table_allowed,
+                "requires_data_anchors": True,
+                "anchor_count": anchor_count if table_requested else 0,
+                "source": source if table_requested else "none",
+            },
+            "chart_intent": {
+                "requested": chart_requested,
+                "allowed": chart_allowed,
+                "numeric": numeric_requested,
+                "requires_data_anchors": True,
+                "anchor_count": anchor_count if chart_requested else 0,
+                "source": source if chart_requested else "none",
+            },
+            "data_anchors": data_anchors[:8],
+            "creativity_signals": {
+                "needs_attractive_visual": needs_attractive_visual,
+                "signals": creativity_signals,
+                "source": "user_prompt" if creativity_signals and prompt_text else "brand_context" if brand_grounding else "metadata",
+            },
+            "visual_treatment_preference": {
+                **treatment_preference,
+            },
+        }
+
+    @classmethod
+    def _structured_visual_metadata_prompt_section(cls, structured_visual_metadata: Any) -> str:
+        metadata = structured_visual_metadata if isinstance(structured_visual_metadata, dict) else {}
+        if not metadata:
+            return ""
+        compact = json.dumps(metadata, ensure_ascii=True, separators=(",", ":"))
+        preference = metadata.get("visual_treatment_preference") if isinstance(metadata.get("visual_treatment_preference"), dict) else {}
+        table_intent = metadata.get("table_intent") if isinstance(metadata.get("table_intent"), dict) else {}
+        chart_intent = metadata.get("chart_intent") if isinstance(metadata.get("chart_intent"), dict) else {}
+        grounding = preference.get("brand_asset_grounding") if isinstance(preference.get("brand_asset_grounding"), list) else []
+        grounding_text = "; ".join(cls._normalize_metadata_text(item, limit=120) for item in grounding[:4] if cls._normalize_metadata_text(item, limit=120))
+        restrictions: list[str] = [
+            f"Structured visual metadata contract JSON: {compact}.",
+            "Layout obedience is stronger than creativity: apply the preferred visual treatment only inside approved layout, image, module, or visual slots; never invent new regions.",
+            "Do not bypass sample visual_permissions; when a table/chart/dashboard intent is not allowed or has anchor_count=0, render a non-data visual treatment instead.",
+        ]
+        if grounding_text:
+            restrictions.append(
+                f"Brand-grounded visual treatment preference: {preference.get('preferred')} from {preference.get('source')}; grounding cues: {grounding_text}."
+            )
+        if (table_intent.get("requested") and not table_intent.get("allowed")) or (chart_intent.get("requested") and not chart_intent.get("allowed")):
+            restrictions.append(
+                "Table/chart request is blocked for this surface unless approved anchors and sample permissions both support it; do not draw tables, charts, axes, dashboards, or metric furniture."
+            )
+        return " ".join(part for part in restrictions if part)
+
+    @classmethod
+    def _dynamic_visual_art_direction_section(
+        cls,
+        *,
+        request: AIOrchestrationRequest | None = None,
+        format_name: str = "",
+        semantic_visual_brief: Any = "",
+        visual_intent: Any = "",
+        structured_visual_metadata: Any = None,
+        visual_plan: dict[str, Any] | None = None,
+        visual_identity: Any = None,
+        data_visualization_anchor_lines: list[str] | None = None,
+        sample_page_blueprint: Any = None,
+        slide_purpose: Any = "",
+        reference_assets: Any = None,
+        asset_catalog: Any = None,
+        compiled_context: dict[str, Any] | None = None,
+    ) -> str:
+        metadata = structured_visual_metadata if isinstance(structured_visual_metadata, dict) else {}
+        plan = visual_plan if isinstance(visual_plan, dict) else {}
+        preference = metadata.get("visual_treatment_preference") if isinstance(metadata.get("visual_treatment_preference"), dict) else {}
+        creativity = metadata.get("creativity_signals") if isinstance(metadata.get("creativity_signals"), dict) else {}
+        table_intent = metadata.get("table_intent") if isinstance(metadata.get("table_intent"), dict) else {}
+        chart_intent = metadata.get("chart_intent") if isinstance(metadata.get("chart_intent"), dict) else {}
+        blueprint = sample_page_blueprint if isinstance(sample_page_blueprint, dict) else {}
+
+        prompt_text = getattr(request, "prompt", "") if request is not None else ""
+        communicate = cls._normalize_metadata_text(
+            semantic_visual_brief
+            or visual_intent
+            or prompt_text,
+            limit=260,
+        )
+        if not communicate:
+            return ""
+
+        plan_parts = [
+            cls._normalize_metadata_text(format_name, limit=40),
+            cls._normalize_metadata_text(slide_purpose, limit=120),
+            cls._normalize_metadata_text(plan.get("mode"), limit=40),
+            cls._normalize_metadata_text(plan.get("rationale"), limit=140),
+        ]
+        purpose = cls._normalize_metadata_text(
+            " | ".join(part for part in plan_parts if part),
+            limit=240,
+        )
+        preferred = cls._normalize_metadata_text(preference.get("preferred"), limit=40).casefold()
+        if preferred not in cls.VISUAL_TREATMENT_PREFERENCE_VALUES:
+            preferred, _ = cls._visual_treatment_from_text(
+                " ".join(
+                    part
+                    for part in [
+                        cls._coerce_text_value(visual_intent),
+                        communicate,
+                        purpose,
+                    ]
+                    if cls._coerce_text_value(part).strip()
+                )
+            )
+        treatment_allowed = bool(preference.get("allowed", True))
+        treatment = preferred if treatment_allowed else f"{preferred} blocked by layout permissions"
+
+        grounding = preference.get("brand_asset_grounding") if isinstance(preference.get("brand_asset_grounding"), list) else []
+        brand_cues: list[str] = []
+        for item in grounding[:4]:
+            cue = cls._normalize_metadata_text(item, limit=120)
+            if cue and cue not in brand_cues:
+                brand_cues.append(cue)
+        if not brand_cues:
+            brand_cues = cls._brand_visual_grounding_evidence(
+                visual_identity=visual_identity,
+                reference_assets=reference_assets,
+                asset_catalog=asset_catalog,
+                compiled_context=compiled_context,
+                limit=4,
+            )
+        brand_cue_text = "; ".join(brand_cues[:4]) or "derive from approved copy, palette, typography, and current visual identity"
+
+        data_lines = data_visualization_anchor_lines if isinstance(data_visualization_anchor_lines, list) else []
+        def anchor_count_value(value: Any) -> int:
+            try:
+                return int(value or 0)
+            except (TypeError, ValueError):
+                return 0
+
+        anchor_count = max(
+            anchor_count_value(table_intent.get("anchor_count")),
+            anchor_count_value(chart_intent.get("anchor_count")),
+            len(metadata.get("data_anchors") if isinstance(metadata.get("data_anchors"), list) else []),
+        )
+        table_requested = bool(table_intent.get("requested"))
+        chart_requested = bool(chart_intent.get("requested"))
+        table_allowed = bool(table_intent.get("allowed"))
+        chart_allowed = bool(chart_intent.get("allowed"))
+        if table_requested or chart_requested:
+            if (table_requested and table_allowed) or (chart_requested and chart_allowed):
+                data_posture = f"use only approved anchors for any visible data structure; anchor_count={anchor_count}"
+            elif anchor_count:
+                data_posture = "keep approved facts as callouts or non-data modules unless layout permissions allow data structures"
+            else:
+                data_posture = "avoid data-visual structures because no approved anchors are available"
+        elif data_lines:
+            data_posture = "use available factual context for hierarchy or callouts only; do not invent numeric visuals"
+        else:
+            data_posture = "do not introduce table, chart, dashboard, or axis grammar unless the prompt and anchors require it"
+
+        explicit_data_visual_request = bool(
+            request is not None
+            and cls._has_explicit_data_visual_request(prompt_text, text_payload=None)
+        )
+        avoid_parts: list[str] = []
+        if not explicit_data_visual_request:
+            avoid_parts.append("unrequested data-visual hero treatment")
+        if not treatment_allowed:
+            avoid_parts.append(f"blocked {preferred} treatment")
+        if blueprint:
+            avoid_parts.append("new regions outside sample_page_blueprint visual permissions")
+        avoid_line = "; ".join(dict.fromkeys(part for part in avoid_parts if part)) or "motifs unsupported by prompt, brand evidence, or approved layout slots"
+
+        craft_posture = (
+            "raise craft through the selected treatment and brand-grounded cues"
+            if creativity.get("needs_attractive_visual")
+            else "keep craft restrained around message clarity and brand fit"
+        )
+        layout_line = (
+            "follow sample_page_blueprint visual_permissions, image_zones, and module slots first"
+            if blueprint
+            else "stay inside approved visual, image, and module slots from the active layout"
+        )
+        return (
+            "Dynamic visual art direction: "
+            f"communicate={communicate}; "
+            f"slide purpose={purpose or 'current surface'}; "
+            f"treatment={treatment}; "
+            f"brand cues={brand_cue_text}; "
+            f"data posture={data_posture}; "
+            f"craft posture={craft_posture}; "
+            f"avoid={avoid_line}; "
+            f"layout={layout_line}."
+        )
+
+    @classmethod
+    def _resolve_reference_creative_profile(
+        cls,
+        *,
+        request: AIOrchestrationRequest | None = None,
+        format_name: str = "",
+        sample_page_blueprint: Any = None,
+        visual_identity: Any = None,
+        visual_plan: dict[str, Any] | None = None,
+        structured_visual_metadata: Any = None,
+        layout_budget: dict[str, Any] | None = None,
+        slide: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+        slide_purpose: Any = "",
+        reference_assets: Any = None,
+        asset_catalog: Any = None,
+        compiled_context: dict[str, Any] | None = None,
+        logo_position_hint: str = "",
+    ) -> dict[str, Any]:
+        blueprint = (
+            cls._sample_blueprint_without_rendered_footer_text(sample_page_blueprint)
+            if isinstance(sample_page_blueprint, dict)
+            else {}
+        )
+        identity = visual_identity if isinstance(visual_identity, dict) else {}
+        plan = visual_plan if isinstance(visual_plan, dict) else {}
+        structured = structured_visual_metadata if isinstance(structured_visual_metadata, dict) else {}
+        preference = structured.get("visual_treatment_preference") if isinstance(structured.get("visual_treatment_preference"), dict) else {}
+        budget = layout_budget if isinstance(layout_budget, dict) else {}
+        slide_payload = slide if isinstance(slide, dict) else {}
+        meta = metadata if isinstance(metadata, dict) else {}
+        counts = blueprint.get("module_counts") if isinstance(blueprint.get("module_counts"), dict) else {}
+        permissions = cls._sample_visual_permissions(blueprint)
+
+        layout_mode = cls._sample_blueprint_layout_mode(blueprint)
+        layout_instruction = cls._sample_blueprint_layout_instruction(blueprint)
+        layout_system = cls._normalize_metadata_text(
+            " | ".join(
+                part
+                for part in [
+                    cls._normalize_metadata_text(blueprint.get("layout_category"), limit=80),
+                    cls._normalize_metadata_text(layout_mode, limit=80),
+                    cls._normalize_metadata_text(blueprint.get("density"), limit=40),
+                    cls._normalize_metadata_text(layout_instruction, limit=180),
+                ]
+                if part
+            ),
+            limit=320,
+        )
+
+        palette_roles = derive_palette_roles(identity) if identity else {}
+        if not palette_roles and isinstance(identity.get("palette_roles"), dict):
+            palette_roles = identity.get("palette_roles") or {}
+        color_roles = {
+            role: value
+            for role in ("background", "surface", "primary", "secondary", "accent")
+            if (value := cls._normalize_metadata_text(palette_roles.get(role), limit=32))
+        }
+        if not color_roles:
+            color_roles = {
+                "policy": "derive background, primary, secondary, accent, and legal/footer roles from approved brand or reference evidence"
+            }
+
+        typography = identity.get("typography") or identity.get("typography_guide") or {}
+        typography_roles: dict[str, Any] = {}
+        if isinstance(typography, dict):
+            for role in ("headline", "subheadline", "callout", "body", "label", "source", "footer"):
+                value = (
+                    typography.get(role)
+                    or typography.get(f"{role}_style")
+                    or typography.get(f"{role}_role")
+                )
+                normalized = cls._normalize_metadata_text(value, limit=80)
+                if normalized:
+                    typography_roles[role] = normalized
+        typography_roles.setdefault(
+            "hierarchy_policy",
+            "separate headline, subheadline, callout, body, label, source, and footer roles; do not make every text block bold or large",
+        )
+
+        brand_grounding = cls._brand_visual_grounding_evidence(
+            visual_identity=identity,
+            reference_assets=reference_assets,
+            asset_catalog=asset_catalog,
+            compiled_context=compiled_context,
+            limit=4,
+        )
+        image_style_parts = [
+            f"treatment={cls._normalize_metadata_text(preference.get('preferred'), limit=40)}"
+            if preference.get("preferred")
+            else "",
+            cls._normalize_metadata_text(plan.get("mode"), limit=60),
+            cls._normalize_metadata_text(plan.get("rationale"), limit=120),
+            cls._normalize_metadata_text(meta.get("reference_visual_craft"), limit=140),
+            "; ".join(brand_grounding[:3]),
+        ]
+        image_style = cls._normalize_metadata_text(
+            " | ".join(part for part in image_style_parts if part),
+            limit=320,
+        ) or "derive image treatment from approved visual identity, reference assets, and current slide role"
+
+        role_text = cls._normalize_metadata_text(
+            " ".join(
+                part
+                for part in [
+                    slide_payload.get("role"),
+                    meta.get("story_role"),
+                    meta.get("carousel_archetype"),
+                    slide_purpose,
+                    layout_mode,
+                    cls._normalize_metadata_text(blueprint.get("layout_category"), limit=80),
+                ]
+                if cls._coerce_text_value(part).strip()
+            ),
+            limit=260,
+        ).casefold()
+        if re.search(r"\b(hook|cover|opening|opener|title)\b", role_text):
+            slide_archetype = "hook/opener"
+        elif re.search(r"\b(persona|example|story|relatable)\b", role_text):
+            slide_archetype = "relatable persona setup"
+        elif re.search(r"\b(problem|mistake|risk|pain|warning)\b", role_text):
+            slide_archetype = "problem/mistake"
+        elif re.search(r"\b(process|workflow|step|journey|behavior|behaviour|change)\b", role_text):
+            slide_archetype = "behavior change/process"
+        elif re.search(r"\b(proof|calculation|comparison|compare|table|chart|metric|data)\b", role_text):
+            slide_archetype = "proof/calculation/comparison"
+        elif re.search(r"\b(cta|close|closing|summary|takeaway|final|insight)\b", role_text):
+            slide_archetype = "insight/CTA/summary"
+        else:
+            slide_archetype = "current slide role"
+
+        persona_context = getattr(request, "persona_context", {}) if request is not None else {}
+        persona_context = persona_context if isinstance(persona_context, dict) else {}
+        persona_source_values: list[Any] = []
+        for key in (
+            "persona_summary",
+            "audience_summary",
+            "motivations",
+            "pain_points",
+            "objections",
+            "language_preference",
+        ):
+            value = persona_context.get(key)
+            if isinstance(value, (list, tuple, set)):
+                persona_source_values.extend(value)
+            else:
+                persona_source_values.append(value)
+        persona_clues = cls._normalize_metadata_list(persona_source_values, limit=4)
+        persona_policy = (
+            "reuse one non-sensitive audience/persona brief across the carousel: " + "; ".join(persona_clues)
+            if persona_clues
+            else "do not invent a recurring persona unless prompt, slide role, or reference evidence requires one"
+        )
+
+        logo_policy = cls._normalize_metadata_text(budget.get("brand_header_policy"), limit=180)
+        if not logo_policy:
+            logo_position = (
+                cls._normalize_metadata_text(logo_position_hint, limit=64)
+                or cls._sample_blueprint_logo_position(blueprint)
+            )
+            logo_policy = (
+                f"reserve the approved brand-header slot at {logo_position}; use exact asset overlay when available and do not redraw the mark"
+                if logo_position
+                else "reserve any approved brand-header/logo zone from the active layout; use exact asset overlay when available and do not redraw the mark"
+            )
+
+        footer_policy = cls._normalize_metadata_text(budget.get("footer_policy"), limit=220)
+        if not footer_policy:
+            footer_count = cls._int_or_none(counts.get("footer_band_count")) or 0
+            footer_policy = (
+                "reserve observed footer/disclaimer band before visual placement; keep characters, icons, captions, CTA, and objects outside it"
+                if footer_count
+                else "if backend footer/disclaimer metadata exists, exclude that safe area from content and visual-object placement"
+            )
+
+        object_density_parts: list[str] = []
+        for key in (
+            "large_visual_count",
+            "small_icon_like_count",
+            "card_like_count",
+            "horizontal_band_count",
+            "text_block_count",
+        ):
+            value = cls._int_or_none(counts.get(key))
+            if value is not None:
+                object_density_parts.append(f"{key}={value}")
+        visible_capacity = cls._int_or_none(budget.get("visible_capacity"))
+        if visible_capacity is not None:
+            object_density_parts.append(f"visible_content_capacity={visible_capacity}")
+        object_density = (
+            "; ".join(object_density_parts)
+            + "; do not add extra hero objects, icons, callouts, or decorative metaphors beyond observed capacity"
+            if object_density_parts
+            else "use the minimum hero objects, icons, callouts, and decorative metaphors needed for the approved layout"
+        )
+
+        treatment_policy = cls._normalize_metadata_text(preference.get("preferred"), limit=40) or "brand_led"
+        if permissions:
+            treatment_policy += "; obey sample visual_permissions"
+
+        return {
+            "layout_system": layout_system or "derive from active layout slots",
+            "color_roles": color_roles,
+            "typography_roles": typography_roles,
+            "image_style": image_style,
+            "logo_header_policy": logo_policy,
+            "footer_safe_policy": footer_policy,
+            "slide_archetype": slide_archetype,
+            "persona_policy": persona_policy,
+            "object_density": object_density,
+            "visual_treatment_consistency": treatment_policy,
+            "reference_obedience": "sample_first" if blueprint else "brand_context_first",
+        }
+
+    @classmethod
+    def _reference_creative_profile_prompt_section(cls, profile: Any) -> str:
+        if not isinstance(profile, dict) or not profile:
+            return ""
+        compact = json.dumps(profile, ensure_ascii=True, separators=(",", ":"))
+        return (
+            f"Reference creative profile JSON: {compact}. "
+            "Use this as source-aware creative DNA for layout, color roles, typography hierarchy, image composition, persona continuity, brand-header handling, footer-safe placement, and object density. "
+            "It must enhance only approved slots; do not copy literal sample text, artwork, brand mark, or unrelated subject matter, and do not modify structured_visual_metadata.data_anchors."
+        )
+
+    @classmethod
+    def _visual_quality_bar_for_treatment(cls, structured_visual_metadata: Any) -> str:
+        metadata = structured_visual_metadata if isinstance(structured_visual_metadata, dict) else {}
+        preference = metadata.get("visual_treatment_preference") if isinstance(metadata.get("visual_treatment_preference"), dict) else {}
+        treatment = cls._normalize_metadata_text(preference.get("preferred"), limit=40).casefold()
+        allowed = bool(preference.get("allowed", True))
+        if not allowed:
+            return (
+                "Visual quality bar: clean, modern, brand-safe composition that avoids the blocked visual treatment and keeps the message clear."
+            )
+        if treatment in {"3d", "isometric"}:
+            return (
+                "Visual quality bar: polished dimensional treatment with controlled lighting, coherent materials, clean negative space, and brand-safe accents."
+            )
+        if treatment == "photo_composite":
+            return (
+                "Visual quality bar: polished photographic or composite-led scene with credible subject matter, natural lighting, and clean copy-safe space."
+            )
+        if treatment == "data_module":
+            return (
+                "Visual quality bar: sparse data/module composition tied only to approved anchors, with clean hierarchy and no invented metrics."
+            )
+        if treatment == "icon_system":
+            return (
+                "Visual quality bar: crisp icon-system or pictorial explainer with intentional spacing, consistent stroke/detail language, and restrained brand accents."
+            )
+        if treatment in {"2d", "flat_editorial"}:
+            return (
+                "Visual quality bar: polished flat/editorial composition with strong hierarchy, refined surfaces, clean negative space, and brand-safe accents."
+            )
+        if treatment == "document_evidence":
+            return (
+                "Visual quality bar: credible document/evidence-led composition with clean hierarchy, realistic context cues, and no fabricated values."
+            )
+        return (
+            "Visual quality bar: polished brand-led imagery with elegant negative space, clear hierarchy, and brand-safe color accents."
+        )
+
+    @classmethod
+    def _dynamic_layout_content_budget(
+        cls,
+        *,
+        request: AIOrchestrationRequest | None = None,
+        format_name: str = "",
+        text_payload: StructuredTextPayload | None = None,
+        slide: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+        sample_page_blueprint: Any = None,
+        scene_graph: GenerationSceneGraph | None = None,
+        legal_footer_text: Any = "",
+        disclaimer_guidance: Any = "",
+        logo_position_hint: str = "",
+    ) -> dict[str, Any]:
+        payload = text_payload
+        slide_payload = slide if isinstance(slide, dict) else {}
+        meta = metadata if isinstance(metadata, dict) else {}
+        blueprint = sample_page_blueprint if isinstance(sample_page_blueprint, dict) else (
+            meta.get("sample_page_blueprint") if isinstance(meta.get("sample_page_blueprint"), dict) else {}
+        )
+        counts = blueprint.get("module_counts") if isinstance(blueprint.get("module_counts"), dict) else {}
+        permissions = cls._sample_visual_permissions(blueprint)
+
+        def count_int(key: str) -> int:
+            try:
+                return int(counts.get(key) or 0)
+            except (TypeError, ValueError):
+                return 0
+
+        studio_panel = getattr(request, "studio_panel", {}) if request is not None else {}
+        studio_panel = studio_panel if isinstance(studio_panel, dict) else {}
+        size = studio_panel.get("size") if isinstance(studio_panel.get("size"), dict) else {}
+        canvas = getattr(scene_graph, "canvas", None)
+        width = int(getattr(canvas, "width", None) or size.get("width") or 0)
+        height = int(getattr(canvas, "height", None) or size.get("height") or 0)
+        aspect_ratio = round(width / height, 3) if width and height else 0
+        aspect_label = (
+            "landscape"
+            if aspect_ratio > 1.15
+            else "portrait"
+            if aspect_ratio and aspect_ratio < 0.95
+            else "square"
+            if aspect_ratio
+            else "unknown"
+        )
+        canvas_summary = f"{width}x{height} {aspect_label}" if width and height else f"{aspect_label} canvas"
+
+        prompt_text = getattr(request, "prompt", "") if request is not None else ""
+        legal_footer = cls._normalize_metadata_text(legal_footer_text, limit=180)
+        disclaimer = cls._normalize_metadata_text(disclaimer_guidance, limit=180)
+        brief = getattr(request, "research_editorial_brief", {}) if request is not None else {}
+        brief = brief if isinstance(brief, dict) else {}
+        footer_band_count = count_int("footer_band_count")
+        footer_requested = bool(
+            legal_footer
+            or disclaimer
+            or brief.get("disclaimer_requested")
+            or ("disclaimer" in str(prompt_text or "").casefold())
+            or footer_band_count > 0
+        )
+        footer_source = (
+            "sample_page_blueprint footer_band_count"
+            if footer_band_count > 0
+            else "legal/disclaimer metadata"
+            if footer_requested
+            else "none"
+        )
+        footer_policy = (
+            f"reserve footer/disclaimer safe area before content and CTA using {footer_source}; keep it blank/quiet, never overlay content"
+            if footer_requested
+            else "no footer/disclaimer safe area requested"
+        )
+        footer_safe_area = (
+            calculate_footer_safe_area(
+                canvas_width=width,
+                canvas_height=height,
+                footer_text=legal_footer or disclaimer,
+            )
+            if footer_requested and width and height
+            else calculate_footer_safe_area(
+                canvas_width=width or 1,
+                canvas_height=height or 1,
+                footer_text="",
+            )
+        )
+        footer_reserved_height = int(footer_safe_area.get("reserved_height") or 0)
+        content_canvas_height = int(footer_safe_area.get("content_canvas_height") or height or 0)
+        content_safe_ratio = (
+            max(0.0, min(content_canvas_height / max(float(height), 1.0), 1.0))
+            if height
+            else 1.0
+        )
+        if footer_requested and footer_reserved_height:
+            footer_policy = (
+                f"{footer_policy}; actual footer_safe_area reserves {footer_reserved_height}px "
+                f"({footer_safe_area.get('reserved_ratio')}) and leaves {content_canvas_height}px content-safe height"
+            )
+
+        cta_text = cls._normalize_metadata_text(
+            getattr(payload, "cta", "") if payload is not None else slide_payload.get("cta") or meta.get("cta"),
+            limit=90,
+        )
+        zones: list[Any] = []
+        for key in ("zones", "image_zones", "content_zones"):
+            value = blueprint.get(key)
+            if isinstance(value, list):
+                zones.extend(value)
+        has_cta_slot = count_int("cta_count") > 0 or any(
+            isinstance(zone, dict)
+            and "cta" in " ".join(
+                cls._normalize_metadata_text(zone.get(key), limit=60)
+                for key in ("role", "name", "label", "zone_role")
+            ).casefold()
+            for zone in zones
+        )
+        cta_allowed = permissions.get("cta_allowed", True) is not False
+        cta_render_allowed = bool(cta_text and cta_allowed and (has_cta_slot or (not footer_requested and not blueprint)))
+        if cta_text and not cta_allowed:
+            cta_policy = "no approved CTA slot: omit CTA shell or downgrade to a quiet approved content module outside footer/disclaimer"
+        elif cta_text and footer_requested and not has_cta_slot:
+            cta_policy = "no safe CTA slot above reserved footer/disclaimer: omit CTA shell or downgrade to text-only intent outside the image"
+        elif cta_text and footer_requested:
+            cta_policy = "CTA may render only in a CTA-safe slot above the reserved footer/disclaimer safe area; omit if no such slot exists"
+        elif cta_text and blueprint and not has_cta_slot:
+            cta_policy = "CTA has no explicit blueprint slot; render only if the active layout already reserves a CTA-safe zone"
+        elif cta_text:
+            cta_policy = "CTA must stay inside an approved CTA-safe slot"
+        else:
+            cta_policy = "no CTA requested; do not invent CTA button"
+
+        raw_items: list[tuple[str, str]] = []
+
+        def add_line(source: str, value: Any) -> None:
+            text = cls._normalize_metadata_text(value, limit=180)
+            if text:
+                raw_items.append((source, text))
+
+        for source, value in (
+            ("proof_points", slide_payload.get("proof_points", meta.get("proof_points"))),
+            ("body_points", slide_payload.get("body_points", meta.get("body_points"))),
+            ("stat_highlights", slide_payload.get("stat_highlights", meta.get("stat_highlights"))),
+        ):
+            for item in cls._normalize_metadata_list(value, limit=10):
+                add_line(source, item)
+        for item in cls._claim_evidence_pair_lines(
+            cls._normalize_claim_evidence_pairs(
+                slide_payload.get("claim_evidence_pairs", meta.get("claim_evidence_pairs")),
+                limit=4,
+            ),
+            limit=4,
+        ):
+            add_line("claim_evidence_pairs", item)
+
+        blocked_keys = {
+            cls._normalize_metadata_text(item, limit=180).casefold()
+            for item in [
+                getattr(payload, "headline", "") if payload is not None else slide_payload.get("headline"),
+                slide_payload.get("supporting_line") or meta.get("supporting_line"),
+                getattr(payload, "body", "") if payload is not None else slide_payload.get("body"),
+                cta_text,
+            ]
+            if cls._normalize_metadata_text(item, limit=180)
+        }
+        deduped_items: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        duplicate_count = 0
+        for source, text in raw_items:
+            key = text.casefold()
+            if key in blocked_keys:
+                continue
+            if key in seen:
+                duplicate_count += 1
+                continue
+            seen.add(key)
+            deduped_items.append((source, text))
+
+        capacity_candidates: list[tuple[str, int]] = []
+        for key in ("horizontal_band_count", "card_like_count", "small_icon_like_count", "text_block_count"):
+            count_value = count_int(key)
+            if count_value > 0:
+                capacity_candidates.append((key, count_value))
+        if capacity_candidates:
+            capacity_key, capacity_value = capacity_candidates[0]
+            content_safe_capacity = int((capacity_value * content_safe_ratio) + 0.5) if footer_requested else capacity_value
+            visible_capacity = max(1, min(content_safe_capacity, capacity_value, 8))
+            capacity_source = (
+                f"sample_page_blueprint module_counts.{capacity_key} after reserving brand header and footer/disclaimer safe areas"
+            )
+        else:
+            reserved_segments = (1 if footer_requested else 0) + (1 if cta_render_allowed else 0) + (1 if request is not None else 0)
+            raw_capacity = max(len(deduped_items) - reserved_segments, 1) if deduped_items else 1
+            content_safe_capacity = int((raw_capacity * content_safe_ratio) + 0.5) if footer_requested else raw_capacity
+            visible_capacity = max(1, min(content_safe_capacity, raw_capacity, 8))
+            capacity_source = "deduped approved item count after reserving brand header, CTA, and footer/disclaimer safe areas"
+        visible_item_pairs = deduped_items[:visible_capacity]
+        visible_items = [text for _, text in visible_item_pairs]
+        overflow_items = [text for _, text in deduped_items[visible_capacity:]]
+
+        headline = cls._normalize_metadata_text(
+            getattr(payload, "headline", "") if payload is not None else slide_payload.get("headline"),
+            limit=220,
+        )
+        body = cls._normalize_metadata_text(
+            getattr(payload, "body", "") if payload is not None else slide_payload.get("body"),
+            limit=360,
+        )
+        supporting = cls._normalize_metadata_text(slide_payload.get("supporting_line") or meta.get("supporting_line"), limit=220)
+        text_pressure = len(headline.split()) + len(body.split()) + len(supporting.split()) + (len(deduped_items) * 8)
+        if cta_text:
+            text_pressure += 6
+        if footer_requested:
+            text_pressure += 10
+        if request is not None:
+            text_pressure += 6
+        density_label = (
+            "high"
+            if text_pressure > 70 or overflow_items
+            else "medium"
+            if text_pressure > 42 or len(deduped_items) > visible_capacity
+            else "low"
+        )
+        density_policy = (
+            f"text density={density_label}; if density is medium/high, compress copy surfaces, prioritize strongest approved points, and reduce visual complexity before rendering"
+        )
+
+        logo_policy = "brand header/logo slot=not resolved"
+        if request is not None:
+            resolved_logo_hint = (
+                cls._sample_blueprint_logo_position(blueprint)
+                or cls._normalize_logo_position_option(logo_position_hint)
+                or cls._effective_logo_position_hint(
+                    request=request,
+                    creative_decision=CreativeDecisionPayload(),
+                    text_payload={"metadata": meta},
+                )
+            )
+            logo_geometry = cls._normalize_logo_safe_zone_geometry(
+                request=request,
+                geometry=cls._logo_safe_zone_geometry(scene_graph),
+                hint=resolved_logo_hint,
+            )
+            _x, _y, logo_width, logo_height = logo_geometry
+            logo_policy = (
+                f"brand header slot=required readable reserved slot at {cls._logo_reserved_area_label(resolved_logo_hint)} "
+                f"using dynamic canvas/header geometry ({max(int(round(logo_width * 100)), 1)}% width x {max(int(round(logo_height * 100)), 1)}% height); "
+                "keep the AI image quiet there so the exact stored brand asset can be composited, and keep placement consistent across carousel slides unless the sample blueprint overrides it"
+            )
+
+        prompt_metadata = {
+            "proof_points": visible_items,
+            "body_points": [],
+            "stat_highlights": [],
+            "claim_evidence_pairs": [],
+            "layout_content_budget": {
+                "visible_capacity": visible_capacity,
+                "visible_count": len(visible_items),
+                "overflow_count": len(overflow_items),
+                "capacity_source": capacity_source,
+                "footer_reserved": footer_requested,
+                "footer_safe_area": {
+                    key: value
+                    for key, value in footer_safe_area.items()
+                    if not str(key).startswith("_")
+                },
+                "cta_render_allowed": cta_render_allowed,
+                "density": density_label,
+            },
+        }
+        return {
+            "canvas_summary": canvas_summary,
+            "brand_header_policy": logo_policy,
+            "footer_policy": footer_policy,
+            "cta_policy": cta_policy,
+            "cta_render_allowed": cta_render_allowed,
+            "visible_capacity": visible_capacity,
+            "visible_items": visible_items,
+            "overflow_items": overflow_items,
+            "overflow_count": len(overflow_items),
+            "capacity_source": capacity_source,
+            "duplicate_count": duplicate_count,
+            "density_label": density_label,
+            "density_policy": density_policy,
+            "prompt_metadata": prompt_metadata,
+            "prompt_cta": cta_text if cta_render_allowed else "",
+        }
+
+    @classmethod
+    def _prompt_visible_slide_from_layout_budget(
+        cls,
+        slide: dict[str, Any],
+        layout_budget: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        if not isinstance(layout_budget, dict):
+            return slide
+        prompt_slide = dict(slide)
+        prompt_slide["proof_points"] = list(layout_budget.get("visible_items") or [])
+        prompt_slide["body_points"] = []
+        prompt_slide["stat_highlights"] = []
+        prompt_slide["claim_evidence_pairs"] = []
+        prompt_slide["cta"] = layout_budget.get("prompt_cta", prompt_slide.get("cta"))
+        metadata = dict(prompt_slide.get("metadata") if isinstance(prompt_slide.get("metadata"), dict) else {})
+        metadata["layout_content_budget"] = (layout_budget.get("prompt_metadata") or {}).get("layout_content_budget", {})
+        prompt_slide["metadata"] = metadata
+        return prompt_slide
+
+    @classmethod
+    def _prompt_visible_text_payload_from_layout_budget(
+        cls,
+        text_payload: StructuredTextPayload,
+        layout_budget: dict[str, Any] | None,
+    ) -> StructuredTextPayload:
+        if not isinstance(layout_budget, dict):
+            return text_payload
+        metadata = dict(text_payload.metadata or {})
+        metadata.update(layout_budget.get("prompt_metadata") or {})
+        return StructuredTextPayload(
+            headline=text_payload.headline,
+            body=text_payload.body,
+            cta=layout_budget.get("prompt_cta", text_payload.cta),
+            hashtags=list(text_payload.hashtags or []),
+            metadata=metadata,
+        )
+
+    @classmethod
+    def _dynamic_layout_quality_guard_section(
+        cls,
+        *,
+        request: AIOrchestrationRequest | None = None,
+        format_name: str = "",
+        text_payload: StructuredTextPayload | None = None,
+        metadata: dict[str, Any] | None = None,
+        sample_page_blueprint: Any = None,
+        structured_visual_metadata: Any = None,
+        data_visualization_anchor_lines: list[str] | None = None,
+        visual_intent: Any = "",
+        visual_plan: dict[str, Any] | None = None,
+        visual_identity: Any = None,
+        reference_assets: Any = None,
+        asset_catalog: Any = None,
+        scene_graph: GenerationSceneGraph | None = None,
+        legal_footer_text: Any = "",
+        disclaimer_guidance: Any = "",
+        layout_budget: dict[str, Any] | None = None,
+    ) -> str:
+        payload = text_payload
+        meta = metadata if isinstance(metadata, dict) else {}
+        blueprint = sample_page_blueprint if isinstance(sample_page_blueprint, dict) else (
+            meta.get("sample_page_blueprint") if isinstance(meta.get("sample_page_blueprint"), dict) else {}
+        )
+        structured = structured_visual_metadata if isinstance(structured_visual_metadata, dict) else {}
+        visual_plan = visual_plan if isinstance(visual_plan, dict) else {}
+        budget = layout_budget if isinstance(layout_budget, dict) else {}
+        permissions = cls._sample_visual_permissions(blueprint)
+        counts = blueprint.get("module_counts") if isinstance(blueprint.get("module_counts"), dict) else {}
+
+        studio_panel = getattr(request, "studio_panel", {}) if request is not None else {}
+        studio_panel = studio_panel if isinstance(studio_panel, dict) else {}
+        size = studio_panel.get("size") if isinstance(studio_panel.get("size"), dict) else {}
+        canvas = getattr(scene_graph, "canvas", None)
+        width = int(
+            getattr(canvas, "width", None)
+            or size.get("width")
+            or 0
+        )
+        height = int(
+            getattr(canvas, "height", None)
+            or size.get("height")
+            or 0
+        )
+        aspect_ratio = round(width / height, 3) if width and height else 0
+        aspect_label = (
+            "landscape"
+            if aspect_ratio > 1.15
+            else "portrait"
+            if aspect_ratio and aspect_ratio < 0.95
+            else "square"
+            if aspect_ratio
+            else "unknown"
+        )
+        canvas_summary = f"{width}x{height} {aspect_label}" if width and height else f"{aspect_label} canvas"
+
+        prompt_text = getattr(request, "prompt", "") if request is not None else ""
+        legal_footer = cls._normalize_metadata_text(legal_footer_text, limit=180)
+        disclaimer = cls._normalize_metadata_text(disclaimer_guidance, limit=180)
+        brief = getattr(request, "research_editorial_brief", {}) if request is not None else {}
+        brief = brief if isinstance(brief, dict) else {}
+        footer_requested = bool(
+            legal_footer
+            or disclaimer
+            or brief.get("disclaimer_requested")
+            or ("disclaimer" in str(prompt_text or "").casefold())
+        )
+        def count_int(key: str) -> int:
+            try:
+                return int(counts.get(key) or 0)
+            except (TypeError, ValueError):
+                return 0
+
+        footer_band_count = count_int("footer_band_count")
+        footer_requested = bool(footer_requested or footer_band_count > 0)
+        footer_source = (
+            "sample_page_blueprint footer_band_count"
+            if footer_band_count > 0
+            else "legal/disclaimer metadata"
+            if footer_requested
+            else "none"
+        )
+        footer_policy = (
+            f"reserve footer/disclaimer safe area before content and CTA using {footer_source}; keep it blank/quiet, never overlay content"
+            if footer_requested
+            else "no footer/disclaimer safe area requested"
+        )
+
+        cta_text = cls._normalize_metadata_text(
+            getattr(payload, "cta", "") if payload is not None else meta.get("cta"),
+            limit=90,
+        )
+        zones: list[Any] = []
+        for key in ("zones", "image_zones", "content_zones"):
+            value = blueprint.get(key)
+            if isinstance(value, list):
+                zones.extend(value)
+        has_cta_slot = count_int("cta_count") > 0 or any(
+            isinstance(zone, dict)
+            and "cta" in " ".join(
+                cls._normalize_metadata_text(zone.get(key), limit=60)
+                for key in ("role", "name", "label", "zone_role")
+            ).casefold()
+            for zone in zones
+        )
+        cta_allowed = permissions.get("cta_allowed", True) is not False
+        if cta_text and not cta_allowed:
+            cta_policy = "no approved CTA slot: omit CTA shell or downgrade to a quiet approved content module outside footer/disclaimer"
+        elif cta_text and footer_requested:
+            cta_policy = "CTA may render only in a CTA-safe slot above the reserved footer/disclaimer safe area; omit if no such slot exists"
+        elif cta_text and blueprint and not has_cta_slot:
+            cta_policy = "CTA has no explicit blueprint slot; render only if the active layout already reserves a CTA-safe zone"
+        elif cta_text:
+            cta_policy = "CTA must stay inside an approved CTA-safe slot"
+        else:
+            cta_policy = "no CTA requested; do not invent CTA button"
+
+        raw_item_lines: list[str] = []
+        for key, item_limit in (
+            ("proof_points", 10),
+            ("body_points", 10),
+            ("stat_highlights", 10),
+        ):
+            raw_item_lines.extend(cls._normalize_metadata_list(meta.get(key), limit=item_limit))
+        raw_item_lines.extend(
+            cls._claim_evidence_pair_lines(
+                cls._normalize_claim_evidence_pairs(meta.get("claim_evidence_pairs"), limit=4),
+                limit=4,
+            )
+        )
+        normalized_raw_items = [
+            cls._normalize_metadata_text(item, limit=180)
+            for item in raw_item_lines
+            if cls._normalize_metadata_text(item, limit=180)
+        ]
+        deduped_items = cls._dedupe_metadata_collection(
+            normalized_raw_items,
+            blocked_texts=[
+                getattr(payload, "headline", "") if payload is not None else "",
+                meta.get("supporting_line"),
+                getattr(payload, "body", "") if payload is not None else "",
+                cta_text,
+            ],
+            limit=12,
+        )
+        duplicate_count = max(0, len(normalized_raw_items) - len(deduped_items))
+
+        capacity_candidates: list[tuple[str, int]] = []
+        for key in ("horizontal_band_count", "card_like_count", "small_icon_like_count", "text_block_count"):
+            try:
+                count_value = int(counts.get(key) or 0)
+            except (TypeError, ValueError):
+                count_value = 0
+            if count_value > 0:
+                capacity_candidates.append((key, count_value))
+        if capacity_candidates:
+            capacity_key, capacity_value = capacity_candidates[0]
+            visible_capacity = max(1, min(capacity_value, 8))
+            capacity_source = f"sample_page_blueprint module_counts.{capacity_key}"
+        else:
+            visible_capacity = max(1, min(len(deduped_items) or 1, 8))
+            capacity_source = "deduped approved item count and active layout density"
+        visible_items = deduped_items[:visible_capacity]
+        overflow_count = max(0, len(deduped_items) - len(visible_items))
+        item_policy = (
+            f"visible item capacity={visible_capacity} derived from {capacity_source}; "
+            f"render only {len(visible_items)} deduped approved item(s); overflow={overflow_count}; "
+            "never render hidden, clipped, or partially visible rows; summarize overflow or carry it to the next slide when supported"
+        )
+        dedupe_policy = (
+            f"dedupe removed {duplicate_count} repeated content item(s); preserve first occurrence order"
+            if duplicate_count
+            else "dedupe checked approved list/card items; no repeated visible rows"
+        )
+
+        headline = cls._normalize_metadata_text(getattr(payload, "headline", "") if payload is not None else "", limit=220)
+        body = cls._normalize_metadata_text(getattr(payload, "body", "") if payload is not None else "", limit=360)
+        supporting = cls._normalize_metadata_text(meta.get("supporting_line"), limit=220)
+        text_pressure = len(headline.split()) + len(body.split()) + len(supporting.split()) + (len(deduped_items) * 8)
+        if cta_text:
+            text_pressure += 6
+        if footer_requested:
+            text_pressure += 10
+        density_label = (
+            "high"
+            if text_pressure > 70 or overflow_count > 0
+            else "medium"
+            if text_pressure > 42 or len(deduped_items) > visible_capacity
+            else "low"
+        )
+        density_policy = (
+            f"text density={density_label}; if density is medium/high, compress copy surfaces, prioritize strongest approved points, and reduce visual complexity before rendering"
+        )
+        brand_header_policy = ""
+        if budget:
+            canvas_summary = cls._normalize_metadata_text(budget.get("canvas_summary"), limit=80) or canvas_summary
+            footer_policy = cls._normalize_metadata_text(budget.get("footer_policy"), limit=220) or footer_policy
+            cta_policy = cls._normalize_metadata_text(budget.get("cta_policy"), limit=220) or cta_policy
+            visible_capacity = int(budget.get("visible_capacity") or visible_capacity)
+            visible_items = list(budget.get("visible_items") or [])
+            overflow_count = int(budget.get("overflow_count") or 0)
+            capacity_source = cls._normalize_metadata_text(budget.get("capacity_source"), limit=180) or capacity_source
+            duplicate_count = int(budget.get("duplicate_count") or 0)
+            density_policy = cls._normalize_metadata_text(budget.get("density_policy"), limit=220) or density_policy
+            brand_header_policy = cls._normalize_metadata_text(budget.get("brand_header_policy"), limit=320)
+            item_policy = (
+                f"visible item capacity={visible_capacity} derived from {capacity_source}; "
+                f"render only {len(visible_items)} deduped approved item(s); overflow={overflow_count}; "
+                "never render hidden, clipped, or partially visible rows; summarize overflow or carry it to the next slide when supported"
+            )
+            dedupe_policy = (
+                f"dedupe removed {duplicate_count} repeated content item(s); preserve first occurrence order"
+                if duplicate_count
+                else "dedupe checked approved list/card items; no repeated visible rows"
+            )
+
+        table_intent = structured.get("table_intent") if isinstance(structured.get("table_intent"), dict) else {}
+        chart_intent = structured.get("chart_intent") if isinstance(structured.get("chart_intent"), dict) else {}
+        strict_anchors = structured.get("data_anchors") if isinstance(structured.get("data_anchors"), list) else []
+        data_requested = bool(table_intent.get("requested") or chart_intent.get("requested"))
+        data_allowed = bool(table_intent.get("allowed") or chart_intent.get("allowed"))
+        data_lines = data_visualization_anchor_lines if isinstance(data_visualization_anchor_lines, list) else []
+        if data_requested and data_allowed and strict_anchors:
+            data_policy = f"data visual gate=allowed only from {len(strict_anchors)} strict approved anchor(s); no extra axes, values, percentages, or dashboard furniture"
+        elif data_requested or data_lines:
+            data_policy = "data visual gate=blocked for chart-like visuals unless strict approved data_anchors allow them; broad layout/body context cannot unlock charts"
+        else:
+            data_policy = "data visual gate=no chart/table/dashboard grammar requested"
+
+        combined_symbol_text = " ".join(
+            part
+            for part in [
+                prompt_text,
+                cls._coerce_text_value(visual_intent),
+                headline,
+                body,
+                supporting,
+            ]
+            if cls._coerce_text_value(part).strip()
+        ).casefold()
+        official_symbol_requested = bool(
+            re.search(
+                r"\b(official|regulated|government|national|flag|seal|emblem|crest|wordmark|brand mark|logo)\b",
+                combined_symbol_text,
+            )
+        )
+
+        def asset_mentions_symbol(asset: Any) -> bool:
+            if not isinstance(asset, dict):
+                return False
+            fields = [
+                asset.get("asset_role"),
+                asset.get("name"),
+                asset.get("label"),
+                asset.get("asset_kind"),
+                asset.get("type"),
+                asset.get("description"),
+                " ".join(str(tag) for tag in asset.get("tags", [])[:6]) if isinstance(asset.get("tags"), list) else "",
+            ]
+            text = " ".join(cls._normalize_metadata_text(item, limit=90) for item in fields).casefold()
+            return bool(re.search(r"\b(flag|seal|emblem|crest|logo|wordmark|brand mark|official)\b", text))
+
+        reference_items = reference_assets if isinstance(reference_assets, list) else []
+        catalog_items = asset_catalog if isinstance(asset_catalog, list) else []
+        visual_assets = visual_identity.get("reusable_design_assets") if isinstance(visual_identity, dict) else []
+        visual_assets = visual_assets if isinstance(visual_assets, list) else []
+        approved_symbol_asset = any(asset_mentions_symbol(asset) for asset in [*reference_items, *catalog_items, *visual_assets])
+        if official_symbol_requested and approved_symbol_asset:
+            official_symbol_policy = "official symbol policy=use only approved uploaded/reference/vector asset evidence; do not freehand exact marks"
+        elif official_symbol_requested:
+            official_symbol_policy = "official symbol policy=no approved official-symbol asset available; use abstract geographic, institutional, or partnership cues instead of recreating exact flags/logos/marks"
+        else:
+            official_symbol_policy = "official symbol policy=no exact official mark required"
+
+        plan_mode = cls._normalize_metadata_text(visual_plan.get("mode"), limit=40)
+        layout_priority = (
+            "layout priority=sample_page_blueprint, visual_permissions, footer/disclaimer safe area, CTA slot, and data-anchor correctness outrank dynamic visual art direction"
+            if blueprint
+            else "layout priority=active layout slots, footer/disclaimer safe area, CTA slot, and data-anchor correctness outrank dynamic visual art direction"
+        )
+        return (
+            "Layout quality guard: "
+            f"canvas={canvas_summary}; format={cls._normalize_metadata_text(format_name, limit=40) or 'unknown'}; "
+            f"purpose={plan_mode or 'current slide/page'}; "
+            f"{brand_header_policy + '; ' if brand_header_policy else ''}"
+            f"safe areas={footer_policy}; "
+            f"CTA policy={cta_policy}; "
+            f"content budget={item_policy}; "
+            f"text density guard={density_policy}; "
+            f"duplicate guard={dedupe_policy}; "
+            f"{data_policy}; "
+            f"{official_symbol_policy}; "
+            f"{layout_priority}."
         )
 
     @classmethod
@@ -17603,6 +19470,7 @@ class AIOrchestratorService:
             body=normalized.get("body"),
             brand_name=brand_name,
             compiled_context=compiled_context,
+            prompt=prompt,
         )
         research_editorial_brief = (
             compiled_context.get("research_editorial_brief")
@@ -17715,6 +19583,7 @@ class AIOrchestratorService:
         body: str | None = None,
         brand_name: str | None = None,
         compiled_context: dict[str, Any] | None = None,
+        prompt: str | None = None,
     ) -> dict[str, Any]:
         base = dict(fallback or {})
         if isinstance(metadata, dict):
@@ -17820,6 +19689,32 @@ class AIOrchestratorService:
                 base,
                 body=body or "",
             )
+
+        structured_anchor_sources = AIOrchestratorService._structured_visual_data_anchor_sources(
+            base,
+            prompt=prompt,
+        )
+        base["structured_visual_metadata"] = AIOrchestratorService._normalize_structured_visual_metadata(
+            metadata=base,
+            visual_intent=" ".join(
+                [
+                    AIOrchestratorService._coerce_text_value(prompt),
+                    AIOrchestratorService._coerce_text_value(base.get("visual_focus")),
+                    AIOrchestratorService._coerce_text_value(base.get("visual_direction")),
+                    AIOrchestratorService._coerce_text_value(base.get("design_style")),
+                    AIOrchestratorService._coerce_text_value(base.get("image_prompt")),
+                ]
+            ),
+            anchor_entries=AIOrchestratorService._structured_visual_anchor_entries(
+                structured_anchor_sources,
+                request=None,
+                limit=8,
+            ),
+            format_name=format_name,
+            sample_page_blueprint=base.get("sample_page_blueprint"),
+            visual_identity=(compiled_context or {}).get("brand_visual_brief") if isinstance(compiled_context, dict) else None,
+            compiled_context=compiled_context,
+        )
 
         return base
 
@@ -22427,14 +24322,41 @@ class AIOrchestratorService:
         visual_plan_guidance = AIOrchestratorService._visual_explanation_guidance(visual_plan)
         disclaimer_overlay_guidance = AIOrchestratorService._disclaimer_overlay_guidance(request)
         legal_footer_text = AIOrchestratorService._scene_graph_legal_footer_text(scene_graph)
+        layout_content_budget = AIOrchestratorService._dynamic_layout_content_budget(
+            request=request,
+            format_name="carousel slide",
+            text_payload=slide_text_payload,
+            slide=slide,
+            metadata={**slide_metadata, "sample_page_blueprint": sample_page_blueprint},
+            sample_page_blueprint=sample_page_blueprint,
+            scene_graph=scene_graph,
+            legal_footer_text=legal_footer_text,
+            disclaimer_guidance=disclaimer_overlay_guidance,
+            logo_position_hint=logo_position_hint,
+        )
+        prompt_slide = AIOrchestratorService._prompt_visible_slide_from_layout_budget(slide, layout_content_budget)
+        prompt_slide_metadata = {
+            **slide_text_payload.metadata,
+            **(layout_content_budget.get("prompt_metadata") if isinstance(layout_content_budget.get("prompt_metadata"), dict) else {}),
+        }
+        prompt_slide_text_payload = StructuredTextPayload(
+            headline=slide_text_payload.headline,
+            body=AIOrchestratorService._carousel_slide_body_text(
+                prompt_slide,
+                fallback_text=AIOrchestratorService._normalize_metadata_text(prompt_slide.get("supporting_line"), limit=220),
+            ),
+            cta=layout_content_budget.get("prompt_cta", slide_text_payload.cta),
+            hashtags=list(slide_text_payload.hashtags or []),
+            metadata=prompt_slide_metadata,
+        )
         palette_execution_contract = AIOrchestratorService._palette_role_execution_contract(
             visual_identity,
-            has_cta=bool(AIOrchestratorService._normalize_metadata_text(slide.get("cta"), limit=80)),
+            has_cta=bool(AIOrchestratorService._normalize_metadata_text(prompt_slide.get("cta"), limit=80)),
             has_legal_footer=bool(legal_footer_text),
         )
         story_role_visual_execution = AIOrchestratorService._story_role_visual_execution_guidance(
             story_role,
-            has_cta=bool(AIOrchestratorService._normalize_metadata_text(slide.get("cta"), limit=80)),
+            has_cta=bool(AIOrchestratorService._normalize_metadata_text(prompt_slide.get("cta"), limit=80)),
         )
         sample_layout_category = AIOrchestratorService._normalize_metadata_text(
             sample_page_blueprint.get("layout_category"),
@@ -22649,73 +24571,213 @@ class AIOrchestratorService:
                 and sample_layout_mode in {"numbered_or_icon_row_list", "card_callout_grid", "vertical_icon_explainer"}
             )
             or sample_support_only_cover
-            else AIOrchestratorService._carousel_slide_body_text(slide, fallback_text="")
+            else AIOrchestratorService._carousel_slide_body_text(prompt_slide, fallback_text="")
         )
         text_render_contract = (
             AIOrchestratorService._text_overlay_substrate_contract(
-                headline=slide.get("headline"),
-                supporting_line=slide.get("supporting_line"),
+                headline=prompt_slide.get("headline"),
+                supporting_line=prompt_slide.get("supporting_line"),
                 body=carousel_body_for_text_contract,
                 proof_points=AIOrchestratorService._carousel_slide_visible_module_lines(
-                    slide,
+                    prompt_slide,
                     limit=proof_points_limit,
                 ),
-                claim_evidence_pairs=slide.get("claim_evidence_pairs"),
-                cta=slide.get("cta"),
-                slide_role=story_role or slide.get("role"),
+                claim_evidence_pairs=prompt_slide.get("claim_evidence_pairs"),
+                cta=prompt_slide.get("cta"),
+                slide_role=story_role or prompt_slide.get("role"),
             )
             if use_backend_text_overlay
             else AIOrchestratorService._final_text_render_contract(
-                headline=slide.get("headline"),
-                supporting_line=slide.get("supporting_line"),
+                headline=prompt_slide.get("headline"),
+                supporting_line=prompt_slide.get("supporting_line"),
                 body=carousel_body_for_text_contract,
                 proof_points=AIOrchestratorService._carousel_slide_visible_module_lines(
-                    slide,
+                    prompt_slide,
                     limit=proof_points_limit,
                 ),
-                claim_evidence_pairs=slide.get("claim_evidence_pairs"),
-                cta=slide.get("cta"),
-                slide_role=story_role or slide.get("role"),
+                claim_evidence_pairs=prompt_slide.get("claim_evidence_pairs"),
+                cta=prompt_slide.get("cta"),
+                slide_role=story_role or prompt_slide.get("role"),
                 legal_footer=legal_footer_text,
                 proof_points_limit=proof_points_limit,
             )
         )
         factual_visual_anchors = AIOrchestratorService._dedupe_metadata_collection(
             [
-                *AIOrchestratorService._normalize_metadata_list(slide.get("stat_highlights"), limit=3),
+                *AIOrchestratorService._normalize_metadata_list(prompt_slide.get("stat_highlights"), limit=3),
                 *AIOrchestratorService._claim_evidence_pair_lines(
-                    AIOrchestratorService._normalize_claim_evidence_pairs(slide.get("claim_evidence_pairs"), limit=2),
+                    AIOrchestratorService._normalize_claim_evidence_pairs(prompt_slide.get("claim_evidence_pairs"), limit=2),
                     limit=2,
                 ),
-                *AIOrchestratorService._normalize_metadata_list(slide.get("proof_points"), limit=3),
-                *AIOrchestratorService._normalize_metadata_list(slide.get("body_points"), limit=2),
+                *AIOrchestratorService._normalize_metadata_list(prompt_slide.get("proof_points"), limit=3),
+                *AIOrchestratorService._normalize_metadata_list(prompt_slide.get("body_points"), limit=2),
             ],
             blocked_texts=[
-                slide.get("headline"),
-                slide.get("supporting_line"),
-                slide.get("cta"),
+                prompt_slide.get("headline"),
+                prompt_slide.get("supporting_line"),
+                prompt_slide.get("cta"),
             ],
             limit=4,
         )
-        data_visualization_contract = AIOrchestratorService._data_visualization_contract(
+        data_visualization_anchor_sources: list[tuple[str, Any]] = [
+            ("stat_highlights", slide.get("stat_highlights")),
+            ("claim_evidence_pairs", slide.get("claim_evidence_pairs")),
+            ("proof_points", slide.get("proof_points")),
+            ("body_points", slide.get("body_points")),
+            ("supporting_line", slide.get("supporting_line")),
+            ("body", AIOrchestratorService._carousel_slide_body_text(slide, fallback_text="")),
+        ]
+        if AIOrchestratorService._prompt_has_explicit_data_anchor(getattr(request, "prompt", "")):
+            data_visualization_anchor_sources.insert(0, ("user_prompt", getattr(request, "prompt", "")))
+        data_visualization_anchor_lines = AIOrchestratorService._data_visualization_anchor_lines(
+            *[value for _, value in data_visualization_anchor_sources],
+            limit=8,
+        )
+        prompt_visible_context_lines = AIOrchestratorService._data_visualization_anchor_lines(
+            prompt_slide.get("stat_highlights"),
+            prompt_slide.get("claim_evidence_pairs"),
+            prompt_slide.get("proof_points"),
+            prompt_slide.get("body_points"),
+            prompt_slide.get("supporting_line"),
+            AIOrchestratorService._carousel_slide_body_text(prompt_slide, fallback_text=""),
+            limit=5,
+        )
+        broad_visual_context_section = AIOrchestratorService._broad_visual_context_prompt_section(
+            prompt_visible_context_lines,
+            limit=5,
+        )
+        structured_anchor_sources = AIOrchestratorService._structured_visual_data_anchor_sources(
+            slide,
+            prompt=getattr(request, "prompt", ""),
             request=request,
-            visual_intent=" ".join(
-                [
-                    AIOrchestratorService._normalize_metadata_text(slide.get("visual_focus"), limit=420),
-                    AIOrchestratorService._normalize_metadata_text(slide_metadata.get("visual_direction"), limit=220),
-                    AIOrchestratorService._normalize_metadata_text(slide_metadata.get("image_prompt"), limit=220),
-                ]
-            ),
-            anchors=AIOrchestratorService._data_visualization_anchor_lines(
-                slide.get("stat_highlights"),
-                slide.get("claim_evidence_pairs"),
-                slide.get("proof_points"),
-                slide.get("body_points"),
-                slide.get("supporting_line"),
-                AIOrchestratorService._carousel_slide_body_text(slide, fallback_text=""),
+        )
+        carousel_visual_intent = " ".join(
+            [
+                AIOrchestratorService._normalize_metadata_text(slide.get("visual_focus"), limit=420),
+                AIOrchestratorService._normalize_metadata_text(slide_metadata.get("visual_direction"), limit=220),
+                AIOrchestratorService._normalize_metadata_text(slide_metadata.get("image_prompt"), limit=220),
+            ]
+        )
+        slide_structured_metadata = {
+            **slide_metadata,
+            "visual_focus": slide.get("visual_focus"),
+            "structured_visual_metadata": slide_metadata.get("structured_visual_metadata")
+            or slide.get("structured_visual_metadata"),
+        }
+        structured_visual_metadata = AIOrchestratorService._normalize_structured_visual_metadata(
+            metadata=slide_structured_metadata,
+            request=request,
+            visual_intent=carousel_visual_intent,
+            anchor_entries=AIOrchestratorService._structured_visual_anchor_entries(
+                structured_anchor_sources,
+                request=request,
                 limit=8,
             ),
             format_name="carousel slide",
+            sample_page_blueprint=sample_page_blueprint,
+            visual_plan=visual_plan,
+            visual_identity=visual_identity,
+            reference_assets=reference_images,
+            asset_catalog=request.asset_catalog,
+            compiled_context=compiled_context,
+        )
+        structured_visual_metadata_section = AIOrchestratorService._structured_visual_metadata_prompt_section(
+            structured_visual_metadata
+        )
+        strict_data_visualization_anchor_lines = [
+            AIOrchestratorService._normalize_metadata_text(anchor.get("text"), limit=260)
+            for anchor in structured_visual_metadata.get("data_anchors", [])
+            if isinstance(anchor, dict)
+            and AIOrchestratorService._normalize_metadata_text(anchor.get("text"), limit=260)
+        ]
+        data_visualization_contract = AIOrchestratorService._data_visualization_contract(
+            request=request,
+            visual_intent=carousel_visual_intent,
+            anchors=strict_data_visualization_anchor_lines,
+            format_name="carousel slide",
+        )
+        slide_semantic_visual_brief = AIOrchestratorService._normalize_metadata_text(
+            " ".join(
+                part
+                for part in [
+                    getattr(request, "prompt", ""),
+                    prompt_slide.get("headline"),
+                    prompt_slide.get("supporting_line"),
+                    prompt_slide_text_payload.body,
+                    prompt_slide.get("visual_focus"),
+                    "; ".join(factual_visual_anchors),
+                ]
+                if AIOrchestratorService._coerce_text_value(part).strip()
+            ),
+            limit=340,
+        )
+        dynamic_visual_art_direction = AIOrchestratorService._dynamic_visual_art_direction_section(
+            request=request,
+            format_name="carousel slide",
+            semantic_visual_brief=slide_semantic_visual_brief,
+            visual_intent=carousel_visual_intent,
+            structured_visual_metadata=structured_visual_metadata,
+            visual_plan=visual_plan,
+            visual_identity=visual_identity,
+            data_visualization_anchor_lines=data_visualization_anchor_lines,
+            sample_page_blueprint=sample_page_blueprint,
+            slide_purpose=" ".join(
+                part
+                for part in [story_role, carousel_archetype, slide.get("role")]
+                if AIOrchestratorService._coerce_text_value(part).strip()
+            ),
+            reference_assets=reference_images,
+            asset_catalog=request.asset_catalog,
+            compiled_context=compiled_context,
+        )
+        reference_creative_profile = AIOrchestratorService._resolve_reference_creative_profile(
+            request=request,
+            format_name="carousel slide",
+            sample_page_blueprint=sample_page_blueprint,
+            visual_identity=visual_identity,
+            visual_plan=visual_plan,
+            structured_visual_metadata=structured_visual_metadata,
+            layout_budget=layout_content_budget,
+            slide=prompt_slide,
+            metadata=prompt_slide_metadata,
+            slide_purpose=" ".join(
+                part
+                for part in [story_role, carousel_archetype, prompt_slide.get("role")]
+                if AIOrchestratorService._coerce_text_value(part).strip()
+            ),
+            reference_assets=reference_images,
+            asset_catalog=request.asset_catalog,
+            compiled_context=compiled_context,
+            logo_position_hint=logo_position_hint,
+        )
+        reference_creative_profile_section = AIOrchestratorService._reference_creative_profile_prompt_section(
+            reference_creative_profile
+        )
+        layout_quality_guard = AIOrchestratorService._dynamic_layout_quality_guard_section(
+            request=request,
+            format_name="carousel slide",
+            text_payload=prompt_slide_text_payload,
+            metadata={
+                **slide_metadata,
+                "supporting_line": prompt_slide.get("supporting_line"),
+                "proof_points": prompt_slide.get("proof_points"),
+                "body_points": prompt_slide.get("body_points"),
+                "stat_highlights": prompt_slide.get("stat_highlights"),
+                "claim_evidence_pairs": prompt_slide.get("claim_evidence_pairs"),
+                "cta": prompt_slide.get("cta"),
+            },
+            sample_page_blueprint=sample_page_blueprint,
+            structured_visual_metadata=structured_visual_metadata,
+            data_visualization_anchor_lines=data_visualization_anchor_lines,
+            visual_intent=carousel_visual_intent,
+            visual_plan=visual_plan,
+            visual_identity=visual_identity,
+            reference_assets=reference_images,
+            asset_catalog=request.asset_catalog,
+            scene_graph=scene_graph,
+            legal_footer_text=legal_footer_text,
+            disclaimer_guidance=disclaimer_overlay_guidance,
+            layout_budget=layout_content_budget,
         )
         if (
             style_reference_sample_active
@@ -22888,6 +24950,7 @@ class AIOrchestratorService:
             f"Platform: {platform}.",
             f"Output type: {file_type}.",
             canvas_fit_guidance,
+            layout_quality_guard,
             f"Creative mode: {creative_decision.layout_mode}.",
             (
                 (
@@ -22934,11 +24997,11 @@ class AIOrchestratorService:
             *text_render_contract,
             (
                 (
-                    f"This slide needs {len(AIOrchestratorService._carousel_slide_visible_module_lines(slide, limit=proof_points_limit))} proof/callout module shell(s); reserve those modules as empty text-safe cards or callouts for backend overlay."
+                    f"This slide needs {len(AIOrchestratorService._carousel_slide_visible_module_lines(prompt_slide, limit=proof_points_limit))} proof/callout module shell(s); reserve those modules as empty text-safe cards or callouts for backend overlay."
                     if use_backend_text_overlay
-                    else f"This slide needs {len(AIOrchestratorService._carousel_slide_visible_module_lines(slide, limit=proof_points_limit))} proof/callout module(s); render the approved readable copy once inside those modules with clean hierarchy and no duplicate shadow text."
+                    else f"This slide needs {len(AIOrchestratorService._carousel_slide_visible_module_lines(prompt_slide, limit=proof_points_limit))} proof/callout module(s); render the approved readable copy once inside those modules with clean hierarchy and no duplicate shadow text."
                 )
-                if AIOrchestratorService._carousel_slide_visible_module_lines(slide, limit=proof_points_limit)
+                if AIOrchestratorService._carousel_slide_visible_module_lines(prompt_slide, limit=proof_points_limit)
                 else "Do not repeat the factual bullet list on this slide unless the story role explicitly requires it."
             ),
             (
@@ -22958,13 +25021,17 @@ class AIOrchestratorService:
                 else ""
             ),
             data_visualization_contract,
+            broad_visual_context_section,
+            structured_visual_metadata_section,
+            dynamic_visual_art_direction,
+            reference_creative_profile_section,
             (
                 (
                     "If this slide includes a CTA, reserve only an empty premium CTA-safe shell in the CTA region; do not render the CTA words in the AI image."
                     if use_backend_text_overlay
                     else "If this slide includes a CTA, render only the approved CTA wording once inside the CTA region with clear contrast and no button duplication elsewhere."
                 )
-                if AIOrchestratorService._normalize_metadata_text(slide.get("cta"), limit=80)
+                if AIOrchestratorService._normalize_metadata_text(prompt_slide.get("cta"), limit=80)
                 else (
                     "Do not add a CTA button on this slide; preserve only a thin quiet blank bottom strip for post-processing compliance text."
                     if legal_footer_text
@@ -23324,27 +25391,69 @@ class AIOrchestratorService:
             ),
             limit=340,
         )
+        data_visualization_anchor_sources: list[tuple[str, Any]] = [
+            ("stat_highlights", metadata.get("stat_highlights")),
+            ("claim_evidence_pairs", metadata.get("claim_evidence_pairs")),
+            ("proof_points", metadata.get("proof_points")),
+            ("body_points", metadata.get("body_points")),
+            ("infographic_section_specs", metadata.get("infographic_section_specs")),
+            ("static_panel_spec", metadata.get("static_panel_spec")),
+            ("supporting_line", metadata.get("supporting_line")),
+            ("body", text_payload.body),
+        ]
+        if AIOrchestratorService._prompt_has_explicit_data_anchor(request.prompt):
+            data_visualization_anchor_sources.insert(0, ("user_prompt", request.prompt))
+        data_visualization_anchor_lines = AIOrchestratorService._data_visualization_anchor_lines(
+            *[value for _, value in data_visualization_anchor_sources],
+            limit=10,
+        )
+        broad_visual_context_section = AIOrchestratorService._broad_visual_context_prompt_section(
+            data_visualization_anchor_lines,
+            limit=5,
+        )
+        structured_anchor_sources = AIOrchestratorService._structured_visual_data_anchor_sources(
+            metadata,
+            prompt=request.prompt,
+            request=request,
+        )
+        visual_intent = " ".join(
+            [
+                visual_direction,
+                design_style,
+                preferred_scene,
+                AIOrchestratorService._coerce_text_value(metadata.get("visual_focus")),
+            ]
+        )
+        structured_visual_metadata = AIOrchestratorService._normalize_structured_visual_metadata(
+            metadata=metadata,
+            request=request,
+            visual_intent=visual_intent,
+            anchor_entries=AIOrchestratorService._structured_visual_anchor_entries(
+                structured_anchor_sources,
+                request=request,
+                limit=8,
+            ),
+            format_name=format_name,
+            sample_page_blueprint=metadata.get("sample_page_blueprint"),
+            visual_plan=visual_explanation_plan,
+            visual_identity=visual_identity,
+            reference_assets=request.reference_assets,
+            asset_catalog=request.asset_catalog,
+            compiled_context=compiled_context,
+        )
+        structured_visual_metadata_section = AIOrchestratorService._structured_visual_metadata_prompt_section(
+            structured_visual_metadata
+        )
+        strict_data_visualization_anchor_lines = [
+            AIOrchestratorService._normalize_metadata_text(anchor.get("text"), limit=260)
+            for anchor in structured_visual_metadata.get("data_anchors", [])
+            if isinstance(anchor, dict)
+            and AIOrchestratorService._normalize_metadata_text(anchor.get("text"), limit=260)
+        ]
         data_visualization_contract = AIOrchestratorService._data_visualization_contract(
             request=request,
-            visual_intent=" ".join(
-                [
-                    visual_direction,
-                    design_style,
-                    preferred_scene,
-                    AIOrchestratorService._coerce_text_value(metadata.get("visual_focus")),
-                ]
-            ),
-            anchors=AIOrchestratorService._data_visualization_anchor_lines(
-                metadata.get("stat_highlights"),
-                metadata.get("claim_evidence_pairs"),
-                metadata.get("proof_points"),
-                metadata.get("body_points"),
-                metadata.get("infographic_section_specs"),
-                metadata.get("static_panel_spec"),
-                metadata.get("supporting_line"),
-                text_payload.body,
-                limit=10,
-            ),
+            visual_intent=visual_intent,
+            anchors=strict_data_visualization_anchor_lines,
             format_name=format_name,
         )
         stripped_prompt_keywords = AIOrchestratorService._topic_anchor_keywords(stripped_prompt_theme)
@@ -23370,9 +25479,42 @@ class AIOrchestratorService:
                 creative_decision=creative_decision,
             )
         )
+        layout_content_budget = AIOrchestratorService._dynamic_layout_content_budget(
+            request=request,
+            format_name=format_name,
+            text_payload=text_payload,
+            metadata=metadata,
+            sample_page_blueprint=metadata.get("sample_page_blueprint"),
+            scene_graph=None,
+            legal_footer_text="",
+            disclaimer_guidance=AIOrchestratorService._disclaimer_overlay_guidance(request),
+            logo_position_hint=logo_position_hint,
+        )
+        prompt_text_payload = AIOrchestratorService._prompt_visible_text_payload_from_layout_budget(
+            text_payload,
+            layout_content_budget,
+        )
+        prompt_metadata = prompt_text_payload.metadata or {}
+        prompt_proof_points = AIOrchestratorService._compact_named_items(prompt_metadata.get("proof_points"), limit=4)
+        prompt_stat_highlights = AIOrchestratorService._compact_named_items(prompt_metadata.get("stat_highlights"), limit=3)
+        prompt_semantic_visual_brief = AIOrchestratorService._normalize_metadata_text(
+            " ".join(
+                part
+                for part in [
+                    stripped_prompt_theme,
+                    prompt_text_payload.headline,
+                    prompt_metadata.get("supporting_line") or "",
+                    prompt_text_payload.body,
+                    prompt_proof_points if prompt_proof_points != "None" else "",
+                    prompt_stat_highlights if prompt_stat_highlights != "None" else "",
+                ]
+                if AIOrchestratorService._coerce_text_value(part).strip()
+            ),
+            limit=340,
+        )
         visual_plan = visual_explanation_plan or AIOrchestratorService._visual_explanation_plan(
             request,
-            text_payload,
+            prompt_text_payload,
             creative_decision,
             request.reference_assets,
             message_strategy,
@@ -23387,9 +25529,9 @@ class AIOrchestratorService:
         )
         multimodal_balance_contract = AIOrchestratorService._multimodal_balance_contract(
             format_name=format_name,
-            supporting_line=AIOrchestratorService._normalize_metadata_text(metadata.get("supporting_line") or text_payload.body, limit=220),
-            proof_points=AIOrchestratorService._normalize_metadata_list(metadata.get("proof_points"), limit=4),
-            claim_evidence_pairs=AIOrchestratorService._normalize_claim_evidence_pairs(metadata.get("claim_evidence_pairs"), limit=3),
+            supporting_line=AIOrchestratorService._normalize_metadata_text(prompt_metadata.get("supporting_line") or prompt_text_payload.body, limit=220),
+            proof_points=AIOrchestratorService._normalize_metadata_list(prompt_metadata.get("proof_points"), limit=4),
+            claim_evidence_pairs=AIOrchestratorService._normalize_claim_evidence_pairs(prompt_metadata.get("claim_evidence_pairs"), limit=3),
             for_visual_only=True,
         )
         reference_family_contract = AIOrchestratorService._reference_family_contract_sections(
@@ -23411,6 +25553,57 @@ class AIOrchestratorService:
             for_carousel=format_name == "carousel",
             for_visual_only=True,
         )
+        dynamic_visual_art_direction = AIOrchestratorService._dynamic_visual_art_direction_section(
+            request=request,
+            format_name=format_name,
+            semantic_visual_brief=prompt_semantic_visual_brief or semantic_visual_brief,
+            visual_intent=visual_intent,
+            structured_visual_metadata=structured_visual_metadata,
+            visual_plan=visual_plan,
+            visual_identity=visual_identity,
+            data_visualization_anchor_lines=data_visualization_anchor_lines,
+            sample_page_blueprint=metadata.get("sample_page_blueprint"),
+            slide_purpose=message_theme or audience_message or resolved_copy_theme,
+            reference_assets=request.reference_assets,
+            asset_catalog=request.asset_catalog,
+            compiled_context=compiled_context,
+        )
+        reference_creative_profile = AIOrchestratorService._resolve_reference_creative_profile(
+            request=request,
+            format_name=format_name,
+            sample_page_blueprint=metadata.get("sample_page_blueprint"),
+            visual_identity=visual_identity,
+            visual_plan=visual_plan,
+            structured_visual_metadata=structured_visual_metadata,
+            layout_budget=layout_content_budget,
+            metadata=prompt_metadata,
+            slide_purpose=message_theme or audience_message or resolved_copy_theme,
+            reference_assets=request.reference_assets,
+            asset_catalog=request.asset_catalog,
+            compiled_context=compiled_context,
+            logo_position_hint=logo_position_hint,
+        )
+        reference_creative_profile_section = AIOrchestratorService._reference_creative_profile_prompt_section(
+            reference_creative_profile
+        )
+        layout_quality_guard = AIOrchestratorService._dynamic_layout_quality_guard_section(
+            request=request,
+            format_name=format_name,
+            text_payload=prompt_text_payload,
+            metadata=prompt_metadata,
+            sample_page_blueprint=metadata.get("sample_page_blueprint"),
+            structured_visual_metadata=structured_visual_metadata,
+            data_visualization_anchor_lines=data_visualization_anchor_lines,
+            visual_intent=visual_intent,
+            visual_plan=visual_plan,
+            visual_identity=visual_identity,
+            reference_assets=request.reference_assets,
+            asset_catalog=request.asset_catalog,
+            scene_graph=None,
+            legal_footer_text="",
+            disclaimer_guidance=AIOrchestratorService._disclaimer_overlay_guidance(request),
+            layout_budget=layout_content_budget,
+        )
 
         sections = [
             "Create a clean supporting visual aligned to the brand system.",
@@ -23423,10 +25616,15 @@ class AIOrchestratorService:
             f"Avoid these messaging cues in the visual: {avoid_list}.",
             f"Platform: {request.studio_panel.get('platform_preset', 'social')}.",
             f"Format: {request.studio_panel.get('format', 'static')}.",
-            f"Headline intent: {AIOrchestratorService._normalize_metadata_text(text_payload.headline, limit=160)}.",
-            f"Body summary: {AIOrchestratorService._normalize_metadata_text(text_payload.body, limit=260)}.",
-            f"Semantic visual brief: communicate this exact idea visually, without relying on text: {semantic_visual_brief}.",
+            layout_quality_guard,
+            f"Headline intent: {AIOrchestratorService._normalize_metadata_text(prompt_text_payload.headline, limit=160)}.",
+            f"Body summary: {AIOrchestratorService._normalize_metadata_text(prompt_text_payload.body, limit=260)}.",
+            f"Semantic visual brief: communicate this exact idea visually, without relying on text: {prompt_semantic_visual_brief or semantic_visual_brief}.",
             data_visualization_contract,
+            broad_visual_context_section,
+            structured_visual_metadata_section,
+            dynamic_visual_art_direction,
+            reference_creative_profile_section,
             (
                 f"Brand knowledge grounding mode: {grounding_mode or 'brand_knowledge'} (strength: {grounding_strength or 'supported'})."
                 if direct_brand_grounding
@@ -23507,10 +25705,7 @@ class AIOrchestratorService:
             *consultant_contract,
             *multimodal_balance_contract,
             *reference_family_contract,
-            (
-                "Visual quality bar: premium, high-end, richly detailed, polished editorial campaign imagery with depth, "
-                "controlled lighting, elegant negative space, and brand-safe color accents."
-            ),
+            AIOrchestratorService._visual_quality_bar_for_treatment(structured_visual_metadata),
             "Choose background tones from true background or surface palette evidence rather than overpowering the canvas with a strong secondary brand color.",
             "Maintain clear contrast between any light surfaces and darker emphasis colors so later text placement stays readable and never fades into a white or dull field.",
             (

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import logging
 from typing import Any
 
@@ -61,62 +62,25 @@ class IntentRouterService:
     }
     _LLM_ALLOWED_SLIDE_TARGETS = {"cover", "last"}
     _LLM_CONFIDENCE_THRESHOLD = 0.7
-    _IMAGE_REFERENCE_TERMS = {
-        "asset",
-        "banner",
-        "carousel",
-        "creative",
-        "image",
-        "images",
-        "poster",
-        "slide",
-        "slides",
-        "visual",
-        "visuals",
-    }
-    _PREVIOUS_REFERENCE_TERMS = {
-        "before",
-        "earlier",
-        "first",
-        "generated",
-        "last",
-        "previous",
-        "previously",
-        "recent",
-        "that",
-        "this",
-    }
-    _IMAGE_DISCUSSION_TERMS = {
-        "about",
-        "analyze",
-        "colors",
-        "colours",
-        "describe",
-        "explain",
-        "tell",
-        "what",
-    }
-    _IMAGE_DISPLAY_TERMS = {
-        "bring",
-        "display",
-        "fetch",
-        "open",
-        "retrieve",
-        "show",
-    }
-    _EXPLICIT_EVALUATION_TERMS = {
-        "aligned",
-        "alignment",
-        "assess",
-        "audit",
-        "check",
-        "compliance",
-        "consistent",
-        "consistency",
-        "evaluate",
-        "review",
-        "score",
-    }
+    _SESSION_SUMMARY_KEYS = (
+        "last_response_mode",
+        "last_non_evaluation_response_mode",
+        "last_content_version_id",
+        "last_non_evaluation_content_version_id",
+        "last_text_deliverable_type",
+        "last_evaluation_review_type",
+        "last_evaluation_scope",
+        "last_displayed_asset_ids",
+        "last_displayed_asset_paths",
+        "last_generated_visual_type",
+        "last_generated_visual",
+        "last_generated_visuals_by_format",
+        "generated_asset_memory",
+        "last_generated_static_image",
+        "last_generated_infographic",
+        "last_generated_carousel",
+        "last_workflow_state",
+    )
 
     def __init__(self) -> None:
         self.providers = ProviderRouter()
@@ -129,16 +93,14 @@ class IntentRouterService:
 
         llm_decision = self._classify_with_llm(
             text=text,
-            session_context=session_context,
+            session_context=self._router_session_summary(session_context),
         )
         if llm_decision is None:
             return ChatIntentDecision(
-                mode="content_only",
-                deliverable_type="general_copy",
-                reason="emergency_default_content",
+                mode="strategy_chat",
+                reason="llm_classification_unavailable",
             )
-        decision = self._build_decision_from_llm(llm_decision=llm_decision)
-        return self._normalize_previous_image_reference(text=text, decision=decision)
+        return self._build_decision_from_llm(llm_decision=llm_decision)
 
     def _classify_with_llm(
         self,
@@ -148,7 +110,7 @@ class IntentRouterService:
     ) -> dict[str, Any] | None:
         provider = self.providers.get_text_provider("generation")
         fallback = {
-            "mode": "content_only",
+            "mode": "strategy_chat",
             "confidence": 0.0,
             "reason": "provider_unavailable",
             "deliverable_type": None,
@@ -164,14 +126,24 @@ class IntentRouterService:
                     system=(
                         "You classify the user's top-level intent for a content studio. "
                         "Return JSON only. "
+                        "Classify the current User message only. Session context is reference-only for resolving phrases like previous, last, this, or that; never infer a generation request from session context alone. "
                         "Pick exactly one mode from: small_talk, strategy_chat, content_only, visual_generation, evaluation, retrieval. "
                         "small_talk = greeting or lightweight casual chat. "
                         "strategy_chat = asking questions, brainstorming, advice, or discussion without requesting deliverable generation. "
-                        "content_only = asking for written copy or text content generation. "
-                        "visual_generation = asking for an image, creative, carousel, poster, infographic, banner, slides, or a visual deliverable. "
+                        "content_only = explicitly asking to write, draft, generate, create, prepare, rewrite, revise, edit, or improve written copy/text content such as a blog, article, caption, post, email, script, thread, newsletter, or description. "
+                        "visual_generation = explicitly asking to generate, create, design, make, render, or revise an image, creative, carousel, poster, infographic, banner, slide deck, slides, or other visual deliverable. "
                         "evaluation = asking to review, check, assess, score, audit, or analyze existing content, tone, brand alignment, compliance, or consistency. "
                         "retrieval = asking to show, find, fetch, retrieve, display, or bring back something already created earlier in the conversation, especially an image or visual asset. "
+                        "Do not classify a greeting, thanks, or casual one-line chat as content_only just because brand context exists. "
+                        "Do not classify brand/audience questions as content_only unless the user asks for a written deliverable. "
+                        "If the user explicitly asks for written content generation, classify as content_only with high confidence. "
+                        "If the user explicitly asks for visual/image/carousel generation, classify as visual_generation with high confidence. "
+                        "If uncertain between strategy_chat and content_only, choose strategy_chat unless the message contains an explicit writing/generation deliverable request. "
+                        "If uncertain between small_talk and content_only, choose small_talk unless the message contains an explicit writing/generation deliverable request. "
                         "If the user is asking about a previously generated image or visual, including prompts like tell me about the last image, describe the previous visual, what is the earlier carousel about, or explain the generated image, classify it as retrieval, not evaluation. "
+                        "If the user asks for the latest, last, previous, earlier, or same generated image/visual/carousel/static image/infographic/slide/asset, classify it as retrieval. "
+                        "If the user asks to show the last generated static image, last generated infographic, or last generated carousel, classify it as retrieval with display_retrieved_asset true. "
+                        "If the user asks to generate a new image/visual/carousel/slide/asset, classify it as visual_generation. "
                         "Set display_retrieved_asset to true only when the user explicitly wants the old image shown again, such as show, display, open, fetch, retrieve, or bring back the image. "
                         "Set display_retrieved_asset to false when the user only wants to discuss, explain, describe, analyze, or answer questions about the previous image without re-showing it. "
                         "Infer deliverable_type when mode is content_only. "
@@ -188,7 +160,7 @@ class IntentRouterService:
                         "slide_targets must be an array using only: cover, last."
                     ),
                     user=(
-                        f"Session context: {session_context}\n"
+                        f"Session summary for reference only: {self._compact_json(session_context)}\n"
                         f"User message: {text}\n"
                         "Return a JSON object with keys: mode, confidence, reason, deliverable_type, uses_previous_output, workflow_type, revision_scope, display_retrieved_asset, direct_reply."
                     ),
@@ -228,6 +200,47 @@ class IntentRouterService:
             "direct_reply": self._normalize_direct_reply(mode=mode, value=response.get("direct_reply")),
         }
 
+    @classmethod
+    def _router_session_summary(cls, session_context: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(session_context, dict):
+            return {}
+        summary: dict[str, Any] = {}
+        for key in cls._SESSION_SUMMARY_KEYS:
+            if key not in session_context:
+                continue
+            value = session_context.get(key)
+            if value in (None, "", [], {}):
+                continue
+            summary[key] = cls._prompt_safe_value(value)
+        return summary
+
+    @classmethod
+    def _prompt_safe_value(cls, value: Any, *, max_depth: int = 2) -> Any:
+        if max_depth < 0:
+            return cls._normalize_scalar(value, limit=160)
+        if isinstance(value, dict):
+            return {
+                str(key): cls._prompt_safe_value(item, max_depth=max_depth - 1)
+                for key, item in list(value.items())[:8]
+            }
+        if isinstance(value, list):
+            return [cls._prompt_safe_value(item, max_depth=max_depth - 1) for item in value[:6]]
+        return cls._normalize_scalar(value, limit=220)
+
+    @staticmethod
+    def _normalize_scalar(value: Any, *, limit: int) -> Any:
+        if isinstance(value, (bool, int, float)):
+            return value
+        text = " ".join(str(value or "").split()).strip()
+        return text[:limit].rstrip()
+
+    @staticmethod
+    def _compact_json(value: Any) -> str:
+        try:
+            return json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
+        except TypeError:
+            return str(value)
+
     def _build_decision_from_llm(self, *, llm_decision: dict[str, Any]) -> ChatIntentDecision:
         mode = str(llm_decision.get("mode") or "").strip().casefold()
         workflow_type = str(llm_decision.get("workflow_type") or "").strip() or None
@@ -245,42 +258,6 @@ class IntentRouterService:
             ),
             display_retrieved_asset=bool(llm_decision.get("display_retrieved_asset")),
             direct_reply=llm_decision.get("direct_reply"),
-        )
-
-    @classmethod
-    def _normalize_previous_image_reference(
-        cls,
-        *,
-        text: str,
-        decision: ChatIntentDecision,
-    ) -> ChatIntentDecision:
-        if decision.mode == "visual_generation":
-            return decision
-        tokens = {
-            token.strip(".,!?;:\"'()[]{}").casefold()
-            for token in str(text or "").split()
-            if token.strip(".,!?;:\"'()[]{}")
-        }
-        if not tokens:
-            return decision
-        has_image_reference = bool(tokens & cls._IMAGE_REFERENCE_TERMS)
-        has_previous_reference = bool(tokens & cls._PREVIOUS_REFERENCE_TERMS)
-        if not has_image_reference or not has_previous_reference:
-            return decision
-        if tokens & cls._EXPLICIT_EVALUATION_TERMS:
-            return decision
-        if not (tokens & cls._IMAGE_DISCUSSION_TERMS or tokens & cls._IMAGE_DISPLAY_TERMS):
-            return decision
-        display_retrieved_asset = bool(tokens & cls._IMAGE_DISPLAY_TERMS)
-        return ChatIntentDecision(
-            mode="retrieval",
-            deliverable_type=None,
-            reason=f"{decision.reason}|previous_image_reference_guard",
-            uses_previous_output=True,
-            revision_scope=None,
-            workflow_plan=None,
-            display_retrieved_asset=display_retrieved_asset,
-            direct_reply=None,
         )
 
     @staticmethod

@@ -34,6 +34,7 @@ class ConversationMemoryService:
         "a",
         "an",
         "and",
+        "can",
         "for",
         "from",
         "i",
@@ -47,6 +48,7 @@ class ConversationMemoryService:
         "please",
         "the",
         "to",
+        "you",
         "we",
     }
     TOKEN_PATTERN = re.compile(r"[a-z0-9']+")
@@ -137,10 +139,10 @@ class ConversationMemoryService:
                     system=(
                         "You choose which previously generated images are most relevant to the user's retrieval request. "
                         "Return JSON only. "
-                        "The candidates are ordered from newest to oldest. "
+                        "Each candidate includes recency_rank, semantic_rank, fallback_score, overlap_score, created_at, and a memory summary. "
                         "Use the user's wording semantically, including references like previous, last, first, earlier, same, that one, or topic/style cues. "
                         "If the user is clearly asking for the last or latest generated image without extra topic/entity qualifiers, "
-                        "prefer selecting a single best newest candidate and mark selection_state as generic_recency. "
+                        "select the candidate with the lowest recency_rank and mark selection_state as generic_recency. "
                         "If the request is ambiguous or could match multiple prior images, you may return up to the requested limit so the user can choose in the frontend. "
                         "Select up to the requested limit of candidate indexes. "
                         "Do not invent indexes. "
@@ -751,6 +753,187 @@ class ConversationMemoryService:
             "height": asset.get("height"),
         }
 
+    def _serialize_session_visual_asset(self, asset: dict[str, Any]) -> dict[str, Any] | None:
+        storage_path = self._clean_text(asset.get("storage_path"), limit=512)
+        if not storage_path or not self.storage.exists(storage_path):
+            return None
+        mime_type = self._clean_text(asset.get("mime_type"), limit=120) or "image/png"
+        return {
+            "asset_id": self._clean_text(asset.get("asset_id"), limit=80) or None,
+            "content_version_id": None,
+            "mime_type": mime_type,
+            "storage_path": storage_path,
+            "asset_url": self.delivery.build_signed_url(
+                storage_path=storage_path,
+                filename=storage_path.rsplit("/", 1)[-1],
+            ),
+            "width": asset.get("width"),
+            "height": asset.get("height"),
+            "asset_role": self._clean_text(asset.get("asset_role"), limit=100) or AssetRole.RENDER_EXPORT.value,
+            "memory_entry_id": None,
+            "memory_text": None,
+            "displayed_asset": True,
+            "metadata": {
+                "source": "session_last_generated_visual",
+                "slide_index": asset.get("slide_index"),
+                "slide_count": asset.get("slide_count"),
+            },
+            "slide_index": asset.get("slide_index"),
+        }
+
+    def _session_visual_memory_text(self, visual_state: dict[str, Any]) -> str:
+        return self._clean_text(
+            (
+                "Last generated visual summary. "
+                f"Format: {self._clean_text(visual_state.get('format'), limit=40)}. "
+                f"Platform: {self._clean_text(visual_state.get('platform'), limit=40)}. "
+                f"Prompt: {self._clean_text(visual_state.get('prompt'), limit=500)}. "
+                f"Headline: {self._clean_text(visual_state.get('headline'), limit=220)}. "
+                f"Body: {self._clean_text(visual_state.get('body'), limit=320)}. "
+                f"CTA: {self._clean_text(visual_state.get('cta'), limit=120)}. "
+                f"Asset count: {visual_state.get('asset_count') or 0}."
+            ),
+            limit=1200,
+        )
+
+    def _session_visual_candidates(self, session_context: dict[str, Any] | None) -> list[dict[str, Any]]:
+        if not isinstance(session_context, dict):
+            return []
+        raw_candidates: list[tuple[str, dict[str, Any]]] = []
+        generated_asset_memory = (
+            session_context.get("generated_asset_memory")
+            if isinstance(session_context.get("generated_asset_memory"), dict)
+            else {}
+        )
+        latest_visual = generated_asset_memory.get("latest")
+        if isinstance(latest_visual, dict):
+            raw_candidates.append(("generated_asset_memory.latest", latest_visual))
+        for format_name in ("static", "infographic", "carousel"):
+            visual_state = generated_asset_memory.get(format_name)
+            if isinstance(visual_state, dict):
+                raw_candidates.append((f"generated_asset_memory.{format_name}", visual_state))
+
+        for key, source_key in (
+            ("last_generated_static_image", "last_generated_static_image"),
+            ("last_generated_infographic", "last_generated_infographic"),
+            ("last_generated_carousel", "last_generated_carousel"),
+        ):
+            visual_state = session_context.get(key)
+            if isinstance(visual_state, dict):
+                raw_candidates.append((source_key, visual_state))
+
+        last_visual = session_context.get("last_generated_visual")
+        if isinstance(last_visual, dict):
+            raw_candidates.append(("last_generated_visual", last_visual))
+        visuals_by_format = (
+            session_context.get("last_generated_visuals_by_format")
+            if isinstance(session_context.get("last_generated_visuals_by_format"), dict)
+            else {}
+        )
+        for format_name, visual_state in visuals_by_format.items():
+            if isinstance(visual_state, dict):
+                raw_candidates.append((f"last_generated_visuals_by_format.{format_name}", visual_state))
+
+        candidates: list[dict[str, Any]] = []
+        seen_keys: set[str] = set()
+        for source_key, visual_state in raw_candidates:
+            raw_assets = visual_state.get("assets") if isinstance(visual_state.get("assets"), list) else []
+            assets = [
+                serialized
+                for item in raw_assets
+                if isinstance(item, dict) and (serialized := self._serialize_session_visual_asset(item)) is not None
+            ]
+            if not assets:
+                continue
+            assets = self._sorted_serialized_assets(assets)
+            identity = str(visual_state.get("content_version_id") or "") or "|".join(
+                str(asset.get("storage_path") or "") for asset in assets
+            )
+            if identity in seen_keys:
+                continue
+            seen_keys.add(identity)
+            memory_text = self._session_visual_memory_text(visual_state)
+            for asset in assets:
+                asset["content_version_id"] = self._clean_text(visual_state.get("content_version_id"), limit=80) or None
+                asset["memory_text"] = memory_text
+            candidates.append(
+                {
+                    "index": len(candidates),
+                    "source": source_key,
+                    "content_version_id": self._clean_text(visual_state.get("content_version_id"), limit=80),
+                    "created_at": self._clean_text(visual_state.get("created_at"), limit=80),
+                    "recency_rank": len(candidates) + 1,
+                    "semantic_rank": None,
+                    "format": self._clean_text(visual_state.get("format"), limit=40),
+                    "platform": self._clean_text(visual_state.get("platform"), limit=40),
+                    "storage_path": assets[0]["storage_path"],
+                    "asset_role": assets[0]["asset_role"],
+                    "memory_text": memory_text,
+                    "fallback_score": 1.0 if source_key == "last_generated_visual" else 0.75,
+                    "overlap_score": 0.0,
+                    "assets": assets,
+                }
+            )
+        return candidates
+
+    def _select_session_visual_candidate(
+        self,
+        *,
+        query: str,
+        session_context: dict[str, Any] | None,
+        limit: int,
+    ) -> dict[str, Any] | None:
+        candidates = self._session_visual_candidates(session_context)
+        if not candidates:
+            return None
+        for candidate in candidates:
+            candidate["overlap_score"] = round(self._overlap_score(query, candidate.get("memory_text", "")), 4)
+        selection_result = self._llm_select_candidate_indexes(
+            query=query,
+            candidates=[
+                {key: value for key, value in candidate.items() if key != "assets"}
+                for candidate in candidates
+            ],
+            limit=limit,
+        )
+        selected_indexes = selection_result.get("selected_indexes") if selection_result else []
+        if not selected_indexes:
+            return None
+        selected_index = selected_indexes[0]
+        if selected_index >= len(candidates):
+            return None
+        selected = candidates[selected_index]
+        assets = selected.get("assets") if isinstance(selected.get("assets"), list) else []
+        if not assets:
+            return None
+        message = self._llm_describe_selected_asset(
+            query=query,
+            candidate={key: value for key, value in selected.items() if key != "assets"},
+            fallback="Here is the latest generated visual from this conversation.",
+        )
+        return {
+            "status": "found",
+            "message": message,
+            "assets": assets,
+            "matched_entries": [
+                {
+                    "memory_entry_id": None,
+                    "storage_path": asset.get("storage_path"),
+                    "score": selected.get("fallback_score"),
+                    "overlap_score": selected.get("overlap_score"),
+                    "source": selected.get("source"),
+                }
+                for asset in assets[:limit]
+            ],
+            "selected_asset": assets[0],
+            "selection_required": False,
+            "selection_prompt": None,
+            "selection_options": [
+                self._selection_option_for_asset(asset, rank=index + 1)
+                for index, asset in enumerate(assets[:limit], start=0)
+            ],
+        }
+
     async def retrieve_image_assets(
         self,
         *,
@@ -758,8 +941,18 @@ class ConversationMemoryService:
         brand_space_id: UUID,
         session_id: UUID,
         query: str,
+        session_context: dict[str, Any] | None = None,
         limit: int = 3,
     ) -> dict[str, Any]:
+        query_text = self._clean_text(query, limit=600)
+        session_visual_result = self._select_session_visual_candidate(
+            query=query_text,
+            session_context=session_context,
+            limit=limit,
+        )
+        if session_visual_result is not None:
+            return session_visual_result
+
         entries = await self.entries.list_image_entries(
             tenant_id=tenant_id,
             brand_space_id=brand_space_id,
@@ -774,7 +967,6 @@ class ConversationMemoryService:
                 "matched_entries": [],
             }
 
-        query_text = self._clean_text(query, limit=600)
         namespace = self._namespace(tenant_id, brand_space_id)
         search_results = self.vectors.search(namespace, query_text, k=max(limit * 4, 12))
         search_by_entry_id: dict[str, SearchResult] = {}
@@ -796,14 +988,39 @@ class ConversationMemoryService:
             scored_entries.append((score, overlap_score, entry))
 
         scored_entries.sort(key=lambda item: (-item[0], item[2].created_at))
+        score_by_entry_id = {str(entry.id): (score, overlap_score) for score, overlap_score, entry in scored_entries}
+        semantic_rank_by_entry_id = {
+            str(entry.id): index
+            for index, (_score, _overlap_score, entry) in enumerate(scored_entries, start=1)
+        }
+        recency_rank_by_entry_id = {str(entry.id): index for index, entry in enumerate(entries, start=1)}
+        candidate_entries: list[ConversationMemoryEntry] = []
+        seen_candidate_entry_ids: set[str] = set()
+        candidate_limit = max(limit * 8, 20)
+        for entry in entries:
+            entry_id = str(entry.id)
+            if entry_id in seen_candidate_entry_ids:
+                continue
+            seen_candidate_entry_ids.add(entry_id)
+            candidate_entries.append(entry)
+            if len(candidate_entries) >= max(candidate_limit // 2, limit):
+                break
+        for _score, _overlap_score, entry in scored_entries:
+            entry_id = str(entry.id)
+            if entry_id in seen_candidate_entry_ids:
+                continue
+            seen_candidate_entry_ids.add(entry_id)
+            candidate_entries.append(entry)
+            if len(candidate_entries) >= candidate_limit:
+                break
         candidate_pool: list[dict[str, Any]] = []
         fallback_assets: list[dict[str, Any]] = []
         fallback_matches: list[dict[str, Any]] = []
         seen_storage_paths: set[str] = set()
-        candidate_limit = max(limit * 4, 8)
         displayed_assets_by_content_version: dict[str, list[dict[str, Any]]] = {}
         displayed_storage_paths_by_content_version: dict[str, set[str]] = {}
-        for score, overlap_score, entry in scored_entries:
+        for entry in candidate_entries:
+            score, overlap_score = score_by_entry_id.get(str(entry.id), (0.0, 0.0))
             serialized = self._serialize_entry_asset(entry)
             if not serialized:
                 continue
@@ -834,6 +1051,8 @@ class ConversationMemoryService:
                     "index": len(candidate_pool),
                     "memory_entry_id": str(entry.id),
                     "created_at": self._isoformat(entry.created_at),
+                    "recency_rank": recency_rank_by_entry_id.get(str(entry.id)),
+                    "semantic_rank": semantic_rank_by_entry_id.get(str(entry.id)),
                     "storage_path": serialized["storage_path"],
                     "asset_role": serialized["asset_role"],
                     "memory_text": self._clean_text(entry.memory_text, limit=320),

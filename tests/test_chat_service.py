@@ -663,7 +663,6 @@ async def test_chat_service_passes_brand_summary_and_recent_messages_to_conversa
     assert brand_summary_calls[0]["sections"] == brand_sections
     assert captured["brand_summary"] == "Audience: salaried professionals. Tone: trustworthy."
     assert captured["recent_messages"] == [
-        {"role": "user", "message": "Previous question"},
         {"role": "assistant", "message": "Previous answer"},
         {"role": "user", "message": "Another question"},
         {"role": "assistant", "message": "Another answer"},
@@ -672,6 +671,74 @@ async def test_chat_service_passes_brand_summary_and_recent_messages_to_conversa
     chat.brand_sections.list_current_sections.assert_awaited_once_with(session.brand_space_id, session.tenant_id)
     chat.text_content.generate.assert_not_awaited()
     chat.content.generate.assert_not_awaited()
+
+
+def test_chat_service_builds_compact_last_generated_visual_state() -> None:
+    content_version = ContentVersion(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        session_id=uuid4(),
+        created_by=uuid4(),
+        prompt="Generate a LinkedIn carousel about FD Bonds.",
+        studio_panel={"format": "carousel", "platform_preset": "linkedin", "file_type": "png"},
+        generated_payload={"headline": "FD Bonds explained", "body": "Body copy", "cta": "Read more"},
+        blueprint_payload={},
+        explainability_metadata={},
+        tone_feedback={},
+    )
+    asset_one = {
+        "storage_path": "tenant/brand/generated/final-slide-1.png",
+        "asset_role": "render_preview",
+        "mime_type": "image/png",
+        "metadata": {"slide_index": 1, "slide_count": 2},
+    }
+    asset_two = {
+        "storage_path": "tenant/brand/generated/final-slide-2.png",
+        "asset_role": "render_export",
+        "mime_type": "image/png",
+        "metadata": {"slide_index": 2, "slide_count": 2},
+    }
+
+    state = ChatService._build_last_generated_visual_state(
+        content_version=content_version,
+        assets=[asset_one, asset_two],
+    )
+
+    assert state is not None
+    assert state["format"] == "carousel"
+    assert state["asset_count"] == 2
+    assert [asset["storage_path"] for asset in state["assets"]] == [
+        "tenant/brand/generated/final-slide-1.png",
+        "tenant/brand/generated/final-slide-2.png",
+    ]
+
+
+def test_chat_service_updates_generated_asset_memory_by_format() -> None:
+    static_state = {
+        "content_version_id": str(uuid4()),
+        "format": "static",
+        "assets": [{"storage_path": "tenant/brand/generated/static.png"}],
+    }
+    carousel_state = {
+        "content_version_id": str(uuid4()),
+        "format": "carousel",
+        "assets": [{"storage_path": "tenant/brand/generated/carousel-1.png"}],
+    }
+
+    memory = ChatService._updated_generated_asset_memory(
+        {},
+        visual_memory_state=static_state,
+    )
+    memory = ChatService._updated_generated_asset_memory(
+        memory,
+        visual_memory_state=carousel_state,
+    )
+
+    assert memory["latest_type"] == "carousel"
+    assert memory["latest"] == carousel_state
+    assert memory["static"] == static_state
+    assert memory["carousel"] == carousel_state
 
 
 @pytest.mark.asyncio

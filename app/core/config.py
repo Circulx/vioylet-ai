@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     live_research_search_backend: str = "openai"
     live_research_search_model: str = "gpt-4.1-mini"
     live_research_search_context_size: str = "medium"
+    research_editorial_llm_planning_enabled: bool = True
 
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None

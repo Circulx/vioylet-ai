@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
+from app.ai.providers.base import PromptEnvelope
+from app.ai.providers.router import ProviderRouter
 from app.ai.structured_prompt_parser import StructuredPromptParser
+from app.core.config import get_settings
+
+
+logger = logging.getLogger(__name__)
 
 
 class ResearchEditorialPlanningService:
@@ -31,6 +38,14 @@ class ResearchEditorialPlanningService:
         r"\b("
         r"exact|specific|latest data|current data|current numbers?|latest numbers?|statistics?|stats?|"
         r"percentage|percentages|benchmark|benchmarks|rankings?|market data|source-backed|verified facts?"
+        r")\b",
+        re.IGNORECASE,
+    )
+    HARD_FAIL_RESEARCH_REQUEST_PATTERN = re.compile(
+        r"\b("
+        r"latest|today|recent|current|latest data|current data|current numbers?|latest numbers?|"
+        r"statistics?|stats?|percentage|percentages|benchmark|benchmarks|rankings?|market data|"
+        r"source-backed|verified facts?|forecast|outlook"
         r")\b",
         re.IGNORECASE,
     )
@@ -172,15 +187,37 @@ class ResearchEditorialPlanningService:
             sample_editorial_brief,
             format_family=format_family,
         )
-        active = self._should_activate(
+        fallback_active = self._should_activate(
             prompt_text=prompt_text,
             live_research=live_research,
             deliverable_type=deliverable_type,
             format_family=format_family,
             ordered_story_beats=ordered_story_beats,
         )
-        topic_focus = self._topic_focus(prompt_text)
-        angle = self._angle(prompt_text, live_research=live_research)
+        fallback_topic_focus = self._topic_focus(prompt_text)
+        fallback_angle = self._angle(prompt_text, live_research=live_research)
+        llm_editorial_plan = self._llm_editorial_plan(
+            prompt_text=prompt_text,
+            studio_panel=studio_panel,
+            brand_context=brand_context or {},
+            objective_context=objective_context or {},
+            knowledge_brief=knowledge_brief,
+            live_research=live_research,
+            deliverable_type=deliverable_type,
+            format_family=format_family,
+            ordered_story_beats=ordered_story_beats,
+        )
+        active = self._coerce_bool(llm_editorial_plan.get("active")) if llm_editorial_plan else fallback_active
+        topic_focus = (
+            self._normalize_text(llm_editorial_plan.get("topic_focus"), limit=180)
+            if llm_editorial_plan
+            else ""
+        ) or fallback_topic_focus
+        angle = (
+            self._normalize_text(llm_editorial_plan.get("angle"), limit=360)
+            if llm_editorial_plan
+            else ""
+        ) or fallback_angle
         thesis = self._thesis(topic_focus=topic_focus, angle=angle, brand_context=brand_context or {})
         insight_hierarchy = self._insight_hierarchy(
             live_research=live_research,
@@ -222,9 +259,21 @@ class ResearchEditorialPlanningService:
             ranked_source_pack=ranked_source_pack,
         )
         source_backing_rules = self._source_backing_rules()
-        editorial_style = self._editorial_style(prompt_text, platform_preset)
-        reader_payoff = self._reader_payoff(prompt_text, angle)
-        hook_strategy = self._hook_strategy(format_family, prompt_text, angle)
+        editorial_style = (
+            self._normalize_text(llm_editorial_plan.get("editorial_style"), limit=80)
+            if llm_editorial_plan
+            else ""
+        ) or self._editorial_style(prompt_text, platform_preset)
+        reader_payoff = (
+            self._normalize_text(llm_editorial_plan.get("reader_payoff"), limit=320)
+            if llm_editorial_plan
+            else ""
+        ) or self._reader_payoff(prompt_text, angle)
+        hook_strategy = (
+            self._normalize_text(llm_editorial_plan.get("hook_strategy"), limit=320)
+            if llm_editorial_plan
+            else ""
+        ) or self._hook_strategy(format_family, prompt_text, angle)
         disclaimer_request = parsed_prompt.get("disclaimer_request") if isinstance(parsed_prompt.get("disclaimer_request"), dict) else {}
         sample_guided = bool(
             sample_editorial_brief
@@ -293,6 +342,7 @@ class ResearchEditorialPlanningService:
                 verified_facts=verified_facts,
                 ranked_source_pack=ranked_source_pack,
                 research_status=self._normalize_text(live_research.get("status"), limit=32),
+                llm_editorial_plan=llm_editorial_plan,
             ),
             "source_pack": source_pack,
             "source_count": len(source_pack),
@@ -305,6 +355,137 @@ class ResearchEditorialPlanningService:
             "research_status": self._normalize_text(live_research.get("status"), limit=32),
         }
 
+    def _llm_editorial_plan(
+        self,
+        *,
+        prompt_text: str,
+        studio_panel: dict[str, Any],
+        brand_context: dict[str, Any],
+        objective_context: dict[str, Any],
+        knowledge_brief: list[dict[str, Any]],
+        live_research: dict[str, Any],
+        deliverable_type: str | None,
+        format_family: str,
+        ordered_story_beats: list[str],
+    ) -> dict[str, Any] | None:
+        try:
+            settings = get_settings()
+            if not settings.research_editorial_llm_planning_enabled:
+                return None
+            provider = ProviderRouter().get_text_provider("generation")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("research_editorial.llm_planner_unavailable: %s", exc)
+            return None
+
+        fallback = {
+            "_fallback": True,
+            "active": False,
+            "confidence": 0.0,
+            "topic_focus": "",
+            "angle": "",
+            "editorial_style": "",
+            "reader_payoff": "",
+            "hook_strategy": "",
+            "research_guard": {
+                "strict_mode": False,
+                "requires_fresh_research": False,
+                "requires_blocking_research": False,
+                "requires_unavailable_research_block": False,
+                "hard_fail": False,
+                "reason": "",
+            },
+        }
+        research_status = self._normalize_text(live_research.get("status"), limit=32)
+        verified_facts = [item for item in (live_research.get("verified_facts") or []) if isinstance(item, dict)]
+        ranked_sources = [item for item in (live_research.get("ranked_sources") or []) if isinstance(item, dict)]
+        sources = [item for item in (live_research.get("sources") or []) if isinstance(item, dict)]
+        compact_knowledge = [
+            self._normalize_text(item.get("content"), limit=180)
+            for item in knowledge_brief[:4]
+            if isinstance(item, dict) and self._normalize_text(item.get("content"), limit=180)
+        ]
+        brand_name = self._normalize_text(brand_context.get("brand_name"), limit=80)
+        objective_name = self._normalize_text(
+            objective_context.get("name") or objective_context.get("description"),
+            limit=120,
+        )
+
+        try:
+            response = provider.generate_structured_json(
+                PromptEnvelope(
+                    system=(
+                        "You are the research and editorial planning brain for a content generation system. "
+                        "Return JSON only. Decide whether this generation needs research-aware editorial planning, "
+                        "what the topic and angle are, and whether unavailable live research must block generation. "
+                        "Do not use keyword matching. Use semantic intent. "
+                        "active=true when the prompt asks for analysis, current affairs, policy, market/economic context, "
+                        "source-backed explanation, research-led thought leadership, or when live research already supplied useful facts/sources. "
+                        "active=false for evergreen/simple brand copy that can be written without source-sensitive claims. "
+                        "research_guard.strict_mode=true only when active and the content needs careful factual/source handling. "
+                        "requires_fresh_research=true when the prompt needs external facts, recent/current context, or claim verification. "
+                        "requires_blocking_research=true when unsupported exact/current claims would be risky without verified sources. "
+                        "requires_unavailable_research_block=true only when the user explicitly asks for latest/current data, exact numbers, statistics, rankings, market data, forecasts, or source-backed verified facts. "
+                        "If the user already supplied a date or event in the prompt, do not block solely because that date/event appears; proceed cautiously unless they also ask for latest/current/exact data. "
+                        "hard_fail=true only if live research status is unavailable, there are no verified facts or ranked sources, and the request explicitly requires unavailable external verification. "
+                        "Keep topic_focus, angle, reader_payoff, and hook_strategy concise and generation-ready."
+                    ),
+                    user=(
+                        f"Prompt: {prompt_text}\n"
+                        f"Brand: {brand_name}\n"
+                        f"Objective: {objective_name}\n"
+                        f"Deliverable type: {self._normalize_text(deliverable_type, limit=32)}\n"
+                        f"Format family: {format_family}\n"
+                        f"Studio panel: {studio_panel}\n"
+                        f"Ordered story beats: {ordered_story_beats[:8]}\n"
+                        f"Live research status: {research_status}\n"
+                        f"Verified fact count: {len(verified_facts)}\n"
+                        f"Ranked source count: {len(ranked_sources)}\n"
+                        f"Source count: {len(sources)}\n"
+                        f"Knowledge snippets: {compact_knowledge}\n"
+                        "Return JSON with keys: active, confidence, topic_focus, angle, editorial_style, reader_payoff, hook_strategy, research_guard. "
+                        "research_guard keys: strict_mode, requires_fresh_research, requires_blocking_research, requires_unavailable_research_block, hard_fail, reason."
+                    ),
+                ),
+                fallback=fallback,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("research_editorial.llm_planner_failed: %s", exc)
+            return None
+
+        if not isinstance(response, dict) or response.get("_fallback"):
+            return None
+        try:
+            confidence = float(response.get("confidence", 0.0))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        if confidence < 0.55:
+            return None
+
+        guard = response.get("research_guard") if isinstance(response.get("research_guard"), dict) else {}
+        hard_fail = bool(
+            self._coerce_bool(guard.get("hard_fail"))
+            and research_status == "unavailable"
+            and not verified_facts
+            and not ranked_sources
+        )
+        return {
+            "active": self._coerce_bool(response.get("active")),
+            "confidence": confidence,
+            "topic_focus": self._normalize_text(response.get("topic_focus"), limit=180),
+            "angle": self._normalize_text(response.get("angle"), limit=360),
+            "editorial_style": self._normalize_text(response.get("editorial_style"), limit=80),
+            "reader_payoff": self._normalize_text(response.get("reader_payoff"), limit=320),
+            "hook_strategy": self._normalize_text(response.get("hook_strategy"), limit=320),
+            "research_guard": {
+                "strict_mode": self._coerce_bool(guard.get("strict_mode")),
+                "requires_fresh_research": self._coerce_bool(guard.get("requires_fresh_research")),
+                "requires_blocking_research": self._coerce_bool(guard.get("requires_blocking_research")),
+                "requires_unavailable_research_block": self._coerce_bool(guard.get("requires_unavailable_research_block")),
+                "hard_fail": hard_fail,
+                "reason": self._normalize_text(guard.get("reason"), limit=260) if hard_fail else "",
+            },
+        }
+
     def _research_guard(
         self,
         *,
@@ -313,12 +494,34 @@ class ResearchEditorialPlanningService:
         verified_facts: list[dict[str, Any]],
         ranked_source_pack: list[dict[str, Any]],
         research_status: str,
+        llm_editorial_plan: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        if isinstance(llm_editorial_plan, dict) and isinstance(llm_editorial_plan.get("research_guard"), dict):
+            guard = llm_editorial_plan["research_guard"]
+            hard_fail = bool(
+                self._coerce_bool(guard.get("hard_fail"))
+                and research_status == "unavailable"
+                and not verified_facts
+                and not ranked_source_pack
+            )
+            return {
+                "strict_mode": self._coerce_bool(guard.get("strict_mode")),
+                "requires_fresh_research": self._coerce_bool(guard.get("requires_fresh_research")),
+                "requires_blocking_research": self._coerce_bool(guard.get("requires_blocking_research")),
+                "requires_unavailable_research_block": self._coerce_bool(guard.get("requires_unavailable_research_block")),
+                "hard_fail": hard_fail,
+                "reason": self._normalize_text(guard.get("reason"), limit=260) if hard_fail else "",
+                "decision_source": "llm",
+            }
+
         requires_fresh_research = bool(self.RESEARCH_SIGNAL_PATTERN.search(prompt_text))
         requires_blocking_research = bool(
             self.TIMELY_RESEARCH_SIGNAL_PATTERN.search(prompt_text)
             or self.EXACT_CLAIM_PATTERN.search(prompt_text)
             or self.EXACT_RESEARCH_REQUEST_PATTERN.search(prompt_text)
+        )
+        requires_unavailable_research_block = bool(
+            self.HARD_FAIL_RESEARCH_REQUEST_PATTERN.search(prompt_text)
         )
         strict = bool(active and requires_fresh_research)
         # "unavailable" means a search backend IS configured but the runtime fetch failed.
@@ -328,6 +531,7 @@ class ResearchEditorialPlanningService:
         hard_fail = bool(
             strict
             and requires_blocking_research
+            and requires_unavailable_research_block
             and research_status == "unavailable"
             and not verified_facts
             and not ranked_source_pack
@@ -341,8 +545,10 @@ class ResearchEditorialPlanningService:
             "strict_mode": strict,
             "requires_fresh_research": requires_fresh_research,
             "requires_blocking_research": requires_blocking_research,
+            "requires_unavailable_research_block": requires_unavailable_research_block,
             "hard_fail": hard_fail,
             "reason": reason,
+            "decision_source": "fallback_rules",
         }
 
     @staticmethod
@@ -370,6 +576,18 @@ class ResearchEditorialPlanningService:
         if not text or limit is None:
             return text
         return text[:limit].rstrip(" ,.;:-")
+
+    @staticmethod
+    def _coerce_bool(value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().casefold()
+            if normalized in {"true", "yes", "1", "on"}:
+                return True
+            if normalized in {"false", "no", "0", "off", "none", "null", ""}:
+                return False
+        return bool(value)
 
     @classmethod
     def _looks_like_low_quality_web_snippet(cls, value: Any) -> bool:

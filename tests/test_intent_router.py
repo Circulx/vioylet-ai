@@ -342,19 +342,18 @@ def test_intent_router_keeps_retrieval_without_display_for_image_discussion(monk
     assert decision.display_retrieved_asset is False
 
 
-def test_intent_router_overrides_previous_image_explanation_misclassified_as_evaluation(monkeypatch) -> None:
+def test_intent_router_does_not_override_llm_decision_for_previous_image_wording(monkeypatch) -> None:
     router = _router_with_llm(
         monkeypatch,
         mode="evaluation",
         uses_previous_output=True,
-        reason="misread_as_analysis",
+        reason="llm_decided_explicit_review",
     )
     decision = router.route("Can you explain the last generated image?")
 
-    assert decision.mode == "retrieval"
+    assert decision.mode == "evaluation"
     assert decision.uses_previous_output is True
-    assert decision.display_retrieved_asset is False
-    assert "previous_image_reference_guard" in decision.reason
+    assert decision.reason == "llm_selected:llm_decided_explicit_review"
 
 
 def test_intent_router_keeps_explicit_previous_image_review_as_evaluation(monkeypatch) -> None:
@@ -385,3 +384,51 @@ def test_intent_router_allows_llm_to_select_evaluation(monkeypatch) -> None:
     assert decision.mode == "evaluation"
     assert decision.uses_previous_output is True
     assert decision.reason.startswith("llm_selected:")
+
+
+def test_intent_router_does_not_default_llm_failure_to_content_generation(monkeypatch) -> None:
+    router = IntentRouterService()
+    monkeypatch.setattr(router, "_classify_with_llm", lambda **kwargs: None)
+
+    decision = router.route("hi", {"last_text_output": "Write-up from a previous turn"})
+
+    assert decision.mode == "strategy_chat"
+    assert decision.deliverable_type is None
+    assert decision.reason == "llm_classification_unavailable"
+
+
+def test_intent_router_sends_only_compact_session_summary_to_llm(monkeypatch) -> None:
+    captured = {}
+    router = IntentRouterService()
+
+    def fake_classifier(**kwargs):
+        captured.update(kwargs)
+        return {
+            "mode": "small_talk",
+            "confidence": 0.95,
+            "reason": "greeting",
+            "deliverable_type": None,
+            "uses_previous_output": False,
+            "workflow_type": None,
+            "revision_scope": None,
+            "display_retrieved_asset": False,
+            "direct_reply": "Hello! How can I help?",
+        }
+
+    monkeypatch.setattr(router, "_classify_with_llm", fake_classifier)
+
+    decision = router.route(
+        "hi",
+        {
+            "last_response_mode": "visual_generation",
+            "last_content_version_id": "content-123",
+            "last_text_output": "x" * 5000,
+            "brand_context_snapshot": {"audience": "Mindful Dreamers", "details": "y" * 5000},
+        },
+    )
+
+    assert decision.mode == "small_talk"
+    assert captured["session_context"] == {
+        "last_response_mode": "visual_generation",
+        "last_content_version_id": "content-123",
+    }

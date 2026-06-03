@@ -295,9 +295,6 @@ class ChatService:
         )
         await self.messages.add(user_message)
         memory_service = getattr(self, "memory", None)
-        if memory_service is not None:
-            await memory_service.index_chat_message(message=user_message, session=session)
-
         content_version = None
         memory_assets: list[GeneratedAsset | dict[str, Any]] = []
         review_result = None
@@ -316,7 +313,7 @@ class ChatService:
                         },
                     }
                 else:
-                    recent_messages = await self.messages.list_recent_by_session(session.id, limit=4)
+                    recent_messages = await self.messages.list_recent_by_session(session.id, limit=3)
                     brand_summary_service = getattr(self, "brand_summary_memory", None)
                     if brand_summary_service is None:
                         brand_summary_service = BrandSummaryMemoryService()
@@ -373,19 +370,39 @@ class ChatService:
                     citations=[],
                 )
             elif intent.mode == "retrieval":
+                backfilled_visual_state = None
                 if memory_service is not None:
-                    await self._backfill_displayed_asset_memory_from_history(
+                    backfilled_visual_state = await self._backfill_displayed_asset_memory_from_history(
                         tenant_id=tenant_id,
                         brand_space_id=brand_space_id,
                         session=session,
                         memory_service=memory_service,
                     )
+                if backfilled_visual_state:
+                    generated_asset_memory = self._updated_generated_asset_memory(
+                        session.conversational_context.get("generated_asset_memory"),
+                        visual_memory_state=backfilled_visual_state,
+                    )
+                    session.conversational_context = {
+                        **session.conversational_context,
+                        "last_generated_visual": backfilled_visual_state,
+                        "last_generated_visual_type": backfilled_visual_state.get("format"),
+                        "last_generated_visuals_by_format": self._updated_visuals_by_format(
+                            session.conversational_context.get("last_generated_visuals_by_format"),
+                            visual_memory_state=backfilled_visual_state,
+                        ),
+                        "generated_asset_memory": generated_asset_memory,
+                        "last_generated_static_image": generated_asset_memory.get("static"),
+                        "last_generated_infographic": generated_asset_memory.get("infographic"),
+                        "last_generated_carousel": generated_asset_memory.get("carousel"),
+                    }
                 retrieval_result = (
                     await memory_service.retrieve_image_assets(
                         tenant_id=tenant_id,
                         brand_space_id=brand_space_id,
                         session_id=session.id,
                         query=payload.message,
+                        session_context=session.conversational_context,
                     )
                     if memory_service is not None
                     else {
@@ -731,7 +748,6 @@ class ChatService:
             )
         await self.messages.add(assistant_message)
         if memory_service is not None:
-            await memory_service.index_chat_message(message=assistant_message, session=session)
             if content_version is not None:
                 await memory_service.index_content_version_summary(
                     session=session,
@@ -773,6 +789,22 @@ class ChatService:
             if last_response_mode == "evaluation"
             else None,
         )
+        visual_memory_state = (
+            self._build_last_generated_visual_state(
+                content_version=content_version,
+                assets=memory_assets,
+            )
+            if content_version is not None and memory_assets and last_response_mode == "visual_generation"
+            else None
+        )
+        last_generated_visuals_by_format = self._updated_visuals_by_format(
+            session.conversational_context.get("last_generated_visuals_by_format"),
+            visual_memory_state=visual_memory_state,
+        )
+        generated_asset_memory = self._updated_generated_asset_memory(
+            session.conversational_context.get("generated_asset_memory"),
+            visual_memory_state=visual_memory_state,
+        )
         session.conversational_context = {
             **session.conversational_context,
             "message_count": int(session.conversational_context.get("message_count", 0)) + 2,
@@ -808,6 +840,18 @@ class ChatService:
                 else session.conversational_context.get("last_workflow_state")
             ),
             "artifact_state": session_artifact_state,
+            "last_generated_visual": visual_memory_state
+            or session.conversational_context.get("last_generated_visual"),
+            "last_generated_visual_type": (
+                visual_memory_state.get("format")
+                if visual_memory_state
+                else session.conversational_context.get("last_generated_visual_type")
+            ),
+            "last_generated_visuals_by_format": last_generated_visuals_by_format,
+            "generated_asset_memory": generated_asset_memory,
+            "last_generated_static_image": generated_asset_memory.get("static"),
+            "last_generated_infographic": generated_asset_memory.get("infographic"),
+            "last_generated_carousel": generated_asset_memory.get("carousel"),
             "last_displayed_asset_ids": (
                 [
                     asset_id
@@ -837,7 +881,7 @@ class ChatService:
         return StudioPanelSelection.model_validate(resolved)
 
     @staticmethod
-    def _recent_conversation_messages(messages: list[ChatMessage], *, limit: int = 4) -> list[dict[str, str]]:
+    def _recent_conversation_messages(messages: list[ChatMessage], *, limit: int = 3) -> list[dict[str, str]]:
         return [
             {
                 "role": str(item.role),
@@ -894,6 +938,122 @@ class ChatService:
             storage_path = cls._normalize_storage_path(asset.storage_path)
         return storage_path or None
 
+    @staticmethod
+    def _compact_context_text(value: Any, *, limit: int = 500) -> str:
+        text = " ".join(str(value or "").split()).strip()
+        return text[:limit].rstrip(" ,.;:")
+
+    @classmethod
+    def _memory_asset_context_ref(cls, asset: GeneratedAsset | dict[str, Any]) -> dict[str, Any] | None:
+        storage_path = cls._memory_asset_ref_storage_path(asset)
+        if not storage_path:
+            return None
+        if isinstance(asset, dict):
+            metadata = asset.get("metadata") if isinstance(asset.get("metadata"), dict) else {}
+            metadata_json = asset.get("metadata_json") if isinstance(asset.get("metadata_json"), dict) else {}
+            metadata = {**metadata_json, **metadata}
+            return {
+                "asset_id": str(asset.get("asset_id") or "").strip() or None,
+                "storage_path": storage_path,
+                "asset_role": cls._compact_context_text(asset.get("asset_role"), limit=80)
+                or AssetRole.RENDER_EXPORT.value,
+                "mime_type": cls._compact_context_text(asset.get("mime_type") or metadata.get("mime_type"), limit=80)
+                or "image/png",
+                "width": asset.get("width") or metadata.get("width"),
+                "height": asset.get("height") or metadata.get("height"),
+                "slide_index": asset.get("slide_index")
+                or metadata.get("slide_index")
+                or metadata.get("page_index")
+                or metadata.get("page_number"),
+                "slide_count": metadata.get("slide_count"),
+            }
+        metadata = asset.metadata_json or {}
+        return {
+            "asset_id": str(asset.id) if asset.id else None,
+            "storage_path": storage_path,
+            "asset_role": cls._compact_context_text(asset.asset_role, limit=80) or AssetRole.RENDER_EXPORT.value,
+            "mime_type": cls._compact_context_text(asset.mime_type, limit=80) or "image/png",
+            "width": asset.width,
+            "height": asset.height,
+            "slide_index": metadata.get("slide_index") or metadata.get("page_index") or metadata.get("page_number"),
+            "slide_count": metadata.get("slide_count"),
+        }
+
+    @classmethod
+    def _build_last_generated_visual_state(
+        cls,
+        *,
+        content_version: Any,
+        assets: list[GeneratedAsset | dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        asset_refs = [
+            asset_ref
+            for asset in assets
+            if (asset_ref := cls._memory_asset_context_ref(asset)) is not None
+        ]
+        if not asset_refs:
+            return None
+        payload = content_version.generated_payload or {}
+        studio_panel = content_version.studio_panel or {}
+        format_name = cls._compact_context_text(studio_panel.get("format"), limit=40)
+        return {
+            "content_version_id": str(content_version.id),
+            "format": format_name,
+            "platform": cls._compact_context_text(studio_panel.get("platform_preset"), limit=40),
+            "file_type": cls._compact_context_text(studio_panel.get("file_type"), limit=40),
+            "prompt": cls._compact_context_text(content_version.prompt, limit=500),
+            "headline": cls._compact_context_text(payload.get("headline"), limit=220),
+            "body": cls._compact_context_text(payload.get("body"), limit=420),
+            "cta": cls._compact_context_text(payload.get("cta"), limit=160),
+            "asset_count": len(asset_refs),
+            "assets": asset_refs,
+            "created_at": (
+                content_version.created_at.isoformat()
+                if getattr(content_version, "created_at", None) is not None
+                else None
+            ),
+        }
+
+    @staticmethod
+    def _updated_visuals_by_format(
+        existing: Any,
+        *,
+        visual_memory_state: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        visuals_by_format = dict(existing) if isinstance(existing, dict) else {}
+        if not visual_memory_state:
+            return visuals_by_format
+        format_name = str(visual_memory_state.get("format") or "").strip().casefold()
+        if format_name:
+            visuals_by_format[format_name] = visual_memory_state
+        return visuals_by_format
+
+    @staticmethod
+    def _visual_memory_format(value: dict[str, Any] | None) -> str:
+        return str((value or {}).get("format") or "").strip().casefold()
+
+    @classmethod
+    def _updated_generated_asset_memory(
+        cls,
+        existing: Any,
+        *,
+        visual_memory_state: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        memory = dict(existing) if isinstance(existing, dict) else {}
+        for key in ("static", "infographic", "carousel"):
+            if key in memory and not isinstance(memory.get(key), dict):
+                memory.pop(key, None)
+        if not visual_memory_state:
+            memory.setdefault("latest_type", cls._visual_memory_format(memory.get("latest")) or None)
+            return memory
+
+        format_name = cls._visual_memory_format(visual_memory_state)
+        memory["latest"] = visual_memory_state
+        memory["latest_type"] = format_name or None
+        if format_name in {"static", "infographic", "carousel"}:
+            memory[format_name] = visual_memory_state
+        return memory
+
     async def _backfill_displayed_asset_memory_from_history(
         self,
         *,
@@ -901,8 +1061,9 @@ class ChatService:
         brand_space_id: UUID,
         session: ContentSession,
         memory_service: ConversationMemoryService,
-    ) -> None:
+    ) -> dict[str, Any] | None:
         messages = await self.messages.list_recent_by_session(session.id, limit=CHAT_HISTORY_MESSAGE_LIMIT)
+        latest_visual_state: dict[str, Any] | None = None
         for message in messages:
             payload = message.structured_payload if isinstance(message.structured_payload, dict) else {}
             if payload.get("mode") != "visual_generation" or not message.content_version_id:
@@ -925,6 +1086,11 @@ class ChatService:
                 content_version=content_version,
                 assets=displayed_assets,
             )
+            latest_visual_state = self._build_last_generated_visual_state(
+                content_version=content_version,
+                assets=displayed_assets,
+            )
+        return latest_visual_state
 
     @classmethod
     def _resolve_displayed_memory_assets(

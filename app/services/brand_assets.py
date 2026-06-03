@@ -62,6 +62,7 @@ from app.services.data_validation import DataValidatorService
 from app.services.jobs import JobService
 from app.services.upload_preflight import UploadPreflightService
 from app.utils.image_assets import open_image_asset
+from app.utils.legal_footer import expand_legal_footer_text
 from app.services.usage import UsageLimitService
 
 
@@ -1343,6 +1344,11 @@ class BrandAssetService:
         structured = outcome.structured_data or {}
         footer_text = structured.get("footer")
         footer_style = structured.get("footer_style") or {}
+        footer_text = expand_legal_footer_text(
+            footer_text,
+            source_text=outcome.extracted_text or asset.extracted_text,
+            structured_data=structured,
+        )
 
         if not footer_text or not isinstance(footer_text, str):
             return

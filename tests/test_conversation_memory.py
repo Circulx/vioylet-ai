@@ -559,3 +559,139 @@ async def test_retrieve_image_assets_returns_complete_displayed_carousel_not_lim
         "final-carousel-slide-5.png",
     ]
     service.assets.list_by_content.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_retrieve_image_assets_uses_compact_session_last_visual_when_vector_memory_is_empty() -> None:
+    service = ConversationMemoryService.__new__(ConversationMemoryService)
+    service.entries = SimpleNamespace(list_image_entries=AsyncMock(return_value=[]))
+    service.vectors = SimpleNamespace(search=lambda namespace, query, k: [])
+    service.delivery = SimpleNamespace(
+        build_signed_url=lambda storage_path, filename: f"https://example.test/{filename}"
+    )
+    service.storage = SimpleNamespace(exists=lambda storage_path: True)
+    service._llm_select_candidate_indexes = lambda **kwargs: {
+        "selected_indexes": [0],
+        "reason": "The user asked for the latest generated image.",
+        "selection_state": "generic_recency",
+    }
+    service._llm_describe_selected_asset = lambda **kwargs: "The last generated image is an FD Bonds carousel."
+
+    result = await service.retrieve_image_assets(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        session_id=uuid4(),
+        query="can you explain the last generated image?",
+        session_context={
+            "last_generated_visual": {
+                "content_version_id": str(uuid4()),
+                "format": "carousel",
+                "platform": "linkedin",
+                "prompt": "Generate a LinkedIn carousel about FD Bonds.",
+                "headline": "FD Bonds explained",
+                "body": "A simple explanation for first-time investors.",
+                "cta": "Read more",
+                "asset_count": 2,
+                "assets": [
+                    {
+                        "storage_path": "tenant/brand/generated/final-slide-1.png",
+                        "asset_role": "render_preview",
+                        "mime_type": "image/png",
+                        "slide_index": 1,
+                        "slide_count": 2,
+                    },
+                    {
+                        "storage_path": "tenant/brand/generated/final-slide-2.png",
+                        "asset_role": "render_export",
+                        "mime_type": "image/png",
+                        "slide_index": 2,
+                        "slide_count": 2,
+                    },
+                ],
+            }
+        },
+    )
+
+    assert result["status"] == "found"
+    assert result["message"] == "The last generated image is an FD Bonds carousel."
+    assert [asset["storage_path"].rsplit("/", 1)[-1] for asset in result["assets"]] == [
+        "final-slide-1.png",
+        "final-slide-2.png",
+    ]
+    service.entries.list_image_entries.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_retrieve_image_assets_uses_generated_asset_memory_format_slots() -> None:
+    service = ConversationMemoryService.__new__(ConversationMemoryService)
+    service.entries = SimpleNamespace(list_image_entries=AsyncMock(return_value=[]))
+    service.vectors = SimpleNamespace(search=lambda namespace, query, k: [])
+    service.delivery = SimpleNamespace(
+        build_signed_url=lambda storage_path, filename: f"https://example.test/{filename}"
+    )
+    service.storage = SimpleNamespace(exists=lambda storage_path: True)
+    captured_candidates: list[dict] = []
+
+    def fake_select(**kwargs):
+        captured_candidates.extend(kwargs["candidates"])
+        selected_index = next(
+            item["index"]
+            for item in kwargs["candidates"]
+            if item.get("format") == "static"
+        )
+        return {
+            "selected_indexes": [selected_index],
+            "reason": "The user specifically asked for the last generated static image.",
+            "selection_state": "match_found",
+        }
+
+    service._llm_select_candidate_indexes = fake_select
+    service._llm_describe_selected_asset = lambda **kwargs: "Here is the last generated static image."
+
+    result = await service.retrieve_image_assets(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        session_id=uuid4(),
+        query="can you show me the last generated static image?",
+        session_context={
+            "generated_asset_memory": {
+                "latest_type": "carousel",
+                "latest": {
+                    "content_version_id": str(uuid4()),
+                    "format": "carousel",
+                    "prompt": "Generate a carousel.",
+                    "headline": "Carousel",
+                    "asset_count": 1,
+                    "assets": [
+                        {
+                            "storage_path": "tenant/brand/generated/carousel-slide-1.png",
+                            "asset_role": "render_export",
+                            "mime_type": "image/png",
+                            "slide_index": 1,
+                        }
+                    ],
+                },
+                "static": {
+                    "content_version_id": str(uuid4()),
+                    "format": "static",
+                    "prompt": "Generate a static post.",
+                    "headline": "Static",
+                    "asset_count": 1,
+                    "assets": [
+                        {
+                            "storage_path": "tenant/brand/generated/static-final.png",
+                            "asset_role": "render_preview",
+                            "mime_type": "image/png",
+                        }
+                    ],
+                },
+            }
+        },
+    )
+
+    assert result["status"] == "found"
+    assert result["message"] == "Here is the last generated static image."
+    assert result["selected_asset"]["storage_path"].endswith("static-final.png")
+    assert any(item.get("format") == "static" for item in captured_candidates)
+    assert any(item.get("format") == "carousel" for item in captured_candidates)
+    service.entries.list_image_entries.assert_not_awaited()

@@ -567,6 +567,11 @@ class TextContentService:
     ) -> dict[str, Any]:
         provider = self.providers.get_text_provider("generation")
         contract = self._deliverable_contract(deliverable_type)
+        prompt_safe_brand_context = self._prompt_safe_context(brand_context)
+        prompt_safe_persona_context = self._prompt_safe_context(persona_context)
+        prompt_safe_objective_context = self._prompt_safe_context(objective_context)
+        prompt_safe_session_memory = self._prompt_safe_context(session_memory, max_depth=2, max_list_items=4)
+        prompt_safe_live_research = self._prompt_safe_context(live_research, max_depth=3, max_list_items=4)
         prompt_safe_research_brief = self._prompt_safe_research_editorial_brief(research_editorial_brief)
         prompt_safe_format_plan = self._prompt_safe_plan(format_family_plan)
         prompt_safe_content_plan = self._prompt_safe_plan(content_plan)
@@ -587,16 +592,16 @@ class TextContentService:
                 user=(
                     f"Prompt: {prompt}\n"
                     f"Deliverable type: {deliverable_type}\n"
-                    f"Deliverable contract: {contract}\n"
-                    f"Brand context: {brand_context}\n"
-                    f"Persona context: {persona_context}\n"
-                    f"Objective context: {objective_context}\n"
-                    f"Session memory: {session_memory}\n"
-                    f"Retrieved knowledge: {knowledge_brief}\n"
-                    f"Live research: {live_research}\n"
-                    f"Research editorial brief: {prompt_safe_research_brief}\n"
-                    f"Format family plan: {prompt_safe_format_plan}\n"
-                    f"Content plan: {prompt_safe_content_plan}\n"
+                    f"Deliverable contract: {self._compact_json(contract)}\n"
+                    f"Brand context: {self._compact_json(prompt_safe_brand_context)}\n"
+                    f"Persona context: {self._compact_json(prompt_safe_persona_context)}\n"
+                    f"Objective context: {self._compact_json(prompt_safe_objective_context)}\n"
+                    f"Session memory: {self._compact_json(prompt_safe_session_memory)}\n"
+                    f"Retrieved knowledge: {self._compact_json(knowledge_brief)}\n"
+                    f"Live research: {self._compact_json(prompt_safe_live_research)}\n"
+                    f"Research editorial brief: {self._compact_json(prompt_safe_research_brief)}\n"
+                    f"Format family plan: {self._compact_json(prompt_safe_format_plan)}\n"
+                    f"Content plan: {self._compact_json(prompt_safe_content_plan)}\n"
                     f"Previous output: {previous_output or ''}\n"
                     f"Uses previous output: {uses_previous_output}\n"
                     f"Revision scope: {revision_scope or {}}\n"
@@ -653,6 +658,60 @@ class TextContentService:
         plan = dict(value or {})
         plan.pop("notes", None)
         return plan
+
+    @classmethod
+    def _prompt_safe_context(
+        cls,
+        value: Any,
+        *,
+        max_depth: int = 4,
+        max_list_items: int = 8,
+        string_limit: int = 900,
+        _key: str = "",
+    ) -> Any:
+        if max_depth < 0:
+            return cls._summarize_leaf(value)
+        if isinstance(value, dict):
+            safe: dict[str, Any] = {}
+            for key, item in value.items():
+                key_text = str(key)
+                item_list_limit = 4 if key_text in {"messages", "chat_messages", "history"} else max_list_items
+                safe[key_text] = cls._prompt_safe_context(
+                    item,
+                    max_depth=max_depth - 1,
+                    max_list_items=item_list_limit,
+                    string_limit=string_limit,
+                    _key=key_text,
+                )
+            return safe
+        if isinstance(value, list):
+            return [
+                cls._prompt_safe_context(
+                    item,
+                    max_depth=max_depth - 1,
+                    max_list_items=max_list_items,
+                    string_limit=string_limit,
+                    _key=_key,
+                )
+                for item in value[:max_list_items]
+            ]
+        if isinstance(value, str):
+            limit = 1800 if any(token in _key.casefold() for token in ("legal", "footer", "disclaimer", "text_template")) else string_limit
+            return value[:limit].rstrip()
+        return value
+
+    @staticmethod
+    def _summarize_leaf(value: Any) -> str:
+        if isinstance(value, (dict, list)):
+            return f"[omitted nested {type(value).__name__}]"
+        return str(value or "")[:240].rstrip()
+
+    @staticmethod
+    def _compact_json(value: Any) -> str:
+        try:
+            return json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
+        except TypeError:
+            return str(value)
 
     @staticmethod
     def _revision_scope_instruction(revision_scope: dict[str, Any] | None) -> str:

@@ -39,6 +39,7 @@ from app.repositories.brand_assets import (
 )
 from app.repositories.knowledge import KnowledgeAssetRepository, TemplateMetadataRepository, TemplateRepository
 from app.utils.palette_roles import derive_palette_roles, is_soft_neutral_color, normalize_hex
+from app.utils.legal_footer import expand_legal_footer_text
 
 
 class DataValidatorService:
@@ -1924,10 +1925,16 @@ class DataValidatorService:
 
         disclaimers = []
         for asset in legal_assets:
+            source_asset = await self.assets.get(asset.source_asset_id) if asset.source_asset_id else None
+            text_template = expand_legal_footer_text(
+                asset.text_template,
+                source_text=source_asset.extracted_text if source_asset else None,
+                structured_data=source_asset.structured_data_json if source_asset else None,
+            )
             disclaimers.append({
                 "id": str(asset.id),
                 "asset_type": asset.asset_type,
-                "text_template": asset.text_template,
+                "text_template": text_template,
                 "applies_to_formats": asset.applies_to_formats or [],
                 "position": asset.position,
                 "font_size": asset.font_size,

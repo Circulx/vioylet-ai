@@ -6,6 +6,23 @@ from app.ai.brand_asset_analysis import AssetProcessingOutcome
 from app.models.brand_assets import AudienceInsightAsset, AudienceInsightStructuredData
 from app.models.knowledge import KnowledgeAsset
 from app.services.brand_assets import BrandAssetService
+from app.utils.legal_footer import expand_legal_footer_text
+
+
+SHORT_JIRAAF_DISCLAIMER = (
+    "Disclaimer : Investments in debt securities / municipal debt securities / securitized debt securities are subject "
+    "to risks including delay and / or default in payment . Read all the offer - related documents carefully ."
+)
+
+LONG_JIRAAF_FOOTER_OCR = f"""
+Follow Jiraaf for more such finance insights !
+Sources : ET , Bankbazaar
+Jiraaf Platform Private Limited
+SEBI Registration Number : INZ000315538
+NSE Member ID- Debt Segment : 90355
+Registered Address : No. 371 , St. John's Hospital Road , Santoshapuram , 3rd Block , Koramangala , Bangalore - 560034
+{SHORT_JIRAAF_DISCLAIMER}
+"""
 
 
 class _SessionStub:
@@ -37,6 +54,28 @@ class _AudienceStructuredRepoStub:
 
     async def get_by_audience_asset(self, _asset_id):
         return self.record
+
+
+def test_expand_legal_footer_text_prefers_full_jiraaf_ocr_block() -> None:
+    expanded = expand_legal_footer_text(
+        SHORT_JIRAAF_DISCLAIMER,
+        source_text=LONG_JIRAAF_FOOTER_OCR,
+    )
+
+    assert expanded.startswith("Jiraaf Platform Private Limited")
+    assert "SEBI Registration Number : INZ000315538" in expanded
+    assert "Registered Address : No. 371" in expanded
+    assert SHORT_JIRAAF_DISCLAIMER in expanded
+    assert "Sources : ET" not in expanded
+
+
+def test_expand_legal_footer_text_keeps_short_disclaimer_without_long_ocr() -> None:
+    expanded = expand_legal_footer_text(
+        SHORT_JIRAAF_DISCLAIMER,
+        source_text="Headline\nBody copy\nLearn more",
+    )
+
+    assert expanded == SHORT_JIRAAF_DISCLAIMER
 
 
 @pytest.mark.asyncio

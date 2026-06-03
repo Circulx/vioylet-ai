@@ -154,6 +154,47 @@ def test_research_editorial_planning_stays_standard_for_simple_social_prompt() -
     assert brief["format_family"] == "static"
 
 
+def test_research_editorial_planning_uses_llm_plan_before_fallback_rules(monkeypatch) -> None:
+    service = ResearchEditorialPlanningService()
+    monkeypatch.setattr(
+        service,
+        "_llm_editorial_plan",
+        lambda **kwargs: {
+            "active": True,
+            "confidence": 0.93,
+            "topic_focus": "A nuanced policy story",
+            "angle": "Explain the strategic implications without relying on keyword rules.",
+            "editorial_style": "llm_research_editorial",
+            "reader_payoff": "Reader should understand why the issue matters.",
+            "hook_strategy": "Open with the hidden strategic tension.",
+            "research_guard": {
+                "strict_mode": True,
+                "requires_fresh_research": True,
+                "requires_blocking_research": False,
+                "requires_unavailable_research_block": False,
+                "hard_fail": False,
+                "reason": "",
+            },
+        },
+    )
+
+    brief = service.build(
+        prompt="Build a smart explainer on a nuanced policy story.",
+        studio_panel={"platform_preset": "linkedin", "format": "carousel", "file_type": "png"},
+        brand_context={"brand_name": "Jiraaf"},
+        persona_context={},
+        objective_context={},
+        knowledge_brief=[],
+        live_research={"status": "unavailable", "summary": "", "verified_facts": [], "ranked_sources": []},
+    )
+
+    assert brief["active"] is True
+    assert brief["topic_focus"] == "A nuanced policy story"
+    assert brief["editorial_style"] == "llm_research_editorial"
+    assert brief["research_guard"]["decision_source"] == "llm"
+    assert brief["research_guard"]["hard_fail"] is False
+
+
 def test_research_editorial_planning_filters_visual_template_knowledge_from_insights() -> None:
     service = ResearchEditorialPlanningService()
 
@@ -231,6 +272,26 @@ def test_research_editorial_planning_marks_hard_fail_when_fresh_research_is_requ
 
     assert brief["research_guard"]["strict_mode"] is True
     assert brief["research_guard"]["hard_fail"] is True
+
+
+def test_research_editorial_planning_allows_user_supplied_fta_prompt_when_research_unavailable() -> None:
+    brief = ResearchEditorialPlanningService().build(
+        prompt=(
+            "Create a LinkedIn carousel on the India-New Zealand FTA signed on 27 April 2026. "
+            "Break down the sectoral and economic implications worth watching."
+        ),
+        studio_panel={"platform_preset": "linkedin", "format": "carousel", "file_type": "png"},
+        brand_context={"brand_name": "Jiraaf"},
+        persona_context={},
+        objective_context={},
+        knowledge_brief=[],
+        live_research={"status": "unavailable", "summary": "", "verified_facts": [], "ranked_sources": []},
+    )
+
+    assert brief["research_guard"]["strict_mode"] is True
+    assert brief["research_guard"]["requires_blocking_research"] is True
+    assert brief["research_guard"]["requires_unavailable_research_block"] is False
+    assert brief["research_guard"]["hard_fail"] is False
 
 
 def test_research_editorial_planning_allows_qualitative_inflation_prompt_when_research_unavailable() -> None:

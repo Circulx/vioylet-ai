@@ -61,6 +61,58 @@ def test_intent_router_routes_visual_request_to_visual_generation(monkeypatch) -
     assert decision.mode == "visual_generation"
 
 
+def test_intent_router_overrides_llm_for_static_social_visual_request(monkeypatch) -> None:
+    router = _router_with_llm(
+        monkeypatch,
+        mode="content_only",
+        deliverable_type="linkedin_post",
+        reason="mistook_static_post_for_text",
+    )
+    decision = router.route(
+        "Create a static post for LinkedIn comparing India's inflation to other countries and create a top 10 ranking."
+    )
+
+    assert decision.mode == "visual_generation"
+    assert decision.deliverable_type is None
+    assert decision.reason.startswith("visual_generation_request_override:")
+
+
+def test_intent_router_overrides_llm_for_infographic_request(monkeypatch) -> None:
+    router = _router_with_llm(
+        monkeypatch,
+        mode="strategy_chat",
+        reason="mistook_infographic_for_discussion",
+    )
+    decision = router.route(
+        "Create an infographic for LinkedIn on the top 6 countries that invest in India, comparing FDI inflows."
+    )
+
+    assert decision.mode == "visual_generation"
+
+
+def test_intent_router_uses_visual_pattern_when_llm_is_unavailable(monkeypatch) -> None:
+    router = IntentRouterService()
+    monkeypatch.setattr(router, "_classify_with_llm", lambda **kwargs: None)
+
+    decision = router.route("Prepare a static creative for LinkedIn about bond yields.")
+
+    assert decision.mode == "visual_generation"
+    assert decision.reason == "visual_generation_request_pattern"
+
+
+def test_intent_router_does_not_override_plain_written_social_post(monkeypatch) -> None:
+    router = _router_with_llm(
+        monkeypatch,
+        mode="content_only",
+        deliverable_type="linkedin_post",
+        reason="text_deliverable",
+    )
+    decision = router.route("Write a LinkedIn post comparing India's inflation to other countries.")
+
+    assert decision.mode == "content_only"
+    assert decision.deliverable_type == "linkedin_post"
+
+
 def test_intent_router_routes_tone_review_to_evaluation(monkeypatch) -> None:
     router = _router_with_llm(
         monkeypatch,

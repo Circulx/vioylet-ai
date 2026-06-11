@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import logging
+import re
 from typing import Any
 
 from app.ai.providers.base import PromptEnvelope
@@ -62,6 +63,34 @@ class IntentRouterService:
     }
     _LLM_ALLOWED_SLIDE_TARGETS = {"cover", "last"}
     _LLM_CONFIDENCE_THRESHOLD = 0.7
+    _VISUAL_REQUEST_ACTION_PATTERN = re.compile(
+        r"\b(?:create|generate|make|design|render|produce|build|prepare|draft|write)\b",
+        re.IGNORECASE,
+    )
+    _VISUAL_DELIVERABLE_PATTERN = re.compile(
+        r"\b(?:"
+        r"image|visual|creative|ad\s+creative|social\s+creative|"
+        r"static\s+(?:post|creative|image|visual)|"
+        r"infographic|carousel|poster|banner|flyer|thumbnail|"
+        r"slide\s+deck|slides?|linkedin\s+carousel|instagram\s+post|facebook\s+post|"
+        r"youtube\s+thumbnail"
+        r")\b",
+        re.IGNORECASE,
+    )
+    _STRONG_VISUAL_FORMAT_PATTERN = re.compile(
+        r"\b(?:"
+        r"image|visual|creative|ad\s+creative|social\s+creative|"
+        r"static\s+(?:post|creative|image|visual)|"
+        r"infographic|carousel|poster|banner|flyer|thumbnail|"
+        r"slide\s+deck|slides?|youtube\s+thumbnail"
+        r")\b",
+        re.IGNORECASE,
+    )
+    _TEXT_ONLY_WRITING_PATTERN = re.compile(
+        r"\b(?:write|draft|compose|rewrite|revise|edit|improve)\b"
+        r".{0,80}\b(?:post|caption|copy|blog|article|email|newsletter|script|thread|description|text)\b",
+        re.IGNORECASE,
+    )
     _SESSION_SUMMARY_KEYS = (
         "last_response_mode",
         "last_non_evaluation_response_mode",
@@ -91,16 +120,46 @@ class IntentRouterService:
         if not text:
             return ChatIntentDecision(mode="small_talk", reason="empty_message")
 
+        visual_generation_hint = self._looks_like_visual_generation_request(text)
         llm_decision = self._classify_with_llm(
             text=text,
             session_context=self._router_session_summary(session_context),
         )
         if llm_decision is None:
+            if visual_generation_hint:
+                return ChatIntentDecision(
+                    mode="visual_generation",
+                    reason="visual_generation_request_pattern",
+                )
             return ChatIntentDecision(
                 mode="strategy_chat",
                 reason="llm_classification_unavailable",
             )
-        return self._build_decision_from_llm(llm_decision=llm_decision)
+        decision = self._build_decision_from_llm(llm_decision=llm_decision)
+        if visual_generation_hint and decision.mode in {"small_talk", "strategy_chat", "content_only"}:
+            return ChatIntentDecision(
+                mode="visual_generation",
+                reason=f"visual_generation_request_override:{decision.reason}",
+                uses_previous_output=decision.uses_previous_output,
+                revision_scope=decision.revision_scope,
+                workflow_plan=decision.workflow_plan,
+            )
+        return decision
+
+    @classmethod
+    def _looks_like_visual_generation_request(cls, text: str) -> bool:
+        normalized = " ".join(str(text or "").split()).strip()
+        if not normalized:
+            return False
+        if not cls._VISUAL_REQUEST_ACTION_PATTERN.search(normalized):
+            return False
+        if not cls._VISUAL_DELIVERABLE_PATTERN.search(normalized):
+            return False
+        if cls._TEXT_ONLY_WRITING_PATTERN.search(normalized) and not cls._STRONG_VISUAL_FORMAT_PATTERN.search(
+            normalized
+        ):
+            return False
+        return True
 
     def _classify_with_llm(
         self,
@@ -136,7 +195,11 @@ class IntentRouterService:
                         "retrieval = asking to show, find, fetch, retrieve, display, or bring back something already created earlier in the conversation, especially an image or visual asset. "
                         "Do not classify a greeting, thanks, or casual one-line chat as content_only just because brand context exists. "
                         "Do not classify brand/audience questions as content_only unless the user asks for a written deliverable. "
-                        "If the user explicitly asks for written content generation, classify as content_only with high confidence. "
+                        "Use content_only only for text-only deliverables, such as writing copy, captions, articles, emails, scripts, threads, newsletters, descriptions, or text posts. "
+                        "The word post is ambiguous: if the user asks for a static post, visual post, social creative, ad creative, infographic, carousel, poster, banner, thumbnail, slide, or image, classify as visual_generation, not content_only. "
+                        "Platform creative requests such as static post for LinkedIn, infographic for LinkedIn, Instagram post design, or carousel post are visual_generation when the user asks to create/generate/design/make/prepare them. "
+                        "If a social platform request includes visual-format requirements such as rankings, comparisons, charts, data visuals, slides, or layout, treat it as visual_generation unless the user clearly asks only for written copy. "
+                        "If the user explicitly asks for written content generation only, classify as content_only with high confidence. "
                         "If the user explicitly asks for visual/image/carousel generation, classify as visual_generation with high confidence. "
                         "If uncertain between strategy_chat and content_only, choose strategy_chat unless the message contains an explicit writing/generation deliverable request. "
                         "If uncertain between small_talk and content_only, choose small_talk unless the message contains an explicit writing/generation deliverable request. "

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import base64
 import json
 import logging
+from io import BytesIO
 from pathlib import Path
 import re
 from statistics import mean
@@ -12,6 +14,7 @@ from app.ai.rag.ocr import OCRService
 from app.ai.tone_intelligence import ToneIntelligenceService
 from app.core.config import get_settings
 from app.integrations.object_storage import get_object_storage
+from openai import OpenAI
 from PIL import Image
 
 logger = logging.getLogger(__name__)
@@ -253,7 +256,13 @@ class BrandScoringService:
         self.storage = get_object_storage()
         self.ocr = OCRService()
         self.tone = ToneIntelligenceService()
-        self.base_dir = Path(get_settings().object_storage_base_path)
+        self.settings = get_settings()
+        self.llm_client = (
+            OpenAI(api_key=self.settings.openai_api_key)
+            if self.settings.openai_api_key
+            else None
+        )
+        self.base_dir = Path(self.settings.object_storage_base_path)
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
     def build_scorecard(
@@ -326,6 +335,28 @@ class BrandScoringService:
             brand_context=brand_context,
             visual_review=visual_review,
         )
+        llm_prompt_relevance = self._llm_prompt_relevance_analysis(
+            prompt=prompt,
+            generated_payload=generated_payload,
+            studio_panel=studio_panel,
+            output_assets=output_assets,
+            persona_context=persona_context,
+            objective_context=objective_context,
+            brand_context=brand_context,
+            explainability=explainability,
+            visual_review=visual_review,
+            fallback_prompt_adherence=prompt_adherence,
+            fallback_relevance=relevance,
+        )
+        scoring_mode = {
+            "on_brand": "rules",
+            "prompt_adherence": "llm_vision" if llm_prompt_relevance else "rules",
+            "relevance": "llm_vision" if llm_prompt_relevance else "rules",
+        }
+        if llm_prompt_relevance:
+            scores = llm_prompt_relevance.get("scores") if isinstance(llm_prompt_relevance.get("scores"), dict) else {}
+            prompt_adherence = int(scores.get("prompt_adherence") or prompt_adherence)
+            relevance = int(scores.get("relevance") or relevance)
         overall_score = max(
             0,
             min(
@@ -358,6 +389,13 @@ class BrandScoringService:
             persona_context=persona_context,
             objective_context=objective_context,
         )
+        if llm_prompt_relevance:
+            self._apply_llm_prompt_relevance_explanation(
+                developer_explanation,
+                llm_prompt_relevance=llm_prompt_relevance,
+                prompt_adherence=prompt_adherence,
+                relevance=relevance,
+            )
         return {
             "overall_score": overall_score,
             "score_breakdown": {
@@ -366,13 +404,15 @@ class BrandScoringService:
                 "relevance": relevance,
             },
             "weighting": dict(self.WEIGHTING),
+            "scoring_mode": scoring_mode,
             "summary": [
                 self._on_brand_summary(
                     on_brand,
                     visual_review=visual_review,
                     tone_feedback=tone_feedback,
                 ),
-                self._prompt_adherence_summary(
+                self._llm_score_summary(llm_prompt_relevance, "prompt_adherence")
+                or self._prompt_adherence_summary(
                     prompt_adherence,
                     prompt=prompt,
                     visual_review=visual_review,
@@ -380,11 +420,13 @@ class BrandScoringService:
                     output_assets=output_assets,
                     generated_payload=generated_payload,
                 ),
-                self._relevance_summary(
+                self._llm_score_summary(llm_prompt_relevance, "relevance")
+                or self._relevance_summary(
                     relevance,
                     tone_feedback=tone_feedback,
                 ),
             ],
+            "llm_prompt_relevance_analysis": llm_prompt_relevance,
             "developer_explanation": developer_explanation,
         }
 
@@ -404,6 +446,623 @@ class BrandScoringService:
             content=json.dumps(scorecard, ensure_ascii=False, indent=2, default=str).encode("utf-8"),
         )
         return str(stored.absolute_path)
+
+    def _llm_prompt_relevance_analysis(
+        self,
+        *,
+        prompt: str,
+        generated_payload: dict[str, Any],
+        studio_panel: dict[str, Any],
+        output_assets: list[dict[str, Any]],
+        persona_context: dict[str, Any],
+        objective_context: dict[str, Any],
+        brand_context: dict[str, Any],
+        explainability: dict[str, Any],
+        visual_review: dict[str, Any],
+        fallback_prompt_adherence: int,
+        fallback_relevance: int,
+    ) -> dict[str, Any] | None:
+        if not self.llm_client:
+            return None
+        image_inputs = self._llm_image_inputs(output_assets)
+        if not image_inputs:
+            return None
+
+        context_payload = {
+            "user_prompt": str(prompt or "").strip(),
+            "studio_panel": self._json_excerpt(studio_panel, limit=1800),
+            "generated_payload": self._json_excerpt(generated_payload, limit=2600),
+            "persona_context": self._json_excerpt(persona_context, limit=1600),
+            "objective_context": self._json_excerpt(objective_context, limit=1600),
+            "brand_context_excerpt": self._json_excerpt(
+                {
+                    "audience_insights": brand_context.get("audience_insights"),
+                    "industry": brand_context.get("industry"),
+                    "objective": brand_context.get("objective"),
+                    "tone_of_voice": brand_context.get("tone_of_voice"),
+                    "visual_identity": brand_context.get("visual_identity"),
+                },
+                limit=2200,
+            ),
+            "visible_text_excerpt": self._visual_text_excerpt(visual_review)[:1200],
+            "format": str(studio_panel.get("format") or "").strip() or None,
+            "asset_count": len(image_inputs),
+            "overlay_policy": {
+                "logo_cta_footer_may_be_added_later": True,
+                "do_not_penalize_missing_logo": True,
+                "do_not_penalize_missing_cta": True,
+                "do_not_penalize_missing_legal_footer": True,
+                "reason": (
+                    "The generation workflow can reserve clean areas during image generation "
+                    "and add exact logo, CTA, or footer elements later."
+                ),
+            },
+            "format_specific_scoring": {
+                "asset_type_detection": (
+                    "First identify the asset type from the studio panel and visible output: "
+                    "static, infographic, carousel, or other. Score against that asset type's "
+                    "primary purpose, not against generic visual appeal."
+                ),
+                "static": (
+                    "Primary purpose: communicate one key message quickly and clearly. "
+                    "Evaluate strong headline, single core insight, at-a-glance clarity, "
+                    "and whether the visual supports the message. Main evaluation: message "
+                    "clarity and prompt fulfillment."
+                ),
+                "infographic": (
+                    "Primary purpose: present and compare information visually. Required data "
+                    "must be present, comparisons should be visible, and charts, rankings, or "
+                    "data visuals should support the content. Key numbers and insights should "
+                    "be easy to understand. Main evaluation: data coverage, visualization "
+                    "quality, and prompt fulfillment. If requested data, rankings, comparisons, "
+                    "or statistics are missing or only described in generic text, treat that as "
+                    "a major prompt-adherence failure even if the design looks polished."
+                ),
+                "carousel": (
+                    "Primary purpose: tell a story across multiple slides. "
+                    "Evaluate the slides collectively as a storytelling sequence. "
+                    "Slide 1 should create a strong hook, the middle slides should continue "
+                    "the idea with clear progression, and the final slide should resolve, "
+                    "summarize, conclude, promote the offer, or drive the intended next action "
+                    "based on the user's request. Penalize weak sequencing, disconnected slides, "
+                    "repeated ideas without progression, or a missing hook/closing slide. "
+                    "Main evaluation: story progression, content coverage, and prompt fulfillment."
+                ),
+            },
+            "dynamic_requirement_scoring": {
+                "visible_image_is_source_of_truth": True,
+                "payload_cannot_compensate_for_missing_visible_content": True,
+                "visible_inventory_required": (
+                    "For any prompt that asks for a Top N, exact count, ranking, list, comparison, "
+                    "steps, countries, products, or data series, perform a visible inventory from "
+                    "the image itself. Identify the expected item count, count the distinct visible "
+                    "items/rows/bars/labels, name the visible items if possible, and name what is "
+                    "missing, cropped, too small, or unclear. Do not say a ranking/list is complete "
+                    "unless the visible inventory supports it."
+                ),
+                "count_or_list_requests": (
+                    "If the prompt asks for an exact count, list, ranking, comparison set, "
+                    "steps, countries, products, or other enumerated items, verify that the "
+                    "visible creative clearly shows the requested items. If only some items "
+                    "are visible, cropped, cut off, too small to read, or implied only by the "
+                    "payload, reduce prompt adherence and explain exactly what is missing."
+                ),
+                "readability_and_cropping": (
+                    "Inspect whether important text, numbers, rankings, labels, or chart "
+                    "elements are readable and fully inside the canvas. Cropped/cut-off or "
+                    "partially hidden requested content should prevent a perfect score."
+                ),
+                "evidence_style": (
+                    "Use concrete visual evidence in explanations: what is visible, what is "
+                    "not visible, what is cut off, and what would need to change."
+                ),
+                "do_not_flag_deferred_elements": (
+                    "Do not list a missing CTA, hashtags, logo, footer, or legal copy as a missing "
+                    "requirement unless the user explicitly requested it and the workflow does not "
+                    "mark it as deferred."
+                ),
+                "brand_intelligence_recommendations": (
+                    "Recommendations should be diagnosis-led and useful to a designer or brand "
+                    "strategist. Explain what the user should change in the creative, such as "
+                    "making the full requested ranking visible, increasing label/data readability, "
+                    "using a table or chart for comparisons, clarifying the hero insight, or "
+                    "rebalancing emphasis around the requested subject."
+                ),
+                "prompt_content_contract": (
+                    "Infer the user's expected content coverage from the prompt before scoring. "
+                    "For example, if a prompt asks to break down sectoral and economic implications, "
+                    "identify the expected implication categories from the prompt and topic, then compare "
+                    "them with the visible slide content. Suggestions must prioritize missing or "
+                    "undercovered prompt content before generic brand mood or style comments."
+                ),
+                "score_consistency": (
+                    "Scores must be consistent with the severity of missing visible requirements. "
+                    "Do not give high prompt-adherence or relevance scores when the explanation "
+                    "says core requested data, rankings, comparisons, statistics, or visualizations "
+                    "are missing. Topic relevance alone is not enough."
+                ),
+            },
+            "render_metadata": self._json_excerpt(
+                {
+                    "render_authority": explainability.get("render_authority"),
+                    "final_render_assets": explainability.get("final_render_assets"),
+                    "render_manifest": explainability.get("render_manifest"),
+                    "logo_overlay_only": (
+                        (explainability.get("scene_graph") or {})
+                        .get("validation_hints", {})
+                        .get("logo_overlay_only")
+                        if isinstance(explainability.get("scene_graph"), dict)
+                        else None
+                    ),
+                },
+                limit=1800,
+            ),
+        }
+        system = (
+            "You evaluate generated marketing creatives using vision. Return strict JSON only. "
+            "Use a 0-100 scale where 100 is excellent. Evaluate all supplied images/slides together, "
+            "supporting static images, carousels, and infographics. Do not use hardcoded keyword rules; "
+            "judge the visible output dynamically against the user's intent. Do not penalize missing logo, "
+            "CTA, legal footer, or footer text because those may be added later by the workflow. "
+            "First classify the asset type and evaluate the output against that type's primary purpose: "
+            "static posts prioritize one clear message, infographics prioritize visible data/comparison "
+            "coverage, and carousels prioritize story progression across slides. "
+            "For carousels, evaluate narrative flow from first slide to last slide: the first slide must "
+            "work as a strong hook, subsequent slides should continue the story with logical progression, "
+            "and the final slide should work as a conclusion, summary, promotion, or next-action close "
+            "based on the user's request. The sequence should feel connected rather than a set of "
+            "unrelated standalone images. "
+            "The visible image is the source of truth for Prompt Adherence and Relevance. Generated payload "
+            "text can provide context, but it must not compensate for requested content that is missing, "
+            "cropped, cut off, hidden, or unreadable in the image. If the prompt requests an exact count "
+            "or ranked/listed set, verify the visible creative shows that complete set clearly; partial "
+            "visibility or cropped rows must reduce the score. Be strict about readability, chart/ranking "
+            "completeness, and whether the requested information is actually visible. "
+            "When the prompt contains an exact count or Top N request, do a visual inventory before scoring: "
+            "count visible distinct countries/items/rows/bars/labels, list what can be read, and identify "
+            "whether the observed count satisfies the requested count. A prompt asking for Top 10 is not "
+            "fulfilled by a partial ranking, even if the visible 7-8 entries look polished. "
+            "For infographics, visual data coverage is central: if the user asks for countries, rankings, "
+            "comparisons, specific values, or statistics, the infographic should visibly show those items "
+            "through data modules, chart/table/ranking structure, labels, and readable values. If those "
+            "core data/comparison elements are missing, prompt adherence and relevance should drop "
+            "substantially even when the title and topic are relevant. "
+            "Before scoring, identify the prompt's core visible requirements, mark which are visible, "
+            "which are missing or unclear, and whether any missing item is critical to the requested asset. "
+            "The final scores must be consistent with that requirement assessment. "
+            "Also extract a prompt content contract: what content areas the user expected, what areas are "
+            "actually visible, and what is missing or undercovered. For carousels, this must include whether "
+            "the slide sequence answers the user's requested angle, not just whether the topic is related. "
+            "For example, if the prompt asks for sectoral and economic implications, do not treat a carousel "
+            "focused mostly on visas, student mobility, and broad trade access as complete unless it also "
+            "covers the expected sectoral and economic implications in meaningful detail. "
+            "Do not treat missing CTA, hashtags, logo, footer, or legal text as a scoring gap unless the user "
+            "explicitly asked for those elements; those can be added later in the workflow. "
+            "Give brand-intelligence suggestions: concrete, evidence-based improvements tied to prompt "
+            "fulfillment, content coverage, readability, hierarchy, audience usefulness, and asset-type purpose. "
+            "Brand-intelligence suggestions should not default to mood alignment when prompt-specific content "
+            "gaps exist; lead with the missing or weak content areas the user asked for. "
+            "Only reduce scores for missing core requested content, wrong visual subject, wrong format, unclear message, "
+            "poor audience/objective fit, or unusable communication."
+        )
+        user_text = (
+            "Score this generated output.\n\n"
+            f"Context JSON:\n{json.dumps(context_payload, ensure_ascii=True)}\n\n"
+            "Return JSON with exactly these keys:\n"
+            "- prompt_adherence_score: integer 0-100\n"
+            "- relevance_score: integer 0-100\n"
+            "- prompt_adherence_explanation: concise explanation, especially if below 75\n"
+            "- relevance_explanation: concise explanation, especially if below 75\n"
+            "- missing_content_or_visuals: array of concise strings\n"
+            "- improvement_suggestions: array of concise strings\n"
+            "- visual_quality_issues: array of concise strings for cropping, unreadable text, hidden rows, incomplete charts, or unclear hierarchy\n"
+            "- asset_type_assessment: object with asset_type, primary_purpose, and purpose_fit\n"
+            "- visible_inventory: object with expected_item_count, observed_visible_item_count, visible_items_or_labels, missing_or_unclear_items, and inventory_confidence\n"
+            "- prompt_content_contract: object with core_user_ask, expected_content_areas, observed_content_areas, missing_or_undercovered_content_areas, and content_gap_reason\n"
+            "- requirement_coverage: object describing visible_requested_items, missing_or_unclear_requested_items, and completeness_reason\n"
+            "- critical_requirement_failures: array of core missing requirements that materially reduce the score\n"
+            "- brand_intelligence_suggestions: array of concrete, evidence-based creative improvements\n"
+            "- score_consistency_reason: concise explanation of why the numeric scores match the missing/visible requirements\n"
+            "- evaluated_format: static, carousel, infographic, or other\n"
+            "- slide_observations: array with one concise observation per supplied image/slide when useful\n"
+            "- carousel_story_assessment: object with hook_strength, continuity, progression, and conclusion_or_promotion when evaluated_format is carousel"
+        )
+        content: list[dict[str, Any]] = [{"type": "text", "text": user_text}]
+        for image_input in image_inputs:
+            content.append(
+                {
+                    "type": "text",
+                    "text": (
+                        f"Generated image/slide {image_input['index']} metadata: "
+                        f"{json.dumps(image_input['metadata'], ensure_ascii=True)}"
+                    ),
+                }
+            )
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": image_input["data_url"]},
+                }
+            )
+
+        try:
+            response = self.llm_client.chat.completions.create(
+                model=self.settings.vision_model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": content},
+                ],
+                response_format={"type": "json_object"},
+            )
+            raw = (response.choices[0].message.content or "").strip() if getattr(response, "choices", None) else ""
+            parsed = json.loads(raw) if raw else {}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("brand_scoring.llm_prompt_relevance_failed error=%s", exc)
+            return None
+
+        prompt_score = self._coerce_score(parsed.get("prompt_adherence_score"), fallback_prompt_adherence)
+        relevance_score = self._coerce_score(parsed.get("relevance_score"), fallback_relevance)
+        prompt_explanation = str(parsed.get("prompt_adherence_explanation") or "").strip()
+        relevance_explanation = str(parsed.get("relevance_explanation") or "").strip()
+        missing = self._string_list(parsed.get("missing_content_or_visuals"), limit=8)
+        improvements = self._string_list(parsed.get("improvement_suggestions"), limit=8)
+        visual_quality_issues = self._string_list(parsed.get("visual_quality_issues"), limit=8)
+        asset_type_assessment = (
+            parsed.get("asset_type_assessment")
+            if isinstance(parsed.get("asset_type_assessment"), dict)
+            else {}
+        )
+        visible_inventory = (
+            parsed.get("visible_inventory")
+            if isinstance(parsed.get("visible_inventory"), dict)
+            else {}
+        )
+        prompt_content_contract = (
+            parsed.get("prompt_content_contract")
+            if isinstance(parsed.get("prompt_content_contract"), dict)
+            else {}
+        )
+        requirement_coverage = (
+            parsed.get("requirement_coverage")
+            if isinstance(parsed.get("requirement_coverage"), dict)
+            else {}
+        )
+        critical_requirement_failures = self._string_list(
+            parsed.get("critical_requirement_failures"),
+            limit=8,
+        )
+        brand_intelligence_suggestions = self._string_list(
+            parsed.get("brand_intelligence_suggestions"),
+            limit=8,
+        )
+        score_consistency_reason = str(parsed.get("score_consistency_reason") or "").strip()
+        slide_observations = self._string_list(parsed.get("slide_observations"), limit=10)
+        carousel_story_assessment = (
+            parsed.get("carousel_story_assessment")
+            if isinstance(parsed.get("carousel_story_assessment"), dict)
+            else {}
+        )
+        return {
+            "source": "llm_vision",
+            "model": self.settings.vision_model,
+            "scores": {
+                "prompt_adherence": prompt_score,
+                "relevance": relevance_score,
+            },
+            "explanations": {
+                "prompt_adherence": prompt_explanation
+                or self._generic_llm_score_explanation("Prompt adherence", prompt_score),
+                "relevance": relevance_explanation
+                or self._generic_llm_score_explanation("Relevance", relevance_score),
+            },
+            "missing_content_or_visuals": missing,
+            "improvement_suggestions": improvements,
+            "visual_quality_issues": visual_quality_issues,
+            "asset_type_assessment": asset_type_assessment,
+            "visible_inventory": visible_inventory,
+            "prompt_content_contract": prompt_content_contract,
+            "requirement_coverage": requirement_coverage,
+            "critical_requirement_failures": critical_requirement_failures,
+            "brand_intelligence_suggestions": brand_intelligence_suggestions,
+            "score_consistency_reason": score_consistency_reason,
+            "evaluated_format": str(parsed.get("evaluated_format") or context_payload["format"] or "other").strip(),
+            "slide_observations": slide_observations,
+            "carousel_story_assessment": carousel_story_assessment,
+            "asset_count": len(image_inputs),
+            "overlay_policy": context_payload["overlay_policy"],
+            "fallback_scores": {
+                "prompt_adherence": fallback_prompt_adherence,
+                "relevance": fallback_relevance,
+            },
+        }
+
+    def _llm_image_inputs(self, output_assets: list[dict[str, Any]], *, limit: int = 10) -> list[dict[str, Any]]:
+        image_inputs: list[dict[str, Any]] = []
+        for asset in output_assets:
+            if len(image_inputs) >= limit:
+                break
+            mime_type = str(asset.get("mime_type") or "").strip().lower()
+            if not mime_type.startswith("image/"):
+                continue
+            storage_path = str(asset.get("storage_path") or "").strip()
+            if not storage_path or not self.storage.exists(storage_path):
+                continue
+            absolute_path = self.storage.absolute_path(storage_path)
+            data_url = self._image_data_url(absolute_path)
+            if not data_url:
+                continue
+            metadata = asset.get("metadata") if isinstance(asset.get("metadata"), dict) else {}
+            image_inputs.append(
+                {
+                    "index": len(image_inputs) + 1,
+                    "data_url": data_url,
+                    "metadata": {
+                        "asset_role": asset.get("asset_role"),
+                        "slide_index": metadata.get("slide_index"),
+                        "slide_count": metadata.get("slide_count"),
+                        "carousel_role": metadata.get("carousel_role"),
+                        "logo_composited_by_service": metadata.get("logo_composited_by_service"),
+                        "legal_footer_composited_by_service": metadata.get("legal_footer_composited_by_service"),
+                        "logo_composited_by_ai": metadata.get("logo_composited_by_ai"),
+                    },
+                }
+            )
+        return image_inputs
+
+    @staticmethod
+    def _image_data_url(path: str) -> str | None:
+        try:
+            with Image.open(path) as raw_image:
+                image = raw_image.convert("RGB")
+                image.thumbnail((1600, 1600))
+                buffer = BytesIO()
+                image.save(buffer, format="JPEG", quality=85, optimize=True)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("brand_scoring.llm_image_prepare_failed path=%s error=%s", path, exc)
+            return None
+        encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+        return f"data:image/jpeg;base64,{encoded}"
+
+    @staticmethod
+    def _coerce_score(value: Any, fallback: int) -> int:
+        try:
+            score = int(round(float(value)))
+        except (TypeError, ValueError):
+            score = int(fallback)
+        return max(0, min(100, score))
+
+    @staticmethod
+    def _json_excerpt(value: Any, *, limit: int) -> str:
+        text = json.dumps(value if value is not None else {}, ensure_ascii=True, default=str)
+        if len(text) <= limit:
+            return text
+        return f"{text[:limit].rstrip()}..."
+
+    @staticmethod
+    def _string_list(value: Any, *, limit: int) -> list[str]:
+        if isinstance(value, list):
+            items = value
+        elif isinstance(value, str) and value.strip():
+            items = [value]
+        else:
+            items = []
+        cleaned: list[str] = []
+        for item in items:
+            text = str(item or "").strip()
+            if text and text not in cleaned:
+                cleaned.append(text[:280])
+            if len(cleaned) >= limit:
+                break
+        return cleaned
+
+    @staticmethod
+    def _generic_llm_score_explanation(label: str, score: int) -> str:
+        if score >= 85:
+            return f"{label} is strong based on the LLM vision review."
+        if score >= 70:
+            return f"{label} is mostly solid with some gaps based on the LLM vision review."
+        return f"{label} is weak based on the LLM vision review."
+
+    @classmethod
+    def _llm_score_summary(cls, llm_prompt_relevance: dict[str, Any] | None, key: str) -> str | None:
+        if not llm_prompt_relevance:
+            return None
+        if key in {"prompt_adherence", "relevance"}:
+            content_gap_summary = cls._llm_content_gap_summary(llm_prompt_relevance)
+            if content_gap_summary:
+                return content_gap_summary
+            critical = cls._string_list(llm_prompt_relevance.get("critical_requirement_failures"), limit=2)
+            if critical:
+                return f"Core prompt requirement gap: {'; '.join(critical)}."
+        explanations = llm_prompt_relevance.get("explanations")
+        if not isinstance(explanations, dict):
+            return None
+        text = str(explanations.get(key) or "").strip()
+        return text or None
+
+    @classmethod
+    def _llm_content_gap_summary(cls, llm_prompt_relevance: dict[str, Any]) -> str | None:
+        contract = llm_prompt_relevance.get("prompt_content_contract")
+        if not isinstance(contract, dict):
+            return None
+        core_ask = str(contract.get("core_user_ask") or "").strip()
+        observed = cls._string_list(contract.get("observed_content_areas"), limit=4)
+        missing = cls._string_list(contract.get("missing_or_undercovered_content_areas"), limit=5)
+        reason = str(contract.get("content_gap_reason") or "").strip()
+        if not missing and not reason:
+            return None
+
+        pieces: list[str] = []
+        if core_ask:
+            pieces.append(f"Prompt asked for {core_ask}")
+        if observed:
+            pieces.append(f"visible output mainly covers {', '.join(observed)}")
+        if missing:
+            pieces.append(f"missing or undercovered: {', '.join(missing)}")
+        if not pieces and reason:
+            pieces.append(reason)
+        summary = "; ".join(pieces).strip()
+        if not summary:
+            return None
+        if summary[-1] not in ".!?":
+            summary += "."
+        return summary
+
+    def _apply_llm_prompt_relevance_explanation(
+        self,
+        developer_explanation: dict[str, Any],
+        *,
+        llm_prompt_relevance: dict[str, Any],
+        prompt_adherence: int,
+        relevance: int,
+    ) -> None:
+        explanations = llm_prompt_relevance.get("explanations") if isinstance(llm_prompt_relevance.get("explanations"), dict) else {}
+        missing = self._string_list(llm_prompt_relevance.get("missing_content_or_visuals"), limit=8)
+        improvements = self._string_list(llm_prompt_relevance.get("improvement_suggestions"), limit=8)
+        visual_quality_issues = self._string_list(llm_prompt_relevance.get("visual_quality_issues"), limit=8)
+        asset_type_assessment = (
+            llm_prompt_relevance.get("asset_type_assessment")
+            if isinstance(llm_prompt_relevance.get("asset_type_assessment"), dict)
+            else {}
+        )
+        visible_inventory = (
+            llm_prompt_relevance.get("visible_inventory")
+            if isinstance(llm_prompt_relevance.get("visible_inventory"), dict)
+            else {}
+        )
+        prompt_content_contract = (
+            llm_prompt_relevance.get("prompt_content_contract")
+            if isinstance(llm_prompt_relevance.get("prompt_content_contract"), dict)
+            else {}
+        )
+        requirement_coverage = (
+            llm_prompt_relevance.get("requirement_coverage")
+            if isinstance(llm_prompt_relevance.get("requirement_coverage"), dict)
+            else {}
+        )
+        critical_requirement_failures = self._string_list(
+            llm_prompt_relevance.get("critical_requirement_failures"),
+            limit=8,
+        )
+        brand_intelligence_suggestions = self._string_list(
+            llm_prompt_relevance.get("brand_intelligence_suggestions"),
+            limit=8,
+        )
+        score_consistency_reason = str(
+            llm_prompt_relevance.get("score_consistency_reason") or ""
+        ).strip()
+
+        prompt_block = developer_explanation.get("prompt_adherence")
+        if isinstance(prompt_block, dict):
+            fallback_rule_diagnostics = {
+                key: prompt_block.get(key)
+                for key in ("formula", "base_score", "components", "boosts", "penalties", "prompt_details")
+                if key in prompt_block
+            }
+            prompt_block.clear()
+            prompt_block.update(
+                {
+                    "formula": (
+                        "prompt_adherence = single dynamic LLM vision evaluation"
+                        "(user prompt + generated image(s) + optional payload)"
+                    ),
+                    "base_score": prompt_adherence,
+                    "score": prompt_adherence,
+                    "components": {"llm_vision_score": prompt_adherence},
+                    "scoring_source": "llm_vision",
+                    "boosts": [],
+                    "reason": str(explanations.get("prompt_adherence") or "").strip(),
+                    "llm_analysis": {
+                        "missing_content_or_visuals": missing,
+                        "improvement_suggestions": improvements,
+                        "visual_quality_issues": visual_quality_issues,
+                        "asset_type_assessment": asset_type_assessment,
+                        "visible_inventory": visible_inventory,
+                        "prompt_content_contract": prompt_content_contract,
+                        "requirement_coverage": requirement_coverage,
+                        "critical_requirement_failures": critical_requirement_failures,
+                        "brand_intelligence_suggestions": brand_intelligence_suggestions,
+                        "score_consistency_reason": score_consistency_reason,
+                        "slide_observations": llm_prompt_relevance.get("slide_observations") or [],
+                        "carousel_story_assessment": (
+                            llm_prompt_relevance.get("carousel_story_assessment") or {}
+                        ),
+                        "overlay_policy": llm_prompt_relevance.get("overlay_policy") or {},
+                    },
+                    "fallback_rule_diagnostics": fallback_rule_diagnostics,
+                }
+            )
+            prompt_block["penalties"] = self._llm_explanation_penalties(
+                score=prompt_adherence,
+                reason=str(explanations.get("prompt_adherence") or "").strip(),
+                layer="prompt_adherence",
+            )
+
+        relevance_block = developer_explanation.get("relevance")
+        if isinstance(relevance_block, dict):
+            fallback_rule_diagnostics = {
+                key: relevance_block.get(key)
+                for key in (
+                    "formula",
+                    "base_score",
+                    "components",
+                    "boosts",
+                    "penalties",
+                    "quality_dimensions",
+                    "visual_checks_failed",
+                )
+                if key in relevance_block
+            }
+            relevance_block.clear()
+            relevance_block.update(
+                {
+                    "formula": (
+                        "relevance = same single dynamic LLM vision evaluation"
+                        "(user intent + audience/objective context + generated image(s))"
+                    ),
+                    "base_score": relevance,
+                    "score": relevance,
+                    "components": {"llm_vision_score": relevance},
+                    "scoring_source": "llm_vision",
+                    "boosts": [],
+                    "reason": str(explanations.get("relevance") or "").strip(),
+                    "llm_analysis": {
+                        "missing_content_or_visuals": missing,
+                        "improvement_suggestions": improvements,
+                        "visual_quality_issues": visual_quality_issues,
+                        "asset_type_assessment": asset_type_assessment,
+                        "visible_inventory": visible_inventory,
+                        "prompt_content_contract": prompt_content_contract,
+                        "requirement_coverage": requirement_coverage,
+                        "critical_requirement_failures": critical_requirement_failures,
+                        "brand_intelligence_suggestions": brand_intelligence_suggestions,
+                        "score_consistency_reason": score_consistency_reason,
+                        "slide_observations": llm_prompt_relevance.get("slide_observations") or [],
+                        "carousel_story_assessment": (
+                            llm_prompt_relevance.get("carousel_story_assessment") or {}
+                        ),
+                        "overlay_policy": llm_prompt_relevance.get("overlay_policy") or {},
+                    },
+                    "fallback_rule_diagnostics": fallback_rule_diagnostics,
+                }
+            )
+            relevance_block["penalties"] = self._llm_explanation_penalties(
+                score=relevance,
+                reason=str(explanations.get("relevance") or "").strip(),
+                layer="relevance",
+            )
+
+    def _llm_explanation_penalties(self, *, score: int, reason: str, layer: str) -> list[dict[str, Any]]:
+        if score >= 75:
+            return []
+        return [
+            self._explanation_item(
+                reason=reason or f"{layer.replace('_', ' ').title()} was reduced by the LLM vision analysis.",
+                impact=round(float(score) - 75.0, 2),
+                layer=layer,
+                rule="llm_vision_score_below_target",
+            )
+        ]
 
     def _developer_explanation(
         self,

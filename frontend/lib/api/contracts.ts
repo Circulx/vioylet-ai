@@ -495,7 +495,9 @@ export interface BrandScoringPayload {
     relevance: number;
   };
   weighting?: Record<string, number>;
+  scoring_mode?: Record<string, string>;
   summary?: string[];
+  llm_prompt_relevance_analysis?: Record<string, unknown> | null;
   developer_explanation?: Record<string, unknown>;
 }
 

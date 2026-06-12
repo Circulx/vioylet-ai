@@ -1671,7 +1671,6 @@ class ContextCompilerService:
         pack = value if isinstance(value, dict) else {}
         slides: list[dict[str, Any]] = []
         story_roles: list[str] = []
-        headline_hints: list[str] = []
         for item in (pack.get("slides") or [])[:8]:
             if not isinstance(item, dict):
                 continue
@@ -1697,57 +1696,24 @@ class ContextCompilerService:
                 else (zone_map.get("editorial_dna") if isinstance(zone_map.get("editorial_dna"), dict) else {})
             )
             normalized_story_role = cls._normalize_text(item.get("story_role"), limit=32)
-            normalized_headline_hint = cls._normalize_text(item.get("headline_hint"), limit=72)
             if normalized_story_role:
                 story_roles.append(normalized_story_role)
-            if normalized_headline_hint and not cls._looks_like_weak_sequence_hint(normalized_headline_hint):
-                headline_hints.append(normalized_headline_hint)
-            normalized_sequence_summary = cls._normalize_text(item.get("sequence_summary"), limit=120)
-            if not normalized_sequence_summary:
-                normalized_sequence_summary = cls._normalize_text(item.get("structural_cues"), limit=120)
-            if not normalized_sequence_summary and normalized_headline_hint and not cls._looks_like_weak_sequence_hint(normalized_headline_hint):
-                normalized_sequence_summary = normalized_headline_hint
-            sample_page_headline = cls._normalize_text(item.get("sample_page_headline"), limit=120)
-            sample_page_supporting = cls._normalize_text(item.get("sample_page_supporting"), limit=160)
-            sample_page_copy = cls._normalize_text(item.get("sample_page_copy"), limit=500)
             sample_page_editorial_role = cls._normalize_text(item.get("sample_page_editorial_role"), limit=40)
             sample_page_copy_behavior = cls._normalize_text(item.get("sample_page_copy_behavior"), limit=48)
             sample_page_copy_density = cls._normalize_text(item.get("sample_page_copy_density"), limit=24)
             sample_page_closing_grammar = cls._normalize_text(item.get("sample_page_closing_grammar"), limit=40)
-            sample_page_text_blocks = []
-            for block in (item.get("sample_page_text_blocks") or [])[:8]:
-                if not isinstance(block, dict):
-                    continue
-                text = cls._normalize_text(block.get("text"), limit=160)
-                if not text:
-                    continue
-                sample_page_text_blocks.append(
-                    {
-                        "text": text,
-                        "x": block.get("x"),
-                        "y": block.get("y"),
-                        "w": block.get("w"),
-                        "h": block.get("h"),
-                    }
-                )
             slides.append(
                 {
                     "slide_index": item.get("slide_index"),
                     "template_name": cls._normalize_text(item.get("template_name"), limit=72),
                     "reference_asset_path": cls._compact_asset_reference(item.get("reference_asset_path")),
                     "story_role": normalized_story_role,
-                    "headline_hint": normalized_headline_hint if not cls._looks_like_weak_sequence_hint(normalized_headline_hint) else "",
                     "structural_cues": cls._summary_list(item.get("structural_cues"), limit=4, item_limit=36),
-                    "sequence_summary": normalized_sequence_summary,
                     "zone_map": cls._compact_layout_dna(zone_map, zone_limit=6),
                     "composition_logic": cls._compact_composition_logic_dna(composition_logic),
                     "visual_craft": cls._compact_visual_craft_dna(visual_craft),
                     "subject_semantics": cls._compact_subject_semantics_dna(subject_semantics),
                     "editorial_dna": cls._compact_editorial_dna(editorial_dna),
-                    "sample_page_headline": sample_page_headline,
-                    "sample_page_supporting": sample_page_supporting,
-                    "sample_page_copy": sample_page_copy,
-                    "sample_page_text_blocks": sample_page_text_blocks,
                     "sample_page_editorial_source": cls._normalize_text(item.get("sample_page_editorial_source"), limit=32),
                     "sample_page_editorial_role": sample_page_editorial_role,
                     "sample_page_copy_behavior": sample_page_copy_behavior,
@@ -1763,7 +1729,6 @@ class ContextCompilerService:
             "surface_policy": cls._normalize_text(pack.get("surface_policy"), limit=32),
             "slide_count": pack.get("slide_count"),
             "story_roles": cls._summary_list(story_roles, limit=8, item_limit=32),
-            "headline_hints": cls._summary_list(headline_hints, limit=6, item_limit=72),
             "sequence_cues": cls._summary_list(pack.get("sequence_cues"), limit=8, item_limit=36),
             "slides": slides,
         }
@@ -2519,7 +2484,6 @@ class ContextCompilerService:
                 {
                     "slide_index": slide.get("slide_index"),
                     "story_role": cls._normalize_text(slide.get("story_role"), limit=40),
-                    "headline_hint": cls._normalize_text(slide.get("headline_hint"), limit=96),
                     "layout_type": cls._normalize_text(zone_map.get("layout_type"), limit=64),
                     "zone_roles": slide_zone_roles,
                     "zone_boxes": cls._compact_zone_boxes(zone_map, zone_limit=8),
@@ -2528,7 +2492,7 @@ class ContextCompilerService:
                         zone_roles=slide_zone_roles or template_zone_roles,
                         story_roles=[slide.get("story_role")],
                         sequence_kind=sequence_kind,
-                        content_structure_summary=cls._normalize_text(slide.get("sequence_summary"), limit=160),
+                        content_structure_summary="",
                         motif_summary=cls._normalize_text(brand_visual_brief.get("motif_summary"), limit=180),
                     ),
                 }
@@ -2690,28 +2654,16 @@ class ContextCompilerService:
                 [slide.get("story_role") for slide in sequence_slides],
                 limit=8,
             )
-            inferred_headline_patterns = cls._dedupe_items(
-                [
-                    slide.get("headline_hint")
-                    for slide in sequence_slides
-                    if not cls._looks_like_weak_sequence_hint(str(slide.get("headline_hint") or ""))
-                ],
-                limit=6,
-            )
             inferred_supporting_patterns = cls._dedupe_items(
-                [
-                    slide.get("sequence_summary") or slide.get("structural_cues")
-                    for slide in sequence_slides
-                ],
+                [slide.get("structural_cues") for slide in sequence_slides],
                 limit=6,
             )
-            if inferred_story_roles or inferred_headline_patterns or inferred_supporting_patterns:
+            if inferred_story_roles or inferred_supporting_patterns:
                 template_editorial_dna = {
                     "format_family": format_family,
                     "page_count_hint": len(sequence_slides),
                     "story_arc_roles": inferred_story_roles,
-                    "headline_patterns": inferred_headline_patterns,
-                    "supporting_patterns": inferred_supporting_patterns,
+                    "structural_patterns": inferred_supporting_patterns,
                     "storytelling_mode": "sample_sequence_guided",
                 }
         component_motifs = visual_identity.get("component_motifs") if isinstance(visual_identity.get("component_motifs"), dict) else (

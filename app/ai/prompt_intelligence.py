@@ -180,12 +180,7 @@ class PromptIntelligenceService:
                     {
                         "slide_index": item.get("slide_index"),
                         "story_role": item.get("story_role"),
-                        "headline_hint": item.get("headline_hint"),
                         "structural_cues": item.get("structural_cues"),
-                        "sequence_summary": item.get("sequence_summary"),
-                        "sample_page_headline": item.get("sample_page_headline"),
-                        "sample_page_supporting": item.get("sample_page_supporting"),
-                        "sample_page_copy": item.get("sample_page_copy"),
                         "sample_page_editorial_role": item.get("sample_page_editorial_role"),
                         "sample_page_copy_behavior": item.get("sample_page_copy_behavior"),
                         "sample_page_copy_density": item.get("sample_page_copy_density"),
@@ -202,7 +197,6 @@ class PromptIntelligenceService:
                 "surface_policy": pack.get("surface_policy"),
                 "slide_count": pack.get("slide_count"),
                 "story_roles": pack.get("story_roles"),
-                "headline_hints": (pack.get("headline_hints") or [])[:12],
                 "sequence_cues": (pack.get("sequence_cues") or [])[:12],
                 "slides": slides,
             }
@@ -923,6 +917,13 @@ class PromptIntelligenceService:
                 "For carousel outputs, do not let one archetype drift into another: an editorial reveal should not read like a list carousel, and a comparison carousel should not read like a poster split into pages.",
                 "For carousel outputs, use body and/or body_points to carry the real per-slide explanation instead of hiding the whole story in supporting_line alone.",
                 "For carousel outputs, only the final slide may contain CTA text; interior slide CTA fields must be empty strings.",
+                "For carousel outputs, first extract the important user-requested concepts, entities, requirements, and expected outcomes from the original prompt, then assign those concepts across the existing slide roles so every major requested detail is covered somewhere in the carousel.",
+                "For carousel outputs, do not let archetype habits, sample storytelling grammar, or broad brand positioning replace the user's requested topic. Every slide must directly answer or explain part of the prompt, introduce new useful information, and avoid vague filler.",
+                "For carousel outputs, the conclusion slide should summarize the key message and major learnings from the covered prompt concepts, not introduce a new unrelated recommendation.",
+                "For carousel outputs, strengthen narrative progression: the sequence should move from hook to foundational context, explanation, implications or effects, and final takeaway without changing the existing slide-role order.",
+                "For carousel outputs, explain the topic before discussing outcomes, opportunities, implications, or recommendations; readers should understand the mechanism before the payoff.",
+                "For carousel outputs, each slide must build on the previous slide through transition_note and content continuity, not read like a disconnected fact card.",
+                "For carousel outputs, prioritize educational depth over promotion: explain why each point matters and avoid product/platform messaging unless the user explicitly requested it.",
                 f"Use {content_plan_name}.preferred_slide_count, {visual_plan_name}.preferred_slide_count, {format_family_name}.preferred_slide_count, and {research_brief_name}.outline to decide how many slide specs the story needs.",
                 "Do not repeat the same supporting_line, proof_points, or generic lesson label across slide specs.",
                 "Do not let one slide repeat another slide's editorial job; each slide should advance the sequence by one analytical step.",
@@ -1244,8 +1245,15 @@ class PromptIntelligenceService:
         For carousels and infographics, distribute meaning through sections instead of cramming the whole story into one line.
         For carousel outputs, metadata.carousel_slide_specs must include the real slide-by-slide explanation in slide-level body and/or body_points fields; do not rely on supporting_line alone.
         For carousel outputs, only the final slide spec may contain CTA text. Keep interior slide CTA fields empty.
-        When a selected sample/reference sequence is present with style_reference_only surface policy, its per-slide sample_page_headline, sample_page_supporting, sample_page_copy, sample_page_editorial_role, sample_page_copy_behavior, sample_page_copy_density, sample_page_closing_grammar, headline_hint, and sequence_summary are editorial authority for hook grammar, insight depth, content density, and closing style. Adapt the user's topic into that editorial grammar instead of falling back to generic explanatory headings.
-        If the sample page copy overlaps the user's topic or research summary, treat its concrete facts and insight hierarchy as approved content anchors. If it does not overlap, use only the rhetorical pattern and structure, not the literal facts.
+        When a selected sample/reference sequence is present with style_reference_only surface policy, it is visual and thematic authority only: use its palette, typography feel, layout rhythm, spacing, module density, slide count, and broad editorial posture. Do not use template/sample headlines, body copy, facts, claims, or topic sequence as content authority unless the user explicitly asks to reuse template wording.
+        Carousel content authority must come from the user's prompt, research/context, and brand guardrails. Build metadata.carousel_slide_specs by breaking down the user's requested topic and required details; the template may shape how that content is arranged, not what the content says.
+        Before writing carousel_slide_specs, extract the important concepts, entities, requirements, and expected outcomes from the user prompt. Cover every major extracted concept somewhere in the carousel, and do not add off-topic subjects just to satisfy a storytelling pattern.
+        Every carousel slide must contribute directly to the requested topic, add new information, and avoid vague filler such as broad observations, placeholder insights, generic discussion prompts, or repeated reassurance.
+        The conclusion slide must summarize the key message and major learnings from the carousel's covered prompt concepts.
+        Carousel narrative quality requirement: keep the existing slide roles and sequence architecture, but make the content read as a connected educational journey. Start with a relevant hook, establish the foundational context or mechanism, explain why it matters, then move into effects, outcomes, implications, and the final takeaway.
+        Do not discuss outcomes, opportunities, or recommendations before the reader understands the core topic. Use transition_note to make each slide connect to the previous one.
+        Avoid repeating the same benefit, risk, or concept across slides unless the later slide adds new explanation. Informational carousels must prioritize education over promotion; product/platform messaging belongs only when the user explicitly asks for it.
+        The final slide must reinforce learnings already established earlier and must not introduce a new primary topic or objective.
         Do not convert an editorial or macro-takeaway closing sample into a product promotion or platform CTA unless the user explicitly requests a promotion or the selected sample page itself uses that CTA/product grammar.
         Brand-intelligent writing requirement: final slide copy must sound like polished brand communication for the intended audience, not a research paper, compliance memo, or analyst brief. Use facts to create sharp creative framing; do not write source-process phrases such as "verified facts from..." as visible module copy unless the sample explicitly uses source labels.
         When the requested format or sample implies a 5-7 slide sequence, provide enough distinct teaching units to fill that story arc instead of collapsing everything into one numbered-list poster summary.
@@ -1647,10 +1655,10 @@ class PromptIntelligenceService:
         17. {audience_research_rules}
         18. Keep messaging audience-facing, not internal, descriptive, or process-oriented.
         19. Preserve the core idea instead of diluting it into generic brand-safe filler.
-        20. When a selected sample/reference carousel provides per-slide sample_page_headline, sample_page_supporting, sample_page_copy, headline_hint, or sequence_summary, use that as the editorial authority for hook style, curiosity level, insight depth, and close grammar. Do not let generic brand positioning or CTA intent override a sample that is interpretive, analytical, or macro-takeaway led.
-        21. If the sample's wording uses curiosity, urgency, undercovered-angle, or smart-reader framing, do not add those techniques to what_must_be_avoided_in_messaging unless a hard brand guardrail explicitly forbids them.
+        20. When a selected sample/reference carousel is present, use it only for visual/theme/layout rhythm and broad copy-density posture. Do not treat sample/template wording, facts, claims, topic order, headline hints, or sequence summaries as message/content authority unless the user explicitly asks to reuse template wording.
+        21. If the sample's structure suggests curiosity, urgency, undercovered-angle, or smart-reader framing, you may use that rhetorical posture only when it helps explain the user's requested topic and does not replace required prompt details.
         22. Keep the message strategy creative and brand-native. It should define audience tension, angle, promise, and payoff, not produce a research-paper thesis or a list of source notes.
-        23. For a style_reference_only carousel, the selected sample sequence is the story model. Match its slide count, per-slide editorial jobs, and final-slide grammar. If the selected sample closes with a macro takeaway, strategic signal, or editorial conclusion, cta_intent must not become product/platform/investment promotion unless the user explicitly requested a product CTA.
+        23. For a style_reference_only carousel, the selected sample sequence is the visual/theme model. Match its slide count, visual pacing, per-slide layout jobs, and final-slide treatment, while deriving the actual slide topics, facts, and teaching sequence from the user's prompt. If the selected sample closes with a macro takeaway, strategic signal, or editorial conclusion, cta_intent must not become product/platform/investment promotion unless the user explicitly requested a product CTA.
         24. Convert research into an audience-facing creative angle: curiosity hook, specific mechanics, undercovered insight, and strategic payoff. Do not make the strategy sound like a source memo, literature review, or compliance note.
         Return JSON only with keys:
         - primary_campaign_theme
@@ -1829,8 +1837,8 @@ class PromptIntelligenceService:
         - validation_hints
         Make the image element large and dominant, then place overlay zones for text/logo with clear spacing and brand-safe hierarchy.
         Keep copy concise and premium.
-        If template_fit_brief.sequence_pack.surface_policy is style_reference_only and its slides include sample_page_headline, sample_page_supporting, sample_page_copy, sample_page_editorial_role, sample_page_copy_behavior, sample_page_copy_density, sample_page_closing_grammar, headline_hint, or sequence_summary, use the selected sample's editorial grammar as the slide-copy authority. Match the sample's hook strength, undercovered-angle logic, insight density, and closing grammar while replacing only facts that do not belong to the user's topic.
-        Do not summarize the topic when the sample interprets it. Generate non-obvious, researched, audience-aware slide beats that answer why the topic matters, what most people missed, and what strategic pattern it signals when the sample uses that structure.
+        If template_fit_brief.sequence_pack.surface_policy is style_reference_only, use the selected sample only as visual/theme/layout authority. Match the sample's visual rhythm, module density, spacing, and broad rhetorical posture, but derive every headline, body point, fact, claim, and slide beat from the user's requested topic and context.
+        Do not summarize the topic too thinly when the user prompt asks for multiple specific details. Generate audience-aware slide beats that cover the requested details, explain why they matter, and fit the selected sample's visual structure.
         Do not turn the final slide into brand/platform promotion unless the user asks for promotion or the sample final slide is itself a CTA/product surface.
         Write like a brand strategist making a premium creative: memorable headline, compact insight modules, strategic implication, and visual copy that can sit on a designed slide. Do not write like a research paper writer; avoid essay paragraphs, bibliography-like source mentions, and generic "verified facts" filler.
         Use the complete message strategy, brand visual brief, template fit brief, reference asset brief, render constraints, prompt intelligence, format plan, content plan, visual plan, visual knowledge brief, studio panel, and validation report supplied in the user message as authoritative input.
@@ -1996,7 +2004,7 @@ class PromptIntelligenceService:
         If brand fonts are unavailable, use generic typography roles instead of inventing specific font families.
         Repair icon stamp columns by converting them into cards, proof rows, or more integrated callout structures.
         Do not repair a carousel or infographic into a sparse static poster. Keep the repaired hierarchy true to the requested format.
-        When repairing a style_reference_only carousel with a selected sample/reference sequence, preserve the sample page's editorial grammar and do not introduce unrelated reusable/reference asset names, product surfaces, or promotional CTAs that are absent from the selected sample page.
+        When repairing a style_reference_only carousel with a selected sample/reference sequence, preserve the sample page's visual/theme grammar, layout density, and CTA treatment, but do not preserve or reintroduce template/sample wording as carousel content unless the user explicitly requested template wording.
         For style_reference_only carousel repair, the selected sample/reference sequence is the only allowed reusable visual family. Do not bind, mention, or copy asset names, storage paths, product surfaces, dashboards, or template titles from any other reference asset. If an unrelated asset seems useful, leave the element generated and describe only the sample-matched visual grammar.
         If the selected sample page does not visibly use a dashboard, chart, table, trading screen, laptop, or product UI, do not add those surfaces during repair even when the topic has financial or economic facts.
         If compiled_context.brand_visual_brief.design_system or its summary fields are present, use them to repair toward the brand's actual layout family, hierarchy, content structure, motif usage, image treatment, visual craft, composition logic, subject semantics, and logo placement instead of generic fallback structure.

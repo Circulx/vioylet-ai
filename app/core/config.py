@@ -95,6 +95,9 @@ class Settings(BaseSettings):
     image_retry_attempts: int = 2
     image_quality_retry_attempts: int = 2
     image_quality_min_score: float = 0.72
+    image_generation_quality: str = "high"
+    image_edit_input_fidelity: str = "high"
+    final_render_output_vision_quality_enabled: bool = True
     visual_grounding_threshold_overrides_json: str | None = None
     visual_grounding_require_quality_metadata: bool = False
 

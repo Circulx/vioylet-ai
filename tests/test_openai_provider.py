@@ -35,6 +35,34 @@ def test_openai_image_provider_generate_omits_response_format() -> None:
     assert asset["height"] == 8
 
 
+def test_openai_image_provider_generate_uses_quality_for_default_mini_model() -> None:
+    provider = OpenAIImageProvider()
+    original_model = provider.settings.image_model
+    original_quality = provider.settings.image_generation_quality
+    provider.settings.image_model = "gpt-image-1-mini"
+    provider.settings.image_generation_quality = "high"
+    calls: list[dict] = []
+    provider.client = SimpleNamespace(
+        images=SimpleNamespace(
+            generate=lambda **kwargs: calls.append(kwargs) or SimpleNamespace(
+                data=[SimpleNamespace(b64_json=base64.b64encode(_png_bytes()).decode("ascii"))]
+            )
+        )
+    )
+    provider.storage = SimpleNamespace(
+        save_bytes=lambda tenant_id, brand_space_id, category, filename, content: SimpleNamespace(storage_path="tenant/brand/generated/test.png")
+    )
+
+    try:
+        provider.generate("tenant", "brand", "Prompt", size="1024x1024")
+    finally:
+        provider.settings.image_model = original_model
+        provider.settings.image_generation_quality = original_quality
+
+    assert calls[0]["model"] == "gpt-image-1-mini"
+    assert calls[0]["quality"] == "high"
+
+
 def test_openai_image_provider_extracts_image_from_url_when_base64_missing(monkeypatch) -> None:
     provider = OpenAIImageProvider()
     provider.client = None
@@ -59,9 +87,14 @@ def test_openai_image_provider_extracts_image_from_url_when_base64_missing(monke
     assert image_bytes.startswith(b"\x89PNG")
 
 
-def test_openai_image_provider_edit_omits_input_fidelity_for_mini_model() -> None:
+def test_openai_image_provider_edit_uses_quality_but_omits_input_fidelity_for_mini_model() -> None:
     provider = OpenAIImageProvider()
+    original_model = provider.settings.image_model
+    original_quality = provider.settings.image_generation_quality
+    original_fidelity = provider.settings.image_edit_input_fidelity
     provider.settings.image_model = "gpt-image-1-mini"
+    provider.settings.image_generation_quality = "high"
+    provider.settings.image_edit_input_fidelity = "high"
     calls: list[dict] = []
     provider.client = SimpleNamespace(
         images=SimpleNamespace(
@@ -74,8 +107,71 @@ def test_openai_image_provider_edit_omits_input_fidelity_for_mini_model() -> Non
         save_bytes=lambda tenant_id, brand_space_id, category, filename, content: SimpleNamespace(storage_path="tenant/brand/generated/test.png")
     )
 
-    asset = provider.edit("tenant", "brand", "Place the real logo", image_paths=[__file__], size="1024x1024")
+    try:
+        asset = provider.edit("tenant", "brand", "Place the real logo", image_paths=[__file__], size="1024x1024")
+    finally:
+        provider.settings.image_model = original_model
+        provider.settings.image_generation_quality = original_quality
+        provider.settings.image_edit_input_fidelity = original_fidelity
 
     assert "input_fidelity" not in calls[0]
-    assert "quality" not in calls[0]
+    assert calls[0]["quality"] == "high"
     assert asset["storage_path"] == "tenant/brand/generated/test.png"
+
+
+def test_openai_image_provider_generate_uses_configured_quality_for_non_mini_model() -> None:
+    provider = OpenAIImageProvider()
+    original_model = provider.settings.image_model
+    original_quality = provider.settings.image_generation_quality
+    provider.settings.image_model = "gpt-image-1"
+    provider.settings.image_generation_quality = "high"
+    calls: list[dict] = []
+    provider.client = SimpleNamespace(
+        images=SimpleNamespace(
+            generate=lambda **kwargs: calls.append(kwargs) or SimpleNamespace(
+                data=[SimpleNamespace(b64_json=base64.b64encode(_png_bytes()).decode("ascii"))]
+            )
+        )
+    )
+    provider.storage = SimpleNamespace(
+        save_bytes=lambda tenant_id, brand_space_id, category, filename, content: SimpleNamespace(storage_path="tenant/brand/generated/test.png")
+    )
+
+    try:
+        provider.generate("tenant", "brand", "Prompt", size="1024x1024")
+    finally:
+        provider.settings.image_model = original_model
+        provider.settings.image_generation_quality = original_quality
+
+    assert calls[0]["quality"] == "high"
+
+
+def test_openai_image_provider_edit_uses_configured_quality_and_fidelity_for_non_mini_model() -> None:
+    provider = OpenAIImageProvider()
+    original_model = provider.settings.image_model
+    original_quality = provider.settings.image_generation_quality
+    original_fidelity = provider.settings.image_edit_input_fidelity
+    provider.settings.image_model = "gpt-image-1"
+    provider.settings.image_generation_quality = "high"
+    provider.settings.image_edit_input_fidelity = "high"
+    calls: list[dict] = []
+    provider.client = SimpleNamespace(
+        images=SimpleNamespace(
+            edit=lambda **kwargs: calls.append(kwargs) or SimpleNamespace(
+                data=[SimpleNamespace(b64_json=base64.b64encode(_png_bytes()).decode("ascii"))]
+            )
+        )
+    )
+    provider.storage = SimpleNamespace(
+        save_bytes=lambda tenant_id, brand_space_id, category, filename, content: SimpleNamespace(storage_path="tenant/brand/generated/test.png")
+    )
+
+    try:
+        provider.edit("tenant", "brand", "Place the real logo", image_paths=[__file__], size="1024x1024")
+    finally:
+        provider.settings.image_model = original_model
+        provider.settings.image_generation_quality = original_quality
+        provider.settings.image_edit_input_fidelity = original_fidelity
+
+    assert calls[0]["quality"] == "high"
+    assert calls[0]["input_fidelity"] == "high"

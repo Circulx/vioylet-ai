@@ -73,6 +73,7 @@ logger = logging.getLogger(__name__)
 
 class ContentService:
     AI_FINAL_RENDER_FORMATS = {"static", "story", "poster", "carousel", "infographic"}
+    AI_FINAL_RENDER_OVERLAY_FORMATS = {"static", "carousel", "infographic"}
     TOPIC_STOPWORDS = {
         "a",
         "an",
@@ -2497,25 +2498,76 @@ class ContentService:
         *,
         prompt: str,
         follow_up_mode: str,
+        studio_panel: dict[str, Any] | None = None,
     ) -> list[dict[str, object]]:
         if str(follow_up_mode or "").strip().casefold() != "new_content":
             return assets
         prompt_tokens = cls._topic_tokens(prompt, limit=8)
         if not prompt_tokens:
             return assets
+        require_infographic_surface_match = cls._prompt_needs_infographic_surface_reference_match(
+            prompt=prompt,
+            studio_panel=studio_panel,
+        )
         filtered: list[dict[str, object]] = []
+        safe_supporting_assets: list[dict[str, object]] = []
         for asset in assets:
             role = str(asset.get("asset_role") or "").strip().casefold()
             if role in {"logo", "logo_variant"}:
                 filtered.append(asset)
+                safe_supporting_assets.append(asset)
                 continue
             label = cls._asset_topic_label(asset)
+            if require_infographic_surface_match and cls._asset_is_safe_infographic_support(asset):
+                safe_supporting_assets.append(asset)
+                filtered.append(asset)
+                continue
             if cls._is_generic_reference_label(label):
+                if require_infographic_surface_match and role in {"reference_creative", "template", "template_preview", "image", "photo", "hero_image"}:
+                    continue
                 filtered.append(asset)
                 continue
             if cls._topic_tokens(label, limit=8) & prompt_tokens:
                 filtered.append(asset)
-        return filtered or assets
+        if filtered:
+            return filtered
+        if require_infographic_surface_match:
+            return safe_supporting_assets
+        return assets
+
+    @classmethod
+    def _prompt_needs_infographic_surface_reference_match(
+        cls,
+        *,
+        prompt: str,
+        studio_panel: dict[str, Any] | None,
+    ) -> bool:
+        if cls._requested_template_format_family(studio_panel) != "infographic":
+            return False
+        text = str(prompt or "").strip().casefold()
+        if not text:
+            return False
+        return bool(
+            re.search(
+                r"\b(top\s+\d{1,2}|rank(?:ed|ing)?|compar(?:e|ing|ison)|versus|vs\.?|metric|data|table|chart|graph|matrix)\b",
+                text,
+                flags=re.IGNORECASE,
+            )
+        )
+
+    @classmethod
+    def _asset_is_safe_infographic_support(cls, asset: dict[str, object]) -> bool:
+        role = str(asset.get("asset_role") or "").strip().casefold()
+        if role in {"logo", "logo_variant", "icon", "icon_set", "decorative_asset", "illustration"}:
+            return True
+        metadata = asset.get("metadata") if isinstance(asset.get("metadata"), dict) else {}
+        format_family = cls._normalize_recommendation_format_family(
+            asset.get("format_family")
+            or metadata.get("format_family")
+            or metadata.get("surface_format")
+            or metadata.get("content_format")
+        )
+        return format_family == "infographic"
 
     @classmethod
     def _merge_reference_assets_for_prompt(
@@ -3347,24 +3399,28 @@ class ContentService:
         safe_width = max(int(width), 1)
         safe_height = max(int(height), 1)
         anchor = str(anchor_hint or "").strip().lower()
+        edge_left = edge_right = max(int(safe_width * 0.14), 18)
         # Top-corner logo regions need stronger interior cleanup because the AI often
         # paints ghosted wordmarks and text bands underneath. We still feather the
         # edges so the cleanup doesn't look like a hard white tile.
         if anchor.startswith("top-"):
-            edge_x = max(int(safe_width * 0.12), 16)
+            edge_left = edge_right = max(int(safe_width * 0.12), 16)
+            if anchor.endswith("-right"):
+                edge_right = max(int(safe_width * 0.03), 4)
+            elif anchor.endswith("-left"):
+                edge_left = max(int(safe_width * 0.03), 4)
             edge_top = max(int(safe_height * 0.08), 10)
             edge_bottom = max(int(safe_height * 0.22), 24)
         else:
-            edge_x = max(int(safe_width * 0.14), 18)
             edge_top = max(int(safe_height * 0.12), 14)
             edge_bottom = max(int(safe_height * 0.16), 18)
         mask = Image.new("L", (safe_width, safe_height), 255)
         draw = ImageDraw.Draw(mask)
         draw.rectangle((0, 0, safe_width - 1, safe_height - 1), fill=255)
         # Blur a contracted inner rectangle back out to create a smooth transition.
-        inner_left = min(edge_x, safe_width // 2)
+        inner_left = min(edge_left, safe_width // 2)
         inner_top = min(edge_top, safe_height // 2)
-        inner_right = max(safe_width - edge_x - 1, inner_left)
+        inner_right = max(safe_width - edge_right - 1, inner_left)
         inner_bottom = max(safe_height - edge_bottom - 1, inner_top)
         contracted = Image.new("L", (safe_width, safe_height), 0)
         ImageDraw.Draw(contracted).rounded_rectangle(
@@ -3381,6 +3437,7 @@ class ContentService:
         box: tuple[int, int, int, int],
         *,
         format_name: str | None = None,
+        avoid_boxes: list[tuple[int, int, int, int]] | None = None,
     ) -> tuple[Image.Image, bool]:
         if image.width <= 0 or image.height <= 0:
             return image, False
@@ -3397,8 +3454,31 @@ class ContentService:
             anchor_hint=anchor,
         )
         original_region = cleared.crop((left, top, right, bottom))
+
+        def protect_avoid_boxes(mask: Image.Image) -> None:
+            if not avoid_boxes:
+                return
+            mask_draw = ImageDraw.Draw(mask)
+            for avoid_left, avoid_top, avoid_width, avoid_height in avoid_boxes:
+                overlap_left = max(int(avoid_left), left)
+                overlap_top = max(int(avoid_top), top)
+                overlap_right = min(int(avoid_left) + int(avoid_width), right)
+                overlap_bottom = min(int(avoid_top) + int(avoid_height), bottom)
+                if overlap_right <= overlap_left or overlap_bottom <= overlap_top:
+                    continue
+                mask_draw.rectangle(
+                    (
+                        overlap_left - left,
+                        overlap_top - top,
+                        overlap_right - left,
+                        overlap_bottom - top,
+                    ),
+                    fill=0,
+                )
+
         if patch is not None:
             mask = cls._feathered_clearance_mask(patch.width, patch.height, anchor_hint=anchor)
+            protect_avoid_boxes(mask)
             blended = Image.composite(patch, original_region, mask)
             cleared.alpha_composite(blended, (left, top))
         else:
@@ -3409,6 +3489,7 @@ class ContentService:
             )
             fill_region = Image.new("RGBA", (right - left, bottom - top), fill)
             mask = cls._feathered_clearance_mask(fill_region.width, fill_region.height, anchor_hint=anchor)
+            protect_avoid_boxes(mask)
             blended = Image.composite(fill_region, original_region, mask)
             cleared.alpha_composite(blended, (left, top))
         return cleared, True
@@ -4617,7 +4698,12 @@ class ContentService:
                 previous = title_parts[-1].rstrip()
                 candidate = lines[cursor]
                 combined = " ".join([*title_parts, candidate]).strip()
-                if previous.endswith((".", "?", "!", ":")) or len(combined.split()) > 18 or len(combined) > 150:
+                if (
+                    previous.endswith((".", "?", "!", ":"))
+                    or (candidate[:1].isupper() and len(title_parts) == 1)
+                    or len(combined.split()) > 18
+                    or len(combined) > 150
+                ):
                     break
                 title_parts.append(candidate)
                 cursor += 1
@@ -5628,7 +5714,7 @@ class ContentService:
     def _build_template_context_payload(
         cls,
         *,
-        prompt: str | None,
+        prompt: str | None = None,
         template_meta,
         selected_template_id: str | None,
         selected_template_name: str | None,
@@ -5797,6 +5883,15 @@ class ContentService:
             ):
                 base_context["sequence_pack"] = resolved_pack
             return base_context or None
+        if explicit_sequence_pack and not (normalized_selected_template_id or normalized_selected_template_name):
+            resolved_pack = cls._resolve_authoritative_sequence_pack(
+                explicit_sequence_pack,
+                selected_template_id=normalized_selected_template_id,
+                selected_template_name=normalized_selected_template_name,
+            )
+            if should_keep_sequence_pack(resolved_pack):
+                base_context["sequence_pack"] = resolved_pack
+                return base_context or None
         selected_template_authority_pack = cls._build_selected_template_authority_sequence_pack(
             selected_template_id=normalized_selected_template_id,
             selected_template_name=normalized_selected_template_name,
@@ -7179,6 +7274,8 @@ class ContentService:
                 if not keep[y][x]:
                     red, green, blue, _alpha = cleaned_pixels[x, y]
                     cleaned_pixels[x, y] = (red, green, blue, 0)
+        if cleaned.getchannel("A").getbbox() is None:
+            return rgba
         return cleaned
 
     @staticmethod
@@ -7677,16 +7774,16 @@ class ContentService:
             width = max(int(canvas_width * 0.2), 170)
             height = max(int(canvas_height * 0.085), 60)
         elif normalized_format == "infographic":
-            width = max(int(canvas_width * 0.19), 160)
-            height = max(int(canvas_height * 0.08), 56)
+            width = max(int(canvas_width * 0.155), 132)
+            height = max(int(canvas_height * 0.058), 44)
         else:
             aspect_ratio = canvas_width / max(canvas_height, 1)
             if aspect_ratio >= 1.3:
-                width = max(int(canvas_width * 0.15), 150)
-                height = max(int(canvas_height * 0.075), 50)
+                width = max(int(canvas_width * 0.13), 128)
+                height = max(int(canvas_height * 0.058), 40)
             else:
-                width = max(int(canvas_width * 0.17), 160)
-                height = max(int(canvas_height * 0.075), 50)
+                width = max(int(canvas_width * 0.145), 132)
+                height = max(int(canvas_height * 0.058), 42)
         return (min(width, canvas_width), min(height, canvas_height))
 
     @classmethod
@@ -7725,9 +7822,24 @@ class ContentService:
             format_name=format_name,
         )
         if reference_box is not None:
-            _ref_x, _ref_y, ref_width, ref_height = reference_box
-            width = max(min(width, ref_width), int(width * 0.75))
-            height = max(min(height, ref_height), int(height * 0.75))
+            ref_x, ref_y, ref_width, ref_height = reference_box
+            safe_padding_x = max(min(int(canvas_width * 0.045), 64), int(ref_width * 0.35))
+            safe_padding_y = max(min(int(canvas_height * 0.025), 44), int(ref_height * 0.18))
+            width = min(max(width, ref_width + safe_padding_x), int(canvas_width * 0.4))
+            height = min(max(height, ref_height + safe_padding_y), int(canvas_height * 0.24))
+            if horizontal == "left":
+                x = min(max(ref_x, 0), max(canvas_width - width, 0))
+            elif horizontal == "center":
+                x = max(min(ref_x + (ref_width // 2) - (width // 2), canvas_width - width), 0)
+            else:
+                x = max(min(ref_x + ref_width - width, canvas_width - width), 0)
+            if vertical == "bottom":
+                y = max(min(ref_y + ref_height - height, canvas_height - height), 0)
+            elif vertical == "middle":
+                y = max(min(ref_y + (ref_height // 2) - (height // 2), canvas_height - height), 0)
+            else:
+                y = min(max(ref_y, 0), max(canvas_height - height, 0))
+            return (int(x), int(y), int(width), int(height))
         if horizontal == "left":
             x = margin_x
         elif horizontal == "center":
@@ -7757,7 +7869,12 @@ class ContentService:
         if horizontal == "left":
             x = min(20, max(canvas_width - width, 0))
         elif horizontal == "right":
-            x = max(canvas_width - width - 20, 0)
+            right_margin = (
+                max(20, int(canvas_width * 0.06))
+                if vertical == "top" or width >= int(canvas_width * 0.19)
+                else 20
+            )
+            x = max(canvas_width - width - right_margin, 0)
         elif horizontal == "center":
             x = max((canvas_width - width) // 2, 0)
         if vertical == "top":
@@ -8016,6 +8133,7 @@ class ContentService:
         explainability: dict,
         format_name: str,
         preferred_hint: str | None,
+        image_obstruction_weight: float = 4.0,
     ) -> dict[str, object]:
         canvas_width, canvas_height = base_image.size
         initial_anchor = cls._logo_anchor_from_box(
@@ -8057,11 +8175,21 @@ class ContentService:
         _initial_x, _initial_y, initial_width, initial_height = logo_box
         min_width = max(int(canvas_width * 0.055), 56)
         min_height = max(int(canvas_height * 0.014), 18)
+        logo_aspect_ratio = logo_image.width / max(logo_image.height, 1)
+        max_wordmark_width = max(
+            initial_width,
+            min(int(canvas_width * 0.34), max(canvas_width - 40, 1)),
+        )
         best: dict[str, object] | None = None
         for anchor in anchors:
             for scale in cls._logo_scale_candidates():
                 candidate_width = max(int(round(initial_width * scale)), min_width)
                 candidate_height = max(int(round(initial_height * scale)), min_height)
+                if logo_aspect_ratio >= 2.2:
+                    candidate_width = min(
+                        max(candidate_width, int(round(candidate_height * logo_aspect_ratio))),
+                        max_wordmark_width,
+                    )
                 candidate_box = cls._snap_logo_box_to_anchor_edge(
                     box=(0, 0, candidate_width, candidate_height),
                     canvas_width=canvas_width,
@@ -8111,7 +8239,7 @@ class ContentService:
                 policy_penalty = 8.0 if policy_override else 0.0
                 score = (
                     (layout_score * 8.0)
-                    + (image_score * 4.0)
+                    + (image_score * image_obstruction_weight)
                     + preference_penalty
                     + size_penalty
                     + policy_penalty
@@ -8356,12 +8484,20 @@ class ContentService:
                     anchor=anchor,
                     reference_box=reference_box,
                 )
-        box = cls._cap_logo_box_to_profile(
-            box=box,
-            canvas_width=canvas_width,
-            canvas_height=canvas_height,
-            format_name=format_name,
-        )
+        if anchor[1] == "right" and width > min_width:
+            box = (
+                x,
+                y,
+                min(width, max(min_width, int(canvas_width * 0.2))),
+                min(height, max(min_height, int(canvas_height * 0.085))),
+            )
+        else:
+            box = cls._cap_logo_box_to_profile(
+                box=box,
+                canvas_width=canvas_width,
+                canvas_height=canvas_height,
+                format_name=format_name,
+            )
         return cls._snap_logo_box_to_anchor_edge(
             box=box,
             canvas_width=canvas_width,
@@ -8458,7 +8594,7 @@ class ContentService:
         assets: list[GeneratedAsset],
     ) -> bool:
         format_name = str((studio_panel or {}).get("format") or "").strip().lower()
-        if format_name != "carousel":
+        if format_name not in ContentService.AI_FINAL_RENDER_OVERLAY_FORMATS:
             return False
         return any(
             isinstance((asset.metadata_json or {}).get("render_overlay_scene_graph"), dict)
@@ -8579,17 +8715,24 @@ class ContentService:
                 "detail",
                 "details",
                 "paragraph",
-                "proof",
-                "proof_point",
-                "proof_points",
-                "stat",
-                "stat_highlight",
-                "stat_highlights",
                 "subheadline",
                 "subtitle",
                 "support",
                 "supporting_copy",
                 "supporting_line",
+            },
+            "proof_points": {
+                "body_points",
+                "proof",
+                "proof_point",
+                "proof_points",
+            },
+            "stat_highlights": {
+                "metric",
+                "metrics",
+                "stat",
+                "stat_highlight",
+                "stat_highlights",
             },
             "cta": {
                 "button",
@@ -8622,6 +8765,70 @@ class ContentService:
         return deepcopy(unscoped[0] if unscoped else candidates[0])
 
     @staticmethod
+    def _ai_final_render_apply_data_surface_overlay_hints(
+        element: dict,
+        *,
+        role: str,
+        overlay_text: str,
+        overlay_metadata: dict,
+    ) -> None:
+        if role != "proof_points":
+            return
+
+        surface_contract = overlay_metadata.get("data_list_surface_contract")
+        if not isinstance(surface_contract, dict):
+            surface_contract = {}
+
+        validation_hints = element.get("validation_hints")
+        if not isinstance(validation_hints, dict):
+            validation_hints = {}
+        else:
+            validation_hints = dict(validation_hints)
+
+        surface_mode = str(
+            validation_hints.get("surface_mode")
+            or surface_contract.get("surface_mode")
+            or ""
+        ).strip()
+        if surface_mode:
+            validation_hints.setdefault("surface_mode", surface_mode)
+
+        def _positive_int(value: object) -> int | None:
+            try:
+                numeric = int(str(value).strip())
+            except (TypeError, ValueError):
+                return None
+            return numeric if numeric > 0 else None
+
+        overlay_row_count = len(
+            [line for line in str(overlay_text or "").splitlines() if line.strip()]
+        )
+        for key in ("requested_count", "available_count", "module_count"):
+            if key in validation_hints:
+                continue
+            numeric = _positive_int(surface_contract.get(key))
+            if numeric is not None:
+                validation_hints[key] = numeric
+
+        if surface_mode.casefold() == "ranking_table":
+            if "module_count" not in validation_hints and overlay_row_count:
+                validation_hints["module_count"] = overlay_row_count
+            style = element.get("style")
+            if not isinstance(style, dict):
+                style = {}
+            else:
+                style = dict(style)
+            style.setdefault("row_layout", "ranking_table")
+            style.setdefault("font_role", "body")
+            style.setdefault("fill_role", "secondary_text")
+            if "max_lines" not in style and validation_hints.get("module_count"):
+                style["max_lines"] = validation_hints["module_count"]
+            element["style"] = style
+
+        if validation_hints:
+            element["validation_hints"] = validation_hints
+
+    @staticmethod
     def _ai_final_render_sanitize_overlay_scene_graph_for_asset(
         scene_graph: dict | None,
         *,
@@ -8647,9 +8854,24 @@ class ContentService:
         if slide_index <= 0:
             slide_index = 1
 
+        overlay_metadata = overlay_text.get("metadata") if isinstance(overlay_text.get("metadata"), dict) else {}
+
+        def _overlay_list_text(key: str) -> str:
+            for source in (overlay_text, overlay_metadata):
+                value = source.get(key) if isinstance(source, dict) else None
+                if isinstance(value, list):
+                    lines = [str(item).strip() for item in value if str(item or "").strip()]
+                    if lines:
+                        return "\n".join(lines)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+            return ""
+
         overlay_values = {
             "headline": str(overlay_text.get("headline") or "").strip(),
             "body": str(overlay_text.get("body") or "").strip(),
+            "proof_points": _overlay_list_text("proof_points"),
+            "stat_highlights": _overlay_list_text("stat_highlights"),
             "cta": str(overlay_text.get("cta") or "").strip(),
         }
         selected_elements: list[dict] = []
@@ -8673,7 +8895,7 @@ class ContentService:
             if role == "logo":
                 _append(deepcopy(element))
 
-        for role in ("headline", "body", "cta"):
+        for role in ("headline", "body", "proof_points", "stat_highlights", "cta"):
             value = overlay_values.get(role) or ""
             if not value:
                 continue
@@ -8688,6 +8910,12 @@ class ContentService:
             element["role"] = role
             element["element_type"] = "text"
             element["element_id"] = f"{role}_text_slide_{slide_index}"
+            ContentService._ai_final_render_apply_data_surface_overlay_hints(
+                element,
+                role=role,
+                overlay_text=value,
+                overlay_metadata=overlay_metadata,
+            )
             _append(element)
 
         for element in source_elements:
@@ -8963,21 +9191,25 @@ class ContentService:
             )
             if asset is None:
                 return None
-            overlay_payload = await self._render_ai_final_overlay_source_asset(
-                content=content,
-                asset=asset,
-                explainability=explainability,
-                studio_panel=per_slide_panel,
-                resolved_blueprint=resolved_blueprint,
-                creative_decision=creative_decision,
-                font_asset_paths=font_asset_paths,
-                brand_visual_rules=brand_visual_rules,
-                logo_asset_path=logo_asset_path,
-                overlay_content=(
-                    parent_content
-                    if reused_parent_render and parent_content is not None
-                    else content
-                ),
+            overlay_payload = (
+                await self._render_ai_final_overlay_source_asset(
+                    content=content,
+                    asset=asset,
+                    explainability=explainability,
+                    studio_panel=per_slide_panel,
+                    resolved_blueprint=resolved_blueprint,
+                    creative_decision=creative_decision,
+                    font_asset_paths=font_asset_paths,
+                    brand_visual_rules=brand_visual_rules,
+                    logo_asset_path=logo_asset_path,
+                    overlay_content=(
+                        parent_content
+                        if reused_parent_render and parent_content is not None
+                        else content
+                    ),
+                )
+                if logo_asset_path
+                else None
             )
             overlay_renderer_metadata = (
                 overlay_payload.get("renderer_metadata")
@@ -9517,25 +9749,53 @@ class ContentService:
                 resolved_logo_asset_path,
             )
             return None
+        reserved_logo_box = logo_box
+        layout_obstructions = self._logo_layout_obstruction_boxes(
+            content=content,
+            explainability=explainability,
+            canvas_width=base.width,
+            canvas_height=base.height,
+        )
+        layout_obstruction_boxes = [
+            item.get("box")
+            for item in layout_obstructions
+            if isinstance(item.get("box"), tuple)
+        ]
+        base_for_collision = base
+        logo_zone_clearance_applied = False
+        if not layout_obstructions:
+            base_for_collision, logo_zone_clearance_applied = self._clear_ai_logo_overlay_region(
+                base,
+                reserved_logo_box,
+                format_name=str((studio_panel or {}).get("format") or ""),
+            )
         collision_guard = self._resolve_logo_collision_guard(
-            base_image=base,
+            base_image=base_for_collision,
             logo_image=logo,
             logo_box=logo_box,
             content=content,
             explainability=explainability,
             format_name=str((studio_panel or {}).get("format") or ""),
             preferred_hint=self._extract_logo_position_hint(content, explainability),
+            image_obstruction_weight=0.2 if not layout_obstructions else 4.0,
         )
         logo_box = collision_guard["box"]  # type: ignore[assignment]
         contained = collision_guard["contained"]  # type: ignore[assignment]
         offset_x = int(collision_guard["offset_x"])
         offset_y = int(collision_guard["offset_y"])
         logo_clearance_anchor = str(collision_guard["anchor"])
-        logo_zone_clearance_applied = False
-        # The scene-graph logo box is a reserved layout zone, not necessarily
-        # the visible logo footprint. Cleaning that full zone can erase nearby
-        # headings when the final logo is smaller and right-aligned inside it.
-        # Keep cleanup tied to the exact footprint that will be pasted below.
+        clearance_logo_box = reserved_logo_box
+        if logo_zone_clearance_applied:
+            base = base_for_collision
+        else:
+            base, logo_zone_clearance_applied = self._clear_ai_logo_overlay_region(
+                base,
+                clearance_logo_box,
+                format_name=str((studio_panel or {}).get("format") or ""),
+                avoid_boxes=layout_obstruction_boxes,
+            )
+        # Clear the reserved zone first, then feather the exact visible
+        # footprint so the pasted logo does not sit on AI-painted residue.
         compact_clearance_box = self._logo_footprint_clearance_box(
             image=base,
             offset_x=offset_x,
@@ -10095,6 +10355,7 @@ class ContentService:
             brand_reference_assets,
             prompt=effective_prompt,
             follow_up_mode=follow_up_mode,
+            studio_panel=payload.studio_panel.model_dump(),
         )
         brand_reference_assets = self._filter_reference_assets_for_studio_format(
             brand_reference_assets,
@@ -10277,6 +10538,7 @@ class ContentService:
             content_format_guide=tracked_content_format_guide,
             deliverable_type="visual_generation",
             template_context=tracked_template_context,
+            reference_assets=tracked_reference_assets,
         )
         research_editorial_brief = planning_bundle["research_editorial_brief"]
         self._assert_research_guard(prompt=effective_prompt, brief=research_editorial_brief, stage="content.generate")

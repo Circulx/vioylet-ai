@@ -91,6 +91,20 @@ class OpenAIImageProvider(ImageGenerationBackend):
         self.client = OpenAI(api_key=self.settings.openai_api_key) if self.settings.openai_api_key else None
         self.storage = LocalObjectStorage()
 
+    def _configured_image_quality(self, model_name: str) -> str | None:
+        configured = str(getattr(self.settings, "image_generation_quality", "high") or "").strip().lower()
+        if not configured or configured == "auto":
+            return "high"
+        return configured
+
+    def _configured_input_fidelity(self, model_name: str) -> str | None:
+        if "mini" in model_name:
+            return None
+        configured = str(getattr(self.settings, "image_edit_input_fidelity", "high") or "").strip().lower()
+        if not configured or configured == "auto":
+            return "high"
+        return configured
+
     def _image_edit_options(self, size: str) -> dict[str, Any]:
         model_name = str(self.settings.image_model or "").strip().lower()
         options: dict[str, Any] = {
@@ -100,11 +114,13 @@ class OpenAIImageProvider(ImageGenerationBackend):
         }
         # `gpt-image-1-mini` does not currently accept `input_fidelity`, and
         # sending it causes the logo edit pass to fail before the model can
-        # apply the real uploaded logo. We also avoid forcing `quality=high`
-        # on mini models to keep the logo edit pass as fast as possible.
-        if "mini" not in model_name:
-            options["quality"] = "high"
-            options["input_fidelity"] = "high"
+        # apply the real uploaded logo. Quality remains config-driven.
+        quality = self._configured_image_quality(model_name)
+        input_fidelity = self._configured_input_fidelity(model_name)
+        if quality:
+            options["quality"] = quality
+        if input_fidelity:
+            options["input_fidelity"] = input_fidelity
         return options
 
     def _image_generate_options(self, size: str) -> dict[str, Any]:
@@ -113,8 +129,9 @@ class OpenAIImageProvider(ImageGenerationBackend):
             "model": self.settings.image_model,
             "size": size,
         }
-        if "mini" not in model_name:
-            options["quality"] = "high"
+        quality = self._configured_image_quality(model_name)
+        if quality:
+            options["quality"] = quality
         return options
 
     @staticmethod

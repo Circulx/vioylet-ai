@@ -162,6 +162,8 @@ class RendererService:
         source_mode = str(payload.blueprint.source_mode or "").strip().lower()
         if format_name == "infographic" and source_mode in {"exact_template", "adapted_template"}:
             return True
+        if format_name == "infographic":
+            return False
         if format_name in {"carousel", "pdf"}:
             return False
         if file_type in {"pdf", "doc"}:
@@ -603,26 +605,41 @@ class RendererService:
     def _is_soft_neutral_color(rgb: tuple[int, int, int]) -> bool:
         return max(rgb) - min(rgb) <= 24 or sum(rgb) >= 660
 
-    def _resolve_primary_color(self, payload: RendererInput, palette: dict[str, str]) -> tuple[int, int, int]:
-        balance = self._reference_color_balance(payload, palette)
+    def _resolve_primary_color(
+        self,
+        payload_or_palette: RendererInput | dict[str, str],
+        palette: dict[str, str] | None = None,
+    ) -> tuple[int, int, int]:
+        payload = payload_or_palette if isinstance(payload_or_palette, RendererInput) else None
+        resolved_palette = palette if palette is not None else payload_or_palette
+        if not isinstance(resolved_palette, dict):
+            resolved_palette = {}
+        balance = self._reference_color_balance(payload, resolved_palette) if payload else {}
         reference_primary = self._normalize_hex(balance.get("primary_hex") if isinstance(balance, dict) else None)
         if reference_primary:
             return self._parse_color(reference_primary, (20, 20, 20))
         return self._parse_color(
-            palette.get("primary") or palette.get("brand") or palette.get("headline"),
+            resolved_palette.get("primary") or resolved_palette.get("brand") or resolved_palette.get("headline"),
             (20, 20, 20),
         )
 
     def _resolve_accent_color(
         self,
-        payload: RendererInput,
-        palette: dict[str, str],
-        primary: tuple[int, int, int],
+        payload_or_palette: RendererInput | dict[str, str],
+        palette_or_primary: dict[str, str] | tuple[int, int, int],
+        primary: tuple[int, int, int] | None = None,
     ) -> tuple[int, int, int]:
-        balance = self._reference_color_balance(payload, palette)
+        payload = payload_or_palette if isinstance(payload_or_palette, RendererInput) else None
+        if payload:
+            palette = palette_or_primary if isinstance(palette_or_primary, dict) else {}
+            resolved_primary = primary or (20, 20, 20)
+        else:
+            palette = payload_or_palette if isinstance(payload_or_palette, dict) else {}
+            resolved_primary = palette_or_primary if isinstance(palette_or_primary, tuple) else (20, 20, 20)
+        balance = self._reference_color_balance(payload, palette) if payload else {}
         reference_accent = self._normalize_hex(balance.get("accent_hex") if isinstance(balance, dict) else None)
         if reference_accent:
-            return self._parse_color(reference_accent, primary)
+            return self._parse_color(reference_accent, resolved_primary)
         explicit = (
             palette.get("secondary")
             or palette.get("accent")
@@ -630,8 +647,8 @@ class RendererService:
             or palette.get("cta")
         )
         if explicit:
-            return self._parse_color(explicit, primary)
-        return self._blend_color(primary, (255, 255, 255), 0.18)
+            return self._parse_color(explicit, resolved_primary)
+        return self._blend_color(resolved_primary, (255, 255, 255), 0.18)
 
     def _resolve_background_color(
         self,
@@ -957,6 +974,8 @@ class RendererService:
                 if not keep[y][x]:
                     red, green, blue, _alpha = cleaned_pixels[x, y]
                     cleaned_pixels[x, y] = (red, green, blue, 0)
+        if cleaned.getchannel("A").getbbox() is None:
+            return rgba
         return cleaned
 
     @classmethod
@@ -1540,6 +1559,10 @@ class RendererService:
     ) -> list[dict[str, int | str | None]]:
         if not items:
             return []
+        if isinstance(badge_style, str):
+            badge_style = {"shape": "rounded_rect"} if badge_style.strip().casefold() == "numbered" else None
+        elif not isinstance(badge_style, dict):
+            badge_style = None
         font = self._font(base_size, family_hint=family_hint)
 
         # Fix 4: Support numbered badges from component motifs
@@ -1611,6 +1634,149 @@ class RendererService:
             cursor_y += total_height + 12
 
         return zones
+
+    def _draw_ranked_row_list(
+        self,
+        draw: ImageDraw.ImageDraw,
+        items: list[str],
+        box: tuple[int, int, int, int],
+        fill: tuple[int, int, int],
+        accent: tuple[int, int, int],
+        background: tuple[int, int, int],
+        *,
+        base_size: int = 20,
+        family_hint: str | None = None,
+        style_hint: dict | None = None,
+        validation_hints: dict | None = None,
+        row_surface_fill: tuple[int, int, int] | None = None,
+        divider_fill: tuple[int, int, int] | None = None,
+        using_base_canvas: bool = False,
+    ) -> dict[str, object]:
+        if not items:
+            return {"zones": [], "text_fit": [], "occupied_boxes": []}
+
+        style_hint = style_hint if isinstance(style_hint, dict) else {}
+        validation_hints = validation_hints if isinstance(validation_hints, dict) else {}
+
+        def _positive_int(value: object) -> int | None:
+            try:
+                numeric = int(str(value).strip())
+            except (TypeError, ValueError):
+                return None
+            return numeric if numeric > 0 else None
+
+        requested_rows = (
+            _positive_int(validation_hints.get("module_count"))
+            or _positive_int(validation_hints.get("requested_count"))
+            or len(items)
+        )
+        row_count = max(len(items), requested_rows)
+        x0, y0, x1, y1 = box
+        width = max(x1 - x0, 1)
+        height = max(y1 - y0, 1)
+        if row_count <= 0 or height <= 0:
+            return {"zones": [], "text_fit": [], "occupied_boxes": []}
+
+        row_gap = _positive_int(style_hint.get("row_gap"))
+        if row_gap is None:
+            row_gap = max(4, min(12, height // 80))
+        row_padding = _positive_int(style_hint.get("row_padding")) or _positive_int(style_hint.get("padding"))
+        if row_padding is None:
+            row_padding = max(8, min(18, height // max(row_count * 5, 1)))
+        available_height = max(height - (row_gap * max(row_count - 1, 0)), row_count)
+        row_height = max(1, available_height // row_count)
+        table_surface = row_surface_fill if row_surface_fill else None
+        if using_base_canvas and table_surface is None:
+            table_surface = self._blend_color(background, (255, 255, 255), 0.88)
+        divider = divider_fill or self._blend_color(table_surface or background, accent, 0.24)
+
+        badge_hint = validation_hints.get("badge_style")
+        numbered_badges = str(badge_hint or "").strip().casefold() == "numbered"
+        if isinstance(badge_hint, dict):
+            numbered_badges = str(badge_hint.get("shape") or "").strip().casefold() == "rounded_rect"
+        badge_color = accent
+        badge_text_color = (255, 255, 255)
+        if isinstance(badge_hint, dict):
+            badge_color = self._parse_color(badge_hint.get("badge_color"), accent)
+            badge_text_color = self._parse_color(badge_hint.get("text_color"), badge_text_color)
+
+        zones: list[dict[str, int | str | None]] = []
+        text_fit_manifest: list[dict[str, object]] = []
+        occupied_boxes: list[tuple[int, int, int, int]] = []
+        y_cursor = y0
+        for index in range(1, row_count + 1):
+            row_bottom = y1 if index == row_count else min(y_cursor + row_height, y1)
+            row_box = (x0, y_cursor, x1, row_bottom)
+            if table_surface:
+                draw.rounded_rectangle(row_box, radius=max(8, min(18, row_height // 4)), fill=table_surface)
+            if index > 1:
+                divider_y = max(y_cursor - max(row_gap // 2, 1), y0)
+                draw.line((x0 + row_padding, divider_y, x1 - row_padding, divider_y), fill=divider, width=1)
+
+            text_value = items[index - 1] if index <= len(items) else ""
+            text_box_left = x0 + row_padding
+            if text_value and numbered_badges and not re.match(r"^\s*(?:#?\d+[\).:\-]|rank\s+\d+\b)", text_value, flags=re.IGNORECASE):
+                badge_size = max(24, min(46, row_height - (row_padding * 2)))
+                badge_x = x0 + row_padding
+                badge_y = y_cursor + max((row_height - badge_size) // 2, 0)
+                badge_box = (badge_x, badge_y, badge_x + badge_size, badge_y + badge_size)
+                draw.rounded_rectangle(badge_box, radius=max(8, badge_size // 3), fill=badge_color)
+                badge_font = self._font(max(12, min(base_size - 2, badge_size // 2)), family_hint=family_hint, weight="bold")
+                badge_text = str(index)
+                left, top, right, bottom = draw.textbbox((0, 0), badge_text, font=badge_font)
+                draw.text(
+                    (
+                        badge_x + max((badge_size - (right - left)) // 2, 0) - left,
+                        badge_y + max((badge_size - (bottom - top)) // 2, 0) - top,
+                    ),
+                    badge_text,
+                    fill=badge_text_color,
+                    font=badge_font,
+                )
+                text_box_left = badge_box[2] + row_padding
+
+            zone_box = (
+                text_box_left,
+                y_cursor + row_padding,
+                x1 - row_padding,
+                max(row_bottom - row_padding, y_cursor + row_padding + 1),
+            )
+            max_lines = 2 if (zone_box[3] - zone_box[1]) >= max(base_size * 2, 28) else 1
+            zone_manifest = self._zone_manifest(
+                f"proof_point_{index}",
+                "proof_point",
+                zone_box,
+                max_lines,
+            )
+            zones.append(zone_manifest)
+            if text_value:
+                fit_manifest = self._draw_text_block(
+                    draw,
+                    text_value,
+                    type("Zone", (), zone_manifest)(),
+                    fill,
+                    base_size,
+                    align=str(style_hint.get("align") or "left"),
+                    background_fill=None,
+                    padding=0,
+                    style_hint=style_hint,
+                    font_family=family_hint,
+                )
+                fit_manifest["surface_mode"] = "ranking_table"
+                fit_manifest["row_index"] = index
+                text_fit_manifest.append(fit_manifest)
+                if fit_manifest.get("occupied_box"):
+                    occupied_boxes.append(tuple(fit_manifest["occupied_box"]))
+
+            y_cursor = row_bottom + row_gap
+            if y_cursor >= y1:
+                break
+
+        return {
+            "zones": zones,
+            "text_fit": text_fit_manifest,
+            "occupied_boxes": occupied_boxes,
+        }
 
     def _draw_stat_cards(
         self,
@@ -2540,6 +2706,28 @@ class RendererService:
             cleaned.append(text)
         return cleaned
 
+    @classmethod
+    def _scene_table_row_items(cls, value: object) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            raw_items = [str(item).strip() for item in value if str(item).strip()]
+        else:
+            text = str(value).strip()
+            raw_items = [
+                item.strip()
+                for item in re.split(r"(?:\r?\n|[;|])+", text)
+                if item.strip()
+            ]
+        cleaned: list[str] = []
+        for item in raw_items:
+            text = cls.SCENE_TEXT_SYMBOL_PATTERN.sub(" ", item)
+            text = re.sub(r"^\s*[-*]\s+", "", text)
+            text = " ".join(text.split()).strip(" ,.;")
+            if text:
+                cleaned.append(text)
+        return cleaned
+
     @staticmethod
     def _logo_box_profile_for_canvas(width: int, height: int) -> tuple[int, int]:
         aspect_ratio = width / max(height, 1)
@@ -2827,6 +3015,13 @@ class RendererService:
                     shape = str(style.get("shape") or "rounded_rect")
                     if shape == "ellipse":
                         draw.ellipse(adapted_box, fill=fill)
+                    elif shape == "line":
+                        line_y = (adapted_box[1] + adapted_box[3]) // 2
+                        draw.line(
+                            (adapted_box[0], line_y, adapted_box[2], line_y),
+                            fill=fill,
+                            width=max(1, adapted_box[3] - adapted_box[1]),
+                        )
                     else:
                         self._draw_panel(draw, adapted_box, fill, radius=int(style.get("border_radius") or 28))
                     decorative_rendered = True
@@ -2888,24 +3083,85 @@ class RendererService:
                     asset_boxes.append({"role": role, "box": adapted_box, "adjusted": adjusted})
                     overlap_checks.append({"role": role, "passed": not self._box_overlaps_any(adapted_box, reserved_text_boxes, padding=18)})
                 elif role == "proof_points":
-                    items = self._scene_text_items(element.text)
+                    validation_hints = element.validation_hints or {}
+                    surface_mode = str(
+                        validation_hints.get("surface_mode")
+                        or style.get("row_layout")
+                        or style.get("surface_mode")
+                        or ""
+                    ).strip().casefold()
+                    items = (
+                        self._scene_table_row_items(element.text)
+                        if surface_mode == "ranking_table"
+                        else self._scene_text_items(element.text)
+                    )
                     if not items:
                         continue
-                    # Extract badge_style from validation_hints
-                    validation_hints = element.validation_hints or {}
-                    badge_style = validation_hints.get("badge_style")
-                    proof_zones = self._draw_bullet_list(
-                        draw,
-                        items,
-                        box,
-                        secondary_text,
-                        accent,
-                        base_size=int(style.get("font_size") or 20),
-                        family_hint=str(style.get("font_family") or "").strip() or None,
-                        badge_style=badge_style,
-                    )
+                    fill = self._scene_graph_color(payload, style, "fill", secondary_text, palette)
+                    base_size = int(style.get("font_size") or 20)
+                    family_hint = str(style.get("font_family") or "").strip() or None
+                    if surface_mode == "ranking_table":
+                        row_surface_fill = None
+                        if (
+                            style.get("row_background_fill")
+                            or style.get("row_background_fill_role")
+                            or style.get("background_fill")
+                            or style.get("background_fill_role")
+                        ):
+                            row_surface_fill = self._scene_graph_color(
+                                payload,
+                                {
+                                    **style,
+                                    "row_background_fill": style.get("row_background_fill") or style.get("background_fill"),
+                                    "row_background_fill_role": style.get("row_background_fill_role") or style.get("background_fill_role"),
+                                },
+                                "row_background_fill",
+                                self._blend_color(background, (255, 255, 255), 0.88),
+                                palette,
+                            )
+                        row_result = self._draw_ranked_row_list(
+                            draw,
+                            items,
+                            box,
+                            fill,
+                            accent,
+                            background,
+                            base_size=base_size,
+                            family_hint=family_hint,
+                            style_hint=style,
+                            validation_hints=validation_hints,
+                            row_surface_fill=row_surface_fill,
+                            using_base_canvas=using_base_canvas,
+                        )
+                        proof_zones = [
+                            dict(zone)
+                            for zone in row_result.get("zones", [])
+                            if isinstance(zone, dict)
+                        ]
+                        text_fit_manifest.extend(
+                            dict(item)
+                            for item in row_result.get("text_fit", [])
+                            if isinstance(item, dict)
+                        )
+                        occupied_text_boxes.extend(
+                            tuple(box_item)
+                            for box_item in row_result.get("occupied_boxes", [])
+                            if isinstance(box_item, tuple)
+                        )
+                    else:
+                        badge_style = validation_hints.get("badge_style")
+                        proof_zones = self._draw_bullet_list(
+                            draw,
+                            items,
+                            box,
+                            fill,
+                            accent,
+                            base_size=base_size,
+                            family_hint=family_hint,
+                            badge_style=badge_style,
+                        )
                     zones_used.extend(proof_zones)
-                    text_blocks_used.append({"role": role, "text": items})
+                    text_blocks_used.append({"role": role, "text": items, "surface_mode": surface_mode or None})
                     occupied_text_boxes.extend(
                         (
                             int(zone["x"]),
@@ -3305,7 +3561,7 @@ class RendererService:
             )
             if template_native_cta and not (isinstance(cta_style_hint, dict) and cta_style_hint.get("background_color")):
                 cta_fill = self._resolved_fill_from_style_hint(cta_style_hint, accent)
-                cta_background_fill = primary
+                cta_background_fill = None
             text_fit_manifest.append(self._draw_text_block(
                 draw=draw,
                 text=page_text.get("cta", ""),

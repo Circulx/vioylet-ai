@@ -8,6 +8,9 @@ from app.core.config import get_settings
 from app.utils.palette_roles import derive_palette_roles
 
 class ContextCompilerService:
+    DEFAULT_RESEARCH_FACT_LIMIT = 6
+    MAX_DATA_SURFACE_FACT_LIMIT = 10
+    MAX_RESEARCH_SOURCE_PACK_LIMIT = 12
     AUDIENCE_RESEARCH_PRIORITY_FIELDS = (
         "proof_cues",
         "trust_signals",
@@ -1102,8 +1105,15 @@ class ContextCompilerService:
     def _research_editorial_brief(cls, value: Any) -> dict[str, Any]:
         brief = value if isinstance(value, dict) else {}
         fact_model = brief.get("fact_model") if isinstance(brief.get("fact_model"), dict) else {}
+        raw_fact_limit = cls._coerce_non_negative_int(brief.get("fact_limit"))
+        fact_limit = (
+            min(max(raw_fact_limit, cls.DEFAULT_RESEARCH_FACT_LIMIT), cls.MAX_DATA_SURFACE_FACT_LIMIT)
+            if raw_fact_limit
+            else cls.DEFAULT_RESEARCH_FACT_LIMIT
+        )
+        source_pack_limit = max(6, min(fact_limit + 2, cls.MAX_RESEARCH_SOURCE_PACK_LIMIT))
         source_pack = []
-        for item in (brief.get("source_pack") or [])[:6]:
+        for item in (brief.get("source_pack") or [])[:source_pack_limit]:
             if not isinstance(item, dict):
                 continue
             source_pack.append(
@@ -1182,7 +1192,7 @@ class ContextCompilerService:
                         "source_title": cls._normalize_text(item.get("source_title"), limit=140),
                         "source_url": cls._normalize_text(item.get("source_url"), limit=220),
                     }
-                    for item in (fact_model.get("verified_facts") or [])[:6]
+                    for item in (fact_model.get("verified_facts") or [])[:fact_limit]
                     if isinstance(item, dict)
                 ],
                 "inferences": cls._normalized_text_list(fact_model.get("inferences"), item_limit=180, limit=4),
@@ -1202,6 +1212,7 @@ class ContextCompilerService:
             "source_backing_rules": cls._normalized_text_list(brief.get("source_backing_rules"), item_limit=180, limit=4),
             "source_pack": source_pack,
             "source_count": int(brief.get("source_count") or len(source_pack) or 0),
+            "fact_limit": fact_limit,
             "preferred_slide_count": int(brief.get("preferred_slide_count") or 0) or None,
             "summary": cls._truncate_text_on_word_boundary(brief.get("summary"), 420),
             "disclaimer_requested": bool(brief.get("disclaimer_requested")),
@@ -1372,6 +1383,16 @@ class ContextCompilerService:
             style_characteristics.get("subject_semantics") if isinstance(style_characteristics.get("subject_semantics"), dict) else {}
         )
         editorial_dna = metadata.get("editorial_dna") if isinstance(metadata.get("editorial_dna"), dict) else {}
+        sample_page_blueprint = cls._compact_sample_page_blueprint(metadata.get("sample_page_blueprint"))
+        template_layout_grammar = cls._compact_template_layout_grammar(
+            blueprint=metadata.get("sample_page_blueprint"),
+            layout_dna=layout_dna,
+            composition_logic=composition_logic,
+            visual_craft=visual_craft_dna,
+            editorial_dna=editorial_dna,
+            structural_cues=structural_cues,
+            source=metadata,
+        )
         return {
             "asset_id": cls._normalize_text(asset.get("asset_id"), limit=48),
             "role": cls._normalize_text(asset.get("asset_role"), limit=32),
@@ -1383,6 +1404,13 @@ class ContextCompilerService:
             "storage_path": cls._normalize_text(asset.get("storage_path"), limit=240),
             "trust_level": cls._normalize_text(asset.get("trust_level"), limit=24),
             "format": cls._normalize_text(metadata.get("format") or metadata.get("content_format"), limit=24),
+            "format_family": cls._normalize_text(
+                asset.get("format_family")
+                or metadata.get("format_family")
+                or metadata.get("surface_format")
+                or metadata.get("content_format"),
+                limit=24,
+            ),
             "page_count": int(metadata.get("page_count") or 0) or None,
             "sequence_kind": cls._normalize_text(
                 metadata.get("sequence_kind") or metadata.get("narrative_pattern"),
@@ -1405,6 +1433,8 @@ class ContextCompilerService:
             "visual_craft": cls._compact_visual_craft_dna(visual_craft_dna),
             "subject_semantics": cls._compact_subject_semantics_dna(subject_semantics),
             "editorial_dna": cls._compact_editorial_dna(editorial_dna),
+            "sample_page_blueprint": sample_page_blueprint,
+            "template_layout_grammar": template_layout_grammar,
         }
 
     @classmethod
@@ -1627,6 +1657,236 @@ class ContextCompilerService:
             "closing_style": cls._normalize_text(dna.get("closing_style"), limit=32),
             "proof_module_count": dna.get("proof_module_count"),
         }
+
+    @classmethod
+    def _compact_template_layout_grammar(
+        cls,
+        *,
+        blueprint: Any = None,
+        layout_dna: Any = None,
+        composition_logic: Any = None,
+        visual_craft: Any = None,
+        editorial_dna: Any = None,
+        structural_cues: Any = None,
+        source: Any = None,
+        brand_visual_brief: Any = None,
+    ) -> dict[str, Any]:
+        blueprint_map = blueprint if isinstance(blueprint, dict) else {}
+        layout_map = layout_dna if isinstance(layout_dna, dict) else {}
+        composition_map = composition_logic if isinstance(composition_logic, dict) else {}
+        visual_map = visual_craft if isinstance(visual_craft, dict) else {}
+        editorial_map = editorial_dna if isinstance(editorial_dna, dict) else {}
+        source_map = source if isinstance(source, dict) else {}
+        brand_visual_map = brand_visual_brief if isinstance(brand_visual_brief, dict) else {}
+        style_characteristics = (
+            source_map.get("style_characteristics")
+            if isinstance(source_map.get("style_characteristics"), dict)
+            else {}
+        )
+
+        zones_source = (
+            blueprint_map.get("zones")
+            if isinstance(blueprint_map.get("zones"), list)
+            else layout_map.get("zones")
+            if isinstance(layout_map.get("zones"), list)
+            else []
+        )
+        zones: list[dict[str, Any]] = []
+        for zone in zones_source[:12]:
+            if not isinstance(zone, dict):
+                continue
+            role = cls._normalize_text(zone.get("role"), limit=36)
+            if not role:
+                continue
+            entry = {
+                "role": role,
+                "x": zone.get("x"),
+                "y": zone.get("y"),
+                "w": zone.get("w") if zone.get("w") is not None else zone.get("width"),
+                "h": zone.get("h") if zone.get("h") is not None else zone.get("height"),
+            }
+            alignment = cls._normalize_text(zone.get("alignment"), limit=24)
+            if alignment:
+                entry["alignment"] = alignment
+            zones.append(entry)
+
+        def role_matches(role: str, tokens: tuple[str, ...]) -> bool:
+            lowered = role.casefold()
+            return any(token in lowered for token in tokens)
+
+        role_order = cls._dedupe_items([zone["role"] for zone in zones], limit=12)
+        visual_zone_roles = cls._dedupe_items(
+            [
+                role
+                for role in role_order
+                if role_matches(role, ("image", "visual", "photo", "illustration", "icon", "object"))
+            ],
+            limit=8,
+        )
+        text_zone_roles = cls._dedupe_items(
+            [
+                role
+                for role in role_order
+                if role_matches(role, ("headline", "title", "subtitle", "body", "copy", "label", "caption", "cta"))
+            ],
+            limit=8,
+        )
+        module_zone_roles = cls._dedupe_items(
+            [
+                role
+                for role in role_order
+                if role_matches(role, ("card", "panel", "box", "row", "column", "callout", "takeaway", "proof", "pill"))
+            ],
+            limit=8,
+        )
+        safe_area_roles = cls._dedupe_items(
+            [
+                role
+                for role in role_order
+                if role_matches(role, ("logo", "header", "footer", "legal", "disclaimer", "safe"))
+            ],
+            limit=6,
+        )
+
+        module_counts = blueprint_map.get("module_counts") if isinstance(blueprint_map.get("module_counts"), dict) else {}
+        module_pattern = cls._dedupe_items(
+            [
+                f"{key}:{value}"
+                for key, value in module_counts.items()
+                if isinstance(value, (int, float, bool)) and value
+            ],
+            limit=8,
+        )
+        structural = cls._dedupe_items(
+            [
+                cls._normalize_text(item, limit=80)
+                for item in (
+                    structural_cues
+                    if isinstance(structural_cues, list)
+                    else [structural_cues]
+                    if structural_cues
+                    else []
+                )
+                if cls._normalize_text(item, limit=80)
+            ],
+            limit=8,
+        )
+        must_match = cls._summary_list(blueprint_map.get("must_match"), limit=8, item_limit=80)
+
+        connector_sources = [
+            *structural,
+            *must_match,
+            *cls._summary_list(composition_map.get("focal_path"), limit=6, item_limit=60),
+            *cls._summary_list(composition_map.get("depth_cues"), limit=4, item_limit=60),
+            *cls._summary_list(editorial_map.get("explanation_styles"), limit=4, item_limit=60),
+            cls._normalize_text(composition_map.get("flow"), limit=80),
+            cls._normalize_text(editorial_map.get("storytelling_mode"), limit=80),
+        ]
+        connector_behavior = cls._dedupe_items(
+            [
+                item
+                for item in connector_sources
+                if item
+                and any(
+                    token in item.casefold()
+                    for token in ("connector", "arrow", "flow", "path", "line", "dashed", "step", "timeline", "sequence")
+                )
+            ],
+            limit=6,
+        )
+
+        background_style = (
+            source_map.get("background_style")
+            if isinstance(source_map.get("background_style"), dict)
+            else style_characteristics.get("background_style")
+            if isinstance(style_characteristics.get("background_style"), dict)
+            else {}
+        )
+        typography_dna = (
+            source_map.get("typography_dna")
+            if isinstance(source_map.get("typography_dna"), dict)
+            else style_characteristics.get("typography_dna")
+            if isinstance(style_characteristics.get("typography_dna"), dict)
+            else {}
+        )
+        design_tokens = (
+            source_map.get("design_tokens")
+            if isinstance(source_map.get("design_tokens"), dict)
+            else style_characteristics.get("design_tokens")
+            if isinstance(style_characteristics.get("design_tokens"), dict)
+            else {}
+        )
+        palette_roles = (
+            design_tokens.get("palette_roles")
+            if isinstance(design_tokens.get("palette_roles"), list)
+            else brand_visual_map.get("palette_roles")
+            if isinstance(brand_visual_map.get("palette_roles"), dict)
+            else {}
+        )
+        color_roles = cls._dedupe_items(
+            [
+                cls._normalize_text(item, limit=32)
+                for item in (
+                    palette_roles
+                    if isinstance(palette_roles, list)
+                    else list(palette_roles.keys())
+                    if isinstance(palette_roles, dict)
+                    else []
+                )
+                if cls._normalize_text(item, limit=32)
+            ],
+            limit=6,
+        )
+        typography_roles = cls._dedupe_items(
+            [
+                cls._normalize_text(key, limit=40)
+                for key, value in typography_dna.items()
+                if value not in ("", {}, [], None)
+            ],
+            limit=6,
+        )
+
+        grammar = {
+            "macro_layout_flow": cls._dedupe_items(
+                [
+                    cls._normalize_text(layout_map.get("layout_type"), limit=64),
+                    cls._normalize_text(layout_map.get("reading_direction"), limit=48),
+                    cls._normalize_text(composition_map.get("balance"), limit=64),
+                    cls._normalize_text(composition_map.get("framing"), limit=64),
+                    cls._normalize_text(editorial_map.get("storytelling_mode"), limit=64),
+                    *cls._summary_list(editorial_map.get("story_arc_roles"), limit=6, item_limit=48),
+                ],
+                limit=8,
+            ),
+            "section_role_order": role_order,
+            "module_pattern": cls._dedupe_items([*module_pattern, *module_zone_roles, *structural], limit=10),
+            "visual_zone_roles": visual_zone_roles,
+            "text_zone_roles": text_zone_roles,
+            "callout_takeaway_roles": module_zone_roles,
+            "connector_behavior": connector_behavior,
+            "typography_roles": typography_roles,
+            "color_roles": color_roles,
+            "object_density": cls._dedupe_items(
+                [
+                    cls._normalize_text(blueprint_map.get("density"), limit=40),
+                    *module_pattern,
+                    *cls._summary_list(visual_map.get("dimensionality_cues"), limit=4, item_limit=48),
+                ],
+                limit=8,
+            ),
+            "background_treatment": cls._dedupe_items(
+                [
+                    cls._normalize_text(background_style.get("dominant_mode"), limit=48),
+                    cls._normalize_text(background_style.get("texture"), limit=48),
+                    cls._normalize_text(visual_map.get("lighting"), limit=48),
+                    cls._normalize_text(visual_map.get("rendering_style"), limit=48),
+                ],
+                limit=6,
+            ),
+            "safe_area_policy": safe_area_roles,
+            "must_preserve": must_match,
+        }
+        return {key: value for key, value in grammar.items() if value not in ("", {}, [])}
 
     @classmethod
     def _compact_asset_reference(cls, value: Any) -> str:
@@ -2372,6 +2632,511 @@ class ContextCompilerService:
         return "editorial_balanced"
 
     @classmethod
+    def _compact_sample_page_blueprint(cls, blueprint: Any) -> dict[str, Any]:
+        if not isinstance(blueprint, dict):
+            return {}
+        module_counts = blueprint.get("module_counts") if isinstance(blueprint.get("module_counts"), dict) else {}
+        visual_permissions = (
+            blueprint.get("visual_permissions")
+            if isinstance(blueprint.get("visual_permissions"), dict)
+            else {}
+        )
+        image_zones = [
+            {
+                "role": cls._normalize_text(zone.get("role"), limit=32),
+                "x": zone.get("x"),
+                "y": zone.get("y"),
+                "w": zone.get("w"),
+                "h": zone.get("h"),
+            }
+            for zone in (blueprint.get("image_zones") or [])
+            if isinstance(zone, dict)
+        ][:4]
+        zones = [
+            {
+                "role": cls._normalize_text(zone.get("role"), limit=36),
+                "x": zone.get("x"),
+                "y": zone.get("y"),
+                "w": zone.get("w") if zone.get("w") is not None else zone.get("width"),
+                "h": zone.get("h") if zone.get("h") is not None else zone.get("height"),
+                "alignment": cls._normalize_text(zone.get("alignment"), limit=24),
+                "text_capacity": cls._normalize_text(zone.get("text_capacity"), limit=24),
+            }
+            for zone in (blueprint.get("zones") or [])
+            if isinstance(zone, dict) and cls._normalize_text(zone.get("role"), limit=36)
+        ][:12]
+        must_match = cls._summary_list(blueprint.get("must_match"), limit=8, item_limit=90)
+        compact = {
+            "layout_category": cls._normalize_text(blueprint.get("layout_category"), limit=80),
+            "density": cls._normalize_text(blueprint.get("density"), limit=40),
+            "module_counts": {
+                str(key): value
+                for key, value in module_counts.items()
+                if isinstance(value, (int, float, bool))
+            },
+            "visual_permissions": {
+                str(key): bool(value)
+                for key, value in visual_permissions.items()
+                if isinstance(value, bool)
+            },
+            "image_zones": image_zones,
+            "zones": [
+                {key: value for key, value in zone.items() if value not in ("", {}, [], None)}
+                for zone in zones
+            ],
+            "must_match": must_match,
+        }
+        return {key: value for key, value in compact.items() if value not in ("", {}, [])}
+
+    @staticmethod
+    def _reference_profile_score(value: float) -> float:
+        return round(max(0.0, min(float(value or 0.0), 1.0)), 2)
+
+    @classmethod
+    def _normalize_surface_family(cls, value: Any) -> str:
+        text = cls._normalize_text(value, limit=48).casefold()
+        if not text:
+            return ""
+        normalized = text.replace("-", "_").replace(" ", "_").replace("/", "_").strip("_")
+        if normalized in {"static", "story", "poster", "hero", "single_frame"}:
+            return "static"
+        if normalized in {"carousel", "carousel_series", "slide_deck", "slide_series"}:
+            return "carousel"
+        if normalized in {"infographic", "diagram", "visual_explainer"}:
+            return "infographic"
+        if normalized in {"video", "reel", "short_video", "youtube_video"}:
+            return "video"
+        return normalized if normalized in {"static", "carousel", "infographic", "video"} else ""
+
+    @classmethod
+    def _surface_output_behavior(cls, output_family: str) -> str:
+        return {
+            "static": "static_creative_output",
+            "carousel": "carousel_sequence_output",
+            "infographic": "infographic_surface_output",
+            "video": "video_output_disabled_or_unsupported",
+        }.get(output_family, "brand_only")
+
+    @classmethod
+    def _selected_size_label(cls, studio_panel: dict[str, Any]) -> str:
+        for key in ("size_label", "aspect_ratio", "aspect", "ratio"):
+            label = cls._normalize_text(studio_panel.get(key), limit=24)
+            if label:
+                return label
+        size = studio_panel.get("size") if isinstance(studio_panel.get("size"), dict) else {}
+        try:
+            width = int(size.get("width") or 0)
+            height = int(size.get("height") or 0)
+        except (TypeError, ValueError):
+            width = 0
+            height = 0
+        if not width or not height:
+            return ""
+        ratio = width / max(float(height), 1.0)
+        if abs(ratio - 0.8) <= 0.03:
+            return "4:5"
+        if abs(ratio - 1.7778) <= 0.04:
+            return "16:9"
+        if abs(ratio - 1.0) <= 0.03:
+            return "1:1"
+        return f"{width}x{height}"
+
+    @classmethod
+    def _reference_adaptation_profile(
+        cls,
+        *,
+        studio_panel: dict[str, Any] | None = None,
+        brand_visual_brief: dict[str, Any],
+        template_fit_brief: dict[str, Any],
+        content_format_brief: dict[str, Any],
+        format_family_plan: dict[str, Any] | None = None,
+        reference_asset_brief: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        studio_panel = studio_panel if isinstance(studio_panel, dict) else {}
+        brand_visual_brief = brand_visual_brief if isinstance(brand_visual_brief, dict) else {}
+        template_fit_brief = template_fit_brief if isinstance(template_fit_brief, dict) else {}
+        content_format_brief = content_format_brief if isinstance(content_format_brief, dict) else {}
+        format_family_plan = format_family_plan if isinstance(format_family_plan, dict) else {}
+        references = [item for item in (reference_asset_brief or []) if isinstance(item, dict)]
+        output_family = (
+            cls._normalize_surface_family(studio_panel.get("format"))
+            or cls._normalize_surface_family(content_format_brief.get("format"))
+            or cls._normalize_surface_family(content_format_brief.get("format_family"))
+            or cls._normalize_surface_family(format_family_plan.get("family"))
+            or cls._normalize_surface_family(format_family_plan.get("format"))
+        )
+        if output_family not in {"carousel", "infographic", "static", "video"}:
+            output_family = "unknown"
+
+        sequence_pack = (
+            template_fit_brief.get("sequence_pack")
+            if isinstance(template_fit_brief.get("sequence_pack"), dict)
+            else {}
+        )
+
+        def family_for(item: dict[str, Any]) -> str:
+            return cls._normalize_surface_family(item.get("format_family") or item.get("format") or "")
+
+        def is_adaptable_reference(item: dict[str, Any]) -> bool:
+            role = cls._normalize_text(item.get("role"), limit=32).casefold()
+            trust = cls._normalize_text(item.get("trust_level"), limit=32).casefold()
+            return (
+                role in {"reference_creative", "template", "reference"}
+                and trust not in {"rejected", "blocked", "untrusted"}
+            )
+
+        exact = [
+            item
+            for item in references
+            if output_family in {"carousel", "infographic", "static"}
+            and family_for(item) == output_family
+            and is_adaptable_reference(item)
+        ]
+        adaptable = [
+            item
+            for item in references
+            if family_for(item) in {"carousel", "infographic", "static"}
+            and is_adaptable_reference(item)
+        ]
+        selected = exact or adaptable
+        selected_source_family = family_for(selected[0]) if selected else ""
+        use_sequence_pack = bool(sequence_pack) and (
+            not selected
+            or selected_source_family == "carousel"
+        )
+        if use_sequence_pack:
+            source = {
+                "source_format_family": "carousel",
+                "role": "template_sequence",
+                "trust_level": "selected",
+                "layout_dna": template_fit_brief.get("template_layout_dna") if isinstance(template_fit_brief.get("template_layout_dna"), dict) else {},
+                "composition_logic": template_fit_brief.get("template_composition_logic") if isinstance(template_fit_brief.get("template_composition_logic"), dict) else {},
+                "visual_craft": template_fit_brief.get("template_visual_craft") if isinstance(template_fit_brief.get("template_visual_craft"), dict) else {},
+                "sample_page_blueprint": {},
+                "structural_cues": sequence_pack.get("story_roles") or [],
+            }
+            source_family = "carousel"
+        else:
+            source = selected[0] if selected else {}
+            source_family = family_for(source) if source else "unknown"
+
+        if source_family not in {"carousel", "infographic", "static"}:
+            source_family = "unknown"
+
+        compatibility = 0.0
+        compatibility_factors: list[str] = []
+        if output_family == "video":
+            compatibility = 0.0
+            compatibility_factors.append("video_output_not_supported_by_ai_final_render")
+        elif source_family == "unknown":
+            compatibility = 0.2 if brand_visual_brief else 0.0
+        elif source_family == output_family:
+            compatibility = 1.0
+            compatibility_factors.append("source_matches_output_format")
+        elif output_family == "carousel" and source_family == "infographic":
+            compatibility = 0.75
+            compatibility_factors.append("infographic_layout_dna_can_be_distributed_into_carousel_slides")
+        elif output_family == "carousel" and source_family == "static":
+            compatibility = 0.65
+            compatibility_factors.append("static_visual_system_can_extend_across_carousel_slides")
+        elif output_family == "static" and source_family == "carousel":
+            compatibility = 0.55
+            compatibility_factors.append("carousel_sequence_reduced_to_static_visual_system_guidance")
+        elif output_family == "static" and source_family == "infographic":
+            compatibility = 0.55
+            compatibility_factors.append("infographic_structure_reduced_to_single_frame_visual_guidance")
+        elif output_family == "infographic" and source_family == "carousel":
+            compatibility = 0.5
+            compatibility_factors.append("carousel_visual_rhythm_can_inform_infographic_sections")
+        elif output_family == "infographic" and source_family == "static":
+            compatibility = 0.5
+            compatibility_factors.append("static_visual_system_can_inform_infographic_surface")
+        elif source_family == "carousel" and output_family in {"infographic", "static"}:
+            compatibility = 0.55
+            compatibility_factors.append("sequence_reference_used_as_reduced_visual_guidance")
+        else:
+            compatibility = 0.45
+            compatibility_factors.append("cross_format_visual_guidance_only")
+
+        trust = cls._normalize_text(source.get("trust_level"), limit=32).casefold() if isinstance(source, dict) else ""
+        trust_score = 0.2 if trust in {"trusted", "approved", "selected"} else (0.12 if trust else 0.08)
+        layout_dna = source.get("layout_dna") if isinstance(source.get("layout_dna"), dict) else {}
+        composition_logic = source.get("composition_logic") if isinstance(source.get("composition_logic"), dict) else {}
+        visual_craft = source.get("visual_craft") if isinstance(source.get("visual_craft"), dict) else {}
+        blueprint = source.get("sample_page_blueprint") if isinstance(source.get("sample_page_blueprint"), dict) else {}
+        visual_permissions = blueprint.get("visual_permissions") if isinstance(blueprint.get("visual_permissions"), dict) else {}
+        structural_cues = source.get("structural_cues") if isinstance(source.get("structural_cues"), list) else []
+        template_layout_grammar = (
+            source.get("template_layout_grammar")
+            if isinstance(source.get("template_layout_grammar"), dict)
+            else cls._compact_template_layout_grammar(
+                blueprint=blueprint,
+                layout_dna=layout_dna,
+                composition_logic=composition_logic,
+                visual_craft=visual_craft,
+                editorial_dna=source.get("editorial_dna") if isinstance(source.get("editorial_dna"), dict) else {},
+                structural_cues=structural_cues,
+                source=source,
+                brand_visual_brief=brand_visual_brief,
+            )
+        )
+
+        reference_factors: list[str] = []
+        score = 0.0
+        score += trust_score
+        if trust_score:
+            reference_factors.append("source_trust")
+        if source_family != "unknown":
+            score += 0.18
+            reference_factors.append("explicit_or_derived_format_family")
+        score += 0.18 * compatibility
+        if compatibility_factors:
+            reference_factors.extend(compatibility_factors)
+        if layout_dna or composition_logic or structural_cues:
+            score += 0.18
+            reference_factors.append("layout_or_composition_signal")
+        if visual_craft:
+            score += 0.12
+            reference_factors.append("visual_craft_signal")
+        if blueprint:
+            score += 0.14
+            reference_factors.append("sample_page_blueprint_signal")
+        if visual_permissions:
+            score += 0.08
+            reference_factors.append("visual_permissions_signal")
+        if template_layout_grammar:
+            score += 0.1
+            reference_factors.append("template_layout_grammar_signal")
+        if brand_visual_brief:
+            score += 0.06
+            reference_factors.append("brand_visual_context")
+        reference_score = cls._reference_profile_score(score)
+
+        prompt_factors = ["prompt_content_first", "requested_output_type_preserved", "reference_subject_blocked"]
+        prompt_score = 0.35
+        if output_family != "unknown":
+            prompt_score += 0.2
+        if content_format_brief:
+            prompt_score += 0.18
+            prompt_factors.append("content_format_brief_present")
+        if compatibility >= 0.75 or source_family == "unknown":
+            prompt_score += 0.14
+            prompt_factors.append("format_compatible_reference_or_brand_only")
+        if reference_score < 0.35:
+            prompt_score += 0.08
+            prompt_factors.append("low_reference_confidence_reduces_adaptation_pressure")
+        prompt_relevance_score = cls._reference_profile_score(prompt_score)
+
+        output_behavior = cls._surface_output_behavior(output_family)
+        if output_family == "video":
+            adaptation_mode = "video_output_disabled_or_unsupported"
+        elif source_family == "carousel" and sequence_pack and output_family == "carousel":
+            adaptation_mode = "template_sequence_adaptation"
+        elif source_family == "infographic":
+            adaptation_mode = "infographic_surface_adaptation"
+        elif source_family == "static":
+            adaptation_mode = "static_creative_adaptation"
+        elif source:
+            adaptation_mode = "hybrid_reference_adaptation"
+        else:
+            adaptation_mode = "brand_only"
+
+        confidence = cls._reference_profile_score((reference_score + prompt_relevance_score + compatibility) / 3.0)
+        grammar_module_pattern = (
+            template_layout_grammar.get("module_pattern")
+            if isinstance(template_layout_grammar, dict)
+            else False
+        )
+        grammar_color_roles = (
+            template_layout_grammar.get("color_roles")
+            if isinstance(template_layout_grammar, dict)
+            else False
+        )
+        grammar_typography_roles = (
+            template_layout_grammar.get("typography_roles")
+            or template_layout_grammar.get("text_zone_roles")
+            if isinstance(template_layout_grammar, dict)
+            else False
+        )
+        grammar_safe_area_policy = (
+            template_layout_grammar.get("safe_area_policy")
+            if isinstance(template_layout_grammar, dict)
+            else False
+        )
+        adapt = {
+            "layout_rhythm": bool(layout_dna or composition_logic or structural_cues or blueprint or sequence_pack or template_layout_grammar),
+            "module_density": bool(blueprint.get("module_counts") if isinstance(blueprint, dict) else False) or bool(structural_cues) or bool(grammar_module_pattern),
+            "color_roles": bool(brand_visual_brief.get("palette_roles") or brand_visual_brief.get("palette_summary") or grammar_color_roles),
+            "typography_hierarchy": bool(brand_visual_brief.get("typography_summary") or brand_visual_brief.get("typography") or grammar_typography_roles),
+            "image_treatment": bool(visual_craft or brand_visual_brief.get("image_treatment_summary")),
+            "logo_footer_policy": bool(blueprint or brand_visual_brief.get("brand_mark_position") or grammar_safe_area_policy),
+            "slide_archetype": adaptation_mode in {
+                "template_sequence_adaptation",
+                "infographic_surface_adaptation",
+                "static_creative_adaptation",
+                "hybrid_reference_adaptation",
+            },
+        }
+        template_structure: dict[str, Any] = {}
+        if blueprint:
+            template_structure["sample_page_blueprint"] = blueprint
+            module_counts = blueprint.get("module_counts") if isinstance(blueprint.get("module_counts"), dict) else {}
+            if module_counts:
+                template_structure["module_counts"] = module_counts
+            if visual_permissions:
+                template_structure["visual_permissions"] = visual_permissions
+        if layout_dna:
+            template_structure["layout_dna"] = layout_dna
+        if composition_logic:
+            template_structure["composition_logic"] = composition_logic
+        if structural_cues:
+            template_structure["structural_cues"] = cls._dedupe_items(
+                [cls._normalize_text(item, limit=80) for item in structural_cues],
+                limit=8,
+            )
+        if template_layout_grammar:
+            template_structure["template_layout_grammar"] = template_layout_grammar
+        return {
+            "source_format_family": source_family,
+            "output_format_family": output_family,
+            "selected_output_behavior": output_behavior,
+            "adaptation_mode": adaptation_mode,
+            "confidence": confidence,
+            "adapt": adapt,
+            "template_structure": template_structure,
+            "do_not_adapt": {
+                "literal_text": True,
+                "source_subject_matter": True,
+                "unsupported_claims": True,
+                "brand_marks_without_permission": True,
+                "unsupported_data_visuals": True,
+            },
+            "balance": {
+                "reference_adaptation_score": reference_score,
+                "reference_adaptation_factors": cls._dedupe_items(reference_factors, limit=8),
+                "prompt_relevance_score": prompt_relevance_score,
+                "prompt_relevance_factors": cls._dedupe_items(prompt_factors, limit=8),
+                "conflict_resolution": "prompt_content_first_reference_visual_system_second",
+                "safety_override": "footer_logo_data_anchor_constraints_override_both",
+            },
+        }
+
+    @classmethod
+    def _generation_surface_contract(
+        cls,
+        *,
+        studio_panel: dict[str, Any],
+        objective_brief: dict[str, Any],
+        content_format_brief: dict[str, Any],
+        format_family_plan: dict[str, Any],
+        visual_plan: dict[str, Any],
+        render_constraints: dict[str, Any],
+        reference_adaptation_profile: dict[str, Any],
+    ) -> dict[str, Any]:
+        studio_panel = studio_panel if isinstance(studio_panel, dict) else {}
+        objective_brief = objective_brief if isinstance(objective_brief, dict) else {}
+        content_format_brief = content_format_brief if isinstance(content_format_brief, dict) else {}
+        format_family_plan = format_family_plan if isinstance(format_family_plan, dict) else {}
+        visual_plan = visual_plan if isinstance(visual_plan, dict) else {}
+        render_constraints = render_constraints if isinstance(render_constraints, dict) else {}
+        profile = reference_adaptation_profile if isinstance(reference_adaptation_profile, dict) else {}
+        selected_format = (
+            cls._normalize_surface_family(studio_panel.get("format"))
+            or cls._normalize_surface_family(content_format_brief.get("format"))
+            or cls._normalize_surface_family(format_family_plan.get("family"))
+            or "unknown"
+        )
+        selected_platform = (
+            cls._normalize_prompt_intelligence_platform_key(studio_panel.get("platform_preset"))
+            or cls._normalize_text(studio_panel.get("platform_preset"), limit=40).casefold()
+            or "unknown"
+        )
+        selected_file_type = cls._normalize_text(studio_panel.get("file_type"), limit=16).casefold()
+        selected_size = cls._selected_size_label(studio_panel)
+        size = studio_panel.get("size") if isinstance(studio_panel.get("size"), dict) else {}
+        try:
+            width = int(size.get("width") or 0)
+            height = int(size.get("height") or 0)
+        except (TypeError, ValueError):
+            width = 0
+            height = 0
+        aspect_ratio = round(width / max(float(height), 1.0), 3) if width and height else 0.0
+        orientation = (
+            "landscape"
+            if aspect_ratio > 1.15
+            else "portrait"
+            if aspect_ratio and aspect_ratio < 0.95
+            else "square"
+            if aspect_ratio
+            else "unknown"
+        )
+        campaign_goal = (
+            cls._normalize_text(objective_brief.get("name"), limit=80)
+            or cls._normalize_text(objective_brief.get("primary_goal"), limit=120)
+        )
+        balance = profile.get("balance") if isinstance(profile.get("balance"), dict) else {}
+        content_budget = {
+            "canvas_size": {"width": width, "height": height},
+            "selected_size": selected_size,
+            "aspect_ratio": aspect_ratio,
+            "orientation": orientation,
+            "format_unit": cls._normalize_text(format_family_plan.get("primary_unit"), limit=40),
+            "format_body_shape": cls._normalize_text(format_family_plan.get("body_shape"), limit=80),
+            "copy_density": (
+                cls._normalize_text(format_family_plan.get("copy_density"), limit=40)
+                or cls._normalize_text(render_constraints.get("text_density"), limit=40)
+            ),
+            "visual_density": (
+                cls._normalize_text(format_family_plan.get("visual_density"), limit=40)
+                or cls._normalize_text(visual_plan.get("density_target"), limit=40)
+            ),
+            "max_headline_words": render_constraints.get("max_headline_words"),
+            "max_body_sentences": render_constraints.get("max_body_sentences"),
+            "prefer_compact_cta": bool(render_constraints.get("prefer_compact_cta")),
+            "budget_source": "studio_panel_size_render_constraints_format_family_plan",
+        }
+        return {
+            "selected_format": selected_format,
+            "selected_platform": selected_platform,
+            "selected_size": selected_size,
+            "selected_file_type": selected_file_type,
+            "campaign_goal": campaign_goal,
+            "campaign_behavior": {
+                "objective_name": cls._normalize_text(objective_brief.get("name"), limit=80),
+                "primary_goal": cls._normalize_text(objective_brief.get("primary_goal"), limit=120),
+                "conversion_priority": cls._normalize_text(objective_brief.get("conversion_priority"), limit=80),
+                "cta_bias": cls._normalize_text(objective_brief.get("cta_bias"), limit=80),
+            },
+            "reference_format_family": cls._normalize_text(profile.get("source_format_family"), limit=32),
+            "adaptation_mode": cls._normalize_text(profile.get("adaptation_mode"), limit=64),
+            "layout_behavior": (
+                cls._normalize_text(profile.get("selected_output_behavior"), limit=64)
+                or cls._surface_output_behavior(selected_format)
+            ),
+            "content_budget": {
+                key: value
+                for key, value in content_budget.items()
+                if value not in ("", {}, [])
+            },
+            "reference_adaptation_score": cls._reference_profile_score(
+                balance.get("reference_adaptation_score")
+            ),
+            "prompt_relevance_score": cls._reference_profile_score(
+                balance.get("prompt_relevance_score")
+            ),
+            "conflict_resolution": (
+                cls._normalize_text(balance.get("conflict_resolution"), limit=96)
+                or "prompt_content_first_reference_visual_system_second"
+            ),
+            "selection_authority": "selected_format_platform_size_file_type_campaign_goal",
+            "file_type_behavior": "export_render_path_only_not_content_meaning",
+            "safety_override": (
+                cls._normalize_text(balance.get("safety_override"), limit=120)
+                or "footer_logo_data_anchor_constraints_override_both"
+            ),
+        }
+
+    @classmethod
     def _reference_family_profile(
         cls,
         *,
@@ -2513,6 +3278,7 @@ class ContextCompilerService:
                 ],
                 limit=4,
             ),
+            "zone_boxes": cls._compact_zone_boxes(layout_dna, zone_limit=8),
             "layout_lock_strength": (
                 "strict"
                 if surface_policy == "lock_template_surface"
@@ -2575,7 +3341,22 @@ class ContextCompilerService:
         template_zones = []
         sequence_pack = template_context.get("sequence_pack") if isinstance(template_context, dict) else {}
         sequence_slides = [dict(item) for item in sequence_pack.get("slides", []) if isinstance(item, dict)] if isinstance(sequence_pack, dict) else []
-        format_family = "carousel" if sequence_pack else "static"
+        source_format_family = ""
+        for asset in reference_assets:
+            if not isinstance(asset, dict):
+                continue
+            metadata = asset.get("metadata") if isinstance(asset.get("metadata"), dict) else {}
+            source_format_family = cls._normalize_text(
+                asset.get("format_family")
+                or metadata.get("format_family")
+                or metadata.get("format")
+                or metadata.get("content_format"),
+                limit=32,
+            ).casefold()
+            if source_format_family in {"carousel", "infographic", "static"}:
+                break
+            source_format_family = ""
+        format_family = "carousel" if sequence_pack else (source_format_family or "static")
         if template_context:
             zone_map = template_context.get("zones", []) or template_context.get("zone_map", {}).get("zones", []) or []
             for zone in zone_map[:6]:
@@ -3624,6 +4405,7 @@ class ContextCompilerService:
         format_family_plan: dict[str, Any] | None = None,
         content_plan: dict[str, Any] | None = None,
         visual_plan: dict[str, Any] | None = None,
+        live_research: dict[str, Any] | None = None,
         resolution_instructions: str | None = None,
         research_summary: str | None = None,
     ) -> dict[str, Any]:
@@ -3786,10 +4568,46 @@ class ContextCompilerService:
             content_format_guide,
             studio_panel,
         )
+        reference_profile_assets: list[dict[str, Any]] = []
+        seen_reference_profile_assets: set[tuple[str, str]] = set()
+        for asset in [*reference_assets, *asset_catalog]:
+            if not isinstance(asset, dict):
+                continue
+            asset_id = self._normalize_text(asset.get("asset_id"), limit=72).casefold()
+            storage_path = self._normalize_text(asset.get("storage_path"), limit=240).casefold()
+            key = (asset_id, storage_path)
+            if key in seen_reference_profile_assets:
+                continue
+            seen_reference_profile_assets.add(key)
+            reference_profile_assets.append(asset)
+        reference_asset_brief = [
+            self._reference_asset_brief_item(asset)
+            for asset in reference_profile_assets[:12]
+            if isinstance(asset, dict)
+        ]
         reference_family_profile = self._reference_family_profile(
             brand_visual_brief=brand_visual_brief,
             template_fit_brief=template_fit_brief,
             content_format_brief=content_format_brief,
+        )
+        reference_adaptation_profile = self._reference_adaptation_profile(
+            studio_panel=studio_panel,
+            brand_visual_brief=brand_visual_brief,
+            template_fit_brief=template_fit_brief,
+            content_format_brief=content_format_brief,
+            format_family_plan=format_family_plan or {},
+            reference_asset_brief=reference_asset_brief,
+        )
+        objective_brief = self._objective_brief(objective_context)
+        render_constraints = self._render_constraints(prompt, studio_panel, decision)
+        generation_surface_contract = self._generation_surface_contract(
+            studio_panel=studio_panel,
+            objective_brief=objective_brief,
+            content_format_brief=content_format_brief,
+            format_family_plan=self._format_family_plan(format_family_plan),
+            visual_plan=self._visual_plan(visual_plan),
+            render_constraints=render_constraints,
+            reference_adaptation_profile=reference_adaptation_profile,
         )
         return {
             "brand_copy_brief": self._copy_brief(
@@ -3799,7 +4617,7 @@ class ContextCompilerService:
                 session_memory=session_memory or {},
             ),
             "brand_visual_brief": brand_visual_brief,
-            "objective_brief": self._objective_brief(objective_context),
+            "objective_brief": objective_brief,
             "audience_brief": self._audience_brief(audience, persona_context),
             "prompt_intelligence_brief": self._prompt_intelligence_brief(
                 brand_context.get("prompt_intelligence", {}) or {},
@@ -3807,21 +4625,20 @@ class ContextCompilerService:
             ),
             "content_format_brief": content_format_brief,
             "research_editorial_brief": self._research_editorial_brief(research_editorial_brief),
+            "live_research": live_research if isinstance(live_research, dict) else {},
             "format_family_plan": self._format_family_plan(format_family_plan),
             "content_plan": self._content_plan(content_plan),
             "visual_plan": self._visual_plan(visual_plan),
             "knowledge_brief": self._knowledge_brief(ordered_knowledge),
             "visual_knowledge_brief": visual_knowledge_brief,
             "visual_grounding_diagnostics": self._visual_grounding_diagnostics(visual_knowledge_brief),
-            "render_constraints": self._render_constraints(prompt, studio_panel, decision),
+            "render_constraints": render_constraints,
+            "generation_surface_contract": generation_surface_contract,
             "session_brief": self._session_brief(session_memory or {}, conversation_context or {}),
             "template_fit_brief": template_fit_brief,
             "reference_family_profile": reference_family_profile,
-            "reference_asset_brief": [
-                self._reference_asset_brief_item(asset)
-                for asset in reference_assets[:6]
-                if isinstance(asset, dict)
-            ],
+            "reference_adaptation_profile": reference_adaptation_profile,
+            "reference_asset_brief": reference_asset_brief,
             "asset_catalog": [
                 {
                     "asset_id": self._normalize_text(asset.get("asset_id"), limit=72),

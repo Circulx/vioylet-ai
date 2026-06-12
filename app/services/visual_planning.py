@@ -26,6 +26,7 @@ class VisualPlanningService:
         content_format_guide: dict[str, Any] | None = None,
         deliverable_type: str | None = None,
         template_context: dict[str, Any] | None = None,
+        reference_assets: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         research_editorial_brief = self.research_editorial.build(
             prompt=prompt,
@@ -38,6 +39,7 @@ class VisualPlanningService:
             content_format_guide=content_format_guide,
             deliverable_type=deliverable_type,
             template_context=template_context,
+            reference_assets=reference_assets,
         )
         format_family_plan = self.format_family_planning.build(
             studio_panel=studio_panel,

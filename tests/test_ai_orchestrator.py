@@ -3,10 +3,11 @@ import json
 from shutil import rmtree
 from types import SimpleNamespace
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from app.ai.contracts import AIOrchestrationRequest, CreativeDecisionPayload, GenerationSceneGraph, MessageStrategyPayload, SceneGraphValidationIssue, SceneGraphValidationReport, StructuredTextPayload
 from app.ai.orchestrator import AIOrchestratorService
@@ -1017,6 +1018,222 @@ def test_orchestrator_conditioning_allows_trusted_reference_creative_without_exp
     assert len(conditioning) == 1
 
 
+def test_orchestrator_conditioning_rejects_text_heavy_static_reference_when_topic_mismatches() -> None:
+    stale_reference = {
+        "asset_id": "old-static-surface",
+        "asset_role": "reference_creative",
+        "mime_type": "image/png",
+        "storage_path": "tenant/brand/old-static-surface.png",
+        "trust_level": "trusted",
+        "metadata": {
+            "label": "Reference creative",
+            "format_family": "static",
+            "surface_kind": "flattened_text_surface",
+            "overlay_safe": True,
+            "ocr_structure": {
+                "readable_text_blocks": 4,
+                "block_summary": [
+                    {"text_excerpt": "US Tariffs on BRICS Nations"},
+                    {"text_excerpt": "Trade tensions and export pressure"},
+                    {"text_excerpt": "Sanctions and tariffs"},
+                    {"text_excerpt": "BRICS growth outlook"},
+                ],
+            },
+        },
+    }
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a static post for LinkedIn comparing India's inflation to other countries and create a top 10 ranking.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png", "size": {"width": 1080, "height": 1350}},
+        generated_content=StructuredTextPayload(
+            headline="India's inflation in global context",
+            body="Compare inflation rates across countries.",
+            cta="Explore",
+            hashtags=["#Inflation"],
+            metadata={},
+        ),
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"brand_name": "Jiraaf", "guardrails": {}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        template_context={
+            "sequence_pack": {
+                "surface_policy": "style_reference_only",
+                "slides": [{"slide_index": 1, "reference_asset_path": "tenant/brand/old-static-surface.png"}],
+            }
+        },
+        layout_decision={},
+        reference_assets=[],
+        asset_catalog=[stale_reference],
+        resolution_policy={},
+        generate_image=True,
+    )
+    creative_decision = CreativeDecisionPayload.model_validate(
+        {
+            "layout_mode": "synthesized_layout",
+            "asset_strategy": {"use_generated_image": True, "template_surface_policy": "style_reference_only"},
+            "planning_hints": {},
+        }
+    )
+
+    selected = AIOrchestratorService._select_reference_image_assets(
+        request=request,
+        creative_decision=creative_decision,
+    )
+    conditioning = AIOrchestratorService._conditioning_reference_image_assets(
+        selected,
+        creative_decision=creative_decision,
+        request=request,
+    )
+
+    assert [asset["storage_path"] for asset in selected] == ["tenant/brand/old-static-surface.png"]
+    assert conditioning == []
+
+
+def test_orchestrator_conditioning_rejects_text_heavy_static_reference_even_when_subject_matches() -> None:
+    matching_reference = {
+        "asset_id": "matching-static-surface",
+        "asset_role": "reference_creative",
+        "mime_type": "image/png",
+        "storage_path": "tenant/brand/matching-static-surface.png",
+        "trust_level": "trusted",
+        "metadata": {
+            "label": "Inflation ranking static reference",
+            "format_family": "static",
+            "surface_kind": "flattened_text_surface",
+            "overlay_safe": True,
+            "ocr_structure": {
+                "readable_text_blocks": 3,
+                "block_summary": [
+                    {"text_excerpt": "Global inflation ranking"},
+                    {"text_excerpt": "India inflation compared with other countries"},
+                    {"text_excerpt": "Top 10 inflation rates"},
+                ],
+            },
+        },
+    }
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a static post for LinkedIn comparing India's inflation to other countries and create a top 10 ranking.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png", "size": {"width": 1080, "height": 1350}},
+        generated_content=StructuredTextPayload(
+            headline="India's inflation in global context",
+            body="Compare inflation rates across countries.",
+            cta="Explore",
+            hashtags=["#Inflation"],
+            metadata={},
+        ),
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"brand_name": "Jiraaf", "guardrails": {}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        template_context={
+            "sequence_pack": {
+                "surface_policy": "style_reference_only",
+                "slides": [{"slide_index": 1, "reference_asset_path": "tenant/brand/matching-static-surface.png"}],
+            }
+        },
+        layout_decision={},
+        reference_assets=[],
+        asset_catalog=[matching_reference],
+        resolution_policy={},
+        generate_image=True,
+    )
+    creative_decision = CreativeDecisionPayload.model_validate(
+        {
+            "layout_mode": "synthesized_layout",
+            "asset_strategy": {"use_generated_image": True, "template_surface_policy": "style_reference_only"},
+            "planning_hints": {},
+        }
+    )
+
+    conditioning = AIOrchestratorService._conditioning_reference_image_assets(
+        [matching_reference],
+        creative_decision=creative_decision,
+        request=request,
+    )
+
+    assert conditioning == []
+
+
+def test_orchestrator_conditioning_rejects_infographic_text_modules_without_topic_evidence() -> None:
+    stale_reference = {
+        "asset_id": "old-infographic-surface",
+        "asset_role": "reference_creative",
+        "mime_type": "image/png",
+        "storage_path": "tenant/brand/old-infographic-surface.png",
+        "trust_level": "trusted",
+        "metadata": {
+            "label": "Reference infographic",
+            "format_family": "infographic",
+            "overlay_safe": True,
+            "sample_page_blueprint": {
+                "layout_category": "card_callout_grid",
+                "module_counts": {
+                    "top_text_band_count": 2,
+                    "horizontal_band_count": 4,
+                    "card_like_count": 4,
+                },
+            },
+        },
+    }
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create an infographic for LinkedIn on the top 6 countries that invest in India, by comparing the country-wise FDI equity inflows.",
+        studio_panel={"platform_preset": "linkedin", "format": "infographic", "file_type": "png", "size": {"width": 1080, "height": 1350}},
+        generated_content=StructuredTextPayload(
+            headline="Top FDI inflow countries",
+            body="Compare country-wise FDI equity inflows into India.",
+            cta="Explore",
+            hashtags=["#FDI"],
+            metadata={},
+        ),
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"brand_name": "Jiraaf", "guardrails": {}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        template_context={
+            "sequence_pack": {
+                "surface_policy": "style_reference_only",
+                "slides": [{"slide_index": 1, "reference_asset_path": "tenant/brand/old-infographic-surface.png"}],
+            }
+        },
+        layout_decision={},
+        reference_assets=[],
+        asset_catalog=[stale_reference],
+        resolution_policy={},
+        generate_image=True,
+    )
+    creative_decision = CreativeDecisionPayload.model_validate(
+        {
+            "layout_mode": "synthesized_layout",
+            "asset_strategy": {"use_generated_image": True, "template_surface_policy": "style_reference_only"},
+            "planning_hints": {},
+        }
+    )
+
+    conditioning = AIOrchestratorService._conditioning_reference_image_assets(
+        [stale_reference],
+        creative_decision=creative_decision,
+        request=request,
+    )
+
+    assert AIOrchestratorService._reference_asset_is_text_bearing_surface(stale_reference) is True
+    assert conditioning == []
+
+
 def test_orchestrator_normalizes_rich_metadata_fields() -> None:
     fallback = {
         "headline": "Fallback headline",
@@ -1157,6 +1374,79 @@ def test_orchestrator_repairs_static_metadata_to_keep_one_dominant_message() -> 
         "Neighborhood triggers beat citywide warnings",
         "Route-level timing matters",
     ]
+
+
+def test_orchestrator_preserves_static_top_n_rows_when_request_is_list_surface() -> None:
+    prompt = "Create a static post on the top 5 providers by key rules and fees."
+    rows = [
+        "Provider A - setup fee applies only after approval",
+        "Provider B - monthly fee varies by usage tier",
+        "Provider C - waiver rules depend on account activity",
+        "Provider D - late charge applies after grace period",
+        "Provider E - review conditions before renewal",
+    ]
+
+    repaired = AIOrchestratorService.normalize_metadata_payload(
+        {
+            "headline": "Compare the top provider rules",
+            "supporting_line": "Use the five-row comparison before choosing.",
+            "proof_points": rows,
+            "static_panel_spec": {
+                "panel_goal": "ranked_list",
+                "dominant_message": "Compare five provider rules before choosing.",
+                "proof_points": rows,
+            },
+        },
+        fallback={},
+        body="A compact comparison should preserve each requested provider row.",
+        compiled_context={"content_format_brief": {"format": "static"}},
+        prompt=prompt,
+    )
+
+    assert repaired["proof_points"] == rows
+    assert repaired["static_panel_spec"]["panel_goal"] == "ranked_list"
+    assert repaired["static_panel_spec"]["proof_points"] == rows
+    assert repaired["data_list_surface_contract"]["requested_count"] == 5
+    assert repaired["data_list_surface_contract"]["module_count"] == 5
+
+
+def test_orchestrator_metadata_limits_expand_for_static_top_ten_surface() -> None:
+    limits = AIOrchestratorService._dynamic_metadata_limits(
+        metadata={},
+        body="",
+        compiled_context={"content_format_brief": {"format": "static"}},
+        prompt="Create a static post comparing a metric and create a top 10 ranking.",
+    )
+
+    assert limits["proof_points"] >= 10
+    assert limits["stat_highlights"] >= 10
+    assert limits["claim_evidence_pairs"] >= 10
+
+
+def test_orchestrator_live_research_prompt_section_preserves_top_ten_rows() -> None:
+    facts = [
+        {"label": f"Rank {index}", "value": f"Verified value {index}", "source_title": "Ranking source"}
+        for index in range(1, 11)
+    ]
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a static post comparing a metric and create a top 10 ranking.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png"},
+        resolved_brand_context={},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        conversation_context={},
+        session_memory={},
+        live_research={"verified_fact_limit": 10, "verified_facts": facts},
+    )
+
+    section = AIOrchestratorService._live_research_verified_facts_prompt_section(request)
+
+    assert "Rank 10" in section
+    assert "Verified value 10" in section
 
 
 def test_orchestrator_repairs_infographic_metadata_into_distinct_sections() -> None:
@@ -2001,8 +2291,11 @@ def test_orchestrator_build_image_prompt_trims_large_context() -> None:
     assert len(prompt) <= AIOrchestratorService.IMAGE_PROMPT_MAX_LENGTH
     assert "Reference assets" in prompt
     assert "Layout approach" in prompt
-    assert "Do not include any text" in prompt
-    assert "Semantic visual brief" in prompt
+    assert "Render finished readable main content" in prompt
+    assert "Static/infographic topic-fit checklist" in prompt
+    assert "native feed ad" in prompt
+    assert "one bold central message" in prompt
+    assert "Semantic creative brief" in prompt
     assert "content-led hero concept" in prompt
 
 
@@ -2043,8 +2336,16 @@ def test_orchestrator_build_image_prompt_pushes_premium_visual_quality() -> None
     assert "premium, high-end, richly detailed" in prompt
     assert "research discipline" in prompt.lower()
     assert "brand and asset discipline" in prompt.lower()
+    assert "simple, scroll-stopping social ad composition" in prompt
+    assert "one bold central message" in prompt
+    assert "Content + visual explanation contract" in prompt
+    assert "both concise readable content and topic-matched imagery" in prompt
+    assert "text states the idea; visuals show, compare, demonstrate, or symbolize" in prompt
+    assert "Image hallucination control" in prompt
+    assert "treat every visible word, number, ranking, chart label" in prompt
+    assert "Do not invent, borrow, or carry over" in prompt
     assert "every image, icon, chart cue, or decorative asset must earn its place" in prompt
-    assert "communicate this exact idea visually" in prompt
+    assert "communicate this exact idea through finished readable content plus topic-specific visual hierarchy" in prompt
     assert "Do not default to a standalone professional portrait" in prompt
 
 
@@ -7549,6 +7850,28 @@ def test_orchestrator_uses_ai_final_render_for_style_reference_sequence_pack_fro
     ) == "ai_renders_finished_slide_with_exact_copy"
 
 
+@pytest.mark.parametrize("format_name", ["static", "infographic"])
+def test_orchestrator_static_infographic_strategy_lets_image_model_render_main_content(format_name: str) -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a branded social creative.",
+        studio_panel={"platform_preset": "linkedin", "format": format_name, "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"brand_name": "Jiraaf"},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+
+    assert AIOrchestratorService._ai_final_render_text_strategy(
+        request,
+        CreativeDecisionPayload(asset_strategy={"use_generated_image": True}),
+    ) == "ai_renders_finished_slide_with_exact_copy"
+
+
 def test_orchestrator_generates_multiple_final_render_assets_for_carousel() -> None:
     service = AIOrchestratorService()
     service.guardrails = SimpleNamespace(validate_prompt=lambda *args, **kwargs: None, validate_output=lambda *args, **kwargs: None)
@@ -8101,13 +8424,18 @@ def test_build_final_render_prompt_emphasizes_infographic_structure() -> None:
     )
 
     lowered = prompt.casefold()
-    assert "genuine infographic" in lowered
-    assert "not a plain headline poster" in lowered
-    assert "modular visual explainer" in lowered
-    assert "infographic section plan to preserve" in lowered
+    assert "llm-led composition authority for static/infographic" in lowered
+    assert "current user prompt is the subject authority" in lowered
+    assert "compact social infographic" in lowered
+    assert "icons/charts/diagrams only when they explain the prompt" in lowered
+    assert "backend controls only the empty space corner and the footer/disclaimer strip" in lowered
+    assert "infographic surface enforcement" not in lowered
+    assert "module-first infographic surface" not in lowered
+    assert "infographic section plan to preserve" not in lowered
+    assert "scene-graph geometry contract json" not in lowered
 
 
-def test_build_final_render_prompt_reserves_text_for_backend_overlay() -> None:
+def test_build_final_render_prompt_renders_main_text_for_static_and_defers_only_logo_footer() -> None:
     request = AIOrchestrationRequest(
         tenant_id=uuid4(),
         brand_space_id=uuid4(),
@@ -8151,14 +8479,221 @@ def test_build_final_render_prompt_reserves_text_for_backend_overlay() -> None:
     )
 
     lowered = prompt.casefold()
-    assert "text overlay contract" in lowered
-    assert "do not render any readable words" in lowered
+    assert "llm-led composition authority for static/infographic" in lowered
+    assert "current user prompt is the subject authority" in lowered
+    assert "backend controls only the empty space corner and the footer/disclaimer strip" in lowered
+    assert "static/infographic content authority" in lowered
+    assert "native feed ad" in lowered
+    assert "one bold central message" in lowered
+    assert "content + visual explanation contract" in lowered
+    assert "both concise readable content and topic-matched imagery" in lowered
+    assert "text states the idea; visuals show, compare, demonstrate, or symbolize" in lowered
+    assert "image hallucination control" in lowered
+    assert "treat every visible word, number, ranking, chart label" in lowered
+    assert "do not invent, borrow, or carry over" in lowered
+    assert "compact hallucination guard" in lowered
+    assert "must come only from the prompt, approved copy, verified facts, live research, or brand context" in lowered
+    assert "never invent fake values, stale template topics, placeholders, unrelated industries, or model-memory facts" in lowered
+    assert "upstream headline, body, proof points, cta, and metadata only as optional semantic hints" in lowered
+    assert "do not invent exact dates, percentages, currency amounts, rankings, table values" in lowered
+    assert "final text render contract" not in lowered
     assert "use this headline verbatim" not in lowered
+    assert "text overlay contract" not in lowered
+    assert "do not render any readable words" not in lowered
     assert "copy discipline: keep the message concise" in lowered
-    assert "layout discipline: use an advanced explanatory composition" in lowered
-    assert "do not crop or crowd any reserved text" in lowered
+    assert "layout discipline: use a simple, scroll-stopping social ad composition" in lowered
+    assert "do not crop or crowd any reserved text" not in lowered
     assert "do not render, invent, stylize" in lowered
-    assert "static panel plan to preserve" in lowered
+    assert "static panel plan to preserve" not in lowered
+
+
+def test_build_final_render_prompt_preserves_static_data_list_surface_contract() -> None:
+    rows = [
+        "Option A - first rule",
+        "Option B - second rule",
+        "Option C - third rule",
+        "Option D - fourth rule",
+        "Option E - fifth rule",
+    ]
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a static post comparing the top 5 options and key rules.",
+        studio_panel={"platform_preset": "instagram", "format": "static", "file_type": "png", "size": {"width": 1080, "height": 1080}},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"brand_name": "Jiraaf", "visual_identity": {}, "guardrails": {}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+    text_payload = StructuredTextPayload(
+        headline="Top options, clearer rules",
+        body="Compare the rule differences before choosing.",
+        cta="Learn more",
+        hashtags=[],
+        metadata={
+            "proof_points": rows,
+            "data_list_surface_contract": {
+                "intent": "top_n_list",
+                "format": "static",
+                "requested_count": 5,
+                "available_count": 5,
+                "module_count": 5,
+            },
+            "static_panel_spec": {
+                "panel_goal": "ranked_list",
+                "dominant_message": "Compare five options before choosing.",
+                "proof_points": rows,
+            },
+        },
+    )
+    scene_graph = GenerationSceneGraph.model_validate(
+        {
+            "canvas": {"width": 1080, "height": 1080, "platform": "instagram", "file_type": "png"},
+            "elements": [],
+            "styles": {},
+        }
+    )
+
+    prompt = AIOrchestratorService.build_final_render_prompt(
+        request=request,
+        text_payload=text_payload,
+        creative_decision=CreativeDecisionPayload(layout_mode="synthesized_layout", confidence=0.8),
+        scene_graph=scene_graph,
+    )
+
+    lowered = prompt.casefold()
+    assert "llm-led composition authority for static/infographic" in lowered
+    assert "data/list surface contract" not in lowered
+    assert "reserve 5 distinct module slot(s)" not in lowered
+    assert "do not collapse it into a single generic hero illustration" not in lowered
+    assert "proof module count=5" not in lowered
+    assert "optional approved proof/list hints" in lowered
+    assert "option e - fifth rule" in lowered
+
+
+def test_build_final_render_prompt_uses_ranking_table_guidance_for_static_top_ten() -> None:
+    rows = [f"Rank {index} - approved row" for index in range(1, 11)]
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a static post for LinkedIn comparing a metric and create a top 10 ranking.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png", "size": {"width": 1080, "height": 1350}},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"brand_name": "Jiraaf", "visual_identity": {}, "guardrails": {}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+    text_payload = StructuredTextPayload(
+        headline="Top 10 ranking",
+        body="Compare the approved rows in one scan-friendly surface.",
+        cta="Learn more",
+        hashtags=[],
+        metadata={
+            "proof_points": rows,
+            "data_list_surface_contract": {
+                "intent": "top_n_list",
+                "format": "static",
+                "surface_mode": "ranking_table",
+                "requested_count": 10,
+                "available_count": 10,
+                "module_count": 10,
+            },
+            "static_panel_spec": {
+                "panel_goal": "ranked_list",
+                "dominant_message": "Compare the complete top 10 ranking.",
+                "proof_points": rows,
+            },
+        },
+    )
+    scene_graph = GenerationSceneGraph.model_validate(
+        {
+            "canvas": {"width": 1080, "height": 1350, "platform": "linkedin", "file_type": "png"},
+            "elements": [],
+            "styles": {},
+        }
+    )
+
+    prompt = AIOrchestratorService.build_final_render_prompt(
+        request=request,
+        text_payload=text_payload,
+        creative_decision=CreativeDecisionPayload(layout_mode="synthesized_layout", confidence=0.8),
+        scene_graph=scene_graph,
+    )
+
+    lowered = prompt.casefold()
+    assert "llm-led composition authority for static/infographic" in lowered
+    assert "comparison/ranking treatment" in lowered
+    assert "reserve 10 distinct module slot(s)" not in lowered
+    assert "dense ranking-table composition" not in lowered
+    assert "no oversized hero illustration" not in lowered
+    assert "generic finance reaction image" not in lowered
+    assert "proof module count=10" not in lowered
+    assert "rank 10 - approved row" in lowered
+
+
+def test_build_final_render_prompt_reserves_blank_slots_when_static_ranking_rows_are_missing() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a static post for LinkedIn comparing a market metric and create a top 10 ranking.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png", "size": {"width": 1080, "height": 1350}},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"brand_name": "Jiraaf", "visual_identity": {}, "guardrails": {}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+    text_payload = StructuredTextPayload(
+        headline="Top 10 ranking",
+        body="Compare the requested ranking in one scan-friendly surface.",
+        cta="Learn more",
+        hashtags=[],
+        metadata={
+            "proof_points": [],
+            "data_list_surface_contract": {
+                "intent": "top_n_list",
+                "format": "static",
+                "surface_mode": "ranking_table",
+                "requested_count": 10,
+                "available_count": 0,
+                "module_count": 10,
+            },
+            "static_panel_spec": {
+                "panel_goal": "ranked_list",
+                "dominant_message": "Compare the complete top 10 ranking.",
+            },
+        },
+    )
+    scene_graph = GenerationSceneGraph.model_validate(
+        {
+            "canvas": {"width": 1080, "height": 1350, "platform": "linkedin", "file_type": "png"},
+            "elements": [],
+            "styles": {},
+        }
+    )
+
+    prompt = AIOrchestratorService.build_final_render_prompt(
+        request=request,
+        text_payload=text_payload,
+        creative_decision=CreativeDecisionPayload(layout_mode="synthesized_layout", confidence=0.8),
+        scene_graph=scene_graph,
+    )
+
+    lowered = prompt.casefold()
+    assert "llm-led composition authority for static/infographic" in lowered
+    assert "only 0 approved row/card anchor(s) are available" not in lowered
+    assert "clean blank overlay-safe shells" not in lowered
+    assert "do not invent missing row labels" not in lowered
+    assert "generic finance reaction image" not in lowered
+    assert "do not invent exact dates, percentages, currency amounts, rankings, table values" in lowered
 
 
 class _StubTextProvider:
@@ -8834,6 +9369,1786 @@ def test_orchestrator_render_final_assets_only_reassesses_stale_quality_before_b
     assert final_assets
     assert image_provider.calls
     assert len(updated_text_payload.metadata["carousel_slide_specs"]) >= 3
+
+
+@pytest.mark.parametrize("format_name", ["static", "infographic"])
+def test_render_final_assets_only_defers_low_quality_static_infographic_plan_to_final_render(format_name: str) -> None:
+    service = AIOrchestratorService()
+    image_provider = _StubImageProvider()
+    service.providers = SimpleNamespace(get_image_provider=lambda: image_provider)
+    service.storage = SimpleNamespace(exists=lambda path: False, absolute_path=lambda path: path)
+    service.validate_scene_graph = lambda **kwargs: SceneGraphValidationReport(status="clean", issues=[], summary=[], repairable=True)
+    service.assess_creative_quality = lambda **kwargs: {
+        "score": 0.41,
+        "issues": ["sparse_scene_graph", "craft_direction_weak"],
+        "retry_recommended": True,
+    }
+
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a premium social creative explaining safer planning decisions.",
+        studio_panel={"platform_preset": "linkedin", "format": format_name, "file_type": "png", "size": {"width": 1080, "height": 1350}},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"brand_name": "Jiraaf"},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        layout_decision={"mode": "synthesized_layout"},
+        reference_assets=[],
+        asset_catalog=[],
+        resolution_policy={},
+        generate_image=True,
+    )
+    text_payload = StructuredTextPayload(
+        headline="Plan With More Confidence",
+        body="Use clear evidence before making a decision.",
+        cta="Explore options",
+        hashtags=[],
+        metadata={"supporting_line": "Use clear evidence before making a decision."},
+    )
+    creative_decision = CreativeDecisionPayload(
+        layout_mode="synthesized_layout",
+        confidence=0.86,
+        asset_strategy={"dominant_visual_system": "generated_image", "use_generated_image": True},
+    )
+    scene_graph = GenerationSceneGraph.model_validate(
+        {
+            "canvas": {"width": 1080, "height": 1350, "platform": "linkedin", "file_type": "png"},
+            "layout_mode": "synthesized_layout",
+            "confidence": 0.86,
+            "layers": ["background", "content"],
+            "elements": [
+                {"element_id": "background", "element_type": "flat_color", "role": "background", "geometry": {"x": 0.0, "y": 0.0, "width": 1.0, "height": 1.0}},
+                {"element_id": "headline", "element_type": "text", "role": "headline", "geometry": {"x": 0.08, "y": 0.12, "width": 0.58, "height": 0.14}, "text": "Plan With More Confidence"},
+            ],
+            "styles": {"layout_archetype": "minimal"},
+            "assets": [],
+        }
+    )
+
+    _final_assets, final_asset, _updated_text_payload, _final_scene_graph = service.render_final_assets_only(
+        request=request,
+        text_payload=text_payload,
+        creative_decision=creative_decision,
+        scene_graph=scene_graph,
+        message_strategy=MessageStrategyPayload(),
+        validation_report=SceneGraphValidationReport(status="clean", issues=[], summary=[], repairable=True),
+        generation_path="image_led_social",
+        selected_reference_images=[],
+        conditioning_reference_images=[],
+        compiled_context={},
+        quality_assessment={"score": 0.41, "issues": ["sparse_scene_graph", "craft_direction_weak"]},
+        quality_retry_attempts=0,
+        fresh_replan_attempted=False,
+    )
+
+    assert final_asset is not None
+    assert image_provider.calls
+    prompt = image_provider.calls[0]["prompt"]
+    assert "Quality improvement note" in prompt
+    assert "sparse_scene_graph" in prompt
+    assert "craft_direction_weak" in prompt
+    assert "Static/infographic content authority" in prompt
+
+
+def test_render_final_assets_only_keeps_low_quality_carousel_plan_blocked() -> None:
+    service = AIOrchestratorService()
+    image_provider = _StubImageProvider()
+    service.providers = SimpleNamespace(get_image_provider=lambda: image_provider)
+    service.storage = SimpleNamespace(exists=lambda path: False, absolute_path=lambda path: path)
+    service.validate_scene_graph = lambda **kwargs: SceneGraphValidationReport(status="clean", issues=[], summary=[], repairable=True)
+    service.assess_creative_quality = lambda **kwargs: {
+        "score": 0.41,
+        "issues": ["sparse_scene_graph", "craft_direction_weak"],
+        "retry_recommended": True,
+    }
+
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a LinkedIn carousel explaining safer planning decisions.",
+        studio_panel={"platform_preset": "linkedin", "format": "carousel", "file_type": "png", "size": {"width": 1080, "height": 1350}},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"brand_name": "Jiraaf"},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        layout_decision={"mode": "synthesized_layout"},
+        reference_assets=[],
+        asset_catalog=[],
+        resolution_policy={},
+        generate_image=True,
+    )
+    text_payload = StructuredTextPayload(
+        headline="Plan With More Confidence",
+        body="Use clear evidence before making a decision.",
+        cta="Explore options",
+        hashtags=[],
+        metadata={},
+    )
+    creative_decision = CreativeDecisionPayload(
+        layout_mode="synthesized_layout",
+        confidence=0.86,
+        asset_strategy={"dominant_visual_system": "generated_image", "use_generated_image": True},
+    )
+    scene_graph = GenerationSceneGraph.model_validate(
+        {
+            "canvas": {"width": 1080, "height": 1350, "platform": "linkedin", "file_type": "png"},
+            "layout_mode": "synthesized_layout",
+            "confidence": 0.86,
+            "layers": ["background", "content"],
+            "elements": [
+                {"element_id": "background", "element_type": "flat_color", "role": "background", "geometry": {"x": 0.0, "y": 0.0, "width": 1.0, "height": 1.0}},
+                {"element_id": "headline", "element_type": "text", "role": "headline", "geometry": {"x": 0.08, "y": 0.12, "width": 0.58, "height": 0.14}, "text": "Plan With More Confidence"},
+            ],
+            "styles": {"layout_archetype": "minimal"},
+            "assets": [],
+        }
+    )
+
+    with pytest.raises(GenerationFailureError) as exc_info:
+        service.render_final_assets_only(
+            request=request,
+            text_payload=text_payload,
+            creative_decision=creative_decision,
+            scene_graph=scene_graph,
+            message_strategy=MessageStrategyPayload(),
+            validation_report=SceneGraphValidationReport(status="clean", issues=[], summary=[], repairable=True),
+            generation_path="image_led_social",
+            selected_reference_images=[],
+            conditioning_reference_images=[],
+            compiled_context={},
+            quality_assessment={"score": 0.41, "issues": ["sparse_scene_graph", "craft_direction_weak"]},
+            quality_retry_attempts=0,
+            fresh_replan_attempted=False,
+        )
+
+    assert exc_info.value.reason_code == "final_render_quality_blocked"
+    assert image_provider.calls == []
+
+
+@pytest.mark.parametrize("format_name", ["static", "infographic"])
+def test_orchestrator_static_infographic_ai_renders_main_text_without_overlay_payloads(format_name: str) -> None:
+    service = AIOrchestratorService()
+    image_provider = _StubImageProvider()
+    service.providers = SimpleNamespace(get_image_provider=lambda: image_provider)
+    service.storage = SimpleNamespace(exists=lambda path: False, absolute_path=lambda path: path)
+
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a social creative about safer planning.",
+        studio_panel={"platform_preset": "instagram", "format": format_name, "file_type": "png", "size": {"width": 1080, "height": 1350}},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"brand_name": "Jiraaf"},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        layout_decision={"mode": "synthesized_layout"},
+        reference_assets=[],
+        asset_catalog=[],
+        resolution_policy={},
+        generate_image=True,
+    )
+    text_payload = StructuredTextPayload(
+        headline="Plan With More Confidence",
+        body="Use clear evidence before making a decision.",
+        cta="Explore options",
+        hashtags=[],
+        metadata={"supporting_line": "Use clear evidence before making a decision."},
+    )
+    creative_decision = CreativeDecisionPayload(
+        layout_mode="synthesized_layout",
+        confidence=0.86,
+        asset_strategy={"dominant_visual_system": "generated_image", "use_generated_image": True},
+    )
+    scene_graph = GenerationSceneGraph.model_validate(
+        {
+            "canvas": {"width": 1080, "height": 1350, "platform": "instagram", "file_type": "png"},
+            "layout_mode": "synthesized_layout",
+            "confidence": 0.86,
+            "layers": ["background", "content", "brand"],
+            "elements": [
+                {"element_id": "background", "element_type": "flat_color", "role": "background", "geometry": {"x": 0.0, "y": 0.0, "width": 1.0, "height": 1.0}},
+                {"element_id": "headline", "element_type": "text", "role": "headline", "geometry": {"x": 0.08, "y": 0.12, "width": 0.58, "height": 0.14}, "text": "Plan With More Confidence"},
+                {"element_id": "body", "element_type": "text", "role": "body", "geometry": {"x": 0.08, "y": 0.3, "width": 0.52, "height": 0.18}, "text": "Use clear evidence before making a decision."},
+                {"element_id": "cta", "element_type": "text", "role": "cta", "geometry": {"x": 0.08, "y": 0.82, "width": 0.34, "height": 0.08}, "text": "Explore options"},
+            ],
+            "styles": {"layout_archetype": "editorial_split"},
+            "assets": [],
+            "template_adaptation": {},
+            "validation_hints": {},
+        }
+    )
+
+    _final_assets, final_asset, _updated_text_payload, _final_scene_graph = service.render_final_assets_only(
+        request=request,
+        text_payload=text_payload,
+        creative_decision=creative_decision,
+        scene_graph=scene_graph,
+        message_strategy=MessageStrategyPayload(),
+        validation_report=SceneGraphValidationReport(status="clean", issues=[], summary=[], repairable=True),
+        generation_path="image_led_social",
+        selected_reference_images=[],
+        conditioning_reference_images=[],
+        compiled_context={},
+        quality_assessment={"score": 0.9, "issues": []},
+        quality_retry_attempts=0,
+        fresh_replan_attempted=False,
+    )
+
+    assert final_asset is not None
+    assert final_asset.metadata["text_overlay_strategy"] == "ai_renders_finished_slide_with_exact_copy"
+    assert "render_overlay_scene_graph" not in final_asset.metadata
+    assert "render_overlay_text" not in final_asset.metadata
+    assert image_provider.calls
+    assert "Static/infographic content authority" in image_provider.calls[0]["prompt"]
+    assert "Current user prompt is the subject authority" in image_provider.calls[0]["prompt"]
+    assert "FINAL TEXT RENDER CONTRACT" not in image_provider.calls[0]["prompt"]
+    assert "TEXT OVERLAY CONTRACT" not in image_provider.calls[0]["prompt"]
+
+
+def test_final_render_output_quality_flags_blank_static_image() -> None:
+    service = AIOrchestratorService()
+    service.template_vision = SimpleNamespace(client=None)
+    root = Path("tests") / f"final-render-output-quality-{uuid4()}"
+    storage_path = "tenant/brand/generated/blank.png"
+    target = root / storage_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (1024, 1024), color=(248, 248, 248)).save(target, format="PNG")
+
+    class _Storage:
+        def exists(self, path: str) -> bool:
+            return (root / path).exists()
+
+        def absolute_path(self, path: str) -> str:
+            return str((root / path).resolve())
+
+    service.storage = _Storage()
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a static social creative.",
+        studio_panel={"platform_preset": "instagram", "format": "static", "file_type": "png", "size": {"width": 1080, "height": 1080}},
+        resolved_brand_context={},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+
+    report = service._assess_final_render_output_image(
+        request=request,
+        asset={"storage_path": storage_path},
+        image_size="1024x1024",
+    )
+
+    assert report is not None
+    assert report["retry_recommended"] is True
+    assert "low_detail_or_blank_output" in report["issues"]
+
+    if root.exists():
+        for child in sorted(root.rglob("*"), reverse=True):
+            if child.is_file():
+                child.unlink()
+            elif child.is_dir():
+                child.rmdir()
+        root.rmdir()
+
+
+def test_final_render_output_quality_allows_static_main_text_and_flags_topic_drift() -> None:
+    service = AIOrchestratorService()
+    root = Path("tests") / f"final-render-vision-quality-{uuid4()}"
+    storage_path = "tenant/brand/generated/vision-output.png"
+    target = root / storage_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    image = Image.new("RGB", (1024, 1024), color=(248, 248, 248))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((140, 160, 840, 760), fill=(30, 80, 140))
+    image.save(target, format="PNG")
+
+    class _Storage:
+        def exists(self, path: str) -> bool:
+            return (root / path).exists()
+
+        def absolute_path(self, path: str) -> str:
+            return str((root / path).resolve())
+
+    class _Vision:
+        client = object()
+
+        def analyze(self, image_path: str, fallback: dict) -> dict:
+            return {
+                "page_blueprint": {
+                    "layout_category": "editorial_explainer",
+                    "density": "balanced",
+                    "module_counts": {"text_block_count": 3},
+                    "visual_permissions": {"cta_allowed": False},
+                },
+                "ocr_structure": {
+                    "readable_text_blocks": 3,
+                    "logo_text_present": True,
+                    "text_overlap_or_collision_risk": "high",
+                    "block_summary": [
+                        {"role": "headline", "text_excerpt": "US Tariffs on BRICS Nations"},
+                        {"role": "body", "text_excerpt": "In 2025, US tariff hikes raised global trade tensions."},
+                    ],
+                },
+                "premium_quality": {
+                    "overall_score": 0.52,
+                    "craft_score": 0.5,
+                    "spacing_score": 0.55,
+                },
+                "visual_craft_dna": {"polish_level": "basic"},
+                "subject_semantics": {
+                    "scene_type": "policy explainer poster",
+                    "primary_subjects": ["US tariffs", "BRICS nations", "trade tensions"],
+                    "domain_cues": ["sanctions", "global trade"],
+                },
+            }
+
+    service.storage = _Storage()
+    service.template_vision = _Vision()
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a static post for LinkedIn comparing India inflation with other countries and create a top 10 ranking.",
+        studio_panel={"platform_preset": "instagram", "format": "static", "file_type": "png", "size": {"width": 1080, "height": 1080}},
+        resolved_brand_context={},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+
+    report = service._assess_final_render_output_image(
+        request=request,
+        asset={"storage_path": storage_path},
+        image_size="1024x1024",
+    )
+
+    assert report is not None
+    assert report["retry_recommended"] is True
+    assert "vision_readable_text_in_substrate" not in report["issues"]
+    assert "vision_ai_generated_logo_text" in report["issues"]
+    assert "vision_low_premium_quality" in report["issues"]
+    assert "vision_subject_relevance_weak" in report["issues"]
+    assert "vision_visible_claim_hallucination" in report["issues"]
+    assert "vision_subject_relevance_weak" in report["hard_retry_issues"]
+    assert "vision_visible_claim_hallucination" in report["hard_retry_issues"]
+    assert report["vision_quality"]["status"] == "openai_vision_enhanced"
+    assert report["vision_quality"]["topic_alignment"]["status"] == "weak"
+    assert report["vision_quality"]["visible_claims"]["status"] == "unsupported_specificity"
+
+    if root.exists():
+        for child in sorted(root.rglob("*"), reverse=True):
+            if child.is_file():
+                child.unlink()
+            elif child.is_dir():
+                child.rmdir()
+        root.rmdir()
+
+
+def test_final_render_visible_claim_report_allows_prompt_supported_specifics() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a static post about increasing engagement by 30% with a top 3 AI creative workflow.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png"},
+        resolved_brand_context={},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+
+    report = AIOrchestratorService._final_render_visible_claim_hallucination_report(
+        request=request,
+        ocr_structure={
+            "headline_text": "Increase engagement by 30%",
+            "block_summary": [{"role": "proof", "text_excerpt": "Top 3 AI creative workflow"}],
+        },
+    )
+
+    assert report["status"] == "ok"
+    assert report["unsupported_specific_claims"] == []
+
+
+def test_final_render_visible_claim_report_allows_approved_text_payload_specifics() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a static LinkedIn post about employer compliance updates.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png"},
+        resolved_brand_context={},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+    text_payload = StructuredTextPayload(
+        headline="Labour Laws 2025",
+        body="Top 3 compliance actions for HR teams.",
+        cta="Review the checklist",
+        hashtags=[],
+        metadata={"proof_points": ["Payroll audits", "Wage code readiness", "Policy documentation"]},
+    )
+
+    report = AIOrchestratorService._final_render_visible_claim_hallucination_report(
+        request=request,
+        ocr_structure={
+            "headline_text": "Labour Laws 2025",
+            "block_summary": [{"role": "proof", "text_excerpt": "Top 3 compliance actions"}],
+        },
+        approved_text_payload=text_payload,
+    )
+
+    assert report["status"] == "ok"
+    assert report["unsupported_specific_claims"] == []
+    assert report["unsupported_named_claims"] == []
+
+
+def test_final_render_visible_claim_report_flags_unsupported_named_claims_without_numbers() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a static LinkedIn post about India's labour law updates for employers.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png"},
+        resolved_brand_context={},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+
+    report = AIOrchestratorService._final_render_visible_claim_hallucination_report(
+        request=request,
+        ocr_structure={
+            "headline_text": "US Tariff Policy Update",
+            "block_summary": [{"role": "proof", "text_excerpt": "BRICS Nations face trade pressure"}],
+        },
+    )
+
+    assert report["status"] == "unsupported_named_claim"
+    assert "US Tariff Policy Update" in report["unsupported_named_claims"]
+    assert "BRICS Nations" in report["unsupported_named_claims"]
+
+
+def test_final_render_visible_claim_report_does_not_allow_strategy_context_as_facts() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a static LinkedIn post about India's labour law updates for employers.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png"},
+        resolved_brand_context={},
+        persona_context={"audience_note": "Earlier draft mentioned BRICS Nations."},
+        objective_context={"market_positioning": "US Tariff Policy Update"},
+        retrieved_knowledge={},
+    )
+
+    report = AIOrchestratorService._final_render_visible_claim_hallucination_report(
+        request=request,
+        ocr_structure={
+            "headline_text": "US Tariff Policy Update",
+            "block_summary": [{"role": "proof", "text_excerpt": "BRICS Nations face trade pressure"}],
+        },
+    )
+
+    assert report["status"] == "unsupported_named_claim"
+    assert "US Tariff Policy Update" in report["unsupported_named_claims"]
+    assert "BRICS Nations" in report["unsupported_named_claims"]
+
+
+def test_final_render_output_quality_flags_unsupported_named_claim_hallucination() -> None:
+    service = AIOrchestratorService()
+    root = Path("tests") / f"final-render-named-claim-{uuid4()}"
+    storage_path = "tenant/brand/generated/named-claim-output.png"
+    target = root / storage_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    image = Image.new("RGB", (1024, 1024), color=(248, 248, 248))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((140, 160, 840, 760), fill=(30, 80, 140))
+    image.save(target, format="PNG")
+
+    class _Storage:
+        def exists(self, path: str) -> bool:
+            return (root / path).exists()
+
+        def absolute_path(self, path: str) -> str:
+            return str((root / path).resolve())
+
+    class _Vision:
+        client = object()
+
+        def analyze(self, image_path: str, fallback: dict) -> dict:
+            return {
+                "page_blueprint": {
+                    "layout_category": "editorial_explainer",
+                    "density": "balanced",
+                    "module_counts": {"text_block_count": 3, "large_visual_count": 1},
+                    "visual_permissions": {"cta_allowed": False},
+                },
+                "ocr_structure": {
+                    "readable_text_blocks": 3,
+                    "logo_text_present": False,
+                    "text_overlap_or_collision_risk": "low",
+                    "block_summary": [
+                        {"role": "headline", "text_excerpt": "US Tariff Policy Update"},
+                        {"role": "body", "text_excerpt": "BRICS Nations face trade pressure"},
+                    ],
+                },
+                "premium_quality": {
+                    "overall_score": 0.82,
+                    "craft_score": 0.78,
+                    "spacing_score": 0.76,
+                },
+                "visual_craft_dna": {"polish_level": "clean"},
+                "subject_semantics": {
+                    "scene_type": "labour law employer explainer",
+                    "primary_subjects": ["labour law updates", "employers"],
+                    "domain_cues": ["compliance", "workforce"],
+                },
+            }
+
+    service.storage = _Storage()
+    service.template_vision = _Vision()
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a static LinkedIn post about India's labour law updates for employers.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png", "size": {"width": 1080, "height": 1080}},
+        resolved_brand_context={},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+
+    report = service._assess_final_render_output_image(
+        request=request,
+        asset={"storage_path": storage_path},
+        image_size="1024x1024",
+    )
+
+    assert report is not None
+    assert "vision_visible_claim_hallucination" in report["issues"]
+    assert "vision_visible_claim_hallucination" in report["hard_retry_issues"]
+    assert report["vision_quality"]["visible_claims"]["status"] == "unsupported_named_claim"
+
+    if root.exists():
+        for child in sorted(root.rglob("*"), reverse=True):
+            if child.is_file():
+                child.unlink()
+            elif child.is_dir():
+                child.rmdir()
+        root.rmdir()
+
+
+def test_final_render_output_quality_flags_truncated_visible_text() -> None:
+    service = AIOrchestratorService()
+    root = Path("tests") / f"final-render-text-truncation-{uuid4()}"
+    storage_path = "tenant/brand/generated/text-truncation-output.png"
+    target = root / storage_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    image = Image.new("RGB", (1024, 1024), color=(248, 248, 248))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((140, 160, 840, 760), fill=(30, 80, 140))
+    image.save(target, format="PNG")
+
+    class _Storage:
+        def exists(self, path: str) -> bool:
+            return (root / path).exists()
+
+        def absolute_path(self, path: str) -> str:
+            return str((root / path).resolve())
+
+    class _Vision:
+        client = object()
+
+        def analyze(self, image_path: str, fallback: dict) -> dict:
+            return {
+                "page_blueprint": {
+                    "layout_category": "editorial_explainer",
+                    "density": "balanced",
+                    "module_counts": {"text_block_count": 3, "large_visual_count": 1},
+                    "visual_permissions": {"cta_allowed": False},
+                },
+                "ocr_structure": {
+                    "readable_text_blocks": 3,
+                    "logo_text_present": False,
+                    "text_overlap_or_collision_risk": "low",
+                    "text_truncation_or_crop_risk": "high",
+                    "block_summary": [
+                        {"role": "headline", "text_excerpt": "Labour law updates"},
+                        {"role": "body", "text_excerpt": "Employer compliance checklist"},
+                    ],
+                },
+                "premium_quality": {
+                    "overall_score": 0.82,
+                    "craft_score": 0.78,
+                    "spacing_score": 0.76,
+                },
+                "visual_craft_dna": {"polish_level": "clean"},
+                "subject_semantics": {
+                    "scene_type": "labour law employer explainer",
+                    "primary_subjects": ["labour law updates", "employers"],
+                    "domain_cues": ["compliance", "workforce"],
+                },
+            }
+
+    service.storage = _Storage()
+    service.template_vision = _Vision()
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a static LinkedIn post about labour law updates for employers.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png", "size": {"width": 1080, "height": 1080}},
+        resolved_brand_context={},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+
+    report = service._assess_final_render_output_image(
+        request=request,
+        asset={"storage_path": storage_path},
+        image_size="1024x1024",
+    )
+
+    assert report is not None
+    assert "vision_text_truncation_risk" in report["issues"]
+    assert "vision_text_truncation_risk" in report["hard_retry_issues"]
+    assert report["vision_quality"]["ocr_structure"]["text_truncation_or_crop_risk"] == "high"
+
+    if root.exists():
+        for child in sorted(root.rglob("*"), reverse=True):
+            if child.is_file():
+                child.unlink()
+            elif child.is_dir():
+                child.rmdir()
+        root.rmdir()
+
+
+def test_final_render_output_quality_retries_when_topic_evidence_is_missing() -> None:
+    service = AIOrchestratorService()
+    root = Path("tests") / f"final-render-missing-topic-{uuid4()}"
+    storage_path = "tenant/brand/generated/missing-topic-output.png"
+    target = root / storage_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    image = Image.new("RGB", (1024, 1280), color=(245, 248, 252))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((120, 180, 900, 920), fill=(20, 80, 130))
+    image.save(target, format="PNG")
+
+    class _Storage:
+        def exists(self, path: str) -> bool:
+            return (root / path).exists()
+
+        def absolute_path(self, path: str) -> str:
+            return str((root / path).resolve())
+
+    class _Vision:
+        client = object()
+
+        def analyze(self, image_path: str, fallback: dict) -> dict:
+            return {
+                "page_blueprint": {
+                    "layout_category": "stacked_sections",
+                    "density": "dense",
+                    "module_counts": {"row_module_count": 4, "text_block_count": 4},
+                    "visual_permissions": {"cta_allowed": False},
+                },
+                "ocr_structure": {
+                    "readable_text_blocks": 4,
+                    "logo_text_present": False,
+                    "text_overlap_or_collision_risk": "low",
+                },
+                "premium_quality": {
+                    "overall_score": 0.82,
+                    "craft_score": 0.78,
+                    "spacing_score": 0.76,
+                },
+                "visual_craft_dna": {"polish_level": "premium"},
+                "subject_semantics": {},
+            }
+
+    service.storage = _Storage()
+    service.template_vision = _Vision()
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create an infographic for LinkedIn on the top 6 countries that invest in India by comparing country-wise FDI equity inflows.",
+        studio_panel={"platform_preset": "linkedin", "format": "infographic", "file_type": "png", "size": {"width": 1080, "height": 1350}},
+        resolved_brand_context={},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+
+    report = service._assess_final_render_output_image(
+        request=request,
+        asset={"storage_path": storage_path},
+        image_size="1024x1280",
+    )
+
+    assert report is not None
+    assert report["retry_recommended"] is True
+    assert "vision_subject_relevance_missing" in report["issues"]
+    assert "vision_subject_relevance_missing" in report["hard_retry_issues"]
+    assert report["vision_quality"]["topic_alignment"]["status"] == "missing"
+    assert "fdi" in report["vision_quality"]["topic_alignment"]["missing_request_tokens"]
+
+    if root.exists():
+        for child in sorted(root.rglob("*"), reverse=True):
+            if child.is_file():
+                child.unlink()
+            elif child.is_dir():
+                child.rmdir()
+        root.rmdir()
+
+
+def test_final_render_output_quality_retries_when_top_n_structure_is_underbuilt() -> None:
+    service = AIOrchestratorService()
+    root = Path("tests") / f"final-render-underbuilt-structure-{uuid4()}"
+    storage_path = "tenant/brand/generated/underbuilt-structure-output.png"
+    target = root / storage_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    image = Image.new("RGB", (1024, 1280), color=(245, 248, 252))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((120, 180, 900, 920), fill=(20, 80, 130))
+    image.save(target, format="PNG")
+
+    class _Storage:
+        def exists(self, path: str) -> bool:
+            return (root / path).exists()
+
+        def absolute_path(self, path: str) -> str:
+            return str((root / path).resolve())
+
+    class _Vision:
+        client = object()
+
+        def analyze(self, image_path: str, fallback: dict) -> dict:
+            return {
+                "page_blueprint": {
+                    "layout_category": "stacked_sections",
+                    "density": "dense",
+                    "module_counts": {
+                        "row_module_count": 3,
+                        "text_block_count": 3,
+                        "card_module_count": 0,
+                        "chart_count": 0,
+                        "table_count": 0,
+                    },
+                    "visual_permissions": {
+                        "cta_allowed": False,
+                        "chart_or_graph_allowed": False,
+                        "table_allowed": False,
+                        "metric_tiles_allowed": False,
+                    },
+                },
+                "ocr_structure": {
+                    "readable_text_blocks": 3,
+                    "logo_text_present": False,
+                    "text_overlap_or_collision_risk": "low",
+                },
+                "premium_quality": {
+                    "overall_score": 0.86,
+                    "craft_score": 0.82,
+                    "spacing_score": 0.8,
+                },
+                "visual_craft_dna": {"polish_level": "premium"},
+                "subject_semantics": {
+                    "scene_type": "inflation ranking infographic",
+                    "primary_subjects": ["India inflation", "country comparison", "ranking"],
+                    "domain_cues": ["inflation", "countries", "ranking"],
+                },
+            }
+
+    service.storage = _Storage()
+    service.template_vision = _Vision()
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a static post for LinkedIn comparing India inflation with other countries and create a top 10 ranking.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png", "size": {"width": 1080, "height": 1350}},
+        resolved_brand_context={},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+
+    report = service._assess_final_render_output_image(
+        request=request,
+        asset={"storage_path": storage_path},
+        image_size="1024x1280",
+    )
+
+    assert report is not None
+    assert report["retry_recommended"] is True
+    assert "vision_requested_structure_underbuilt" in report["issues"]
+    assert "vision_requested_structure_underbuilt" in report["hard_retry_issues"]
+    assert report["vision_quality"]["requested_structure"]["requested_count"] == 10
+    assert report["vision_quality"]["requested_structure"]["required_visible_modules"] == 8
+    assert report["vision_quality"]["requested_structure"]["visible_item_modules"] == 3
+
+    if root.exists():
+        for child in sorted(root.rglob("*"), reverse=True):
+            if child.is_file():
+                child.unlink()
+            elif child.is_dir():
+                child.rmdir()
+        root.rmdir()
+
+
+def test_final_render_output_quality_allows_top_n_chart_or_table_structure() -> None:
+    service = AIOrchestratorService()
+    root = Path("tests") / f"final-render-chart-structure-{uuid4()}"
+    storage_path = "tenant/brand/generated/chart-structure-output.png"
+    target = root / storage_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    image = Image.new("RGB", (1024, 1280), color=(245, 248, 252))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((120, 180, 900, 920), fill=(20, 80, 130))
+    image.save(target, format="PNG")
+
+    class _Storage:
+        def exists(self, path: str) -> bool:
+            return (root / path).exists()
+
+        def absolute_path(self, path: str) -> str:
+            return str((root / path).resolve())
+
+    class _Vision:
+        client = object()
+
+        def analyze(self, image_path: str, fallback: dict) -> dict:
+            return {
+                "page_blueprint": {
+                    "layout_category": "stacked_sections",
+                    "density": "dense",
+                    "module_counts": {
+                        "row_module_count": 2,
+                        "text_block_count": 3,
+                        "chart_count": 1,
+                        "table_count": 0,
+                    },
+                    "visual_permissions": {
+                        "cta_allowed": False,
+                        "chart_or_graph_allowed": True,
+                        "table_allowed": False,
+                        "metric_tiles_allowed": False,
+                    },
+                },
+                "ocr_structure": {
+                    "readable_text_blocks": 3,
+                    "logo_text_present": False,
+                    "text_overlap_or_collision_risk": "low",
+                },
+                "premium_quality": {
+                    "overall_score": 0.86,
+                    "craft_score": 0.82,
+                    "spacing_score": 0.8,
+                },
+                "visual_craft_dna": {"polish_level": "premium"},
+                "subject_semantics": {
+                    "scene_type": "FDI country inflow chart",
+                    "primary_subjects": ["FDI equity inflows", "countries investing in India"],
+                    "domain_cues": ["FDI", "equity", "inflows", "countries"],
+                },
+            }
+
+    service.storage = _Storage()
+    service.template_vision = _Vision()
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create an infographic for LinkedIn on the top 6 countries that invest in India by comparing country-wise FDI equity inflows.",
+        studio_panel={"platform_preset": "linkedin", "format": "infographic", "file_type": "png", "size": {"width": 1080, "height": 1350}},
+        resolved_brand_context={},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+
+    report = service._assess_final_render_output_image(
+        request=request,
+        asset={"storage_path": storage_path},
+        image_size="1024x1280",
+    )
+
+    assert report is not None
+    assert "vision_requested_structure_underbuilt" not in report["issues"]
+    assert report["vision_quality"]["requested_structure"]["status"] == "satisfied"
+    assert report["vision_quality"]["requested_structure"]["table_or_chart_visible"] is True
+
+    if root.exists():
+        for child in sorted(root.rglob("*"), reverse=True):
+            if child.is_file():
+                child.unlink()
+            elif child.is_dir():
+                child.rmdir()
+        root.rmdir()
+
+
+def test_final_render_output_quality_retries_when_data_surface_is_underbuilt() -> None:
+    service = AIOrchestratorService()
+    root = Path("tests") / f"final-render-underbuilt-data-surface-{uuid4()}"
+    storage_path = "tenant/brand/generated/underbuilt-data-surface-output.png"
+    target = root / storage_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    image = Image.new("RGB", (1024, 1280), color=(245, 248, 252))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((120, 180, 900, 920), fill=(20, 80, 130))
+    image.save(target, format="PNG")
+
+    class _Storage:
+        def exists(self, path: str) -> bool:
+            return (root / path).exists()
+
+        def absolute_path(self, path: str) -> str:
+            return str((root / path).resolve())
+
+    class _Vision:
+        client = object()
+
+        def analyze(self, image_path: str, fallback: dict) -> dict:
+            return {
+                "page_blueprint": {
+                    "layout_category": "stacked_sections",
+                    "density": "dense",
+                    "module_counts": {
+                        "row_module_count": 2,
+                        "text_block_count": 2,
+                        "card_module_count": 0,
+                        "metric_tile_count": 0,
+                        "chart_count": 0,
+                        "table_count": 0,
+                    },
+                    "visual_permissions": {
+                        "cta_allowed": False,
+                        "chart_or_graph_allowed": False,
+                        "table_allowed": False,
+                        "metric_tiles_allowed": False,
+                    },
+                },
+                "ocr_structure": {
+                    "readable_text_blocks": 3,
+                    "logo_text_present": False,
+                    "text_overlap_or_collision_risk": "low",
+                },
+                "premium_quality": {
+                    "overall_score": 0.86,
+                    "craft_score": 0.82,
+                    "spacing_score": 0.8,
+                },
+                "visual_craft_dna": {"polish_level": "premium"},
+                "subject_semantics": {
+                    "scene_type": "FDI equity inflow infographic",
+                    "primary_subjects": ["FDI equity inflows", "investor countries", "India"],
+                    "domain_cues": ["FDI", "equity", "inflows", "investment"],
+                },
+            }
+
+    service.storage = _Storage()
+    service.template_vision = _Vision()
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create an infographic comparing country-wise FDI equity inflows into India across major investor countries.",
+        studio_panel={"platform_preset": "linkedin", "format": "infographic", "file_type": "png", "size": {"width": 1080, "height": 1350}},
+        resolved_brand_context={},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+
+    report = service._assess_final_render_output_image(
+        request=request,
+        asset={"storage_path": storage_path},
+        image_size="1024x1280",
+    )
+
+    assert report is not None
+    assert report["retry_recommended"] is True
+    assert "vision_data_surface_underbuilt" in report["issues"]
+    assert "vision_data_surface_underbuilt" in report["hard_retry_issues"]
+    assert report["vision_quality"]["data_surface"]["status"] == "underbuilt"
+    assert report["vision_quality"]["data_surface"]["required_structured_modules"] == 4
+    assert report["vision_quality"]["data_surface"]["visible_structured_modules"] == 2
+
+    if root.exists():
+        for child in sorted(root.rglob("*"), reverse=True):
+            if child.is_file():
+                child.unlink()
+            elif child.is_dir():
+                child.rmdir()
+        root.rmdir()
+
+
+def test_final_render_output_quality_allows_data_surface_metric_tiles() -> None:
+    service = AIOrchestratorService()
+    root = Path("tests") / f"final-render-data-surface-metrics-{uuid4()}"
+    storage_path = "tenant/brand/generated/data-surface-metrics-output.png"
+    target = root / storage_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    image = Image.new("RGB", (1024, 1280), color=(245, 248, 252))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((120, 180, 900, 920), fill=(20, 80, 130))
+    image.save(target, format="PNG")
+
+    class _Storage:
+        def exists(self, path: str) -> bool:
+            return (root / path).exists()
+
+        def absolute_path(self, path: str) -> str:
+            return str((root / path).resolve())
+
+    class _Vision:
+        client = object()
+
+        def analyze(self, image_path: str, fallback: dict) -> dict:
+            return {
+                "page_blueprint": {
+                    "layout_category": "stacked_sections",
+                    "density": "dense",
+                    "module_counts": {
+                        "row_module_count": 1,
+                        "text_block_count": 2,
+                        "card_module_count": 2,
+                        "metric_tile_count": 4,
+                        "chart_count": 0,
+                        "table_count": 0,
+                    },
+                    "visual_permissions": {
+                        "cta_allowed": False,
+                        "chart_or_graph_allowed": False,
+                        "table_allowed": False,
+                        "metric_tiles_allowed": True,
+                    },
+                },
+                "ocr_structure": {
+                    "readable_text_blocks": 4,
+                    "logo_text_present": False,
+                    "text_overlap_or_collision_risk": "low",
+                },
+                "premium_quality": {
+                    "overall_score": 0.86,
+                    "craft_score": 0.82,
+                    "spacing_score": 0.8,
+                },
+                "visual_craft_dna": {"polish_level": "premium"},
+                "subject_semantics": {
+                    "scene_type": "FDI equity inflow metric infographic",
+                    "primary_subjects": ["FDI equity inflows", "investor countries", "India"],
+                    "domain_cues": ["FDI", "equity", "inflows", "investment"],
+                },
+            }
+
+    service.storage = _Storage()
+    service.template_vision = _Vision()
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create an infographic comparing country-wise FDI equity inflows into India across major investor countries.",
+        studio_panel={"platform_preset": "linkedin", "format": "infographic", "file_type": "png", "size": {"width": 1080, "height": 1350}},
+        resolved_brand_context={},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+
+    report = service._assess_final_render_output_image(
+        request=request,
+        asset={"storage_path": storage_path},
+        image_size="1024x1280",
+    )
+
+    assert report is not None
+    assert "vision_data_surface_underbuilt" not in report["issues"]
+    assert "vision_visual_metaphor_generic" not in report["issues"]
+    assert report["vision_quality"]["data_surface"]["status"] == "satisfied"
+    assert report["vision_quality"]["data_surface"]["metric_surface_visible"] is True
+
+    if root.exists():
+        for child in sorted(root.rglob("*"), reverse=True):
+            if child.is_file():
+                child.unlink()
+            elif child.is_dir():
+                child.rmdir()
+        root.rmdir()
+
+
+def test_final_render_output_quality_retries_when_visual_metaphor_is_generic() -> None:
+    service = AIOrchestratorService()
+    root = Path("tests") / f"final-render-generic-visual-metaphor-{uuid4()}"
+    storage_path = "tenant/brand/generated/generic-visual-metaphor-output.png"
+    target = root / storage_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    image = Image.new("RGB", (1024, 1280), color=(245, 248, 252))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((120, 180, 900, 920), fill=(20, 80, 130))
+    image.save(target, format="PNG")
+
+    class _Storage:
+        def exists(self, path: str) -> bool:
+            return (root / path).exists()
+
+        def absolute_path(self, path: str) -> str:
+            return str((root / path).resolve())
+
+    class _Vision:
+        client = object()
+
+        def analyze(self, image_path: str, fallback: dict) -> dict:
+            return {
+                "page_blueprint": {
+                    "layout_category": "stacked_sections",
+                    "density": "dense",
+                    "module_counts": {
+                        "row_module_count": 2,
+                        "text_block_count": 3,
+                        "card_module_count": 3,
+                        "metric_tile_count": 4,
+                        "chart_count": 0,
+                        "table_count": 0,
+                    },
+                    "visual_permissions": {
+                        "cta_allowed": False,
+                        "chart_or_graph_allowed": False,
+                        "table_allowed": False,
+                        "metric_tiles_allowed": True,
+                    },
+                },
+                "ocr_structure": {
+                    "readable_text_blocks": 4,
+                    "logo_text_present": False,
+                    "text_overlap_or_collision_risk": "low",
+                },
+                "premium_quality": {
+                    "overall_score": 0.86,
+                    "craft_score": 0.82,
+                    "spacing_score": 0.8,
+                },
+                "visual_craft_dna": {"polish_level": "premium"},
+                "subject_semantics": {
+                    "scene_type": "generic finance dashboard",
+                    "primary_subjects": ["FDI", "rupee coins", "rising arrows"],
+                    "domain_cues": ["finance", "growth", "dashboard"],
+                },
+            }
+
+    service.storage = _Storage()
+    service.template_vision = _Vision()
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create an infographic comparing country-wise FDI equity inflows into India across major investor countries.",
+        studio_panel={"platform_preset": "linkedin", "format": "infographic", "file_type": "png", "size": {"width": 1080, "height": 1350}},
+        resolved_brand_context={},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+
+    report = service._assess_final_render_output_image(
+        request=request,
+        asset={"storage_path": storage_path},
+        image_size="1024x1280",
+    )
+
+    assert report is not None
+    assert "vision_data_surface_underbuilt" not in report["issues"]
+    assert "vision_visual_metaphor_generic" in report["issues"]
+    assert "vision_visual_metaphor_generic" in report["hard_retry_issues"]
+    assert report["vision_quality"]["visual_metaphor"]["status"] in {"generic", "weak"}
+    assert "equity" in report["vision_quality"]["visual_metaphor"]["missing_domain_tokens"]
+    assert "finance" in report["vision_quality"]["visual_metaphor"]["generic_subject_tokens"]
+
+    if root.exists():
+        for child in sorted(root.rglob("*"), reverse=True):
+            if child.is_file():
+                child.unlink()
+            elif child.is_dir():
+                child.rmdir()
+        root.rmdir()
+
+
+def test_final_render_output_quality_retries_when_infographic_is_text_heavy_without_visual_explanation() -> None:
+    service = AIOrchestratorService()
+    root = Path("tests") / f"final-render-text-heavy-infographic-{uuid4()}"
+    storage_path = "tenant/brand/generated/text-heavy-infographic-output.png"
+    target = root / storage_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    image = Image.new("RGB", (1024, 1280), color=(248, 250, 252))
+    draw = ImageDraw.Draw(image)
+    for index in range(6):
+        y = 140 + index * 150
+        draw.rectangle((120, y, 900, y + 96), outline=(20, 70, 130), width=3)
+    image.save(target, format="PNG")
+
+    class _Storage:
+        def exists(self, path: str) -> bool:
+            return (root / path).exists()
+
+        def absolute_path(self, path: str) -> str:
+            return str((root / path).resolve())
+
+    class _Vision:
+        client = object()
+
+        def analyze(self, image_path: str, fallback: dict) -> dict:
+            return {
+                "page_blueprint": {
+                    "layout_category": "stacked_sections",
+                    "density": "dense",
+                    "module_counts": {
+                        "text_block_count": 7,
+                        "headline_block_count": 1,
+                        "row_module_count": 0,
+                        "card_module_count": 0,
+                        "small_icon_like_count": 0,
+                        "large_visual_count": 0,
+                        "chart_count": 0,
+                        "table_count": 0,
+                        "metric_tile_count": 0,
+                    },
+                    "visual_permissions": {
+                        "cta_allowed": False,
+                        "chart_or_graph_allowed": False,
+                        "table_allowed": False,
+                        "metric_tiles_allowed": False,
+                    },
+                },
+                "ocr_structure": {
+                    "readable_text_blocks": 7,
+                    "logo_text_present": False,
+                    "text_overlap_or_collision_risk": "low",
+                },
+                "premium_quality": {
+                    "overall_score": 0.82,
+                    "craft_score": 0.78,
+                    "spacing_score": 0.76,
+                },
+                "visual_craft_dna": {"polish_level": "clean"},
+                "subject_semantics": {
+                    "scene_type": "text-heavy poster",
+                    "primary_subjects": ["text blocks"],
+                    "domain_cues": ["copy"],
+                    "financial_objects": [],
+                },
+            }
+
+    service.storage = _Storage()
+    service.template_vision = _Vision()
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create an infographic for LinkedIn on the top 6 countries that invest in India by comparing country-wise FDI equity inflows.",
+        studio_panel={"platform_preset": "linkedin", "format": "infographic", "file_type": "png", "size": {"width": 1080, "height": 1350}},
+        resolved_brand_context={},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+
+    report = service._assess_final_render_output_image(
+        request=request,
+        asset={"storage_path": storage_path},
+        image_size="1024x1280",
+    )
+
+    assert report is not None
+    assert "vision_content_visual_balance_weak" in report["issues"]
+    assert "vision_content_visual_balance_weak" in report["hard_retry_issues"]
+    assert report["vision_quality"]["content_visual_balance"]["status"] == "text_heavy"
+
+    if root.exists():
+        for child in sorted(root.rglob("*"), reverse=True):
+            if child.is_file():
+                child.unlink()
+            elif child.is_dir():
+                child.rmdir()
+        root.rmdir()
+
+
+def test_final_render_output_quality_repair_prompt_keeps_static_infographic_text_authority() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create an infographic for LinkedIn on the top 6 countries that invest in India by comparing country-wise FDI equity inflows.",
+        studio_panel={"platform_preset": "linkedin", "format": "infographic", "file_type": "png", "size": {"width": 1080, "height": 1350}},
+        resolved_brand_context={},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+
+    prompt = AIOrchestratorService._append_final_render_output_quality_repair_prompt(
+        "Create one finished premium branded social creative.",
+        quality_report={
+            "score": 0.54,
+            "issues": [
+                "vision_subject_relevance_weak",
+                "vision_weak_spacing",
+                "vision_requested_structure_underbuilt",
+                "vision_data_surface_underbuilt",
+                "vision_visual_metaphor_generic",
+                "vision_content_visual_balance_weak",
+                "vision_text_truncation_risk",
+            ],
+            "target_size": {"width": 1080, "height": 1350},
+            "generated_size": {"width": 1024, "height": 1536},
+            "vision_quality": {
+                "topic_alignment": {
+                    "status": "weak",
+                    "missing_request_tokens": ["fdi", "equity", "inflow"],
+                },
+                "requested_structure": {
+                    "status": "underbuilt",
+                    "requested_count": 6,
+                    "required_visible_modules": 6,
+                    "visible_item_modules": 2,
+                    "table_or_chart_visible": False,
+                },
+                "data_surface": {
+                    "status": "underbuilt",
+                    "required_structured_modules": 6,
+                    "visible_structured_modules": 2,
+                    "table_or_chart_visible": False,
+                    "metric_surface_visible": False,
+                },
+                "visual_metaphor": {
+                    "status": "generic",
+                    "missing_domain_tokens": ["equity", "inflows", "investor"],
+                    "generic_subject_tokens": ["coins", "finance", "growth"],
+                    "domain_overlap": ["fdi"],
+                    "required_domain_overlap": 2,
+                },
+                "content_visual_balance": {
+                    "status": "text_heavy",
+                    "text_block_count": 7,
+                    "explanatory_visual_units": 0,
+                },
+                "premium_quality": {
+                    "overall_score": 0.58,
+                    "craft_score": 0.61,
+                    "spacing_score": 0.55,
+                },
+                "ocr_structure": {
+                    "readable_text_blocks": 7,
+                    "text_overlap_or_collision_risk": "low",
+                    "text_truncation_or_crop_risk": "high",
+                },
+            },
+        },
+        request=request,
+    )
+
+    assert "current_user_prompt" in prompt
+    assert "requested_structure" in prompt
+    assert "fdi" in prompt.casefold()
+    assert "readable finished image text" in prompt
+    assert "at least 6 distinct visible item modules" in prompt
+    assert "requested 6-item comparison/ranking/list" in prompt
+    assert "unsupported visible words, numbers, source labels, logos, brand-like marks" in prompt
+    assert "Do not replace missing facts with generic fallback imagery" in prompt
+    assert "Rebalance the creative so content and imagery explain the same topic together" in prompt
+    assert "Avoid text-only poster layouts" in prompt
+    assert "Fix text fit before improving decoration" in prompt
+    assert "No cropped letters, half words, fading edge text, hidden rows" in prompt
+    assert "previous attempt had about 2 visible item module" in prompt
+    assert "real chart/table surface" in prompt
+    assert "data_surface" in prompt
+    assert "data-first layout with at least 6 visible rows" in prompt
+    assert "decorative imagery secondary" in prompt
+    assert "visual_metaphor" in prompt
+    assert "Replace generic visual subjects" in prompt
+    assert "equity, inflows, investor" in prompt
+    assert "Minimum output quality floor for final static/infographic image" in prompt
+    assert "finished premium social creative at thumbnail size and full size" in prompt
+    assert "Raise the craft level before changing the message" in prompt
+    assert "premium_quality" in prompt
+    assert "quality_floor" in prompt
+    assert "Regenerate the finished static/infographic creative, not a blank substrate" in prompt
+    assert "Do not add readable text" not in prompt
+
+
+def test_final_render_output_quality_repair_prompt_strips_previous_repair_contract() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create an infographic comparing country-wise FDI equity inflows into India across major investor countries.",
+        studio_panel={"platform_preset": "linkedin", "format": "infographic", "file_type": "png", "size": {"width": 1080, "height": 1350}},
+        resolved_brand_context={},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+    first = AIOrchestratorService._append_final_render_output_quality_repair_prompt(
+        "Create one finished premium branded social creative.",
+        quality_report={
+            "score": 0.42,
+            "issues": ["vision_data_surface_underbuilt"],
+            "hard_retry_issues": ["vision_data_surface_underbuilt"],
+            "retry_recommended": True,
+            "format": "infographic",
+            "vision_quality": {
+                "data_surface": {
+                    "status": "underbuilt",
+                    "required_structured_modules": 6,
+                    "visible_structured_modules": 1,
+                }
+            },
+        },
+        request=request,
+    )
+    second = AIOrchestratorService._append_final_render_output_quality_repair_prompt(
+        first,
+        quality_report={
+            "score": 0.5,
+            "issues": ["vision_visual_metaphor_generic"],
+            "hard_retry_issues": ["vision_visual_metaphor_generic"],
+            "retry_recommended": True,
+            "format": "infographic",
+            "vision_quality": {
+                "visual_metaphor": {
+                    "status": "generic",
+                    "missing_domain_tokens": ["equity", "inflows"],
+                    "generic_subject_tokens": ["coins", "finance"],
+                }
+            },
+        },
+        request=request,
+    )
+
+    assert second.count("post_generation_output_quality_repair") == 1
+    assert "vision_data_surface_underbuilt" not in second
+    assert "vision_visual_metaphor_generic" in second
+    assert "Create one finished premium branded social creative" in second
+
+
+def test_final_render_output_quality_returns_visible_static_infographic_without_retry() -> None:
+    service = AIOrchestratorService()
+    service.settings.image_quality_retry_attempts = 2
+
+    class _ImageProvider:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+
+        def generate(self, **kwargs):
+            self.calls.append(kwargs)
+            return {
+                "mime_type": "image/png",
+                "storage_path": f"tenant/brand/generated/attempt-{len(self.calls)}.png",
+                "width": 1024,
+                "height": 1280,
+                "asset_role": "render_preview",
+            }
+
+    reports = iter(
+        [
+            {
+                "score": 0.42,
+                "issues": ["vision_data_surface_underbuilt"],
+                "hard_retry_issues": ["vision_data_surface_underbuilt"],
+                "retry_recommended": True,
+                "format": "infographic",
+                "vision_quality": {
+                    "data_surface": {
+                        "status": "underbuilt",
+                        "required_structured_modules": 6,
+                        "visible_structured_modules": 1,
+                    }
+                },
+            },
+            {
+                "score": 0.5,
+                "issues": ["vision_visual_metaphor_generic"],
+                "hard_retry_issues": ["vision_visual_metaphor_generic"],
+                "retry_recommended": True,
+                "format": "infographic",
+                "vision_quality": {
+                    "visual_metaphor": {
+                        "status": "generic",
+                        "missing_domain_tokens": ["equity", "inflows"],
+                        "generic_subject_tokens": ["coins", "finance"],
+                    }
+                },
+            },
+            {
+                "score": 0.51,
+                "issues": ["vision_visual_metaphor_generic"],
+                "hard_retry_issues": ["vision_visual_metaphor_generic"],
+                "retry_recommended": True,
+                "format": "infographic",
+                "vision_quality": {
+                    "visual_metaphor": {
+                        "status": "generic",
+                        "missing_domain_tokens": ["equity", "inflows"],
+                        "generic_subject_tokens": ["coins", "finance"],
+                    }
+                },
+            },
+        ]
+    )
+    service._assess_final_render_output_image = lambda **kwargs: next(reports)  # type: ignore[method-assign]
+    image_provider = _ImageProvider()
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create an infographic comparing country-wise FDI equity inflows into India across major investor countries.",
+        studio_panel={"platform_preset": "linkedin", "format": "infographic", "file_type": "png", "size": {"width": 1080, "height": 1350}},
+        resolved_brand_context={},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+
+    asset, report, retry_attempts, _prompt = service._generate_final_render_image_with_sample_guard(
+        image_provider=image_provider,
+        request=request,
+        prompt="Create one finished premium branded social creative.",
+        reference_image_paths=[],
+        image_size="1024x1280",
+        trace_id=None,
+        trace_suffix="",
+        sample_blueprint=None,
+        slide_index=1,
+        slide_count=1,
+    )
+
+    assert asset["storage_path"] == "tenant/brand/generated/attempt-1.png"
+    assert asset["output_quality_status"] == "visible_with_warnings"
+    assert asset["output_quality_blocking_issues"] == ["vision_data_surface_underbuilt"]
+    assert asset["output_quality_retry_attempts"] == 0
+    assert asset["output_quality_user_warning"]
+    assert report is None
+    assert retry_attempts == 0
+    assert len(image_provider.calls) == 1
+    assert "post_generation_output_quality_repair" not in image_provider.calls[0]["prompt"]
+
+
+def test_final_render_sample_similarity_best_attempt_is_not_overridden_by_output_quality() -> None:
+    service = AIOrchestratorService()
+    service.template_vision = SimpleNamespace(client=None)
+    root = Path("tests") / f"final-render-sample-quality-{uuid4()}"
+    output_paths = [
+        "tenant/brand/generated/attempt-1.png",
+        "tenant/brand/generated/attempt-2.png",
+    ]
+    for storage_path in output_paths:
+        target = root / storage_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (1024, 1024), color=(248, 248, 248)).save(target, format="PNG")
+
+    class _Storage:
+        def exists(self, path: str) -> bool:
+            return (root / path).exists()
+
+        def absolute_path(self, path: str) -> str:
+            return str((root / path).resolve())
+
+    class _ImageProvider:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def edit(self, **kwargs):
+            storage_path = output_paths[self.calls]
+            self.calls += 1
+            return {
+                "mime_type": "image/png",
+                "storage_path": storage_path,
+                "width": 1024,
+                "height": 1024,
+                "asset_role": "render_preview",
+            }
+
+    similarity_reports = iter(
+        [
+            {"score": 0.4, "retry_recommended": True},
+            {"score": 0.6, "retry_recommended": True},
+        ]
+    )
+
+    service.storage = _Storage()
+    service._assess_final_render_output_image = lambda **kwargs: {  # type: ignore[method-assign]
+        "score": 0.9,
+        "issues": [],
+        "hard_retry_issues": [],
+        "retry_recommended": False,
+        "format": "static",
+    }
+    service._sample_output_similarity_from_paths_with_vision = lambda **kwargs: next(similarity_reports)  # type: ignore[method-assign]
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a static social creative.",
+        studio_panel={"platform_preset": "instagram", "format": "static", "file_type": "png", "size": {"width": 1080, "height": 1080}},
+        resolved_brand_context={},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+
+    asset, report, retry_attempts, _prompt = service._generate_final_render_image_with_sample_guard(
+        image_provider=_ImageProvider(),
+        request=request,
+        prompt="Create a text-safe substrate.",
+        reference_image_paths=["tenant/reference/sample.png"],
+        image_size="1024x1024",
+        trace_id=None,
+        trace_suffix="",
+        sample_blueprint={"premium_quality": {"overall_score": 0.9}},
+        slide_index=1,
+        slide_count=1,
+    )
+
+    assert asset["storage_path"] == output_paths[0]
+    assert report is not None
+    assert report["score"] == 0.4
+    assert retry_attempts == 0
+
+    if root.exists():
+        for child in sorted(root.rglob("*"), reverse=True):
+            if child.is_file():
+                child.unlink()
+            elif child.is_dir():
+                child.rmdir()
+        root.rmdir()
+
+
+def test_final_render_sample_conditioned_output_quality_returns_visible_static_infographic_without_retry() -> None:
+    service = AIOrchestratorService()
+    service.template_vision = SimpleNamespace(client=None)
+    service.settings.image_quality_retry_attempts = 2
+
+    class _Storage:
+        def exists(self, path: str) -> bool:
+            return True
+
+        def absolute_path(self, path: str) -> str:
+            return path
+
+    class _ImageProvider:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+
+        def edit(self, **kwargs):
+            self.calls.append(kwargs)
+            return {
+                "mime_type": "image/png",
+                "storage_path": f"tenant/brand/generated/sample-attempt-{len(self.calls)}.png",
+                "width": 1024,
+                "height": 1280,
+                "asset_role": "render_preview",
+            }
+
+    reports = iter(
+        [
+            {
+                "score": 0.42,
+                "issues": ["vision_data_surface_underbuilt"],
+                "hard_retry_issues": ["vision_data_surface_underbuilt"],
+                "retry_recommended": True,
+                "format": "infographic",
+                "vision_quality": {
+                    "data_surface": {
+                        "status": "underbuilt",
+                        "required_structured_modules": 6,
+                        "visible_structured_modules": 1,
+                    }
+                },
+            },
+            {
+                "score": 0.5,
+                "issues": ["vision_visual_metaphor_generic"],
+                "hard_retry_issues": ["vision_visual_metaphor_generic"],
+                "retry_recommended": True,
+                "format": "infographic",
+                "vision_quality": {
+                    "visual_metaphor": {
+                        "status": "generic",
+                        "missing_domain_tokens": ["equity", "inflows"],
+                        "generic_subject_tokens": ["coins", "finance"],
+                    }
+                },
+            },
+            {
+                "score": 0.51,
+                "issues": ["vision_visual_metaphor_generic"],
+                "hard_retry_issues": ["vision_visual_metaphor_generic"],
+                "retry_recommended": True,
+                "format": "infographic",
+                "vision_quality": {
+                    "visual_metaphor": {
+                        "status": "generic",
+                        "missing_domain_tokens": ["equity", "inflows"],
+                        "generic_subject_tokens": ["coins", "finance"],
+                    }
+                },
+            },
+        ]
+    )
+    service.storage = _Storage()
+    service._assess_final_render_output_image = lambda **kwargs: next(reports)  # type: ignore[method-assign]
+    service._sample_output_similarity_from_paths_with_vision = pytest.fail  # type: ignore[method-assign]
+    image_provider = _ImageProvider()
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create an infographic comparing country-wise FDI equity inflows into India across major investor countries.",
+        studio_panel={"platform_preset": "linkedin", "format": "infographic", "file_type": "png", "size": {"width": 1080, "height": 1350}},
+        resolved_brand_context={},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+
+    asset, report, retry_attempts, _prompt = service._generate_final_render_image_with_sample_guard(
+        image_provider=image_provider,
+        request=request,
+        prompt="Create one finished premium branded social creative.",
+        reference_image_paths=["tenant/reference/sample.png"],
+        image_size="1024x1280",
+        trace_id=None,
+        trace_suffix="",
+        sample_blueprint={"premium_quality": {"overall_score": 0.9}},
+        slide_index=1,
+        slide_count=1,
+        sample_reference_image_paths=["tenant/reference/sample.png"],
+    )
+
+    assert asset["storage_path"] == "tenant/brand/generated/sample-attempt-1.png"
+    assert asset["output_quality_status"] == "visible_with_warnings"
+    assert asset["output_quality_blocking_issues"] == ["vision_data_surface_underbuilt"]
+    assert asset["output_quality_retry_attempts"] == 0
+    assert asset["output_quality_user_warning"]
+    assert report is None
+    assert retry_attempts == 0
+    assert len(image_provider.calls) == 1
+    assert "post_generation_output_quality_repair" not in image_provider.calls[0]["prompt"]
 
 
 def test_orchestrator_defers_exact_logo_overlay_when_real_logo_path_is_available() -> None:
@@ -11144,6 +13459,8 @@ def test_build_image_prompt_includes_sequence_blueprint_alignment_contract() -> 
     assert "Sequence blueprint authority: RETIREMENT-ARC / reference_pdf_blueprint (4 slides)." in prompt
     assert "Sequence narrative rhythm: hook -> structure -> strategic_meaning -> takeaway." in prompt
     assert "Sample-driven enforcement: use the uploaded sample intelligence as the governing contract" in prompt
+    assert "Static template structure lock JSON" not in prompt
+    assert "Infographic template structure lock JSON" not in prompt
 
 
 def test_build_final_render_prompt_includes_multimodal_balance_contract() -> None:
@@ -11236,6 +13553,515 @@ def test_build_image_prompt_includes_reference_family_contract() -> None:
     assert "Reference family contract: RETIREMENT-ARC / reference_pdf_blueprint." in prompt
     assert "Approved image zones only: generated imagery should live inside these family roles only: hero_visual." in prompt
     assert "Reference family module grammar: cover_hero_split, proof_grid, closing_cta_strip." in prompt
+
+
+def test_build_image_prompt_uses_static_template_adaptation_contract() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a static creative about making complex choices easier.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png", "size": {"width": 1080, "height": 1080}},
+        resolved_brand_context={"brand_name": "Example Brand", "visual_identity": {"palette_roles": {"primary": "#123456"}}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        reference_assets=[],
+        layout_decision={"mode": "adapted_template"},
+    )
+    text_payload = StructuredTextPayload(
+        headline="Simpler choices start with structure",
+        body="Use a clear frame before comparing options.",
+        cta="Compare clearly",
+        hashtags=[],
+        metadata={
+            "static_panel_spec": {
+                "panel_goal": "single_dominant_message",
+                "dominant_message": "Structure makes comparison easier.",
+                "supporting_lines": ["Frame the options before choosing."],
+            }
+        },
+    )
+
+    prompt = AIOrchestratorService.build_image_prompt(
+        request,
+        text_payload,
+        creative_decision=CreativeDecisionPayload(asset_strategy={"use_generated_image": True}),
+        compiled_context={
+            "reference_adaptation_profile": {
+                "source_format_family": "static",
+                "output_format_family": "static",
+                "selected_output_behavior": "static_creative_output",
+                "adaptation_mode": "static_creative_adaptation",
+                "confidence": 0.78,
+                "adapt": {
+                    "layout_rhythm": True,
+                    "module_density": True,
+                    "color_roles": True,
+                    "typography_hierarchy": True,
+                    "image_treatment": True,
+                    "logo_footer_policy": True,
+                    "slide_archetype": True,
+                },
+                "do_not_adapt": {"literal_text": True, "unsupported_data_visuals": True},
+                "balance": {"conflict_resolution": "prompt_content_first_reference_visual_system_second"},
+                "template_structure": {
+                    "sample_page_blueprint": {
+                        "layout_category": "cover_or_hero_visual",
+                        "density": "balanced",
+                        "module_counts": {
+                            "large_visual_count": 1,
+                            "text_block_count": 2,
+                            "footer_band_count": 1,
+                            "cta_count": 0,
+                        },
+                        "visual_permissions": {
+                            "cta_allowed": False,
+                            "chart_or_graph_allowed": False,
+                            "table_allowed": False,
+                        },
+                        "image_zones": [{"role": "hero_visual", "x": 0.08, "y": 0.22, "w": 0.84, "h": 0.46}],
+                    },
+                    "layout_dna": {"layout_type": "hero_with_proof_strip"},
+                    "composition_logic": {"balance": "hero_then_support"},
+                    "template_layout_grammar": {
+                        "macro_layout_flow": ["hero_with_proof_strip", "hero_then_support"],
+                        "section_role_order": ["header_logo_safe_zone", "headline", "hero_visual", "takeaway_box", "footer_disclaimer_safe_zone"],
+                        "module_pattern": ["large_visual_count:1", "text_block_count:2", "takeaway_box"],
+                        "visual_zone_roles": ["hero_visual"],
+                        "text_zone_roles": ["headline"],
+                        "callout_takeaway_roles": ["takeaway_box"],
+                        "connector_behavior": ["small connector path"],
+                        "typography_roles": ["headline", "body"],
+                        "color_roles": ["background", "surface", "accent"],
+                        "safe_area_policy": ["header_logo_safe_zone", "footer_disclaimer_safe_zone"],
+                    },
+                },
+            },
+            "generation_surface_contract": {
+                "selected_format": "static",
+                "selected_platform": "linkedin",
+                "selected_size": "1:1",
+                "selected_file_type": "png",
+                "layout_behavior": "static_creative_output",
+            },
+        },
+    )
+
+    assert "LLM-led static/infographic ad authority" in prompt
+    assert "AI-led paid-social composition" in prompt
+    assert "Reference/template assets have no content or layout authority" in prompt
+    assert "Compose a finished, creative ad post" in prompt
+    assert "Static/infographic topic-fit checklist" in prompt
+    assert "Render finished readable main content" in prompt
+    assert "Respect the selected reference/template layout" not in prompt
+    assert "Do not compose the image like a finished poster" not in prompt
+    assert "Reference adaptation profile JSON" not in prompt
+    assert "Generation surface contract JSON" not in prompt
+    assert "Reference template adaptation contract: selected output format is static" not in prompt
+    assert "Static template adaptation:" not in prompt
+    assert "Static template structure lock JSON" not in prompt
+    assert "sample_page_blueprint" not in prompt
+    assert "module_counts" not in prompt
+    assert "visual_permissions" not in prompt
+    assert "template_layout_grammar" not in prompt
+    assert "layout_content_budget" not in prompt
+    assert "preserve macro flow" not in prompt
+    assert "Static fallback takeover guard" not in prompt
+    assert "Template-active fallback policy" not in prompt
+    assert "may only fill an approved visual slot" not in prompt
+    assert "Prefer one coherent content-led hero concept" in prompt
+    assert "Do not include any text" not in prompt
+    assert "Sequence blueprint authority" not in prompt
+    assert "Carousel cross-format adaptation" not in prompt
+
+
+def test_build_image_prompt_uses_infographic_template_adaptation_contract() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create an infographic explaining how teams compare options.",
+        studio_panel={"platform_preset": "linkedin", "format": "infographic", "file_type": "png", "size": {"width": 1080, "height": 1350}},
+        resolved_brand_context={"brand_name": "Example Brand", "visual_identity": {"palette_roles": {"primary": "#123456"}}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        reference_assets=[],
+        layout_decision={"mode": "adapted_template"},
+    )
+    text_payload = StructuredTextPayload(
+        headline="Compare options in order",
+        body="Show the decision path with compact explanatory sections.",
+        cta="Compare clearly",
+        hashtags=[],
+        metadata={
+            "infographic_section_specs": [
+                {"section_number": 1, "section_role": "overview", "headline": "Frame the choice"},
+                {"section_number": 2, "section_role": "process", "headline": "Compare the tradeoffs"},
+            ]
+        },
+    )
+
+    prompt = AIOrchestratorService.build_image_prompt(
+        request,
+        text_payload,
+        creative_decision=CreativeDecisionPayload(asset_strategy={"use_generated_image": True}),
+        compiled_context={
+            "reference_adaptation_profile": {
+                "source_format_family": "infographic",
+                "output_format_family": "infographic",
+                "selected_output_behavior": "infographic_surface_output",
+                "adaptation_mode": "infographic_surface_adaptation",
+                "confidence": 0.8,
+                "adapt": {
+                    "layout_rhythm": True,
+                    "module_density": True,
+                    "color_roles": True,
+                    "typography_hierarchy": True,
+                    "image_treatment": True,
+                    "logo_footer_policy": True,
+                    "slide_archetype": True,
+                },
+                "do_not_adapt": {"literal_text": True, "unsupported_data_visuals": True},
+                "balance": {"conflict_resolution": "prompt_content_first_reference_visual_system_second"},
+                "template_structure": {
+                    "sample_page_blueprint": {
+                        "layout_category": "timeline_or_winding_process_path",
+                        "density": "dense",
+                        "module_counts": {
+                            "horizontal_band_count": 4,
+                            "small_icon_like_count": 4,
+                            "footer_band_count": 1,
+                            "cta_count": 0,
+                        },
+                        "visual_permissions": {
+                            "cta_allowed": False,
+                            "chart_or_graph_allowed": False,
+                            "table_allowed": False,
+                            "dashboard_allowed": False,
+                        },
+                        "image_zones": [{"role": "icon_text_row", "x": 0.12, "y": 0.22, "w": 0.76, "h": 0.12}],
+                    },
+                    "layout_dna": {"layout_type": "stacked_infographic"},
+                    "composition_logic": {"flow": "top_to_bottom_sections"},
+                    "structural_cues": ["context band", "comparison grid", "takeaway strip"],
+                    "template_layout_grammar": {
+                        "macro_layout_flow": ["stacked_infographic", "top_to_bottom_sections"],
+                        "section_role_order": ["header_logo_safe_zone", "top_explanation", "connector_path", "comparison_module", "takeaway_box", "footer_disclaimer_safe_zone"],
+                        "module_pattern": ["horizontal_band_count:4", "comparison_module", "takeaway_box"],
+                        "visual_zone_roles": ["icon_text_row"],
+                        "text_zone_roles": ["top_explanation"],
+                        "callout_takeaway_roles": ["comparison_module", "takeaway_box"],
+                        "connector_behavior": ["connector path"],
+                        "typography_roles": ["compact_heading", "label"],
+                        "color_roles": ["background", "accent"],
+                        "safe_area_policy": ["header_logo_safe_zone", "footer_disclaimer_safe_zone"],
+                    },
+                },
+            },
+            "generation_surface_contract": {
+                "selected_format": "infographic",
+                "selected_platform": "linkedin",
+                "selected_size": "4:5",
+                "selected_file_type": "png",
+                "layout_behavior": "infographic_surface_output",
+            },
+        },
+    )
+
+    assert "LLM-led static/infographic ad authority" in prompt
+    assert "AI-led paid-social composition" in prompt
+    assert "Reference/template assets have no content or layout authority" in prompt
+    assert "Compose a finished, creative ad post" in prompt
+    assert "Static/infographic topic-fit checklist" in prompt
+    assert "Render finished readable main content" in prompt
+    assert "Respect the selected reference/template layout" not in prompt
+    assert "Do not compose the image like a finished poster" not in prompt
+    assert "Reference template adaptation contract: selected output format is infographic" not in prompt
+    assert "Infographic template adaptation:" not in prompt
+    assert "Infographic template structure lock JSON" not in prompt
+    assert "sample_page_blueprint" not in prompt
+    assert "module_counts" not in prompt
+    assert "visual_permissions" not in prompt
+    assert "template_layout_grammar" not in prompt
+    assert "layout_content_budget" not in prompt
+    assert "preserve macro flow" not in prompt
+    assert "Infographic fallback takeover guard" not in prompt
+    assert "Template-active fallback policy" not in prompt
+    assert "may only fill an approved visual slot" not in prompt
+    assert "Prefer one coherent content-led hero concept" in prompt
+    assert "Do not include any text" not in prompt
+    assert "This contract does not authorize charts, tables, dashboards, metrics, or data visuals" not in prompt
+    assert "structured_visual_metadata.data_anchors" not in prompt
+
+
+def test_build_image_prompt_activates_template_guard_from_layout_grammar_without_blueprint() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a static creative about choosing a cleaner workflow.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png"},
+        resolved_brand_context={"brand_name": "Example Brand", "visual_identity": {}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        reference_assets=[],
+        layout_decision={"mode": "adapted_template"},
+    )
+    text_payload = StructuredTextPayload(
+        headline="Cleaner workflows start with order",
+        body="Show how teams move from scattered inputs to one clear next step.",
+        cta="Organize work",
+        hashtags=[],
+        metadata={},
+    )
+
+    prompt = AIOrchestratorService.build_image_prompt(
+        request,
+        text_payload,
+        creative_decision=CreativeDecisionPayload(asset_strategy={"use_generated_image": True}),
+        compiled_context={
+            "reference_adaptation_profile": {
+                "source_format_family": "static",
+                "output_format_family": "static",
+                "selected_output_behavior": "static_creative_output",
+                "adaptation_mode": "static_creative_adaptation",
+                "confidence": 0.72,
+                "adapt": {"layout_rhythm": True, "module_density": True, "slide_archetype": True},
+                "template_structure": {
+                    "layout_dna": {"layout_type": "centered_explainer", "zones": [{"role": "hero_visual", "x": 0.18, "y": 0.32, "w": 0.64, "h": 0.34}]},
+                    "template_layout_grammar": {
+                        "macro_layout_flow": ["centered_explainer"],
+                        "section_role_order": ["headline", "hero_visual", "takeaway_box"],
+                        "visual_zone_roles": ["hero_visual"],
+                        "text_zone_roles": ["headline"],
+                        "callout_takeaway_roles": ["takeaway_box"],
+                    },
+                },
+            },
+            "generation_surface_contract": {
+                "selected_format": "static",
+                "selected_platform": "linkedin",
+                "selected_file_type": "png",
+                "layout_behavior": "static_creative_output",
+            },
+        },
+    )
+
+    assert "LLM-led static/infographic ad authority" in prompt
+    assert "AI-led paid-social composition" in prompt
+    assert "Reference/template assets have no content or layout authority" in prompt
+    assert "Compose a finished, creative ad post" in prompt
+    assert "Static/infographic topic-fit checklist" in prompt
+    assert "Render finished readable main content" in prompt
+    assert "Respect the selected reference/template layout" not in prompt
+    assert "Do not compose the image like a finished poster" not in prompt
+    assert "Create a template-aware visual substrate" not in prompt
+    assert "Static template structure lock JSON" not in prompt
+    assert "Template-active fallback policy" not in prompt
+    assert "Prefer one coherent content-led hero concept" in prompt
+
+
+def test_reference_family_scene_defaults_use_static_template_adaptation_zones() -> None:
+    payload = {
+        "elements": [
+            {
+                "role": "image",
+                "element_type": "image",
+                "geometry": {"x": 0.0, "y": 0.0, "width": 1.0, "height": 1.0, "units": "normalized"},
+                "asset": {"asset_role": "ai_image"},
+            },
+            {
+                "role": "headline",
+                "element_type": "text",
+                "geometry": {"x": 0.05, "y": 0.05, "width": 0.9, "height": 0.12, "units": "normalized"},
+            },
+        ],
+        "styles": {},
+    }
+
+    updated = AIOrchestratorService._apply_reference_family_scene_defaults(
+        payload,
+        compiled_context={
+            "reference_family_profile": {"layout_lock_strength": "guided"},
+            "reference_adaptation_profile": {
+                "source_format_family": "static",
+                "output_format_family": "static",
+                "template_structure": {
+                    "sample_page_blueprint": {
+                        "zones": [
+                            {"role": "headline", "x": 0.08, "y": 0.12, "w": 0.72, "h": 0.12},
+                            {"role": "hero_visual", "x": 0.18, "y": 0.32, "w": 0.64, "h": 0.34},
+                        ],
+                    }
+                },
+            },
+        },
+    )
+
+    image = next(element for element in updated["elements"] if element["role"] == "image")
+    assert image["geometry"] == {"x": 0.18, "y": 0.32, "width": 0.64, "height": 0.34, "units": "normalized"}
+    assert image["validation_hints"]["reference_template_layout_locked"] is True
+    assert updated["styles"]["reference_template_layout_locked"] is True
+
+
+@pytest.mark.parametrize("format_family", ["static", "infographic"])
+def test_reference_family_scene_defaults_use_template_adaptation_zones_without_family_profile(
+    format_family: str,
+) -> None:
+    payload = {
+        "elements": [
+            {
+                "role": "image",
+                "element_type": "image",
+                "geometry": {"x": 0.0, "y": 0.0, "width": 1.0, "height": 1.0, "units": "normalized"},
+                "asset": {"asset_role": "ai_image"},
+            },
+            {
+                "role": "headline",
+                "element_type": "text",
+                "geometry": {"x": 0.05, "y": 0.05, "width": 0.9, "height": 0.12, "units": "normalized"},
+            },
+        ],
+        "styles": {},
+    }
+
+    updated = AIOrchestratorService._apply_reference_family_scene_defaults(
+        payload,
+        compiled_context={
+            "reference_adaptation_profile": {
+                "source_format_family": format_family,
+                "output_format_family": format_family,
+                "template_structure": {
+                    "sample_page_blueprint": {
+                        "layout_category": "sectioned_content_surface",
+                        "zones": [
+                            {"role": "headline", "x": 0.08, "y": 0.12, "w": 0.72, "h": 0.12},
+                            {"role": "hero_visual", "x": 0.18, "y": 0.32, "w": 0.64, "h": 0.34},
+                        ],
+                    }
+                },
+            },
+        },
+    )
+
+    image = next(element for element in updated["elements"] if element["role"] == "image")
+    headline = next(element for element in updated["elements"] if element["role"] == "headline")
+    assert image["geometry"] == {"x": 0.18, "y": 0.32, "width": 0.64, "height": 0.34, "units": "normalized"}
+    assert headline["geometry"] == {"x": 0.08, "y": 0.12, "width": 0.72, "height": 0.12, "units": "normalized"}
+    assert image["validation_hints"]["reference_template_layout_locked"] is True
+    assert headline["validation_hints"]["reference_template_layout_locked"] is True
+    assert updated["styles"]["reference_template_layout_locked"] is True
+    assert updated["styles"]["layout_archetype"] == "sectioned_content_surface"
+
+
+@pytest.mark.parametrize(
+    ("selected_format", "source_family", "expected_guidance"),
+    [
+        ("static", "carousel", "Static cross-format adaptation: selected Static output remains a single static creative."),
+        ("infographic", "carousel", "Infographic cross-format adaptation: selected Infographic output remains an infographic surface."),
+        ("carousel", "static", "Carousel cross-format adaptation: selected Carousel output remains a slide sequence."),
+        ("carousel", "infographic", "Carousel cross-format adaptation: selected Carousel output remains a slide sequence."),
+    ],
+)
+def test_build_image_prompt_keeps_selected_format_authoritative_for_cross_format_references(
+    selected_format: str,
+    source_family: str,
+    expected_guidance: str,
+) -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a visual about comparing options clearly.",
+        studio_panel={"platform_preset": "linkedin", "format": selected_format, "file_type": "png"},
+        resolved_brand_context={"brand_name": "Example Brand", "visual_identity": {}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        reference_assets=[],
+        layout_decision={"mode": "adapted_template"},
+    )
+    text_payload = StructuredTextPayload(
+        headline="Compare with structure",
+        body="Keep the current prompt topic and use the reference only for compatible visual structure.",
+        cta="Start comparing",
+        hashtags=[],
+        metadata={},
+    )
+
+    prompt = AIOrchestratorService.build_image_prompt(
+        request,
+        text_payload,
+        creative_decision=CreativeDecisionPayload(asset_strategy={"use_generated_image": True}),
+        compiled_context={
+            "reference_adaptation_profile": {
+                "source_format_family": source_family,
+                "output_format_family": selected_format,
+                "selected_output_behavior": {
+                    "static": "static_creative_output",
+                    "infographic": "infographic_surface_output",
+                    "carousel": "carousel_sequence_output",
+                }[selected_format],
+                "adaptation_mode": "static_creative_adaptation" if source_family == "static" else "template_sequence_adaptation",
+                "confidence": 0.62,
+                "adapt": {"layout_rhythm": True, "module_density": True, "slide_archetype": True},
+                "do_not_adapt": {"literal_text": True, "source_subject_matter": True, "unsupported_data_visuals": True},
+            },
+            "generation_surface_contract": {
+                "selected_format": selected_format,
+                "selected_platform": "linkedin",
+                "selected_file_type": "png",
+                "layout_behavior": {
+                    "static": "static_creative_output",
+                    "infographic": "infographic_surface_output",
+                    "carousel": "carousel_sequence_output",
+                }[selected_format],
+            },
+        },
+    )
+
+    assert f"selected output format is {selected_format}" in prompt
+    assert f"reference source family is {source_family}" in prompt
+    assert expected_guidance in prompt
+    assert "Prompt content and approved evidence remain the subject authority" in prompt
+
+
+@pytest.mark.parametrize("selected_format", ["static", "infographic"])
+def test_build_image_prompt_does_not_activate_template_adaptation_without_reference_profile(selected_format: str) -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt=f"Create a clean {selected_format} visual about comparing options.",
+        studio_panel={"platform_preset": "linkedin", "format": selected_format, "file_type": "png"},
+        resolved_brand_context={"brand_name": "Example Brand", "visual_identity": {}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        reference_assets=[],
+        layout_decision={"mode": "synthesized_layout"},
+    )
+    text_payload = StructuredTextPayload(
+        headline="Compare options clearly",
+        body="Use one clear visual hierarchy.",
+        cta="Compare",
+        hashtags=[],
+        metadata={},
+    )
+
+    prompt = AIOrchestratorService.build_image_prompt(
+        request,
+        text_payload,
+        creative_decision=CreativeDecisionPayload(asset_strategy={"use_generated_image": True}),
+        compiled_context={},
+    )
+
+    assert "Reference template adaptation contract" not in prompt
+    assert "Static template adaptation:" not in prompt
+    assert "Infographic template adaptation:" not in prompt
 
 
 def test_build_image_prompt_includes_dynamic_visual_style_policy_for_photo_led_brand() -> None:
@@ -11600,6 +14426,104 @@ def test_build_image_prompt_ignores_general_knowledge_brief_for_visual_grounding
     assert "template: A polished poster template with a headline about moving from FDs to bonds." not in prompt
 
 
+def test_build_final_render_prompt_defaults_to_creative_topic_specific_3d_visual() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a LinkedIn static creative explaining supply chain risk signals.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"brand_name": "Example Brand", "visual_identity": {}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        reference_assets=[],
+        layout_decision={},
+    )
+    scene_graph = GenerationSceneGraph.model_validate(
+        {
+            "canvas": {"width": 1080, "height": 1080, "platform": "linkedin", "file_type": "png"},
+            "elements": [],
+        }
+    )
+
+    prompt = AIOrchestratorService.build_final_render_prompt(
+        request=request,
+        text_payload=StructuredTextPayload(
+            headline="Read risk before it compounds",
+            body="Show how weak signals move through a supply chain.",
+            cta="Review signals",
+            hashtags=[],
+            metadata={},
+        ),
+        creative_decision=CreativeDecisionPayload(layout_mode="synthesized_layout"),
+        scene_graph=scene_graph,
+        compiled_context={},
+    )
+
+    assert "Creative topic-specific 3D visual direction:" in prompt
+    assert "premium 3D/2.5D/isometric topic visuals" in prompt
+    assert "custom rendered objects, material depth, lighting, and spatial metaphors" in prompt
+    assert "generic coins, arrows, stock dashboards, business portraits" in prompt
+
+
+def test_build_final_render_prompt_respects_flat_brand_policy_without_forcing_3d() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a LinkedIn static creative explaining supply chain risk signals.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"brand_name": "Example Brand", "visual_identity": {}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        reference_assets=[],
+        layout_decision={},
+    )
+    scene_graph = GenerationSceneGraph.model_validate(
+        {
+            "canvas": {"width": 1080, "height": 1080, "platform": "linkedin", "file_type": "png"},
+            "elements": [],
+        }
+    )
+
+    prompt = AIOrchestratorService.build_final_render_prompt(
+        request=request,
+        text_payload=StructuredTextPayload(
+            headline="Read risk before it compounds",
+            body="Show how weak signals move through a supply chain.",
+            cta="Review signals",
+            hashtags=[],
+            metadata={},
+        ),
+        creative_decision=CreativeDecisionPayload(layout_mode="synthesized_layout"),
+        scene_graph=scene_graph,
+        compiled_context={
+            "brand_visual_brief": {
+                "visual_style_policy": {
+                    "dominant_image_mode": "photo",
+                    "dominant_depth_mode": "flat",
+                    "dominant_rendering_mode": "photo",
+                    "dominant_subject_mode": "editorial",
+                    "dominant_support_mode": "photo_led",
+                    "style_consistency": "strong",
+                    "three_d_usage": "none",
+                    "reference_pattern_priority": "brand_dominant",
+                }
+            }
+        },
+    )
+
+    assert "Dynamic visual-style policy:" in prompt
+    assert "3D restraint: do not force 3D, isometric, or rendered object scenes" in prompt
+    assert "Creative topic-specific 3D visual direction:" not in prompt
+
+
 def test_build_final_render_prompt_includes_dynamic_visual_style_policy_for_3d_brand() -> None:
     request = AIOrchestrationRequest(
         tenant_id=uuid4(),
@@ -11655,7 +14579,7 @@ def test_build_final_render_prompt_includes_dynamic_visual_style_policy_for_3d_b
     assert "3D execution: the analyzed brand/reference samples regularly use true 3D or dimensional rendering" in prompt
 
 
-def test_build_final_render_prompt_requests_finished_creative_and_complete_copy() -> None:
+def test_build_final_render_prompt_requests_finished_static_copy_and_backend_logo_footer_only() -> None:
     request = AIOrchestrationRequest(
         tenant_id=uuid4(),
         brand_space_id=uuid4(),
@@ -11714,12 +14638,19 @@ def test_build_final_render_prompt_requests_finished_creative_and_complete_copy(
     assert "Create one finished premium branded social creative." in prompt
     assert "Do not crop or crowd any reserved text" in prompt
     assert "Canvas fit: design for the requested 1080x1080 square output ratio" in prompt
+    assert "Generation-to-export fit: model canvas 1024x1024 closely matches the final 1080x1080 export" in prompt
     assert "fully inside a centered target-aspect safe frame" in prompt
-    assert "All reserved overlay regions must remain fully inside the export frame" in prompt
+    assert "All rendered text regions plus the reserved corner-safe and legal/footer areas must remain fully inside the export frame" in prompt
     assert "Palette role guidance:" in prompt
     assert "Strict palette contract:" in prompt
-    assert "TEXT OVERLAY CONTRACT" in prompt
-    assert "Use this headline verbatim" not in prompt
+    assert "FINAL TEXT RENDER CONTRACT" in prompt
+    assert "Main content render authority:" in prompt
+    assert "TEXT OVERLAY CONTRACT" not in prompt
+    assert "Backend overlay collision guard:" not in prompt
+    assert "CRITICAL TEXT WRAPPING RULE" in prompt
+    assert "never clip, crop, truncate, fade out, hide, or continue text past a card/panel/canvas edge" in prompt
+    assert "shorten/wrap the copy, reduce module count, or simplify visuals before allowing cut-off text" in prompt
+    assert "Use this headline verbatim" in prompt
     assert "Make the supporting visual explain the exact topic and benefit" in prompt
     assert "Do not default to a standalone business portrait" in prompt
     assert "Respect the reference/template layout" in prompt
@@ -11786,7 +14717,11 @@ def test_build_image_prompt_strips_blocked_compliance_phrases_from_dynamic_copy(
             "body": "A SEBI-regulated, trusted platform for fixed-income investors.",
             "metadata": {
                 "supporting_line": "SEBI-licensed access for retail investors.",
-                "proof_points": ["SEBI-Regulated", "Transparent fixed-income insights"],
+                "proof_points": [
+                    "SEBI-Regulated",
+                    "Transparent fixed-income insights",
+                    "Guaranteed risk-free transparent platform.",
+                ],
                 "stat_highlights": ["SEBI aware", "Investor-first framing"],
             },
         },
@@ -11809,6 +14744,10 @@ def test_build_image_prompt_strips_blocked_compliance_phrases_from_dynamic_copy(
 
     lowered = prompt.casefold()
     assert "sebi" not in lowered
+    assert "regulated" not in lowered
+    assert "guaranteed" not in lowered
+    assert "risk-free" not in lowered
+    assert "transparent platform" not in lowered
     assert "transparent fixed-income insights" in lowered
 
 
@@ -13285,6 +16224,126 @@ def test_merge_slide_layout_anchor_reference_preserves_layout_anchor_even_withou
         "tenant/reference/FTA-3.pdf",
     ]
     assert merged[0]["metadata"]["conditioning_page_index"] == 7
+
+
+def test_merge_slide_layout_anchor_reference_skips_text_surface_anchor_when_topic_mismatches() -> None:
+    stale_asset = {
+        "asset_id": "fd-break-infographic",
+        "asset_role": "reference_creative",
+        "storage_path": "tenant/reference/fd-break-infographic.png",
+        "mime_type": "image/png",
+        "trust_level": "trusted",
+        "metadata": {
+            "label": "Early fixed deposit break infographic",
+            "format_family": "infographic",
+            "overlay_safe": True,
+            "sample_page_blueprint": {
+                "layout_category": "card_callout_grid",
+                "module_counts": {
+                    "top_text_band_count": 2,
+                    "horizontal_band_count": 4,
+                    "card_like_count": 4,
+                },
+            },
+        },
+    }
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create an infographic for LinkedIn on the top 6 countries that invest in India, by comparing the country-wise FDI equity inflows.",
+        studio_panel={"platform_preset": "linkedin", "format": "infographic", "file_type": "png"},
+        resolved_brand_context={},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        template_context={},
+        asset_catalog=[stale_asset],
+        reference_assets=[stale_asset],
+    )
+    slide = {
+        "slide_index": 1,
+        "slide_count": 1,
+        "metadata": {
+            "reference_asset_path": "tenant/reference/fd-break-infographic.png",
+            "reference_layout_asset_path": "tenant/reference/fd-break-infographic.png",
+        },
+    }
+
+    merged = AIOrchestratorService._merge_slide_layout_anchor_reference(
+        slide,
+        [],
+        request=request,
+        creative_decision=CreativeDecisionPayload(
+            layout_mode="adapted_template",
+            asset_strategy={"use_generated_image": True, "template_surface_policy": "style_reference_only"},
+        ),
+    )
+
+    assert merged == []
+
+
+def test_merge_slide_layout_anchor_reference_keeps_static_anchor_prompt_only_for_conditioning() -> None:
+    static_asset = {
+        "asset_id": "inflation-static-layout",
+        "asset_role": "reference_creative",
+        "storage_path": "tenant/reference/inflation-static-layout.png",
+        "mime_type": "image/png",
+        "trust_level": "trusted",
+        "metadata": {
+            "label": "Inflation ranking static layout reference",
+            "format_family": "static",
+            "overlay_safe": True,
+            "sample_page_blueprint": {
+                "layout_category": "ranked_comparison",
+                "module_counts": {"text_block_count": 3, "row_module_count": 10},
+                "visual_permissions": {"table_allowed": True},
+            },
+        },
+    }
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a static post for LinkedIn comparing India's inflation to other countries and create a top 10 ranking.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png"},
+        resolved_brand_context={},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        template_context={},
+        asset_catalog=[static_asset],
+        reference_assets=[static_asset],
+    )
+    slide = {
+        "slide_index": 1,
+        "slide_count": 1,
+        "metadata": {
+            "reference_asset_path": "tenant/reference/inflation-static-layout.png",
+            "reference_layout_asset_path": "tenant/reference/inflation-static-layout.png",
+        },
+    }
+    creative_decision = CreativeDecisionPayload(
+        layout_mode="adapted_template",
+        asset_strategy={"use_generated_image": True, "template_surface_policy": "style_reference_only"},
+    )
+
+    prompt_merged = AIOrchestratorService._merge_slide_layout_anchor_reference(
+        slide,
+        [],
+        request=request,
+        creative_decision=creative_decision,
+    )
+    conditioning_merged = AIOrchestratorService._merge_slide_layout_anchor_reference(
+        slide,
+        [],
+        request=request,
+        creative_decision=creative_decision,
+        for_conditioning=True,
+    )
+
+    assert [asset["storage_path"] for asset in prompt_merged] == ["tenant/reference/inflation-static-layout.png"]
+    assert conditioning_merged == []
 
 
 def test_apply_sequence_pack_slide_metadata_maps_shorter_output_to_last_reference_slide() -> None:
@@ -15412,6 +18471,436 @@ def test_orchestrator_ai_final_render_uses_selected_reference_image() -> None:
     assert response.explainability["selected_reference_images"][0]["storage_path"] == "tenant/brand/reference/travel-hero.png"
 
 
+def test_orchestrator_static_reference_adaptation_reaches_final_render_prompt() -> None:
+    service = AIOrchestratorService()
+    service.guardrails = SimpleNamespace(validate_prompt=lambda *args, **kwargs: None, validate_output=lambda *args, **kwargs: None)
+    service.resolution = SimpleNamespace(
+        build_plan=lambda **kwargs: SimpleNamespace(
+            ordered_knowledge={"brand": [{"content": "Trusted fixed income platform"}]},
+            instructions="Prefer validated brand context.",
+            metadata={"ordered_channels": ["brand"]},
+        )
+    )
+    service.compiler = SimpleNamespace(
+        compile=lambda **kwargs: {
+            "brand_copy_brief": {"brand_name": "Jiraaf"},
+            "brand_visual_brief": {"font_families": []},
+            "objective_brief": {},
+            "audience_brief": {},
+            "knowledge_brief": [{"content": "Trusted fixed income platform"}],
+            "render_constraints": {},
+            "session_brief": {},
+            "template_fit_brief": {},
+            "reference_asset_brief": [],
+            "content_format_brief": {},
+            "reference_adaptation_profile": {
+                "source_format_family": "static",
+                "output_format_family": "static",
+                "adaptation_mode": "static_creative_adaptation",
+                "confidence": 0.82,
+                "adapt": {"layout_rhythm": True, "module_density": True},
+                "do_not_adapt": {"literal_text": True, "source_subject_matter": True},
+            },
+            "generation_surface_contract": {
+                "selected_format": "static",
+                "selected_platform": "instagram",
+                "layout_behavior": "static_creative_output",
+            },
+        }
+    )
+    planning_payload = {
+        "headline": "Invest With Structure",
+        "body": "A clear framework helps investors compare options without overreacting.",
+        "cta": "Compare clearly",
+        "hashtags": ["#Jiraaf"],
+        "metadata": {
+            "supporting_line": "Use structure before choosing an option.",
+            "proof_points": ["Compare risk", "Check liquidity", "Review fit"],
+            "visual_direction": "Premium structured investment creative",
+            "design_style": "clean editorial social creative",
+        },
+        "creative_decision": {
+            "layout_mode": "adapted_template",
+            "confidence": 0.86,
+            "asset_strategy": {
+                "dominant_visual_system": "generated_image",
+                "use_generated_image": True,
+                "use_brand_reference_assets": True,
+            },
+        },
+        "scene_graph": {
+            "canvas": {"width": 1080, "height": 1080, "platform": "instagram", "file_type": "png"},
+            "layout_mode": "adapted_template",
+            "confidence": 0.86,
+            "layers": ["background", "content"],
+            "elements": [
+                {"element_id": "headline", "element_type": "text", "role": "headline", "geometry": {"x": 0.08, "y": 0.1, "width": 0.58, "height": 0.14}, "text": "Invest With Structure"},
+                {"element_id": "supporting_line", "element_type": "text", "role": "supporting_line", "geometry": {"x": 0.08, "y": 0.24, "width": 0.48, "height": 0.1}, "text": "Use structure before choosing an option."},
+                {"element_id": "hero_image", "element_type": "image", "role": "image", "geometry": {"x": 0.54, "y": 0.18, "width": 0.34, "height": 0.42}},
+            ],
+            "styles": {"layout_archetype": "editorial_split"},
+            "assets": [],
+            "template_adaptation": {},
+            "validation_hints": {},
+        },
+    }
+    image_provider = _StubImageProvider()
+    service.providers = SimpleNamespace(
+        get_text_provider=lambda purpose: _StubTextProvider(planning_payload),
+        get_image_provider=lambda: image_provider,
+    )
+    service.tone = SimpleNamespace(evaluate=lambda **kwargs: {"score": 0.9, "summary": "on-brand"})
+    service.validate_scene_graph = lambda **kwargs: SceneGraphValidationReport(status="clean", issues=[], summary=[], repairable=True)
+    service.assess_creative_quality = lambda **kwargs: {"score": 0.95, "issues": []}
+    reference_file = Path("tests") / f"reference-static-layout-{uuid4()}.png"
+    reference_image = Image.new("RGB", (320, 320), (248, 246, 238))
+    draw = ImageDraw.Draw(reference_image)
+    draw.rectangle((28, 38, 292, 82), fill=(18, 48, 72))
+    draw.rectangle((42, 120, 150, 230), fill=(212, 132, 34))
+    draw.rectangle((178, 128, 282, 184), fill=(32, 120, 112))
+    draw.rectangle((178, 204, 282, 246), fill=(32, 120, 112))
+    reference_image.save(reference_file)
+    service.storage = SimpleNamespace(exists=lambda path: True, absolute_path=lambda path: str(reference_file.resolve()))
+
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create an Instagram static post about comparing fixed-income options with structure.",
+        studio_panel={"platform_preset": "instagram", "format": "static", "file_type": "png", "size": {"width": 1080, "height": 1080}},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"brand_name": "Jiraaf", "guardrails": {}, "visual_identity": {"brand_color_palette": {"primary": "#003975", "accent": "#FFA400"}}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={"brand": [{"content": "Trusted fixed income platform"}]},
+        layout_decision={"mode": "adapted_template"},
+        reference_assets=[],
+        asset_catalog=[
+            {
+                "asset_id": "reference-static-layout",
+                "asset_role": "reference_creative",
+                "storage_path": "tenant/brand/reference/static-layout.png",
+                "mime_type": "image/png",
+                "trust_level": "trusted",
+                "metadata": {"label": "static layout reference for investment comparison", "review_status": "approved"},
+            }
+        ],
+        resolution_policy={},
+        generate_image=True,
+    )
+
+    try:
+        response = service.generate(request)
+    finally:
+        if reference_file.exists():
+            reference_file.unlink()
+
+    assert all(call.get("mode") != "edit" for call in image_provider.calls)
+    generate_call = next(call for call in image_provider.calls if call.get("prompt"))
+    assert "LLM-led composition authority for static/infographic" in generate_call["prompt"]
+    assert "Current user prompt is the subject authority" in generate_call["prompt"]
+    assert "sample_page_blueprint" not in generate_call["prompt"]
+    assert "Static template structure lock JSON" not in generate_call["prompt"]
+    assert "Template-active fallback policy" not in generate_call["prompt"]
+    assert "layout DNA" not in generate_call["prompt"]
+    assert response.final_render_asset is not None
+    assert response.final_render_asset.metadata["reference_conditioned_by_ai"] is False
+    assert isinstance(response.final_render_asset.metadata["sample_page_blueprint"], dict)
+    assert response.final_render_asset.metadata["sample_page_conditioning_image_path"] is None
+    assert response.final_render_asset.metadata["sample_page_layout_image_path"] == str(reference_file.resolve())
+
+
+def test_orchestrator_static_reference_adaptation_uses_asset_catalog_real_compiler_path() -> None:
+    service = AIOrchestratorService()
+    service.guardrails = SimpleNamespace(validate_prompt=lambda *args, **kwargs: None, validate_output=lambda *args, **kwargs: None)
+    service.resolution = SimpleNamespace(
+        build_plan=lambda **kwargs: SimpleNamespace(
+            ordered_knowledge={"brand": [{"content": "Trusted fixed income platform"}]},
+            instructions="Prefer validated brand context.",
+            metadata={"ordered_channels": ["brand"]},
+        )
+    )
+    planning_payload = {
+        "headline": "Invest With Structure",
+        "body": "A clear framework helps investors compare options without overreacting.",
+        "cta": "Compare clearly",
+        "hashtags": ["#Jiraaf"],
+        "metadata": {
+            "supporting_line": "Use structure before choosing an option.",
+            "proof_points": ["Compare risk", "Check liquidity", "Review fit"],
+            "visual_direction": "Premium structured investment creative",
+            "design_style": "clean editorial social creative",
+        },
+        "creative_decision": {
+            "layout_mode": "adapted_template",
+            "confidence": 0.86,
+            "asset_strategy": {
+                "dominant_visual_system": "generated_image",
+                "use_generated_image": True,
+                "use_brand_reference_assets": True,
+            },
+        },
+        "scene_graph": {
+            "canvas": {"width": 1080, "height": 1080, "platform": "instagram", "file_type": "png"},
+            "layout_mode": "adapted_template",
+            "confidence": 0.86,
+            "layers": ["background", "content"],
+            "elements": [
+                {"element_id": "headline", "element_type": "text", "role": "headline", "geometry": {"x": 0.08, "y": 0.1, "width": 0.58, "height": 0.14}, "text": "Invest With Structure"},
+                {"element_id": "supporting_line", "element_type": "text", "role": "supporting_line", "geometry": {"x": 0.08, "y": 0.24, "width": 0.48, "height": 0.1}, "text": "Use structure before choosing an option."},
+                {"element_id": "hero_image", "element_type": "image", "role": "image", "geometry": {"x": 0.54, "y": 0.18, "width": 0.34, "height": 0.42}},
+            ],
+            "styles": {"layout_archetype": "editorial_split"},
+            "assets": [],
+            "template_adaptation": {},
+            "validation_hints": {},
+        },
+    }
+    image_provider = _StubImageProvider()
+    service.providers = SimpleNamespace(
+        get_text_provider=lambda purpose: _StubTextProvider(planning_payload),
+        get_image_provider=lambda: image_provider,
+    )
+    service.tone = SimpleNamespace(evaluate=lambda **kwargs: {"score": 0.9, "summary": "on-brand"})
+    service.validate_scene_graph = lambda **kwargs: SceneGraphValidationReport(status="clean", issues=[], summary=[], repairable=True)
+    service.assess_creative_quality = lambda **kwargs: {"score": 0.95, "issues": []}
+    reference_file = Path("tests") / f"reference-static-real-compiler-{uuid4()}.png"
+    reference_image = Image.new("RGB", (320, 320), (248, 246, 238))
+    draw = ImageDraw.Draw(reference_image)
+    draw.rectangle((28, 38, 292, 82), fill=(18, 48, 72))
+    draw.rectangle((42, 120, 150, 230), fill=(212, 132, 34))
+    draw.rectangle((178, 128, 282, 184), fill=(32, 120, 112))
+    draw.rectangle((178, 204, 282, 246), fill=(32, 120, 112))
+    reference_image.save(reference_file)
+    service.storage = SimpleNamespace(exists=lambda path: True, absolute_path=lambda path: str(reference_file.resolve()))
+
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create an Instagram static post about comparing fixed-income options with structure.",
+        studio_panel={"platform_preset": "instagram", "format": "static", "file_type": "png", "size": {"width": 1080, "height": 1080}},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"brand_name": "Jiraaf", "guardrails": {}, "visual_identity": {"brand_color_palette": {"primary": "#003975", "accent": "#FFA400"}}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={"brand": [{"content": "Trusted fixed income platform"}]},
+        layout_decision={"mode": "adapted_template"},
+        reference_assets=[],
+        asset_catalog=[
+            {
+                "asset_id": "reference-static-real-compiler",
+                "asset_role": "reference_creative",
+                "format_family": "static",
+                "storage_path": "tenant/brand/reference/static-real-compiler.png",
+                "mime_type": "image/png",
+                "trust_level": "trusted",
+                "metadata": {
+                    "label": "static layout reference for investment comparison",
+                    "review_status": "approved",
+                    "format_family": "static",
+                    "sample_page_blueprint": {
+                        "layout_category": "hero_with_proof_strip",
+                        "density": "balanced",
+                        "module_counts": {
+                            "large_visual_count": 1,
+                            "text_block_count": 2,
+                            "footer_band_count": 1,
+                        },
+                        "visual_permissions": {
+                            "chart_or_graph_allowed": False,
+                            "table_allowed": False,
+                        },
+                        "image_zones": [{"role": "hero_visual", "x": 0.54, "y": 0.18, "w": 0.34, "h": 0.42}],
+                        "zones": [
+                            {"role": "headline", "x": 0.08, "y": 0.1, "w": 0.58, "h": 0.14},
+                            {"role": "hero_visual", "x": 0.54, "y": 0.18, "w": 0.34, "h": 0.42},
+                            {"role": "supporting_line", "x": 0.08, "y": 0.24, "w": 0.48, "h": 0.1},
+                        ],
+                        "must_match": ["hero visual right", "text stack left", "footer safe area"],
+                    },
+                },
+            }
+        ],
+        resolution_policy={},
+        generate_image=True,
+    )
+
+    try:
+        response = service.generate(request)
+    finally:
+        if reference_file.exists():
+            reference_file.unlink()
+
+    assert all(call.get("mode") != "edit" for call in image_provider.calls)
+    generate_call = next(call for call in image_provider.calls if call.get("prompt"))
+    prompt = generate_call["prompt"]
+    assert "LLM-led composition authority for static/infographic" in prompt
+    assert "Current user prompt is the subject authority" in prompt
+    assert "Reference adaptation profile JSON" not in prompt
+    assert "static_creative_adaptation" not in prompt
+    assert "Static template structure lock JSON" not in prompt
+    assert "Template-active fallback policy" not in prompt
+    assert "layout DNA" not in prompt
+    assert "sample_page_blueprint" not in prompt
+    assert response.final_render_asset is not None
+    assert response.final_render_asset.metadata["reference_conditioned_by_ai"] is False
+    assert isinstance(response.final_render_asset.metadata["sample_page_blueprint"], dict)
+    assert response.final_render_asset.metadata["sample_page_conditioning_image_path"] is None
+    assert response.final_render_asset.metadata["sample_page_layout_image_path"] == str(reference_file.resolve())
+
+
+def test_orchestrator_infographic_reference_adaptation_reaches_final_render_prompt() -> None:
+    service = AIOrchestratorService()
+    service.guardrails = SimpleNamespace(validate_prompt=lambda *args, **kwargs: None, validate_output=lambda *args, **kwargs: None)
+    service.resolution = SimpleNamespace(
+        build_plan=lambda **kwargs: SimpleNamespace(
+            ordered_knowledge={"brand": [{"content": "Trusted fixed income platform"}]},
+            instructions="Prefer validated brand context.",
+            metadata={"ordered_channels": ["brand"]},
+        )
+    )
+    service.compiler = SimpleNamespace(
+        compile=lambda **kwargs: {
+            "brand_copy_brief": {"brand_name": "Jiraaf"},
+            "brand_visual_brief": {"font_families": []},
+            "objective_brief": {},
+            "audience_brief": {},
+            "knowledge_brief": [{"content": "Trusted fixed income platform"}],
+            "render_constraints": {},
+            "session_brief": {},
+            "template_fit_brief": {},
+            "reference_asset_brief": [],
+            "content_format_brief": {},
+            "reference_adaptation_profile": {
+                "source_format_family": "infographic",
+                "output_format_family": "infographic",
+                "adaptation_mode": "infographic_surface_adaptation",
+                "confidence": 0.84,
+                "adapt": {"layout_rhythm": True, "module_density": True},
+                "do_not_adapt": {"literal_text": True, "source_subject_matter": True},
+            },
+            "generation_surface_contract": {
+                "selected_format": "infographic",
+                "selected_platform": "instagram",
+                "layout_behavior": "infographic_surface_output",
+            },
+        }
+    )
+    planning_payload = {
+        "headline": "Compare Options Clearly",
+        "body": "Use a compact sequence of sections to explain how investors compare options.",
+        "cta": "Compare clearly",
+        "hashtags": ["#Jiraaf"],
+        "metadata": {
+            "supporting_line": "Break the comparison into visible steps.",
+            "proof_points": ["Define goal", "Compare risk", "Review liquidity"],
+            "infographic_section_specs": [
+                {"section_number": 1, "section_role": "overview", "headline": "Define the goal"},
+                {"section_number": 2, "section_role": "comparison", "headline": "Compare the tradeoffs"},
+                {"section_number": 3, "section_role": "takeaway", "headline": "Pick the best fit"},
+            ],
+            "visual_direction": "Premium sectioned investment infographic",
+            "design_style": "clean modular infographic surface",
+        },
+        "creative_decision": {
+            "layout_mode": "adapted_template",
+            "confidence": 0.88,
+            "asset_strategy": {
+                "dominant_visual_system": "generated_image",
+                "use_generated_image": True,
+                "use_brand_reference_assets": True,
+            },
+        },
+        "scene_graph": {
+            "canvas": {"width": 1080, "height": 1350, "platform": "instagram", "file_type": "png"},
+            "layout_mode": "adapted_template",
+            "confidence": 0.88,
+            "layers": ["background", "content"],
+            "elements": [
+                {"element_id": "headline", "element_type": "text", "role": "headline", "geometry": {"x": 0.08, "y": 0.08, "width": 0.7, "height": 0.1}, "text": "Compare Options Clearly"},
+                {"element_id": "section_1", "element_type": "shape", "role": "card", "geometry": {"x": 0.08, "y": 0.24, "width": 0.84, "height": 0.14}},
+                {"element_id": "section_2", "element_type": "shape", "role": "card", "geometry": {"x": 0.08, "y": 0.44, "width": 0.84, "height": 0.14}},
+                {"element_id": "section_3", "element_type": "shape", "role": "card", "geometry": {"x": 0.08, "y": 0.64, "width": 0.84, "height": 0.14}},
+            ],
+            "styles": {"layout_archetype": "stacked_infographic"},
+            "assets": [],
+            "template_adaptation": {},
+            "validation_hints": {},
+        },
+    }
+    image_provider = _StubImageProvider()
+    service.providers = SimpleNamespace(
+        get_text_provider=lambda purpose: _StubTextProvider(planning_payload),
+        get_image_provider=lambda: image_provider,
+    )
+    service.tone = SimpleNamespace(evaluate=lambda **kwargs: {"score": 0.9, "summary": "on-brand"})
+    service.validate_scene_graph = lambda **kwargs: SceneGraphValidationReport(status="clean", issues=[], summary=[], repairable=True)
+    service.assess_creative_quality = lambda **kwargs: {"score": 0.95, "issues": []}
+    reference_file = Path("tests") / f"reference-infographic-layout-{uuid4()}.png"
+    reference_image = Image.new("RGB", (320, 420), (247, 246, 240))
+    draw = ImageDraw.Draw(reference_image)
+    draw.rectangle((28, 30, 292, 74), fill=(18, 48, 72))
+    draw.rectangle((38, 112, 282, 166), fill=(212, 132, 34))
+    draw.rectangle((38, 196, 282, 250), fill=(32, 120, 112))
+    draw.rectangle((38, 280, 282, 334), fill=(32, 120, 112))
+    draw.line((160, 166, 160, 196), fill=(18, 48, 72), width=4)
+    draw.line((160, 250, 160, 280), fill=(18, 48, 72), width=4)
+    reference_image.save(reference_file)
+    service.storage = SimpleNamespace(exists=lambda path: True, absolute_path=lambda path: str(reference_file.resolve()))
+
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create an Instagram infographic about comparing fixed-income options step by step.",
+        studio_panel={"platform_preset": "instagram", "format": "infographic", "file_type": "png", "size": {"width": 1080, "height": 1350}},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"brand_name": "Jiraaf", "guardrails": {}, "visual_identity": {"brand_color_palette": {"primary": "#003975", "accent": "#FFA400"}}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={"brand": [{"content": "Trusted fixed income platform"}]},
+        layout_decision={"mode": "adapted_template"},
+        reference_assets=[],
+        asset_catalog=[
+            {
+                "asset_id": "reference-infographic-layout",
+                "asset_role": "reference_creative",
+                "storage_path": "tenant/brand/reference/infographic-layout.png",
+                "mime_type": "image/png",
+                "trust_level": "trusted",
+                "metadata": {"label": "infographic layout reference for investment comparison", "review_status": "approved"},
+            }
+        ],
+        resolution_policy={},
+        generate_image=True,
+    )
+
+    try:
+        response = service.generate(request)
+    finally:
+        if reference_file.exists():
+            reference_file.unlink()
+
+    assert all(call.get("mode") != "edit" for call in image_provider.calls)
+    generate_call = next(call for call in image_provider.calls if call.get("prompt"))
+    assert "LLM-led composition authority for static/infographic" in generate_call["prompt"]
+    assert "Current user prompt is the subject authority" in generate_call["prompt"]
+    assert "sample_page_blueprint" not in generate_call["prompt"]
+    assert "infographic_surface_adaptation" not in generate_call["prompt"]
+    assert "Infographic template structure lock JSON" not in generate_call["prompt"]
+    assert "Template-active fallback policy" not in generate_call["prompt"]
+    assert "layout DNA" not in generate_call["prompt"]
+    assert response.final_render_asset is not None
+    assert response.final_render_asset.metadata["reference_conditioned_by_ai"] is False
+    assert isinstance(response.final_render_asset.metadata["sample_page_blueprint"], dict)
+    assert response.final_render_asset.metadata["sample_page_conditioning_image_path"] is None
+    assert response.final_render_asset.metadata["sample_page_layout_image_path"] == str(reference_file.resolve())
+
+
 def test_orchestrator_skips_logo_bearing_reference_image_when_exact_logo_overlay_is_used() -> None:
     service = AIOrchestratorService()
     service.guardrails = SimpleNamespace(validate_prompt=lambda *args, **kwargs: None, validate_output=lambda *args, **kwargs: None)
@@ -16867,6 +20356,314 @@ def test_orchestrator_content_semantic_validator_flags_static_numeric_chart_with
     assert "static_unsupported_numeric_data_visual" in issue_codes
 
 
+def test_orchestrator_content_semantic_validator_flags_static_top_n_ranking_with_missing_rows_and_unverified_values() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a static post for LinkedIn comparing a market metric across countries and create a top 10 ranking.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"brand_name": "Jiraaf"},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+    payload = StructuredTextPayload(
+        headline="The metric is stable locally",
+        body="A top 10 ranking should compare all requested countries.",
+        cta="Explore more",
+        hashtags=["#Markets"],
+        metadata={
+            "supporting_line": "Only three rows were generated.",
+            "proof_points": [
+                "Local market metric - 4.0%",
+                "Global median - 2.9%",
+                "Highest country - 682.1%",
+            ],
+            "static_panel_spec": {
+                "panel_goal": "ranked_list",
+                "dominant_message": "Compare the top 10 ranking.",
+                "proof_points": [
+                    "Local market metric - 4.0%",
+                    "Global median - 2.9%",
+                    "Highest country - 682.1%",
+                ],
+                "visual_focus": "Compact ranking table with top 10 rows and percentage values.",
+            },
+        },
+    )
+
+    report = AIOrchestratorService._validate_content_semantics(request=request, text_payload=payload)
+    issue_codes = {issue["code"] for issue in report["issues"]}
+
+    assert "static_missing_requested_ranking_rows" in issue_codes
+    assert "static_unsupported_exact_claim" in issue_codes
+
+
+def test_orchestrator_preflight_sanitizes_unverified_static_ranking_values_before_blocking() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a static post for LinkedIn comparing a market metric across countries and create a top 10 ranking.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"brand_name": "Jiraaf"},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+    payload = StructuredTextPayload(
+        headline="The metric is stable locally",
+        body="A top 10 ranking should compare all requested countries.",
+        cta="Explore more",
+        hashtags=["#Markets"],
+        metadata={
+            "supporting_line": "Only three rows were generated.",
+            "proof_points": [
+                "Local market metric - 4.0%",
+                "Global median - 2.9%",
+                "Highest country - 682.1%",
+            ],
+            "static_panel_spec": {
+                "panel_goal": "ranked_list",
+                "dominant_message": "Compare the top 10 ranking.",
+                "proof_points": [
+                    "Local market metric - 4.0%",
+                    "Global median - 2.9%",
+                    "Highest country - 682.1%",
+                ],
+                "visual_focus": "Compact ranking table with top 10 rows and percentage values.",
+            },
+        },
+    )
+
+    sanitized = AIOrchestratorService._preflight_text_payload_semantics(
+        request=request,
+        text_payload=payload,
+        compiled_context={},
+    )
+    report = AIOrchestratorService._validate_content_semantics(request=request, text_payload=sanitized)
+    issue_codes = {issue["code"] for issue in report["issues"]}
+
+    assert sanitized.metadata["proof_points"] == []
+    assert sanitized.metadata["static_panel_spec"]["proof_points"] == []
+    assert sanitized.metadata["static_panel_spec"]["visual_focus"].startswith("Topic-specific qualitative comparison modules")
+    assert sanitized.metadata["data_surface_exact_values_sanitized"] is True
+    assert "static_missing_requested_ranking_rows" in issue_codes
+    assert "static_unsupported_exact_claim" not in issue_codes
+    assert "static_unsupported_numeric_data_visual" not in issue_codes
+    assert AIOrchestratorService._unresolved_data_surface_issue_codes(report) == set()
+
+
+def test_orchestrator_preflight_sanitizes_unverified_infographic_values_before_blocking() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create an infographic for LinkedIn on the top 6 countries that invest in India, by comparing country-wise FDI equity inflows.",
+        studio_panel={"platform_preset": "linkedin", "format": "infographic", "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"brand_name": "Jiraaf"},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+    payload = StructuredTextPayload(
+        headline="Top FDI inflow countries",
+        body="Country A contributed 27.7%, Country B contributed 17.3%, and Country C contributed 9.8%.",
+        cta="Explore more",
+        hashtags=["#FDI"],
+        metadata={
+            "proof_points": ["Country A - 27.7%", "Country B - 17.3%", "Country C - 9.8%"],
+            "infographic_section_specs": [
+                {
+                    "section_number": 1,
+                    "section_role": "evidence",
+                    "headline": "Top contributors",
+                    "proof_points": ["Country A - 27.7%", "Country B - 17.3%"],
+                    "visual_focus": "Ranking table with percentage values.",
+                }
+            ],
+        },
+    )
+
+    sanitized = AIOrchestratorService._preflight_text_payload_semantics(
+        request=request,
+        text_payload=payload,
+        compiled_context={},
+    )
+    report = AIOrchestratorService._validate_content_semantics(request=request, text_payload=sanitized)
+    issue_codes = {issue["code"] for issue in report["issues"]}
+
+    assert sanitized.body == ""
+    assert sanitized.metadata["proof_points"] == []
+    assert sanitized.metadata["infographic_section_specs"][0]["proof_points"] == []
+    assert sanitized.metadata["infographic_section_specs"][0]["visual_focus"].startswith("Topic-specific qualitative comparison modules")
+    assert "infographic_missing_requested_ranking_rows" in issue_codes
+    assert "infographic_unsupported_exact_claim" not in issue_codes
+    assert "infographic_unsupported_numeric_data_visual" not in issue_codes
+    assert AIOrchestratorService._unresolved_data_surface_issue_codes(report) == set()
+
+
+def test_orchestrator_does_not_treat_unverified_static_ranking_values_as_generation_failure() -> None:
+    report = {
+        "status": "needs_rewrite",
+        "format": "static",
+        "issues": [
+            {"code": "static_missing_requested_ranking_rows", "message": "Rows missing."},
+            {"code": "static_unsupported_exact_claim", "message": "Values unsupported."},
+        ],
+    }
+
+    issue_codes = AIOrchestratorService._unresolved_data_surface_issue_codes(report)
+
+    assert issue_codes == set()
+
+
+def test_orchestrator_still_treats_unverified_carousel_values_as_no_fallback_generation_failure() -> None:
+    report = {
+        "status": "needs_rewrite",
+        "format": "carousel",
+        "issues": [
+            {"code": "carousel_slide_unsupported_exact_claim", "message": "Values unsupported."},
+        ],
+    }
+
+    issue_codes = AIOrchestratorService._unresolved_data_surface_issue_codes(report)
+    failure = AIOrchestratorService._data_surface_generation_failure(report=report)
+
+    assert issue_codes == {"carousel_slide_unsupported_exact_claim"}
+    assert failure.reason_code == "data_surface_content_unresolved"
+    assert failure.failure_type == "content_semantic_validation"
+    assert failure.retryable is True
+    assert "generic visual fallback is disabled" in failure.reason_summary
+    assert "stopped before inventing data" in failure.user_safe_message
+    assert "simplify" not in failure.user_safe_message.casefold()
+
+
+@pytest.mark.parametrize(
+    "issue_code",
+    ["static_missing_requested_ranking_rows", "infographic_missing_requested_ranking_rows"],
+)
+def test_orchestrator_does_not_hard_block_ranking_when_only_rows_are_missing(issue_code: str) -> None:
+    report = {
+        "status": "needs_rewrite",
+        "format": "infographic" if issue_code.startswith("infographic") else "static",
+        "issues": [
+            {"code": issue_code, "message": "Rows missing."},
+        ],
+    }
+
+    assert AIOrchestratorService._unresolved_data_surface_issue_codes(report) == set()
+
+
+@pytest.mark.parametrize("format_name", ["static", "infographic"])
+def test_orchestrator_defers_static_infographic_data_surface_layout_validation_to_final_render(format_name: str) -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt=f"Create a {format_name} post for LinkedIn comparing a market metric and create a top 10 ranking.",
+        studio_panel={"platform_preset": "linkedin", "format": format_name, "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"brand_name": "Jiraaf"},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+    text_payload = StructuredTextPayload(
+        headline="Top 10 ranking",
+        body="Reserve the complete ranking surface.",
+        cta="Learn more",
+        hashtags=[],
+        metadata={
+            "data_list_surface_contract": {
+                "intent": "top_n_list",
+                "format": format_name,
+                "surface_mode": "ranking_table",
+                "requested_count": 10,
+                "available_count": 0,
+                "module_count": 10,
+            }
+        },
+    )
+    validation_report = SceneGraphValidationReport(
+        status="needs_repair",
+        issues=[
+            SceneGraphValidationIssue(
+                severity="error",
+                rule_id="missing_visual_emphasis",
+                message="The scene graph needs a stronger data surface.",
+            )
+        ],
+        summary=["The scene graph needs a stronger data surface."],
+        repairable=True,
+    )
+
+    assert AIOrchestratorService._should_defer_data_surface_layout_validation(
+        request=request,
+        text_payload=text_payload,
+        validation_report=validation_report,
+    ) is True
+
+
+def test_orchestrator_static_top_ten_ranking_uses_dense_table_fallback_scene_graph() -> None:
+    service = AIOrchestratorService()
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a static post for LinkedIn comparing a metric and create a top 10 ranking.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png", "size": {"width": 1080, "height": 1350}},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"brand_name": "Jiraaf"},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+    rows = [f"Rank {index} - approved row anchor" for index in range(1, 11)]
+
+    scene_graph = service._fallback_scene_graph(
+        request=request,
+        text_payload={
+            "headline": "Top 10 ranking",
+            "body": "Compare all requested rows.",
+            "cta": "Explore more",
+            "metadata": {
+                "proof_points": rows,
+                "data_list_surface_contract": {
+                    "intent": "top_n_list",
+                    "format": "static",
+                    "surface_mode": "ranking_table",
+                    "requested_count": 10,
+                    "available_count": 10,
+                    "module_count": 10,
+                },
+            },
+        },
+        creative_decision={"layout_mode": "synthesized_layout", "confidence": 0.8},
+        compiled_context={},
+    )
+
+    elements = scene_graph["elements"]
+    roles = [element["role"] for element in elements]
+    proof_element = next(element for element in elements if element["role"] == "proof_points")
+
+    assert scene_graph["styles"]["layout_type"] == "ranking_table"
+    assert "image" not in roles
+    assert proof_element["geometry"]["height"] >= 0.55
+    assert proof_element["style"]["max_lines"] == 10
+    assert proof_element["validation_hints"]["surface_mode"] == "ranking_table"
+    assert len([element for element in elements if str(element.get("element_id", "")).startswith("ranking_row_divider_")]) == 9
+
+
 def test_build_image_prompt_includes_data_visualization_execution_contract() -> None:
     request = AIOrchestrationRequest(
         tenant_id=uuid4(),
@@ -16937,6 +20734,81 @@ def test_build_image_prompt_strictly_prohibits_data_visuals_without_valid_anchor
     assert "no approved data/content anchors are available" in prompt
     assert "Strict prohibition: do not render a table, tabular layout, chart, graph" in prompt
     assert "Use a non-data visual treatment tied to the approved headline/body instead" in prompt
+
+
+def test_build_image_prompt_enforces_infographic_comparison_surface_and_suppresses_scene_metadata() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create an infographic for LinkedIn on the top 4 funding sources by comparing category-wise capital inflows.",
+        studio_panel={"platform_preset": "linkedin", "format": "infographic", "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"brand_name": "Example Brand", "visual_identity": {"brand_color_palette": {"primary": "#003975"}}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+    payload = StructuredTextPayload(
+        headline="Top funding sources at a glance",
+        body="Generated copy mentions specific category names and values, but those details are not approved data anchors.",
+        cta="Explore the context",
+        hashtags=[],
+        metadata={
+            "image_prompt": "Outdoor lifestyle backdrop with one subject and full-bleed photo treatment.",
+        },
+    )
+
+    prompt = AIOrchestratorService.build_image_prompt(
+        request=request,
+        text_payload=payload,
+        creative_decision=CreativeDecisionPayload(asset_strategy={"use_generated_image": True}),
+    )
+
+    structured = _structured_visual_metadata_from_prompt(prompt)
+
+    assert "Infographic surface enforcement" in prompt
+    assert "Top-N comparison contract: the prompt asks for 4 item slot(s)" in prompt
+    assert "module-first infographic surface" in prompt
+    assert "ranked/list/card/module structure" in prompt
+    assert "No strict approved data_anchors are present" in prompt
+    assert "LLM fallback preferred scene" not in prompt
+    assert "Outdoor lifestyle backdrop" not in prompt
+    assert structured["data_anchors"] == []
+    assert structured["visual_treatment_preference"]["preferred"] != "photo_composite"
+
+
+@pytest.mark.parametrize("item_count", [3, 8])
+def test_build_image_prompt_derives_top_n_infographic_comparison_count(item_count: int) -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt=f"Create a LinkedIn infographic on the top {item_count} allocation options by comparing contribution patterns.",
+        studio_panel={"platform_preset": "linkedin", "format": "infographic", "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"brand_name": "Example Brand", "visual_identity": {}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+    payload = StructuredTextPayload(
+        headline="Compare allocation options",
+        body="Use a structured comparison surface.",
+        cta="Review options",
+        hashtags=[],
+        metadata={},
+    )
+
+    prompt = AIOrchestratorService.build_image_prompt(
+        request=request,
+        text_payload=payload,
+        creative_decision=CreativeDecisionPayload(asset_strategy={"use_generated_image": True}),
+    )
+
+    assert f"the prompt asks for {item_count} item slot(s)" in prompt
 
 
 def test_normalize_metadata_payload_adds_stable_structured_visual_metadata_schema() -> None:
@@ -17774,3 +21646,294 @@ def test_build_carousel_slide_render_prompt_uses_reference_profile_for_slide_arc
 
     for forbidden in ("JIRAAF", "Arjun", "Most People Earn Well", "Stanford", "Marshmallow", "10 Years"):
         assert forbidden not in hook_prompt
+
+
+def test_build_final_render_prompt_includes_static_reference_adaptation_profile() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a static social creative about making complex choices easier.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png", "size": {"width": 1080, "height": 1080}},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"visual_identity": {"palette_roles": {"primary": "#123456"}}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        reference_assets=[],
+        layout_decision={"mode": "synthesized_layout"},
+    )
+    payload = StructuredTextPayload(
+        headline="Simpler choices start with structure",
+        body="Use a clear frame before comparing options.",
+        cta="Compare clearly",
+        hashtags=[],
+        metadata={"static_panel_spec": {"body_points": ["Generated copy should not become a strict data anchor."]}},
+    )
+    scene_graph = GenerationSceneGraph.model_validate(
+        {"canvas": {"width": 1080, "height": 1080, "platform": "linkedin", "file_type": "png"}, "elements": []}
+    )
+
+    prompt = AIOrchestratorService.build_final_render_prompt(
+        request=request,
+        text_payload=payload,
+        creative_decision=CreativeDecisionPayload(asset_strategy={"use_generated_image": True}),
+        scene_graph=scene_graph,
+        compiled_context={
+            "reference_adaptation_profile": {
+                "source_format_family": "static",
+                "output_format_family": "static",
+                "selected_output_behavior": "static_creative_output",
+                "adaptation_mode": "static_creative_adaptation",
+                "confidence": 0.74,
+                "adapt": {"layout_rhythm": True, "module_density": True},
+                "do_not_adapt": {"literal_text": True, "unsupported_data_visuals": True},
+                "balance": {"conflict_resolution": "prompt_content_first_reference_visual_system_second"},
+                "template_structure": {
+                    "sample_page_blueprint": {
+                        "layout_category": "cover_or_hero_visual",
+                        "module_counts": {"large_visual_count": 1, "text_block_count": 2, "footer_band_count": 1},
+                        "visual_permissions": {"chart_or_graph_allowed": False, "table_allowed": False},
+                        "image_zones": [{"role": "hero_visual", "x": 0.08, "y": 0.2, "w": 0.84, "h": 0.48}],
+                    },
+                    "layout_dna": {"layout_type": "hero_with_proof_strip"},
+                },
+            },
+            "generation_surface_contract": {
+                "selected_format": "static",
+                "selected_platform": "linkedin",
+                "selected_size": "1:1",
+                "selected_file_type": "png",
+                "layout_behavior": "static_creative_output",
+                "file_type_behavior": "export_render_path_only_not_content_meaning",
+            },
+        },
+    )
+
+    assert "LLM-led composition authority for static/infographic" in prompt
+    assert "Current user prompt is the subject authority" in prompt
+    assert "Static/infographic topic-fit checklist" in prompt
+    assert "Minimum output quality floor for final static/infographic image" in prompt
+    assert "Static floor: show one dominant topic-specific hero concept" in prompt
+    assert "Reference/template material is inspiration only for static/infographic" in prompt
+    assert "Reference adaptation profile JSON" not in prompt
+    assert "Generation surface contract JSON" not in prompt
+    assert "static_creative_adaptation" not in prompt
+    assert "static_creative_output" not in prompt
+    assert "Static template structure lock JSON" not in prompt
+    assert "sample_page_blueprint" not in prompt
+    assert "layout_content_budget" not in prompt
+    assert "Static fallback takeover guard" not in prompt
+    assert "Template-active fallback policy" not in prompt
+    assert "may only occupy an approved visual slot" not in prompt
+    assert "Current request subject matter overrides reference subject matter" not in prompt
+
+
+def test_build_final_render_prompt_includes_infographic_template_structure_lock() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create an infographic about comparing options clearly.",
+        studio_panel={"platform_preset": "linkedin", "format": "infographic", "file_type": "png", "size": {"width": 1080, "height": 1350}},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"visual_identity": {"palette_roles": {"primary": "#123456"}}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        reference_assets=[],
+        layout_decision={"mode": "synthesized_layout"},
+    )
+    payload = StructuredTextPayload(
+        headline="Compare options in order",
+        body="Use compact sections to show the decision path.",
+        cta="Compare clearly",
+        hashtags=[],
+        metadata={
+            "infographic_section_specs": [
+                {"section_number": 1, "section_role": "overview", "headline": "Frame the choice"},
+                {"section_number": 2, "section_role": "process", "headline": "Compare tradeoffs"},
+            ],
+            "structured_visual_metadata": {
+                "chart_intent": {"requested": True, "allowed": False, "requires_data_anchors": True, "anchor_count": 0},
+                "data_anchors": [],
+            },
+        },
+    )
+    scene_graph = GenerationSceneGraph.model_validate(
+        {"canvas": {"width": 1080, "height": 1350, "platform": "linkedin", "file_type": "png"}, "elements": []}
+    )
+
+    prompt = AIOrchestratorService.build_final_render_prompt(
+        request=request,
+        text_payload=payload,
+        creative_decision=CreativeDecisionPayload(asset_strategy={"use_generated_image": True}),
+        scene_graph=scene_graph,
+        compiled_context={
+            "reference_adaptation_profile": {
+                "source_format_family": "infographic",
+                "output_format_family": "infographic",
+                "selected_output_behavior": "infographic_surface_output",
+                "adaptation_mode": "infographic_surface_adaptation",
+                "confidence": 0.79,
+                "adapt": {"layout_rhythm": True, "module_density": True},
+                "do_not_adapt": {"literal_text": True, "unsupported_data_visuals": True},
+                "balance": {"conflict_resolution": "prompt_content_first_reference_visual_system_second"},
+                "template_structure": {
+                    "sample_page_blueprint": {
+                        "layout_category": "timeline_or_winding_process_path",
+                        "module_counts": {
+                            "horizontal_band_count": 4,
+                            "small_icon_like_count": 4,
+                            "footer_band_count": 1,
+                        },
+                        "visual_permissions": {
+                            "chart_or_graph_allowed": False,
+                            "table_allowed": False,
+                            "dashboard_allowed": False,
+                        },
+                        "image_zones": [{"role": "icon_text_row", "x": 0.12, "y": 0.22, "w": 0.76, "h": 0.12}],
+                    },
+                    "layout_dna": {"layout_type": "stacked_infographic"},
+                    "composition_logic": {"flow": "top_to_bottom_sections"},
+                },
+            },
+            "generation_surface_contract": {
+                "selected_format": "infographic",
+                "selected_platform": "linkedin",
+                "selected_size": "4:5",
+                "selected_file_type": "png",
+                "layout_behavior": "infographic_surface_output",
+                "file_type_behavior": "export_render_path_only_not_content_meaning",
+            },
+        },
+    )
+
+    assert "LLM-led composition authority for static/infographic" in prompt
+    assert "Current user prompt is the subject authority" in prompt
+    assert "Static/infographic topic-fit checklist" in prompt
+    assert "Minimum output quality floor for final static/infographic image" in prompt
+    assert "Infographic floor: show a scannable section rhythm" in prompt
+    assert "Reference/template material is inspiration only for static/infographic" in prompt
+    assert "Infographic template structure lock JSON" not in prompt
+    assert "sample_page_blueprint" not in prompt
+    assert "layout_content_budget" not in prompt
+    assert "preserve repeated card/row/panel rhythm" not in prompt
+    assert "Infographic fallback takeover guard" not in prompt
+    assert "Template-active fallback policy" not in prompt
+    assert "may only occupy an approved visual slot" not in prompt
+    assert "structured_visual_metadata.data_anchors" not in prompt
+    assert "This contract does not authorize charts, tables, dashboards, metrics, or data visuals" not in prompt
+    assert "Current request subject matter overrides reference subject matter" not in prompt
+
+
+def test_build_carousel_slide_render_prompt_includes_infographic_reference_adaptation_profile() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a carousel explaining how teams compare options.",
+        studio_panel={"platform_preset": "linkedin", "format": "carousel", "file_type": "png", "size": {"width": 1080, "height": 1350}},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"visual_identity": {"visual_style": "structured editorial"}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        reference_assets=[],
+        layout_decision={"mode": "adapted_template"},
+    )
+    slide = {
+        "slide_index": 1,
+        "slide_count": 3,
+        "role": "hook",
+        "headline": "Compare the paths first",
+        "supporting_line": "A clear opener with one visual hierarchy.",
+        "body_points": ["Frame the options", "Show the decision path"],
+        "metadata": {"story_role": "hook", "visual_direction": "Use sectioned infographic hierarchy."},
+    }
+
+    prompt = AIOrchestratorService.build_carousel_slide_render_prompt(
+        request=request,
+        creative_decision=CreativeDecisionPayload(asset_strategy={"use_generated_image": True}),
+        message_strategy=None,
+        slide=slide,
+        compiled_context={
+            "reference_adaptation_profile": {
+                "source_format_family": "infographic",
+                "output_format_family": "carousel",
+                "selected_output_behavior": "carousel_sequence_output",
+                "adaptation_mode": "infographic_surface_adaptation",
+                "confidence": 0.76,
+                "adapt": {"layout_rhythm": True, "module_density": True, "slide_archetype": True},
+                "do_not_adapt": {"literal_text": True, "source_subject_matter": True, "unsupported_data_visuals": True},
+                "balance": {"conflict_resolution": "prompt_content_first_reference_visual_system_second"},
+            },
+            "generation_surface_contract": {
+                "selected_format": "carousel",
+                "selected_platform": "linkedin",
+                "selected_size": "4:5",
+                "selected_file_type": "png",
+                "layout_behavior": "carousel_sequence_output",
+                "file_type_behavior": "export_render_path_only_not_content_meaning",
+            },
+        },
+    )
+
+    assert "Reference adaptation profile JSON" in prompt
+    assert "Generation surface contract JSON" in prompt
+    assert "infographic_surface_adaptation" in prompt
+    assert "carousel_sequence_output" in prompt
+    assert "Current slide subject matter overrides reference subject matter" in prompt
+    assert "structured_visual_metadata.data_anchors" in prompt
+
+
+def test_reference_layout_adaptation_active_keeps_data_anchor_contract_separate() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a static social creative with chart-like momentum cues.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        reference_assets=[],
+        layout_decision={"mode": "synthesized_layout"},
+    )
+    compiled_context = {
+        "reference_adaptation_profile": {
+            "source_format_family": "static",
+            "output_format_family": "static",
+            "adaptation_mode": "static_creative_adaptation",
+            "confidence": 0.7,
+        }
+    }
+
+    assert AIOrchestratorService._reference_layout_adaptation_active(
+        request,
+        creative_decision=CreativeDecisionPayload(asset_strategy={"use_generated_image": True}),
+        compiled_context=compiled_context,
+    ) is True
+
+    normalized = AIOrchestratorService._normalize_structured_visual_metadata(
+        metadata={
+            "visual_direction": "Use chart-like dashboard modules.",
+            "static_panel_spec": {"body_points": ["Generated nested copy is broad context only."]},
+        },
+        request=request,
+        visual_intent="chart-like dashboard modules",
+        anchor_entries=[],
+        format_name="static",
+        sample_page_blueprint={"visual_permissions": {"chart_or_graph_allowed": True, "table_allowed": True}},
+        compiled_context=compiled_context,
+    )
+
+    assert normalized["data_anchors"] == []
+    assert normalized["chart_intent"]["allowed"] is False
+    assert normalized["table_intent"]["allowed"] is False

@@ -73,6 +73,75 @@ def test_research_editorial_planning_uses_style_reference_sample_count_over_gene
     assert brief["narrative_contract"] == "follow_sample_editorial_rhythm"
 
 
+def test_research_editorial_planning_static_sample_mode_uses_reference_metadata() -> None:
+    service = ResearchEditorialPlanningService()
+
+    brief = service.build(
+        prompt="Create a static social creative about making complex choices easier.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png"},
+        brand_context={"brand_name": "Example Brand"},
+        persona_context={},
+        objective_context={},
+        knowledge_brief=[],
+        live_research={},
+        reference_assets=[
+            {
+                "asset_role": "reference_creative",
+                "trust_level": "trusted",
+                "format_family": "static",
+                "metadata": {
+                    "format_family": "static",
+                    "summary": "Single-surface creative with one dominant hero line, proof cue, and quiet footer.",
+                    "editorial_dna": {
+                        "story_arc_roles": ["single_frame_story", "proof", "takeaway"],
+                        "headline_patterns": ["Lead with one concrete tension."],
+                        "supporting_patterns": ["Use one concise supporting proof cue."],
+                        "copy_density": "low",
+                    },
+                },
+            }
+        ],
+    )
+
+    assert brief["mode"] == "sample_guided_explainer"
+    assert brief["narrative_contract"] == "follow_sample_static_hierarchy"
+    assert brief["sample_editorial_brief"]["source"] == "reference_asset"
+
+
+def test_research_editorial_planning_infographic_sample_mode_uses_reference_metadata() -> None:
+    service = ResearchEditorialPlanningService()
+
+    brief = service.build(
+        prompt="Create an infographic about how teams compare options.",
+        studio_panel={"platform_preset": "linkedin", "format": "infographic", "file_type": "png"},
+        brand_context={"brand_name": "Example Brand"},
+        persona_context={},
+        objective_context={},
+        knowledge_brief=[],
+        live_research={},
+        reference_assets=[
+            {
+                "asset_role": "reference_creative",
+                "trust_level": "approved",
+                "format_family": "infographic",
+                "metadata": {
+                    "format_family": "infographic",
+                    "summary": "Infographic reference with a context band, comparison modules, and takeaway strip.",
+                    "structural_cues": ["context band", "comparison modules", "takeaway strip"],
+                    "editorial_dna": {
+                        "story_arc_roles": ["context", "comparison", "takeaway"],
+                        "headline_patterns": ["Frame the comparison clearly."],
+                    },
+                },
+            }
+        ],
+    )
+
+    assert brief["mode"] == "sample_guided_explainer"
+    assert brief["narrative_contract"] == "follow_sample_infographic_flow"
+    assert brief["ordered_story_beats"]
+
+
 def test_research_editorial_planning_honors_explicit_prompt_count_over_sample_count() -> None:
     service = ResearchEditorialPlanningService()
 
@@ -134,6 +203,45 @@ def test_research_editorial_planning_separates_inference_and_uncertainty() -> No
     assert "softer policy stance" in brief["fact_model"]["inferences"][0]
     assert "still unclear" in brief["fact_model"]["uncertainties"][0]
     assert brief["citation_rules"]["style"] in {"light_source_cues", "light_on_canvas_citations"}
+
+
+def test_research_editorial_planning_preserves_requested_top_ten_verified_rows() -> None:
+    service = ResearchEditorialPlanningService()
+    facts = [
+        {
+            "label": f"Rank {index}",
+            "value": f"Verified value {index}",
+            "source_title": "Ranking source",
+            "source_url": "https://example.com/ranking",
+        }
+        for index in range(1, 11)
+    ]
+    prompt = "Create a static post comparing a metric and create a top 10 ranking."
+
+    brief = service.build(
+        prompt=prompt,
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png"},
+        brand_context={"brand_name": "Jiraaf"},
+        persona_context={},
+        objective_context={},
+        knowledge_brief=[],
+        live_research={
+            "status": "completed",
+            "summary": "The source contains ten verified ranking rows.",
+            "verified_facts": facts,
+            "sources": [{"title": "Ranking source", "url": "https://example.com/ranking"}],
+        },
+    )
+
+    sanitized = ResearchEditorialPlanningService.enforce_source_backing(
+        {"headline": "Top 10 ranking", "body": "", "cta": "", "metadata": {"proof_points": [], "claim_evidence_pairs": []}},
+        prompt_text=prompt,
+        brief=brief,
+    )
+
+    assert brief["fact_limit"] == 10
+    assert len(brief["fact_model"]["verified_facts"]) == 10
+    assert len(sanitized["metadata"]["claim_evidence_pairs"]) == 10
 
 
 def test_research_editorial_planning_stays_standard_for_simple_social_prompt() -> None:
@@ -230,6 +338,38 @@ def test_research_editorial_planning_marks_hard_fail_when_fresh_research_is_requ
     )
 
     assert brief["research_guard"]["strict_mode"] is True
+    assert brief["research_guard"]["hard_fail"] is True
+
+
+def test_research_editorial_planning_hard_fails_top_n_ranking_when_research_not_configured() -> None:
+    brief = ResearchEditorialPlanningService().build(
+        prompt="Create a static post comparing a metric and create a top 10 ranking.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png"},
+        brand_context={"brand_name": "Jiraaf"},
+        persona_context={},
+        objective_context={},
+        knowledge_brief=[],
+        live_research={"status": "not_configured", "summary": "No live search backend configured.", "verified_facts": [], "ranked_sources": []},
+    )
+
+    assert brief["active"] is True
+    assert brief["research_guard"]["requires_verified_rows"] is True
+    assert brief["research_guard"]["hard_fail"] is True
+
+
+def test_research_editorial_planning_hard_fails_top_n_ranking_when_research_missing() -> None:
+    brief = ResearchEditorialPlanningService().build(
+        prompt="Create a static post comparing a metric and create a top 10 ranking.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png"},
+        brand_context={"brand_name": "Jiraaf"},
+        persona_context={},
+        objective_context={},
+        knowledge_brief=[],
+        live_research={},
+    )
+
+    assert brief["active"] is True
+    assert brief["research_guard"]["requires_verified_rows"] is True
     assert brief["research_guard"]["hard_fail"] is True
 
 

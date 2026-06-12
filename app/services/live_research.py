@@ -42,8 +42,26 @@ class _HTMLTextExtractor(HTMLParser):
 
 
 class LiveResearchService:
+    DEFAULT_VERIFIED_FACT_LIMIT = 8
+    MAX_DATA_SURFACE_VERIFIED_FACT_LIMIT = 10
+    NUMBER_WORDS = {
+        "one": 1,
+        "two": 2,
+        "three": 3,
+        "four": 4,
+        "five": 5,
+        "six": 6,
+        "seven": 7,
+        "eight": 8,
+        "nine": 9,
+        "ten": 10,
+    }
     CURRENT_SIGNAL_PATTERN = re.compile(
         r"\b(?:latest|current|today|recent|as of|202[4-9]|repo rate|policy rate|market size|fdi|inflow|cagr|xirr|returns?)\b",
+        re.IGNORECASE,
+    )
+    DATA_SURFACE_SIGNAL_PATTERN = re.compile(
+        r"\b(rank(?:ed|ing)?|table|scorecard|matrix|compar(?:e|ing|ison)|versus|vs\.?|list|top)\b",
         re.IGNORECASE,
     )
     URL_PATTERN = re.compile(r"https?://[^\s)>\]]+", re.IGNORECASE)
@@ -60,6 +78,44 @@ class LiveResearchService:
         if limit is None or not text:
             return text
         return text[:limit].rstrip(" ,.;:")
+
+    @classmethod
+    def _positive_count_from_token(cls, value: str) -> int | None:
+        token = str(value or "").strip().casefold()
+        if not token:
+            return None
+        if token.isdigit():
+            count = int(token)
+            return count if count > 0 else None
+        return cls.NUMBER_WORDS.get(token)
+
+    @classmethod
+    def _explicit_top_n_count(cls, prompt: str) -> int | None:
+        text = str(prompt or "")
+        if not text.strip():
+            return None
+        token_pattern = r"(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)"
+        for pattern in (
+            rf"\btop\s+{token_pattern}\b",
+            rf"\b{token_pattern}\s+(?:rows?|items?|points?|entries|rankings?|providers|rules?|fees?|rates?)\b",
+        ):
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if not match:
+                continue
+            count = cls._positive_count_from_token(match.group(1))
+            if count:
+                return min(count, cls.MAX_DATA_SURFACE_VERIFIED_FACT_LIMIT)
+        return None
+
+    @classmethod
+    def _requested_verified_fact_limit(cls, prompt: str, studio_panel: dict[str, Any]) -> int:
+        explicit_count = cls._explicit_top_n_count(prompt)
+        if explicit_count:
+            return min(max(explicit_count, 1), cls.MAX_DATA_SURFACE_VERIFIED_FACT_LIMIT)
+        format_name = cls._normalize_text(studio_panel.get("format"), limit=32).casefold()
+        if format_name in {"static", "infographic", "carousel"} and cls.DATA_SURFACE_SIGNAL_PATTERN.search(str(prompt or "")):
+            return cls.DEFAULT_VERIFIED_FACT_LIMIT
+        return cls.DEFAULT_VERIFIED_FACT_LIMIT
 
     def _urls_from_context(self, prompt: str, compiled_context: dict[str, Any]) -> list[str]:
         urls = self.URL_PATTERN.findall(prompt or "")
@@ -88,15 +144,22 @@ class LiveResearchService:
         knowledge_line = ""
         if knowledge and isinstance(knowledge[0], dict):
             knowledge_line = self._normalize_text(knowledge[0].get("content"), limit=180)
-        needs_live = bool(self.CURRENT_SIGNAL_PATTERN.search(prompt_text))
+        needs_live = bool(
+            self.CURRENT_SIGNAL_PATTERN.search(prompt_text)
+            or self.DATA_SURFACE_SIGNAL_PATTERN.search(prompt_text)
+        )
         queries = [prompt_text]
         if knowledge_line:
             queries.append(f"{prompt_text} {knowledge_line}")
         queries.append(f"{prompt_text} {platform} {format_name}")
+        facts_to_verify = ["exact values", "dates", "percentages", "chart labels", "sources"]
+        explicit_count = self._explicit_top_n_count(prompt_text)
+        if explicit_count:
+            facts_to_verify.insert(0, f"distinct source-backed rows for the requested top {explicit_count} ranking")
         return {
             "needs_live_research": needs_live,
             "queries": [query for query in queries if query][: self.settings.live_research_max_queries],
-            "facts_to_verify": ["exact values", "dates", "percentages", "chart labels", "sources"],
+            "facts_to_verify": facts_to_verify,
             "preferred_sources": [],
         }
 
@@ -108,7 +171,7 @@ class LiveResearchService:
             return bool(self.settings.brave_search_api_key)
         return self.openai_search_client is not None or bool(self.settings.brave_search_api_key)
 
-    def _normalize_verified_facts(self, facts: Any) -> list[dict[str, str]]:
+    def _normalize_verified_facts(self, facts: Any, *, limit: int | None = None) -> list[dict[str, str]]:
         normalized: list[dict[str, str]] = []
         seen: set[tuple[str, str, str]] = set()
         for fact in facts if isinstance(facts, list) else []:
@@ -132,7 +195,8 @@ class LiveResearchService:
                     "source_url": source_url,
                 }
             )
-        return normalized[:8]
+        max_count = limit or self.DEFAULT_VERIFIED_FACT_LIMIT
+        return normalized[: max(1, min(max_count, self.MAX_DATA_SURFACE_VERIFIED_FACT_LIMIT))]
 
     def _rank_sources(
         self,
@@ -501,6 +565,7 @@ class LiveResearchService:
         *,
         force: bool = False,
     ) -> dict[str, Any]:
+        verified_fact_limit = self._requested_verified_fact_limit(prompt, studio_panel)
         if not self.settings.live_research_enabled:
             if force:
                 return {
@@ -513,6 +578,7 @@ class LiveResearchService:
                     "sources": [],
                     "queries": [],
                     "facts_to_verify": ["exact values", "dates", "percentages", "chart labels", "sources"],
+                    "verified_fact_limit": verified_fact_limit,
                 }
             return {}
         plan = await self._plan_queries(prompt, studio_panel, compiled_context)
@@ -525,6 +591,7 @@ class LiveResearchService:
                 "sources": [],
                 "queries": plan.get("queries", []),
                 "facts_to_verify": plan.get("facts_to_verify", []),
+                "verified_fact_limit": verified_fact_limit,
             }
         if force or plan.get("needs_live_research") or prompt_urls:
             if not self._has_live_search_backend() and not prompt_urls:
@@ -545,6 +612,7 @@ class LiveResearchService:
                     "queries": plan.get("queries", []),
                     "facts_to_verify": plan.get("facts_to_verify", []),
                     "preferred_sources": plan.get("preferred_sources", []),
+                    "verified_fact_limit": verified_fact_limit,
                 }
         timeout = httpx.Timeout(self.settings.live_research_timeout_seconds)
         raw_sources: list[dict[str, str]] = []
@@ -572,6 +640,7 @@ class LiveResearchService:
                 "sources": [],
                 "queries": plan.get("queries", []),
                 "facts_to_verify": plan.get("facts_to_verify", []),
+                "verified_fact_limit": verified_fact_limit,
             }
         synthesis_fallback = {
             "summary": self._normalize_text(
@@ -591,13 +660,15 @@ class LiveResearchService:
                     "Return JSON only with keys: summary, verified_facts. "
                     "summary should state the most important exact values, dates, graph labels, and source-backed caveats. "
                     "verified_facts must be a list of objects with keys: label, value, source_title, source_url. "
-                    "Only include facts directly supported by the provided sources."
+                    "Only include facts directly supported by the provided sources. "
+                    f"For ranked, top-N, table, or comparison requests, include up to {verified_fact_limit} distinct verified_facts when the sources support that many rows."
                 ),
                 user=(
                     f"Prompt: {prompt}\n"
                     f"Studio panel: {studio_panel}\n"
                     f"Facts to verify: {plan.get('facts_to_verify', [])}\n"
-                    f"Fetched sources: {json.dumps(raw_sources[:5], ensure_ascii=False)}"
+                    f"Requested verified fact limit: {verified_fact_limit}\n"
+                    f"Fetched sources: {json.dumps(raw_sources[: max(5, min(verified_fact_limit, 8))], ensure_ascii=False)}"
                 ),
             )
             try:
@@ -609,13 +680,16 @@ class LiveResearchService:
             except Exception:
                 synthesis = synthesis_fallback
         summary = self._normalize_text((synthesis or {}).get("summary"), limit=1400)
-        verified_facts = self._normalize_verified_facts((synthesis or {}).get("verified_facts"))
+        verified_facts = self._normalize_verified_facts(
+            (synthesis or {}).get("verified_facts"),
+            limit=verified_fact_limit,
+        )
         sources = [
             {
                 "title": self._normalize_text(source.get("title"), limit=180),
                 "url": self._normalize_text(source.get("url"), limit=400),
             }
-            for source in raw_sources[:5]
+            for source in raw_sources[: max(5, min(verified_fact_limit, 8))]
         ]
         ranked_sources = self._rank_sources(
             sources=sources,
@@ -632,7 +706,7 @@ class LiveResearchService:
         return {
             "status": "completed",
             "summary": summary,
-            "verified_facts": verified_facts[:8],
+            "verified_facts": verified_facts[:verified_fact_limit],
             "inferences": inferences,
             "uncertainties": uncertainties,
             "sources": sources,
@@ -640,4 +714,5 @@ class LiveResearchService:
             "queries": plan.get("queries", []),
             "facts_to_verify": plan.get("facts_to_verify", []),
             "preferred_sources": plan.get("preferred_sources", []),
+            "verified_fact_limit": verified_fact_limit,
         }

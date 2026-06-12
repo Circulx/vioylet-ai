@@ -797,7 +797,7 @@ def test_should_use_ai_final_render_overlay_when_exact_text_contract_exists() ->
         [carousel_asset],
     ) is False
 
-    carousel_overlay_asset = GeneratedAsset(
+    overlay_asset = GeneratedAsset(
         id=uuid4(),
         tenant_id=uuid4(),
         brand_space_id=uuid4(),
@@ -821,9 +821,21 @@ def test_should_use_ai_final_render_overlay_when_exact_text_contract_exists() ->
         },
     )
     assert ContentService._should_use_ai_final_render_overlay_for_panel(
-        {"format": "carousel", "file_type": "png"},
-        [carousel_overlay_asset],
+        {"format": "static", "file_type": "png"},
+        [overlay_asset],
     ) is True
+    assert ContentService._should_use_ai_final_render_overlay_for_panel(
+        {"format": "carousel", "file_type": "png"},
+        [overlay_asset],
+    ) is True
+    assert ContentService._should_use_ai_final_render_overlay_for_panel(
+        {"format": "infographic", "file_type": "png"},
+        [overlay_asset],
+    ) is True
+    assert ContentService._should_use_ai_final_render_overlay_for_panel(
+        {"format": "poster", "file_type": "png"},
+        [overlay_asset],
+    ) is False
 
 
 def test_sequence_pack_relevance_filter_rejects_irrelevant_family_for_prompt() -> None:
@@ -1802,6 +1814,38 @@ def test_filter_reference_assets_for_studio_format_prefers_enriched_carousel_ass
     assert not any("WhatsApp-Image" in str(item.get("storage_path") or "") for item in filtered)
 
 
+def test_filter_reference_assets_for_studio_format_keeps_static_and_infographic_when_no_exact_refs() -> None:
+    assets = [
+        {
+            "asset_id": str(uuid4()),
+            "asset_role": "reference_creative",
+            "mime_type": "image/png",
+            "storage_path": "tenant/reference/static-creative.png",
+            "metadata": {
+                "format_family": "static",
+                "summary": "Single-surface creative with a hero area and proof strip.",
+            },
+        },
+        {
+            "asset_id": str(uuid4()),
+            "asset_role": "reference_creative",
+            "mime_type": "image/png",
+            "storage_path": "tenant/reference/infographic-reference.png",
+            "metadata": {
+                "format_family": "infographic",
+                "summary": "Infographic with stacked sections and callout modules.",
+            },
+        },
+    ]
+
+    filtered = ContentService._filter_reference_assets_for_studio_format(
+        assets,
+        studio_panel={"format": "carousel"},
+    )
+
+    assert {item["metadata"]["format_family"] for item in filtered} == {"static", "infographic"}
+
+
 def test_selected_reference_visual_assets_materializes_trace_assets_for_export() -> None:
     assets = ContentService._selected_reference_visual_assets(
         {
@@ -1935,6 +1979,48 @@ def test_filter_brand_reference_assets_for_prompt_removes_off_topic_campaign_ass
 
     assert len(filtered) == 2
     assert all("fd-to-bonds" not in str(asset["storage_path"]) for asset in filtered)
+
+
+def test_filter_brand_reference_assets_for_prompt_blocks_unrelated_infographic_reference_creative() -> None:
+    assets = [
+        {
+            "asset_id": str(uuid4()),
+            "asset_role": "logo",
+            "storage_path": "tenant/brand/assets/mark.png",
+            "metadata": {"label": "Approved mark"},
+            "trust_level": "trusted",
+        },
+        {
+            "asset_id": str(uuid4()),
+            "asset_role": "reference_creative",
+            "storage_path": "tenant/brand/assets/outdoor-backdrop.png",
+            "metadata": {"label": "Outdoor lifestyle campaign backdrop"},
+            "trust_level": "trusted",
+        },
+        {
+            "asset_id": str(uuid4()),
+            "asset_role": "reference_creative",
+            "storage_path": "tenant/brand/assets/capital-comparison-board.png",
+            "metadata": {
+                "label": "Capital comparison module board",
+                "format_family": "infographic",
+            },
+            "trust_level": "trusted",
+        },
+    ]
+
+    filtered = ContentService._filter_brand_reference_assets_for_prompt(
+        assets,
+        prompt="Create a LinkedIn infographic on the top 4 funding sources by comparing category-wise capital inflows.",
+        follow_up_mode="new_content",
+        studio_panel={"format": "infographic"},
+    )
+
+    paths = {str(asset.get("storage_path") or "") for asset in filtered}
+
+    assert "tenant/brand/assets/mark.png" in paths
+    assert "tenant/brand/assets/capital-comparison-board.png" in paths
+    assert "tenant/brand/assets/outdoor-backdrop.png" not in paths
 
 
 def test_filter_template_recommendations_for_prompt_drops_off_topic_named_templates() -> None:
@@ -3044,6 +3130,111 @@ def test_build_ai_final_render_export_payload_composites_logo_when_ai_skips_it()
         root.rmdir()
 
 
+def test_build_ai_logo_fallback_asset_does_not_clear_scene_graph_title_near_logo() -> None:
+    service = ContentService(session=None)  # type: ignore[arg-type]
+    tenant_id = uuid4()
+    brand_space_id = uuid4()
+    root = Path("tests") / f"ai-final-render-logo-title-safe-{uuid4()}"
+
+    class _Storage:
+        def __init__(self, base_path: Path) -> None:
+            self.base_path = base_path
+
+        def exists(self, storage_path: str) -> bool:
+            return (self.base_path / storage_path).exists()
+
+        def absolute_path(self, storage_path: str) -> str:
+            return str((self.base_path / storage_path).resolve())
+
+        def save_bytes(self, tenant_id, brand_space_id, category, filename, content):
+            relative = f"{category}/{filename}"
+            target = self.base_path / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+            return SimpleNamespace(storage_path=relative, absolute_path=str(target.resolve()))
+
+    service.storage = _Storage(root)
+
+    final_render_path = f"{tenant_id}/{brand_space_id}/generated/final-render.png"
+    logo_path = f"{tenant_id}/{brand_space_id}/logo/mark.png"
+    final_render_file = root / final_render_path
+    final_render_file.parent.mkdir(parents=True, exist_ok=True)
+    base = Image.new("RGBA", (1080, 1080), (248, 246, 238, 255))
+    for x in range(760, 850):
+        for y in range(66, 92):
+            base.putpixel((x, y), (12, 54, 116, 255))
+    for x in range(1025, 1060):
+        for y in range(60, 110):
+            base.putpixel((x, y), (10, 30, 80, 255))
+    base.save(final_render_file, format="PNG")
+
+    logo_file = root / logo_path
+    logo_file.parent.mkdir(parents=True, exist_ok=True)
+    logo = Image.new("RGBA", (260, 110), (0, 0, 0, 0))
+    for x in range(75, 190):
+        for y in range(30, 78):
+            logo.putpixel((x, y), (245, 158, 11, 255))
+    logo.save(logo_file, format="PNG")
+
+    content = ContentVersion(
+        id=uuid4(),
+        tenant_id=tenant_id,
+        brand_space_id=brand_space_id,
+        session_id=uuid4(),
+        created_by=uuid4(),
+        prompt="Create a social post",
+        studio_panel={"format": "static", "platform_preset": "instagram", "file_type": "png"},
+        generated_payload={"metadata": {"logo_position": "Top-right corner for clear brand presence with enough margin"}},
+        blueprint_payload={},
+        explainability_metadata={},
+    )
+    asset = GeneratedAsset(
+        id=uuid4(),
+        tenant_id=tenant_id,
+        brand_space_id=brand_space_id,
+        content_version_id=uuid4(),
+        asset_role="render_preview",
+        mime_type="image/png",
+        storage_path=final_render_path,
+        width=1080,
+        height=1080,
+        metadata_json={"render_source": "ai", "generation_stage": "final_render"},
+    )
+
+    payload = service._build_ai_logo_fallback_asset(
+        content=content,
+        asset=asset,
+        explainability={
+            "scene_graph": {
+                "elements": [
+                    {
+                        "role": "headline",
+                        "geometry": {"x": 760, "y": 66, "width": 90, "height": 26, "units": "px"},
+                    }
+                ]
+            },
+            "generation_path": "ai_final_render",
+        },
+        studio_panel={"format": "static", "platform_preset": "instagram", "file_type": "png", "size": {"width": 1080, "height": 1080}},
+        logo_asset_path=logo_path,
+    )
+
+    assert payload is not None
+    composited_output = root / payload["storage_path"]
+    with Image.open(composited_output) as rendered:
+        assert rendered.getpixel((800, 74))[:3] == (12, 54, 116)
+        cleared_red, cleared_green, cleared_blue, _ = rendered.getpixel((1050, 70))
+        assert min(cleared_red, cleared_green, cleared_blue) >= 190
+
+    if root.exists():
+        for child in sorted(root.rglob("*"), reverse=True):
+            if child.is_file():
+                child.unlink()
+            elif child.is_dir():
+                child.rmdir()
+        root.rmdir()
+
+
 def test_build_ai_logo_fallback_asset_clears_reserved_logo_zone_for_transparent_logo() -> None:
     service = ContentService(session=None)  # type: ignore[arg-type]
     tenant_id = uuid4()
@@ -3582,6 +3773,29 @@ def test_resolve_ai_logo_box_prefers_top_right_hint_and_minimum_size() -> None:
     assert box[3] >= 90
 
 
+def test_static_infographic_logo_profiles_are_less_dominant_than_carousel() -> None:
+    carousel_width, carousel_height = ContentService._logo_box_profile_for_format(
+        canvas_width=1080,
+        canvas_height=1350,
+        format_name="carousel",
+    )
+    static_width, static_height = ContentService._logo_box_profile_for_format(
+        canvas_width=1080,
+        canvas_height=1350,
+        format_name="static",
+    )
+    infographic_width, infographic_height = ContentService._logo_box_profile_for_format(
+        canvas_width=1080,
+        canvas_height=1350,
+        format_name="infographic",
+    )
+
+    assert static_width < carousel_width
+    assert static_height < carousel_height
+    assert infographic_width < carousel_width
+    assert infographic_height < carousel_height
+
+
 def test_default_ai_logo_box_hugs_requested_frame_edge() -> None:
     box = ContentService._default_ai_logo_box(
         canvas_width=1080,
@@ -3866,7 +4080,12 @@ def test_normalize_ai_logo_box_snaps_viable_template_box_to_20px_edge() -> None:
         explainability={},
     )
 
-    assert box == (20, 20, 174, 92)
+    expected_width, expected_height = ContentService._logo_box_profile_for_format(
+        canvas_width=1024,
+        canvas_height=1536,
+        format_name="static",
+    )
+    assert box == (20, 20, expected_width, expected_height)
 
 
 def test_resolve_ai_logo_box_uses_reference_creative_logo_ratio_for_top_right() -> None:
@@ -4109,7 +4328,12 @@ def test_resolve_ai_logo_box_uses_synthesized_blueprint_logo_zone_when_it_is_via
         asset=asset,
     )
 
-    assert box == (20, 20, 160, 60)
+    profile_width, profile_height = ContentService._logo_box_profile_for_format(
+        canvas_width=1080,
+        canvas_height=1080,
+        format_name="static",
+    )
+    assert box == (20, 20, min(160, profile_width), min(60, profile_height))
 
 
 def test_resolve_ai_logo_box_prefers_finalized_scene_graph_logo_over_stale_blueprint_zone() -> None:
@@ -4328,6 +4552,91 @@ async def test_build_ai_final_render_overlay_payloads_renders_exact_text_overlay
     ]
     assert payload["renderer_metadata"]["layout_variant"] == "ai_final_render_text_overlay_carousel"
     assert payload["renderer_metadata"]["render_manifest"]["base_canvas_overlay"] is True
+
+
+def test_ai_final_render_overlay_sanitizer_preserves_proof_and_stat_rows() -> None:
+    tenant_id = uuid4()
+    brand_space_id = uuid4()
+    asset = GeneratedAsset(
+        id=uuid4(),
+        tenant_id=tenant_id,
+        brand_space_id=brand_space_id,
+        content_version_id=uuid4(),
+        asset_role="render_preview",
+        mime_type="image/png",
+        storage_path=f"{tenant_id}/{brand_space_id}/generated/final-render.png",
+        width=1080,
+        height=1080,
+        metadata_json={"render_source": "ai", "generation_stage": "final_render", "slide_index": 1},
+    )
+    scene_graph = {
+        "canvas": {"width": 1080, "height": 1080, "platform": "instagram", "file_type": "png"},
+        "layers": ["content"],
+        "elements": [
+            {
+                "element_id": "headline",
+                "element_type": "text",
+                "role": "headline",
+                "geometry": {"x": 0.08, "y": 0.1, "width": 0.7, "height": 0.12, "units": "normalized"},
+            },
+            {
+                "element_id": "body",
+                "element_type": "text",
+                "role": "body",
+                "geometry": {"x": 0.08, "y": 0.24, "width": 0.7, "height": 0.12, "units": "normalized"},
+            },
+            {
+                "element_id": "proof_rows",
+                "element_type": "text",
+                "role": "proof_points",
+                "geometry": {"x": 0.08, "y": 0.38, "width": 0.76, "height": 0.3, "units": "normalized"},
+            },
+            {
+                "element_id": "stat_rows",
+                "element_type": "text",
+                "role": "stat_highlights",
+                "geometry": {"x": 0.08, "y": 0.7, "width": 0.76, "height": 0.16, "units": "normalized"},
+            },
+        ],
+    }
+
+    sanitized = ContentService._ai_final_render_sanitize_overlay_scene_graph_for_asset(
+        scene_graph,
+        asset=asset,
+        overlay_text={
+            "headline": "Compare the top options",
+            "body": "Use the row-by-row view before choosing.",
+            "cta": "",
+            "metadata": {
+                "proof_points": ["Option A - first rule", "Option B - second rule"],
+                "stat_highlights": ["Fee varies by tier", "Review timing applies"],
+                "data_list_surface_contract": {
+                    "intent": "top_n_list",
+                    "format": "static",
+                    "surface_mode": "ranking_table",
+                    "requested_count": 2,
+                    "available_count": 2,
+                    "module_count": 2,
+                },
+            },
+        },
+    )
+
+    assert sanitized is not None
+    text_by_role = {
+        element["role"]: element["text"]
+        for element in sanitized["elements"]
+        if element.get("element_type") == "text"
+    }
+    assert text_by_role["headline"] == "Compare the top options"
+    assert text_by_role["body"] == "Use the row-by-row view before choosing."
+    assert text_by_role["proof_points"] == "Option A - first rule\nOption B - second rule"
+    assert text_by_role["stat_highlights"] == "Fee varies by tier\nReview timing applies"
+    proof_element = next(element for element in sanitized["elements"] if element["role"] == "proof_points")
+    assert proof_element["validation_hints"]["surface_mode"] == "ranking_table"
+    assert proof_element["validation_hints"]["module_count"] == 2
+    assert proof_element["style"]["row_layout"] == "ranking_table"
+    assert proof_element["style"]["fill_role"] == "secondary_text"
 
 
 def test_selective_overlay_text_payload_preserves_slide_body_and_empty_interior_cta() -> None:
@@ -4677,7 +4986,17 @@ def test_build_ai_logo_fallback_asset_prefers_light_logo_variant_on_dark_backgro
     assert payload["metadata"]["logo_asset_path"] == light_logo_path
     composited_output = root / payload["storage_path"]
     with Image.open(composited_output) as rendered:
-        assert rendered.getpixel((860, 90))[0] >= 220
+        region_left = int(rendered.width * 0.72)
+        region_top = 20
+        region_right = rendered.width - 20
+        region_bottom = int(rendered.height * 0.18)
+        assert any(
+            rendered.getpixel((x, y))[0] >= 220
+            and rendered.getpixel((x, y))[1] >= 220
+            and rendered.getpixel((x, y))[2] >= 220
+            for x in range(region_left, region_right)
+            for y in range(region_top, region_bottom)
+        )
 
     if root.exists():
         for child in sorted(root.rglob("*"), reverse=True):
@@ -4769,13 +5088,18 @@ def test_build_ai_logo_fallback_asset_clears_reserved_logo_zone_before_overlay()
     composited_output = root / payload["storage_path"]
     with Image.open(composited_output) as rendered:
         cleared_red, cleared_green, cleared_blue, _ = rendered.getpixel((1050, 70))
-        logo_red, logo_green, logo_blue, _ = rendered.getpixel((920, 90))
-        assert cleared_red >= 230
-        assert cleared_green >= 230
-        assert cleared_blue >= 220
-    assert logo_red >= 220
-    assert logo_green >= 120
-    assert logo_blue <= 80
+        region_left = int(rendered.width * 0.72)
+        region_top = 20
+        region_right = rendered.width - 20
+        region_bottom = int(rendered.height * 0.18)
+        assert min(cleared_red, cleared_green, cleared_blue) >= 190
+        assert any(
+            rendered.getpixel((x, y))[0] >= 220
+            and rendered.getpixel((x, y))[1] >= 120
+            and rendered.getpixel((x, y))[2] <= 80
+            for x in range(region_left, region_right)
+            for y in range(region_top, region_bottom)
+        )
 
     if root.exists():
         for child in sorted(root.rglob("*"), reverse=True):

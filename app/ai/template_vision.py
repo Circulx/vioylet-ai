@@ -126,6 +126,7 @@ class TemplateVisionAnalyzer:
                             "      logo_text_present:boolean,\n"
                             "      text_alignment_pattern:string,\n"
                             "      text_overlap_or_collision_risk:'none'|'low'|'medium'|'high',\n"
+                            "      text_truncation_or_crop_risk:'none'|'low'|'medium'|'high',\n"
                             "      block_summary: array of {role:string, text_excerpt:string, x:number, y:number, w:number, h:number}\n"
                             "   }\n"
                             "20. premium_quality: {\n"
@@ -382,7 +383,16 @@ class TemplateVisionAnalyzer:
                 **(primary.get("ocr_structure") if isinstance(primary.get("ocr_structure"), dict) else {}),
                 **cls._merge_mapping_vote(
                     ocr_structure_candidates,
-                    keys=["readable_text_blocks", "headline_text", "footer_or_legal_present", "logo_text_present", "text_alignment_pattern", "text_overlap_or_collision_risk", "block_summary"],
+                    keys=[
+                        "readable_text_blocks",
+                        "headline_text",
+                        "footer_or_legal_present",
+                        "logo_text_present",
+                        "text_alignment_pattern",
+                        "text_overlap_or_collision_risk",
+                        "text_truncation_or_crop_risk",
+                        "block_summary",
+                    ],
                 ),
             },
             "premium_quality": {

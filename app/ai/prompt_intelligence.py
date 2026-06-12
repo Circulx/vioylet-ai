@@ -9,6 +9,9 @@ from app.ai.providers.llm import PromptEnvelope
 
 
 class PromptIntelligenceService:
+    DEFAULT_RESEARCH_FACT_LIMIT = 6
+    MAX_DATA_SURFACE_FACT_LIMIT = 10
+    MAX_RESEARCH_SOURCE_PACK_LIMIT = 12
     MISTAKE_CAROUSEL_SIGNAL_PATTERN = re.compile(
         r"\b(mistake|mistakes|pitfall|pitfalls|error|errors|wrong|misstep|missteps|avoid|avoiding|costly)\b",
         re.IGNORECASE,
@@ -225,6 +228,19 @@ class PromptIntelligenceService:
     def _research_editorial_prompt_payload(value: Any) -> dict[str, Any]:
         brief = value if isinstance(value, dict) else {}
         fact_model = brief.get("fact_model") if isinstance(brief.get("fact_model"), dict) else {}
+        try:
+            raw_fact_limit = int(brief.get("fact_limit") or 0)
+        except (TypeError, ValueError):
+            raw_fact_limit = 0
+        fact_limit = (
+            min(max(raw_fact_limit, PromptIntelligenceService.DEFAULT_RESEARCH_FACT_LIMIT), PromptIntelligenceService.MAX_DATA_SURFACE_FACT_LIMIT)
+            if raw_fact_limit
+            else PromptIntelligenceService.DEFAULT_RESEARCH_FACT_LIMIT
+        )
+        source_pack_limit = max(
+            6,
+            min(fact_limit + 2, PromptIntelligenceService.MAX_RESEARCH_SOURCE_PACK_LIMIT),
+        )
         outline = []
         for item in (brief.get("outline") or [])[:8]:
             if not isinstance(item, dict):
@@ -237,7 +253,7 @@ class PromptIntelligenceService:
                 }
             )
         source_pack = []
-        for item in (brief.get("source_pack") or [])[:6]:
+        for item in (brief.get("source_pack") or [])[:source_pack_limit]:
             if not isinstance(item, dict):
                 continue
             source_pack.append(
@@ -320,7 +336,7 @@ class PromptIntelligenceService:
                         "source_title": str(item.get("source_title") or "").strip(),
                         "source_url": str(item.get("source_url") or "").strip(),
                     }
-                    for item in (fact_model.get("verified_facts") or [])[:6]
+                    for item in (fact_model.get("verified_facts") or [])[:fact_limit]
                     if isinstance(item, dict)
                 ],
                 "inferences": [str(item).strip() for item in (fact_model.get("inferences") or []) if str(item).strip()][:4],
@@ -340,6 +356,7 @@ class PromptIntelligenceService:
             "source_backing_rules": [str(item).strip() for item in (brief.get("source_backing_rules") or []) if str(item).strip()][:4],
             "source_pack": source_pack,
             "source_count": int(brief.get("source_count") or 0),
+            "fact_limit": fact_limit,
             "preferred_slide_count": brief.get("preferred_slide_count"),
             "summary": str(brief.get("summary") or "").strip(),
             "disclaimer_requested": bool(brief.get("disclaimer_requested")),
@@ -479,11 +496,14 @@ class PromptIntelligenceService:
                 "The top-level headline, body, and CTA should summarize the overall sequence, not replace the per-slide structure.",
                 f"When {content_plan_name}.format_family is static, keep metadata.carousel_slide_specs empty and make metadata.static_panel_spec the primary surface contract.",
                 "metadata.static_panel_spec should be a single object with panel_goal, dominant_message, supporting_lines, proof_points, stat_highlights, visual_focus, and cta_mode.",
+                "When a static request asks for top-N items, ranked/list content, rules, rates, fees, criteria, scorecards, or comparisons, set metadata.static_panel_spec.panel_goal to ranked_list or comparison_or_list and keep each requested item as a distinct row-ready proof_point, stat_highlight, or claim_evidence_pair instead of collapsing the content into one supporting line.",
+                "When the requested static list/ranking is dense, such as 7-10 items, plan it as a compact ranking-table surface with row-ready entries rather than a hero image, large paragraph block, or three-card summary.",
                 f"If {content_plan_name}.sequence_contract is sample_static_panel_hierarchy and {content_plan_name}.sample_story_roles is present, treat those sampled roles as the required single-surface reading order for metadata.static_panel_spec.",
                 f"If {content_plan_name}.sample_headline_patterns, {content_plan_name}.sample_explanation_styles, or {content_plan_name}.sample_copy_densities are present for a static output, match that sampled message hierarchy and density instead of defaulting to poster-generic filler.",
                 f"When {content_plan_name}.format_family is infographic, keep metadata.carousel_slide_specs empty unless the user explicitly asks for a paginated carousel version; make metadata.infographic_section_specs the primary stacked structure.",
                 "Each metadata.infographic_section_specs item should be a distinct object with section_number, section_role, section_label, headline, body, body_points, proof_points, stat_highlights, claim_evidence_pairs, and visual_focus.",
                 "For infographic outputs, use infographic_section_specs to separate overview, evidence, comparison, process, or takeaway sections instead of one long proof-point dump.",
+                "When an infographic request asks for top-N items, ranked/list content, rules, rates, fees, criteria, scorecards, or comparisons, create enough distinct infographic_section_specs or row-ready section body_points to preserve the requested item count within the format budget.",
                 f"If {content_plan_name}.sequence_contract is sample_infographic_section_flow and {content_plan_name}.sample_story_roles is present, preserve that sampled section-role order in metadata.infographic_section_specs before applying any generic infographic structure.",
                 f"If {content_plan_name}.sample_headline_patterns, {content_plan_name}.sample_explanation_styles, or {content_plan_name}.sample_copy_densities are present for an infographic output, follow that sampled teaching density and section rhythm instead of flattening the topic into summary blocks.",
                 f"Follow {visual_plan_name}.execution_mode and {visual_plan_name}.visual_sequence_expectation so multi-page outputs feel intentionally sequenced rather than cloned.",
@@ -604,6 +624,7 @@ class PromptIntelligenceService:
                 "- infographic_section_specs rules: use these to create real stacked editorial sections such as overview, evidence, comparison, process, or takeaway instead of one flat bullet dump",
                 "- static_panel_spec: for static outputs, a single object with keys panel_goal, dominant_message, supporting_lines, proof_points, stat_highlights, visual_focus, and cta_mode",
                 "- static_panel_spec rules: dominant_message should capture the one thing the panel must communicate at a glance, and supporting_lines should stay short enough to preserve one-panel clarity",
+                "- static_panel_spec list rules: when the user asks for top-N, ranking, comparison, rules, rates, fees, scorecards, or criteria, keep distinct row-ready entries in proof_points, stat_highlights, and claim_evidence_pairs; do not replace the requested list with generic intro copy",
                 "- visual_focus rules: provide highly specific, literal premium 2D/3D visual scenes or contextual graphics that directly demonstrate the real-world situation of the slide's content. Do NOT use abstract conceptual metaphors (e.g. avoid vague shields, glowing nodes, chess pieces, or floating jigsaw puzzles). For the first and last slides in particular, specify a strong, attention-grabbing literal hook scene.",
                 "- visual_focus must be a content-specific natural-language visual direction, never a JSON object, storage_path, reference_image handle, asset id, filename, or instruction to use an uploaded reference as the visual idea",
                 "- structured_visual_metadata: stable additive object with keys schema_version, table_intent, chart_intent, data_anchors, creativity_signals, and visual_treatment_preference",
@@ -673,6 +694,7 @@ class PromptIntelligenceService:
                 "Every row, column, axis, legend, label, card heading, metric, and comparison bucket must map to the approved content; do not draw generic bars, unlabeled lines, fake axes, random percentages, placeholder dashboards, or abstract finance widgets.",
                 "If exact numeric values, time series, percentages, currency amounts, or rankings are unavailable, do not invent them. When approved qualitative anchors exist, use qualitative comparison cards, process modules, labeled evidence blocks, or a non-numeric matrix instead of numeric charts.",
                 "Choose the right data visual type mechanically: table/matrix for comparisons, bar chart for ranked categories with real values, line chart for time series with real dates, flow/process chart for sequences, scorecard/dashboard modules for qualitative evidence, and callout cards for single proof points.",
+                "For top-N, ranked/list, rules, rates, fees, scorecard, or comparison prompts, produce one approved metadata row per requested item when facts are available; when facts are unavailable, keep the row qualitative and uncertainty-safe instead of inventing values.",
                 "For carousel slides, each slide's data visual must serve that slide's story role and match the selected sample's partitioning and density. For static and infographic outputs, the data visual must support the dominant message or section job without becoming unreadable filler.",
             ]
         )
@@ -747,6 +769,8 @@ class PromptIntelligenceService:
         session_brief = compiled_context.get("session_brief", {}) or {}
         template_fit_brief = compiled_context.get("template_fit_brief", {}) or {}
         reference_asset_brief = compiled_context.get("reference_asset_brief", []) or []
+        reference_adaptation_profile = compiled_context.get("reference_adaptation_profile", {}) or {}
+        generation_surface_contract = compiled_context.get("generation_surface_contract", {}) or {}
         prompt_intelligence_brief = self._prompt_intelligence_prompt_payload(compiled_context.get("prompt_intelligence_brief"))
         content_format_brief = self._content_format_prompt_payload(compiled_context.get("content_format_brief"))
         research_editorial_brief = self._research_editorial_prompt_payload(compiled_context.get("research_editorial_brief"))
@@ -824,8 +848,11 @@ class PromptIntelligenceService:
         Visual brief: {brand_visual_brief}
         Template fit brief: {template_fit_brief}
         Render constraints: {render_constraints}
+        Generation surface contract: {generation_surface_contract}
+        Surface authority rule: selected format, platform, size, file type, and campaign goal in generation_surface_contract govern the output surface; reference assets only guide compatible visual structure and must not override the selected output format or user prompt content.
         Session brief: {session_brief}
         Reference asset brief: {reference_asset_brief}
+        Reference adaptation profile: {reference_adaptation_profile}
         Prompt intelligence brief: {prompt_intelligence_brief}
         Content format brief: {content_format_brief}
         Prompt intelligence rules: {prompt_intelligence_rules}
@@ -884,6 +911,12 @@ class PromptIntelligenceService:
         Reference asset brief:
         {json.dumps(reference_asset_brief, ensure_ascii=True)}
 
+        Reference adaptation profile:
+        {json.dumps(reference_adaptation_profile, ensure_ascii=True)}
+
+        Generation surface contract:
+        {json.dumps(generation_surface_contract, ensure_ascii=True)}
+
         Prompt intelligence brief:
         {json.dumps(prompt_intelligence_brief, ensure_ascii=True)}
 
@@ -930,6 +963,8 @@ class PromptIntelligenceService:
         session_brief = compiled_context.get("session_brief", {}) or {}
         template_fit_brief = compiled_context.get("template_fit_brief", {}) or {}
         reference_asset_brief = compiled_context.get("reference_asset_brief", []) or []
+        reference_adaptation_profile = compiled_context.get("reference_adaptation_profile", {}) or {}
+        generation_surface_contract = compiled_context.get("generation_surface_contract", {}) or {}
         objective_brief = compiled_context.get("objective_brief", {}) or {}
         prompt_intelligence_brief = self._prompt_intelligence_prompt_payload(compiled_context.get("prompt_intelligence_brief"))
         content_format_brief = self._content_format_prompt_payload(compiled_context.get("content_format_brief"))
@@ -1047,7 +1082,7 @@ class PromptIntelligenceService:
         Use brand_visual_brief.subject_semantics_summary and any structured subject_semantics fields to choose the right scene type, subject matter, abstraction level, and finance objects.
         Use brand_visual_brief.motif_summary and brand_visual_brief.design_system motif signals only when they reinforce the topic; never force every motif into the composition.
         Use brand_visual_brief.image_treatment_summary to avoid generic portraits when the reference system implies diagrams, icon-led explainers, editorial compositions, or non-photo treatment.
-        Use brand_visual_brief.brand_mark_position and background_style_summary to reserve the correct safe region and keep that surface calm.
+        Use brand_visual_brief.logo_position and background_style_summary to reserve the correct safe region and keep that surface calm.
         If template_fit_brief.template_editorial_dna, template_fit_brief.template_layout_dna, or template_fit_brief.sequence_pack are present, treat them as concrete sample-specific guidance for sequence rhythm, layout structure, and spatial pacing.
         For Instagram, LinkedIn, X, and other social creatives, do not return a sparse poster with only headline/body/cta unless the prompt explicitly asks for extreme minimalism.
         For social outputs, include a visibly structured composition with:
@@ -1074,8 +1109,11 @@ class PromptIntelligenceService:
         Visual brief: {brand_visual_brief}
         Template fit brief: {template_fit_brief}
         Render constraints: {render_constraints}
+        Generation surface contract: {generation_surface_contract}
+        Surface authority rule: selected format, platform, size, file type, and campaign goal in generation_surface_contract govern the output surface; reference assets only guide compatible visual structure and must not override the selected output format or user prompt content.
         Session brief: {session_brief}
         Reference asset brief: {reference_asset_brief}
+        Reference adaptation profile: {reference_adaptation_profile}
         Prompt intelligence brief: {prompt_intelligence_brief}
         Content format brief: {content_format_brief}
         Prompt intelligence rules: {prompt_intelligence_rules}
@@ -1120,6 +1158,12 @@ class PromptIntelligenceService:
 
         Reference assets:
         {json.dumps(reference_asset_brief, ensure_ascii=True)}
+
+        Reference adaptation profile:
+        {json.dumps(reference_adaptation_profile, ensure_ascii=True)}
+
+        Generation surface contract:
+        {json.dumps(generation_surface_contract, ensure_ascii=True)}
 
         Prompt intelligence brief:
         {json.dumps(prompt_intelligence_brief, ensure_ascii=True)}

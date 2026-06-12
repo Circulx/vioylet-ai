@@ -7,6 +7,22 @@ from app.ai.structured_prompt_parser import StructuredPromptParser
 
 
 class ResearchEditorialPlanningService:
+    DEFAULT_FACT_MODEL_LIMIT = 6
+    DEFAULT_SOURCE_FACT_LIMIT = 4
+    MAX_DATA_SURFACE_FACT_LIMIT = 10
+    MAX_SOURCE_PACK_LIMIT = 12
+    NUMBER_WORDS = {
+        "one": 1,
+        "two": 2,
+        "three": 3,
+        "four": 4,
+        "five": 5,
+        "six": 6,
+        "seven": 7,
+        "eight": 8,
+        "nine": 9,
+        "ten": 10,
+    }
     RESEARCH_SIGNAL_PATTERN = re.compile(
         r"\b("
         r"analysis|analytical|analyze|explainer|explain|why it matters|go beyond|beyond the headline|"
@@ -61,6 +77,10 @@ class ResearchEditorialPlanningService:
         r"\b\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+20\d{2}\b|"
         r"\b20\d{2}\b"
         r")",
+        re.IGNORECASE,
+    )
+    DATA_SURFACE_SIGNAL_PATTERN = re.compile(
+        r"\b(rank(?:ed|ing)?|table|scorecard|matrix|compar(?:e|ing|ison)|versus|vs\.?|list|top)\b",
         re.IGNORECASE,
     )
     STOPWORDS = {
@@ -140,6 +160,7 @@ class ResearchEditorialPlanningService:
         content_format_guide: dict[str, Any] | None = None,
         deliverable_type: str | None = None,
         template_context: dict[str, Any] | None = None,
+        reference_assets: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         prompt_text = self._normalize_text(prompt, limit=520)
         parsed_prompt = StructuredPromptParser.parse_prompt(prompt)
@@ -154,11 +175,17 @@ class ResearchEditorialPlanningService:
         inferences = self._inferences(live_research=live_research, knowledge_brief=knowledge_brief)
         uncertainties = self._uncertainties(live_research=live_research)
         format_family = self._format_family(format_name=format_name, deliverable_type=deliverable_type)
+        fact_limit = self._requested_fact_limit(
+            prompt_text=prompt_text,
+            format_family=format_family,
+            verified_fact_count=len(verified_facts),
+        )
         explicit_story_beats = self._ordered_story_beats(parsed_prompt)
         sample_editorial_brief = self._sample_editorial_brief(
             template_context=template_context,
             brand_context=brand_context or {},
             format_family=format_family,
+            reference_assets=reference_assets,
         )
         ordered_story_beats = explicit_story_beats or self._sample_story_beats(
             sample_editorial_brief,
@@ -206,7 +233,13 @@ class ResearchEditorialPlanningService:
             ranked_sources=ranked_sources,
             fallback_sources=research_sources,
         )
-        source_pack = self._source_pack(research_sources, verified_facts, knowledge_brief, ranked_source_pack)
+        source_pack = self._source_pack(
+            research_sources,
+            verified_facts,
+            knowledge_brief,
+            ranked_source_pack,
+            fact_limit=fact_limit,
+        )
         citation_rules = self._citation_rules(
             format_family=format_family,
             deliverable_type=deliverable_type,
@@ -272,7 +305,7 @@ class ResearchEditorialPlanningService:
             "outline": outline,
             "sample_editorial_brief": sample_editorial_brief,
             "fact_model": {
-                "verified_facts": verified_facts[:6],
+                "verified_facts": verified_facts[:fact_limit],
                 "inferences": inferences[:4],
                 "uncertainties": uncertainties[:4],
             },
@@ -285,9 +318,11 @@ class ResearchEditorialPlanningService:
                 verified_facts=verified_facts,
                 ranked_source_pack=ranked_source_pack,
                 research_status=self._normalize_text(live_research.get("status"), limit=32),
+                format_family=format_family,
             ),
             "source_pack": source_pack,
             "source_count": len(source_pack),
+            "fact_limit": fact_limit,
             "preferred_slide_count": preferred_slide_count,
             "summary": summary,
             "disclaimer_requested": bool(disclaimer_request.get("requested")),
@@ -305,34 +340,44 @@ class ResearchEditorialPlanningService:
         verified_facts: list[dict[str, Any]],
         ranked_source_pack: list[dict[str, Any]],
         research_status: str,
+        format_family: str,
     ) -> dict[str, Any]:
-        requires_fresh_research = bool(self.RESEARCH_SIGNAL_PATTERN.search(prompt_text))
+        requires_verified_rows = self._requires_verified_row_data(
+            prompt_text=prompt_text,
+            format_family=format_family,
+        )
+        requires_fresh_research = bool(
+            self.RESEARCH_SIGNAL_PATTERN.search(prompt_text)
+            or self.EXACT_RESEARCH_REQUEST_PATTERN.search(prompt_text)
+            or requires_verified_rows
+        )
         requires_blocking_research = bool(
             self.TIMELY_RESEARCH_SIGNAL_PATTERN.search(prompt_text)
             or self.EXACT_CLAIM_PATTERN.search(prompt_text)
             or self.EXACT_RESEARCH_REQUEST_PATTERN.search(prompt_text)
+            or requires_verified_rows
         )
         strict = bool(active and requires_fresh_research)
-        # "unavailable" means a search backend IS configured but the runtime fetch failed.
-        # "not_configured" means no backend is set up at all — that is not a failure, so
-        # it must not trigger hard_fail.  Any other status (not_required, empty) also
-        # does not block generation.
+        research_status_key = self._normalize_text(research_status, limit=32).casefold()
+        missing_research_status = research_status_key not in {"available", "completed"}
+        # Exact data surfaces must stop before render when verified rows are missing.
         hard_fail = bool(
             strict
             and requires_blocking_research
-            and research_status == "unavailable"
+            and missing_research_status
             and not verified_facts
             and not ranked_source_pack
         )
         reason = ""
         if hard_fail:
             reason = (
-                "This prompt needs externally verified research, but live research was unavailable and no ranked sources were confirmed."
+                "This prompt needs externally verified row data, but live research did not return verified facts or ranked sources."
             )
         return {
             "strict_mode": strict,
             "requires_fresh_research": requires_fresh_research,
             "requires_blocking_research": requires_blocking_research,
+            "requires_verified_rows": requires_verified_rows,
             "hard_fail": hard_fail,
             "reason": reason,
         }
@@ -374,6 +419,8 @@ class ResearchEditorialPlanningService:
     ) -> bool:
         if any(live_research.get(key) for key in ("summary", "sources", "verified_facts")):
             return True
+        if self._requires_verified_row_data(prompt_text=prompt_text, format_family=format_family):
+            return True
         if self.TIMELY_RESEARCH_SIGNAL_PATTERN.search(prompt_text):
             return True
         if (
@@ -394,6 +441,21 @@ class ResearchEditorialPlanningService:
         deliverable = self._normalize_text(deliverable_type, limit=32).casefold()
         return deliverable in {"blog", "newsletter"} and bool(self.CONVERSATIONAL_ANALYTICAL_PATTERN.search(prompt_text))
 
+    @classmethod
+    def _requires_verified_row_data(cls, *, prompt_text: str, format_family: str) -> bool:
+        normalized_family = cls._normalize_text(format_family, limit=32).casefold()
+        if normalized_family not in {"static", "infographic", "carousel", "long_form", "short_form"}:
+            return False
+        prompt = cls._normalize_text(prompt_text, limit=520)
+        if not prompt:
+            return False
+        if cls._explicit_top_n_count(prompt):
+            return True
+        return bool(
+            cls.DATA_SURFACE_SIGNAL_PATTERN.search(prompt)
+            and cls.EXACT_RESEARCH_REQUEST_PATTERN.search(prompt)
+        )
+
     @staticmethod
     def _ordered_story_beats(parsed_prompt: dict[str, Any]) -> list[str]:
         return [
@@ -408,8 +470,9 @@ class ResearchEditorialPlanningService:
         template_context: dict[str, Any] | None,
         brand_context: dict[str, Any],
         format_family: str,
+        reference_assets: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        if format_family != "carousel":
+        if format_family not in {"carousel", "infographic", "static"}:
             return {}
 
         sequence_pack = (
@@ -422,7 +485,7 @@ class ResearchEditorialPlanningService:
             for item in (sequence_pack.get("slides") or [])
             if isinstance(item, dict)
         ]
-        if len(sequence_slides) >= 3:
+        if format_family in {"carousel", "infographic"} and len(sequence_slides) >= 3:
             story_roles = [
                 str(item.get("story_role") or "").strip()
                 for item in sequence_slides
@@ -506,6 +569,13 @@ class ResearchEditorialPlanningService:
                 "proof_module_count": int(template_editorial_dna.get("proof_module_count") or 0) or None,
             }
 
+        reference_brief = ResearchEditorialPlanningService._reference_asset_sample_editorial_brief(
+            reference_assets=reference_assets,
+            format_family=format_family,
+        )
+        if reference_brief:
+            return reference_brief
+
         visual_identity = brand_context.get("visual_identity", {}) if isinstance(brand_context, dict) else {}
         design_system = visual_identity.get("design_system", {}) if isinstance(visual_identity.get("design_system"), dict) else {}
         editorial_patterns_root = design_system.get("editorial_patterns", {}) if isinstance(design_system.get("editorial_patterns"), dict) else {}
@@ -519,7 +589,25 @@ class ResearchEditorialPlanningService:
             for item in (editorial_patterns.get("dominant_story_arc") or [])
             if str(item).strip()
         ][:8]
-        if story_arc or format_family == "static":
+        editorial_signal_values: list[Any] = [
+            editorial_patterns.get("family_name"),
+            editorial_patterns.get("preferred_slide_count"),
+            editorial_patterns.get("proof_module_count"),
+        ]
+        for key in (
+            "headline_patterns",
+            "sample_summaries",
+            "explanation_styles",
+            "copy_densities",
+            "closing_styles",
+        ):
+            value = editorial_patterns.get(key)
+            if isinstance(value, (list, tuple, set)):
+                editorial_signal_values.extend(value)
+            else:
+                editorial_signal_values.append(value)
+
+        if story_arc or any(str(value).strip() for value in editorial_signal_values if value is not None):
             return {
                 "source": "design_system",
                 "family_name": str(editorial_patterns.get("family_name") or "").strip(),
@@ -552,6 +640,126 @@ class ResearchEditorialPlanningService:
                     if str(item).strip()
                 ][:4],
                 "proof_module_count": int(editorial_patterns.get("proof_module_count") or 0) or None,
+            }
+        return {}
+
+    @staticmethod
+    def _positive_int_or_none(value: Any) -> int | None:
+        try:
+            parsed = int(value or 0)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed > 0 else None
+
+    @staticmethod
+    def _reference_asset_sample_editorial_brief(
+        *,
+        reference_assets: list[dict[str, Any]] | None,
+        format_family: str,
+    ) -> dict[str, Any]:
+        if format_family not in {"carousel", "infographic", "static"}:
+            return {}
+        candidates = [item for item in (reference_assets or []) if isinstance(item, dict)]
+        for asset in candidates:
+            metadata = asset.get("metadata") if isinstance(asset.get("metadata"), dict) else {}
+            role = str(asset.get("asset_role") or metadata.get("asset_role") or "").strip().casefold()
+            trust = str(asset.get("trust_level") or metadata.get("trust_level") or "").strip().casefold()
+            source_family = str(
+                asset.get("format_family")
+                or metadata.get("format_family")
+                or metadata.get("format")
+                or metadata.get("content_format")
+                or ""
+            ).strip().casefold()
+            if source_family != format_family:
+                continue
+            if role and not any(token in role for token in ("reference", "template", "creative")):
+                continue
+            if trust and trust in {"rejected", "blocked", "untrusted"}:
+                continue
+
+            editorial_dna = metadata.get("editorial_dna") if isinstance(metadata.get("editorial_dna"), dict) else {}
+            style_characteristics = (
+                metadata.get("style_characteristics")
+                if isinstance(metadata.get("style_characteristics"), dict)
+                else {}
+            )
+            composition_logic = metadata.get("composition_logic") if isinstance(metadata.get("composition_logic"), dict) else (
+                style_characteristics.get("composition_logic")
+                if isinstance(style_characteristics.get("composition_logic"), dict)
+                else {}
+            )
+            layout_dna = metadata.get("layout_dna") if isinstance(metadata.get("layout_dna"), dict) else (
+                style_characteristics.get("layout_dna")
+                if isinstance(style_characteristics.get("layout_dna"), dict)
+                else {}
+            )
+
+            story_roles = [
+                str(item).strip()
+                for item in (
+                    editorial_dna.get("story_arc_roles")
+                    or metadata.get("story_roles")
+                    or metadata.get("section_roles")
+                    or metadata.get("structural_cues")
+                    or []
+                )
+                if str(item).strip()
+            ][:8]
+            headline_patterns = [
+                str(item).strip()
+                for item in (
+                    editorial_dna.get("headline_patterns")
+                    or metadata.get("headline_patterns")
+                    or []
+                )
+                if str(item).strip()
+            ][:6]
+            sample_summaries = [
+                str(item).strip()
+                for item in (
+                    editorial_dna.get("supporting_patterns")
+                    or metadata.get("sample_summaries")
+                    or metadata.get("structural_cues")
+                    or []
+                )
+                if str(item).strip()
+            ][:6]
+            summary = str(metadata.get("summary") or metadata.get("notes") or "").strip()
+            if summary and summary not in sample_summaries:
+                sample_summaries.append(summary[:180])
+            explanation_style = str(
+                editorial_dna.get("explanation_style")
+                or composition_logic.get("flow")
+                or composition_logic.get("balance")
+                or layout_dna.get("layout_type")
+                or ""
+            ).strip()
+            copy_density = str(editorial_dna.get("copy_density") or metadata.get("copy_density") or "").strip()
+            closing_style = str(editorial_dna.get("closing_style") or metadata.get("closing_style") or "").strip()
+
+            if not any([story_roles, headline_patterns, sample_summaries, explanation_style, copy_density, closing_style]):
+                continue
+            return {
+                "source": "reference_asset",
+                "family_name": str(metadata.get("family_name") or metadata.get("label") or metadata.get("name") or "").strip(),
+                "slide_count": ResearchEditorialPlanningService._positive_int_or_none(
+                    metadata.get("page_count") or metadata.get("page_count_hint")
+                ),
+                "story_roles": story_roles,
+                "structural_cues": [
+                    [str(item).strip()]
+                    for item in story_roles
+                    if str(item).strip()
+                ],
+                "headline_patterns": headline_patterns,
+                "sample_summaries": sample_summaries[:6],
+                "explanation_styles": [explanation_style] if explanation_style else [],
+                "copy_densities": [copy_density] if copy_density else [],
+                "closing_styles": [closing_style] if closing_style else [],
+                "proof_module_count": ResearchEditorialPlanningService._positive_int_or_none(
+                    editorial_dna.get("proof_module_count") or metadata.get("proof_module_count")
+                ),
             }
         return {}
 
@@ -756,8 +964,14 @@ class ResearchEditorialPlanningService:
         verified_facts: list[dict[str, Any]],
         knowledge_brief: list[dict[str, Any]],
         ranked_source_pack: list[dict[str, str]],
+        *,
+        fact_limit: int | None = None,
     ) -> list[dict[str, str]]:
         packed: list[dict[str, str]] = []
+        verified_fact_limit = max(
+            self.DEFAULT_SOURCE_FACT_LIMIT,
+            min(fact_limit or self.DEFAULT_SOURCE_FACT_LIMIT, self.MAX_DATA_SURFACE_FACT_LIMIT),
+        )
         filtered_knowledge = self._filtered_analytical_knowledge(knowledge_brief)
         for source in ranked_source_pack[:3]:
             if source.get("label") or source.get("detail"):
@@ -769,7 +983,7 @@ class ResearchEditorialPlanningService:
                         "source": self._normalize_text(source.get("source"), limit=180),
                     }
                 )
-        for fact in verified_facts[:4]:
+        for fact in verified_facts[:verified_fact_limit]:
             label = self._normalize_text(fact.get("label"), limit=120)
             value = self._normalize_text(fact.get("value"), limit=200)
             source_title = self._normalize_text(fact.get("source_title"), limit=120)
@@ -793,7 +1007,8 @@ class ResearchEditorialPlanningService:
             channel = self._normalize_text(item.get("channel"), limit=32)
             if content:
                 packed.append({"type": "knowledge", "label": channel or "knowledge", "detail": content, "source": channel})
-        return packed[:8]
+        source_pack_limit = max(8, min(verified_fact_limit + 4, self.MAX_SOURCE_PACK_LIMIT))
+        return packed[:source_pack_limit]
 
     def _ranked_source_pack(
         self,
@@ -982,6 +1197,53 @@ class ResearchEditorialPlanningService:
                 return count
         return None
 
+    @classmethod
+    def _positive_count_from_token(cls, value: str) -> int | None:
+        token = str(value or "").strip().casefold()
+        if not token:
+            return None
+        if token.isdigit():
+            count = int(token)
+            return count if count > 0 else None
+        return cls.NUMBER_WORDS.get(token)
+
+    @classmethod
+    def _explicit_top_n_count(cls, prompt_text: str) -> int | None:
+        text = cls._normalize_text(prompt_text, limit=520)
+        if not text:
+            return None
+        token_pattern = r"(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)"
+        for pattern in (
+            rf"\btop\s+{token_pattern}\b",
+            rf"\b{token_pattern}\s+(?:rows?|items?|points?|entries|rankings?|providers|rules?|fees?|rates?)\b",
+        ):
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if not match:
+                continue
+            count = cls._positive_count_from_token(match.group(1))
+            if count:
+                return min(count, cls.MAX_DATA_SURFACE_FACT_LIMIT)
+        return None
+
+    @classmethod
+    def _requested_fact_limit(
+        cls,
+        *,
+        prompt_text: str,
+        format_family: str,
+        verified_fact_count: int = 0,
+    ) -> int:
+        explicit_count = cls._explicit_top_n_count(prompt_text)
+        if explicit_count:
+            return min(max(explicit_count, 1), cls.MAX_DATA_SURFACE_FACT_LIMIT)
+        if (
+            str(format_family or "").strip().casefold() in {"static", "infographic", "carousel"}
+            and verified_fact_count > cls.DEFAULT_FACT_MODEL_LIMIT
+            and cls.DATA_SURFACE_SIGNAL_PATTERN.search(str(prompt_text or ""))
+        ):
+            return min(max(verified_fact_count, cls.DEFAULT_FACT_MODEL_LIMIT), cls.MAX_DATA_SURFACE_FACT_LIMIT)
+        return cls.DEFAULT_FACT_MODEL_LIMIT
+
     def _reader_payoff(self, prompt_text: str, angle: str) -> str:
         lowered = prompt_text.casefold()
         if self.PRACTICAL_FINANCE_JOURNEY_PATTERN.search(prompt_text) and not self.TIMELY_RESEARCH_SIGNAL_PATTERN.search(prompt_text):
@@ -1043,12 +1305,22 @@ class ResearchEditorialPlanningService:
         fact_model = brief.get("fact_model") if isinstance(brief.get("fact_model"), dict) else {}
         verified_facts = [item for item in (fact_model.get("verified_facts") or []) if isinstance(item, dict)]
         needs_live_research = bool(brief.get("needs_live_research"))
+        format_family = cls._normalize_text(
+            brief.get("format_family") or brief.get("format"),
+            limit=32,
+        ).casefold()
+        fact_limit = cls._requested_fact_limit(
+            prompt_text=prompt_text,
+            format_family=format_family,
+            verified_fact_count=len(verified_facts),
+        )
         if verified_facts:
             return cls._enforce_verified_fact_grounding(
                 payload,
                 prompt_text=prompt_text,
                 brief=brief,
                 verified_facts=verified_facts,
+                fact_limit=fact_limit,
             )
         if not needs_live_research:
             return cls._inject_sources_used(payload, brief)
@@ -1079,7 +1351,7 @@ class ResearchEditorialPlanningService:
         ]
         if not filtered_proof_points:
             filtered_proof_points = cls._safe_proof_points(brief=brief)
-        metadata["proof_points"] = filtered_proof_points[:4]
+        metadata["proof_points"] = filtered_proof_points[:fact_limit]
         metadata["claim_evidence_pairs"] = []
         metadata["sources_used"] = []
         metadata["research_status"] = cls._normalize_text(brief.get("research_status"), limit=32)
@@ -1094,6 +1366,7 @@ class ResearchEditorialPlanningService:
         prompt_text: str,
         brief: dict[str, Any],
         verified_facts: list[dict[str, Any]],
+        fact_limit: int | None = None,
     ) -> dict[str, Any]:
         sanitized = dict(payload)
         metadata = dict(sanitized.get("metadata") or {}) if isinstance(sanitized.get("metadata"), dict) else {}
@@ -1131,9 +1404,10 @@ class ResearchEditorialPlanningService:
         ]
         if not filtered_proof_points:
             filtered_proof_points = verified_lines or cls._safe_proof_points(brief=brief)
-        metadata["proof_points"] = filtered_proof_points[:4]
+        row_limit = max(1, min(fact_limit or cls.DEFAULT_FACT_MODEL_LIMIT, cls.MAX_DATA_SURFACE_FACT_LIMIT))
+        metadata["proof_points"] = filtered_proof_points[:row_limit]
 
-        metadata["claim_evidence_pairs"] = verified_pairs[:4]
+        metadata["claim_evidence_pairs"] = verified_pairs[:row_limit]
         metadata["research_status"] = cls._normalize_text(brief.get("research_status"), limit=32)
         sanitized["metadata"] = metadata
         return cls._inject_sources_used(sanitized, brief)

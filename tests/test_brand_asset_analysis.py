@@ -84,7 +84,7 @@ def test_template_vision_analyze_pages_merges_partial_page_results() -> None:
                     "image_treatment": {"style": "diagram led"},
                     "brand_cues": {"tone_keywords": ["trustworthy"]},
                     "page_blueprint": {"layout_category": "cover_or_hero_visual", "module_counts": {"text_block_count": 2}},
-                    "ocr_structure": {"readable_text_blocks": 2},
+                    "ocr_structure": {"readable_text_blocks": 2, "text_truncation_or_crop_risk": "medium"},
                     "premium_quality": {"overall_score": 0.86},
                 },
                 "page-2": {
@@ -97,7 +97,7 @@ def test_template_vision_analyze_pages_merges_partial_page_results() -> None:
                     "image_treatment": {"style": "editorial illustration"},
                     "brand_cues": {"trust_markers": ["data cues"]},
                     "page_blueprint": {"layout_category": "card_callout_grid", "module_counts": {"card_module_count": 3}},
-                    "ocr_structure": {"readable_text_blocks": 5},
+                    "ocr_structure": {"readable_text_blocks": 5, "text_truncation_or_crop_risk": "medium"},
                     "premium_quality": {"overall_score": 0.9},
                 },
                 "page-3": None,
@@ -129,4 +129,5 @@ def test_template_vision_analyze_pages_merges_partial_page_results() -> None:
     assert merged["image_treatment"]["style"] in {"diagram led", "editorial illustration"}
     assert merged["page_blueprint"]["layout_category"] in {"cover_or_hero_visual", "card_callout_grid"}
     assert merged["ocr_structure"]["readable_text_blocks"] == 3.5
-    assert merged["premium_quality"]["overall_score"] in {0.86, 0.9}
+    assert merged["ocr_structure"]["text_truncation_or_crop_risk"] == "medium"
+    assert merged["premium_quality"]["overall_score"] == 0.88

@@ -11,7 +11,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter, ImageStat
 from pydantic import ValidationError
 
 from app.ai.blueprint import BlueprintService
@@ -51,13 +51,14 @@ logger = logging.getLogger(__name__)
 
 
 class AIOrchestratorService:
-    IMAGE_PROMPT_MAX_LENGTH = 24000
-    CAROUSEL_IMAGE_PROMPT_MAX_LENGTH = 24000
+    IMAGE_PROMPT_MAX_LENGTH = 12000
+    CAROUSEL_IMAGE_PROMPT_MAX_LENGTH = 12000
     SAMPLE_SIMILARITY_ACCEPT_SCORE = 0.82
     SCENE_GRAPH_REPAIR_ATTEMPTS = 2
     CONTENT_SEMANTIC_REPAIR_ATTEMPTS = 1
     IMAGE_QUALITY_MIN_SCORE = 0.72
     AI_FINAL_RENDER_FORMATS = {"static", "story", "poster", "carousel", "infographic"}
+    BACKEND_TEXT_OVERLAY_SCENE_GRAPH_FORMATS = {"carousel"}
     TEMPLATE_LOCKED_IMAGE_LED_FORMATS = {"static", "story", "poster"}
     DEFAULT_LAYERS = ["background", "decorative", "primary_visual", "content", "brand", "footer"]
     PROMPT_ECHO_STOPWORDS = {
@@ -1127,6 +1128,7 @@ class AIOrchestratorService:
         *,
         request: AIOrchestrationRequest | None,
         creative_decision: CreativeDecisionPayload | None = None,
+        for_conditioning: bool = False,
     ) -> list[dict[str, Any]]:
         merged = [dict(asset) for asset in reference_assets if isinstance(asset, dict)]
         layout_anchor = cls._style_reference_layout_anchor_asset(
@@ -1135,6 +1137,10 @@ class AIOrchestratorService:
             creative_decision=creative_decision,
         )
         if layout_anchor is None:
+            return merged
+        if cls._reference_asset_is_mismatched_text_surface_conditioning(layout_anchor, request=request):
+            return merged
+        if for_conditioning and cls._reference_asset_is_layout_only_static_infographic_surface(layout_anchor, request=request):
             return merged
         merged_paths = {
             str(asset.get("storage_path") or "").strip()
@@ -1821,6 +1827,85 @@ class AIOrchestratorService:
         ) == "style_reference_only"
 
     @classmethod
+    def _reference_layout_adaptation_active(
+        cls,
+        request: AIOrchestrationRequest | None,
+        creative_decision: CreativeDecisionPayload | None = None,
+        metadata: dict[str, Any] | None = None,
+        compiled_context: dict[str, Any] | None = None,
+        reference_images: list[dict[str, Any]] | None = None,
+    ) -> bool:
+        if cls._style_reference_only_carousel_active(
+            request,
+            creative_decision=creative_decision,
+            metadata=metadata,
+        ):
+            return True
+        context = compiled_context if isinstance(compiled_context, dict) else {}
+        profile = context.get("reference_adaptation_profile") if isinstance(context.get("reference_adaptation_profile"), dict) else {}
+        mode = cls._normalize_metadata_text(profile.get("adaptation_mode"), limit=64).casefold()
+        source_family = cls._normalize_metadata_text(profile.get("source_format_family"), limit=32).casefold()
+        output_family = cls._normalize_metadata_text(profile.get("output_format_family"), limit=32).casefold()
+        if mode not in {
+            "infographic_surface_adaptation",
+            "static_creative_adaptation",
+            "hybrid_reference_adaptation",
+            "template_sequence_adaptation",
+        }:
+            return False
+        if source_family not in {"carousel", "infographic", "static"}:
+            return False
+        if output_family not in {"carousel", "infographic", "static"}:
+            return False
+        try:
+            confidence = float(profile.get("confidence") or 0.0)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        if confidence > 0.0:
+            return True
+
+        requested_family = cls._requested_reference_format_family(request)
+        if requested_family not in {"static", "infographic"}:
+            return False
+        metadata_blueprint = (
+            metadata.get("sample_page_blueprint")
+            if isinstance(metadata, dict) and isinstance(metadata.get("sample_page_blueprint"), dict)
+            else {}
+        )
+        if metadata_blueprint:
+            return True
+
+        evidence_assets = reference_images if reference_images is not None else []
+        if not evidence_assets and request is not None:
+            evidence_assets = list(getattr(request, "asset_catalog", []) or getattr(request, "reference_assets", []) or [])
+
+        def normalize_family(value: Any) -> str:
+            normalized = cls._normalize_metadata_text(value, limit=48).casefold()
+            normalized = normalized.replace("-", "_").replace(" ", "_").replace("/", "_").strip("_")
+            if normalized in {"static", "story", "poster", "hero", "single_frame"}:
+                return "static"
+            if normalized in {"infographic", "diagram", "visual_explainer"}:
+                return "infographic"
+            return normalized if normalized in {"static", "infographic", "carousel"} else ""
+
+        for asset in evidence_assets:
+            if not isinstance(asset, dict) or not cls._reference_asset_is_visual_source(asset):
+                continue
+            if normalize_family(cls._reference_asset_format_family(asset)) != requested_family:
+                continue
+            asset_metadata = cls._asset_metadata(asset)
+            asset_role = cls._normalize_metadata_text(asset.get("asset_role"), limit=32).casefold()
+            trust_level = cls._normalize_metadata_text(asset.get("trust_level"), limit=32).casefold()
+            has_blueprint = isinstance(asset_metadata.get("sample_page_blueprint"), dict) and bool(
+                asset_metadata.get("sample_page_blueprint")
+            )
+            if trust_level in {"rejected", "blocked", "untrusted", "excluded"}:
+                continue
+            if asset_role in {"reference_creative", "template", "reference", "template_preview"} or has_blueprint:
+                return True
+        return False
+
+    @classmethod
     def _thin_sample_conditioning_contract(
         cls,
         *,
@@ -2046,6 +2131,22 @@ class AIOrchestratorService:
         prompt_platform_rules = self._normalize_metadata_list(prompt_intelligence_brief.get("current_platform_rules"), limit=4)
         prompt_global_rules = self._normalize_metadata_list(prompt_intelligence_brief.get("global_rules"), limit=4)
         prompt_intelligence_summary = self._coerce_text_value(prompt_intelligence_brief.get("summary"), "")
+        content_format_brief = self._coerce_mapping(compiled_context.get("content_format_brief"))
+        content_format_name = str(
+            content_format_brief.get("format") or request.studio_panel.get("format") or ""
+        ).strip().casefold()
+        content_format_slide_count = self._int_or_none(content_format_brief.get("preferred_slide_count"))
+        content_format_headline_direction = ""
+        content_format_supporting_direction = ""
+        content_format_cta_intent = ""
+        if content_format_brief and content_format_name == "carousel":
+            slide_count_phrase = f"a {content_format_slide_count}-slide story" if content_format_slide_count else "the carousel story"
+            content_format_headline_direction = f"Open with a hook strong enough to launch {slide_count_phrase}."
+            content_format_supporting_direction = (
+                "Build a paginated PDF story where each slide earns one idea, keeps the narrative moving, "
+                "and avoids cramming multiple proof points onto the same page."
+            )
+            content_format_cta_intent = "Use a closing-slide CTA that completes the narrative without repeating every slide."
         audience_research_highlights = self._normalize_metadata_list(
             [
                 *self._normalize_metadata_list(audience_brief.get("research_highlights"), limit=5),
@@ -2171,6 +2272,10 @@ class AIOrchestratorService:
             ],
             limit=4,
         ) or persona_pain_points
+        audience_research_pain_points = self._normalize_metadata_list(
+            audience_brief.get("audience_research_pain_points"),
+            limit=4,
+        )
         primary_objections = audience_objections or persona_objections
         prompt_topic = self._fallback_topic_focus(request.prompt, compiled_context=compiled_context)
         primary_research_highlight = audience_research_highlights[0] if audience_research_highlights else ""
@@ -2187,6 +2292,11 @@ class AIOrchestratorService:
         objection_grounding = (audience_proof_cues or audience_trust_signals or audience_research_highlights)[:1]
         objection_reassurance = self._coerce_text_value(
             (
+                f"Address the objection '{primary_objections[0]}' with specific reassurance, name the pain point '{audience_research_pain_points[0]}', and ground it in '{objection_grounding[0]}'."
+                if primary_objections and audience_research_pain_points and objection_grounding
+                else f"Address the objection '{primary_objections[0]}' with specific reassurance, name the pain point '{audience_research_pain_points[0]}', and use credible proof."
+                if primary_objections and audience_research_pain_points
+                else
                 f"Address the objection '{primary_objections[0]}' with specific reassurance and ground it in '{objection_grounding[0]}'."
                 if primary_objections and objection_grounding
                 else f"Address the objection '{primary_objections[0]}' with specific reassurance and credible proof."
@@ -2239,7 +2349,8 @@ class AIOrchestratorService:
                 or "MISSING"
             ),
             "headline_direction": self._coerce_text_value(
-                objective_brief.get("market_positioning")
+                content_format_headline_direction
+                or objective_brief.get("market_positioning")
                 or (prompt_starter_texts[0] if prompt_starter_texts else "")
                 or (f"Lead with the outcome '{audience_desired_outcomes[0]}'" if audience_desired_outcomes else "")
                 or (f"Lead with the benefit '{primary_motivations[0]}'" if primary_motivations else "")
@@ -2255,7 +2366,8 @@ class AIOrchestratorService:
                 )
             ),
             "supporting_copy_direction": self._coerce_text_value(
-                prompt_intelligence_summary
+                content_format_supporting_direction
+                or prompt_intelligence_summary
                 or (prompt_platform_rules[0] if prompt_platform_rules else "")
                 or objection_reassurance
                 or pain_point_framing
@@ -2281,7 +2393,8 @@ class AIOrchestratorService:
                 )
             ),
             "cta_intent": self._coerce_text_value(
-                objective_brief.get("cta_bias")
+                content_format_cta_intent
+                or objective_brief.get("cta_bias")
                 or (prompt_platform_rules[1] if len(prompt_platform_rules) > 1 else "")
                 or (prompt_global_rules[1] if len(prompt_global_rules) > 1 else "")
                 or (prompt_platform_rules[0] if len(prompt_platform_rules) == 1 else "")
@@ -2310,6 +2423,15 @@ class AIOrchestratorService:
         format_name = str(studio_panel.get("format") or "static")
         if format_name == "infographic":
             return "infographic_stack"
+        metadata = text_payload.get("metadata") if isinstance(text_payload.get("metadata"), dict) else {}
+        surface_contract = metadata.get("data_list_surface_contract") if isinstance(metadata.get("data_list_surface_contract"), dict) else {}
+        requested_count = AIOrchestratorService._int_or_none(surface_contract.get("requested_count")) or AIOrchestratorService._explicit_top_n_item_count(prompt)
+        if (
+            requested_count
+            and requested_count >= 7
+            and re.search(r"\b(top\s+\d{1,2}|rank(?:ed|ing)?|table|comparison|compare|versus|vs\.?)\b", lowered_prompt)
+        ):
+            return "ranking_table"
         if any(token in lowered_prompt for token in ["tips", "tip", "strategies", "strategy", "steps", "checklist", "how to"]):
             return "checklist_card"
         if any(token in lowered_prompt for token in ["compare", "comparison", "versus", "vs "]):
@@ -2550,9 +2672,24 @@ class AIOrchestratorService:
         canvas_width = max(int(size.get("width") or 1080), 1)
         canvas_height = max(int(size.get("height") or 1080), 1)
         if reference_geometry is not None:
-            _ref_x, _ref_y, ref_width, ref_height = reference_geometry
-            width = max(min(width, ref_width), width * 0.75)
-            height = max(min(height, ref_height), height * 0.75)
+            ref_x, ref_y, ref_width, ref_height = reference_geometry
+            safe_padding_x = max(min(48 / canvas_width, 0.06), min(ref_width * 0.4, 0.06))
+            safe_padding_y = max(min(32 / canvas_height, 0.04), min(ref_height * 0.25, 0.04))
+            width = min(max(width, ref_width + safe_padding_x), 0.4)
+            height = min(max(height, ref_height + safe_padding_y), 0.24)
+            if horizontal == "left":
+                x = min(max(ref_x, 0.0), max(1.0 - width, 0.0))
+            elif horizontal == "center":
+                x = max(min(ref_x + (ref_width / 2.0) - (width / 2.0), 1.0 - width), 0.0)
+            else:
+                x = max(min(ref_x + ref_width - width, 1.0 - width), 0.0)
+            if vertical == "bottom":
+                y = max(min(ref_y + ref_height - height, 1.0 - height), 0.0)
+            elif vertical == "middle":
+                y = max(min(ref_y + (ref_height / 2.0) - (height / 2.0), 1.0 - height), 0.0)
+            else:
+                y = min(max(ref_y, 0.0), max(1.0 - height, 0.0))
+            return (x, y, width, height)
         margin_x = min(20 / canvas_width, max(1.0 - width, 0.0))
         margin_y = min(20 / canvas_height, max(1.0 - height, 0.0))
         if horizontal == "left":
@@ -2762,14 +2899,14 @@ class AIOrchestratorService:
         tone = cls._normalize_logo_background_tone(background_tone)
         if tone == "light":
             return (
-                "Keep the reserved safe zone on a calm light surface with low texture, soft gradients only, and clean edge contrast."
+                "Keep the reserved safe zone on a calm light surface with low texture, soft gradients only, clean edge contrast, and transparent edges for the exact overlay asset."
             )
         if tone == "dark":
             return (
-                "Keep the reserved safe zone on a calm dark surface with low texture and stable contrast."
+                "Keep the reserved safe zone on a calm dark surface with low texture, stable contrast, and transparent edges for the exact overlay asset."
             )
         return (
-            "Keep the reserved safe zone on a smooth, visually quiet surface with stable contrast and no noisy texture, glass effects, or cutout-like detail."
+            "Keep the reserved safe zone on a smooth, visually quiet surface with stable contrast, transparent edges for the exact overlay asset, and no noisy texture, glass effects, or cutout-like detail."
         )
 
     @classmethod
@@ -2782,6 +2919,7 @@ class AIOrchestratorService:
             "Do not render, invent, stylize, trace, emboss, blur, shadow, crop, duplicate, partially duplicate, fade, ghost, hint at, or reserve a visible placeholder for any brand mark or wordmark. The exact stored brand mark is composited afterward as a separate asset.",
             f"Never write or paint {brand_label} in the corner-safe area. If approved legal/footer copy contains the brand name, it may appear only inside the legal/footer text region, never as a brand mark, header signature, watermark, or decorative brand lockup.",
             f"The {reserved_logo_area} area must remain pure background reservation only: blank/quiet surface, no placeholder text, no ghosted wordmark, no orange/navy brand-mark-like marks, no icon cluster, no badge, no plate, no chip, and no decorative detail.",
+            "For the reserved safe rectangle, no readable text may overlap that rectangle or its immediate padding; when large text shares that band, keep its right edge before about the reserved zone and use additional lines rather than stretching under the logo.",
         ]
 
     @classmethod
@@ -3171,7 +3309,7 @@ class AIOrchestratorService:
                 "style": {"shape": "ellipse", "fill_role": "accent"},
             },
         ]
-        if proof_points:
+        if proof_points and layout_type != "ranking_table":
             content_elements.insert(
                 3,
                 {
@@ -3184,7 +3322,79 @@ class AIOrchestratorService:
                     "style": {"font_size": 20, "font_role": "body", "fill_role": "secondary_text", "max_lines": 5},
                 },
             )
-        else:
+        if layout_type == "ranking_table":
+            metadata = text_payload.get("metadata") if isinstance(text_payload.get("metadata"), dict) else {}
+            surface_contract = metadata.get("data_list_surface_contract") if isinstance(metadata.get("data_list_surface_contract"), dict) else {}
+            requested_count = self._int_or_none(surface_contract.get("requested_count")) or self._explicit_top_n_item_count(request.prompt) or len(proof_points)
+            module_count = max(1, min(self._int_or_none(surface_contract.get("module_count")) or requested_count or len(proof_points) or 1, 10))
+            proof_rows = proof_points[:module_count] or self._sentences(text_payload.get("body", ""))[:module_count]
+            if not any(element.get("role") == "proof_points" for element in content_elements):
+                content_elements.insert(
+                    3,
+                    {
+                        "element_id": "proof_points",
+                        "element_type": "text",
+                        "role": "proof_points",
+                        "layer": "content",
+                        "geometry": {"x": 0.08, "y": 0.30, "width": 0.84, "height": 0.58, "units": "normalized"},
+                        "text": proof_rows,
+                        "style": {"font_size": 16, "font_role": "body", "fill_role": "secondary_text", "max_lines": max(module_count, 8)},
+                    },
+                )
+            for element in content_elements:
+                role = element.get("role")
+                if role == "headline":
+                    element["geometry"] = {"x": 0.08, "y": 0.07, "width": 0.66, "height": 0.13, "units": "normalized"}
+                    element["style"] = {**dict(element.get("style") or {}), "font_size": 48, "max_lines": 2}
+                elif role == "supporting_line":
+                    element["geometry"] = {"x": 0.08, "y": 0.205, "width": 0.78, "height": 0.06, "units": "normalized"}
+                    element["style"] = {**dict(element.get("style") or {}), "font_size": 20, "max_lines": 2}
+                elif role == "proof_points":
+                    element["geometry"] = {"x": 0.08, "y": 0.30, "width": 0.84, "height": 0.58, "units": "normalized"}
+                    element["text"] = proof_rows
+                    element["style"] = {**dict(element.get("style") or {}), "font_size": 16, "max_lines": max(module_count, 8)}
+                    element["validation_hints"] = {
+                        **dict(element.get("validation_hints") or {}),
+                        "badge_style": "numbered",
+                        "surface_mode": "ranking_table",
+                        "requested_count": requested_count,
+                        "module_count": module_count,
+                    }
+                elif role == "cta":
+                    element["geometry"] = {"x": 0.08, "y": 0.905, "width": 0.42, "height": 0.05, "units": "normalized"}
+                    element["style"] = {**dict(element.get("style") or {}), "font_size": 18, "max_lines": 1}
+                elif role == "logo":
+                    element["geometry"] = {"x": 0.78, "y": 0.045, "width": 0.16, "height": 0.07, "units": "normalized"}
+            content_elements = [
+                element
+                for element in content_elements
+                if element.get("role") not in {"image"} and element.get("element_id") != "decorative_glow"
+            ]
+            content_elements.insert(
+                3,
+                {
+                    "element_id": "ranking_table_panel",
+                    "element_type": "decorative_shape",
+                    "role": "decorative_shape",
+                    "layer": "decorative",
+                    "geometry": {"x": 0.06, "y": 0.28, "width": 0.88, "height": 0.62, "units": "normalized"},
+                    "style": {"shape": "rounded_rect", "fill_role": "surface", "border_radius": 28, "opacity": 0.96},
+                    "validation_hints": {"surface_mode": "ranking_table", "module_count": module_count},
+                },
+            )
+            row_height = 0.58 / max(module_count, 1)
+            for index in range(1, module_count):
+                content_elements.append(
+                    {
+                        "element_id": f"ranking_row_divider_{index}",
+                        "element_type": "decorative_shape",
+                        "role": "decorative_shape",
+                        "layer": "decorative",
+                        "geometry": {"x": 0.09, "y": 0.30 + row_height * index, "width": 0.80, "height": 0.002, "units": "normalized"},
+                        "style": {"shape": "line", "fill_role": "primary", "opacity": 0.12},
+                    }
+                )
+        elif not proof_points:
             content_elements.insert(
                 3,
                 {
@@ -4948,11 +5158,18 @@ class AIOrchestratorService:
         )
 
     @staticmethod
-    def _consultant_quality_contract(*, for_visual_only: bool, for_carousel: bool) -> list[str]:
+    def _consultant_quality_contract(
+        *,
+        for_visual_only: bool,
+        for_carousel: bool,
+        for_static_infographic_ad: bool = False,
+    ) -> list[str]:
         layout_target = (
             "Use an advanced explanatory slide composition with deliberate grouping, alignment, rhythm, and negative space; "
             "do not collapse into a generic top-heading, middle-image, bottom-footer layout."
             if for_carousel
+            else "Use a simple, scroll-stopping social ad composition with one dominant focal idea, clear headline hierarchy, generous breathing room, and a visible CTA path; do not make it feel like a document page, dense report, or plain text poster."
+            if for_static_infographic_ad
             else "Use an advanced explanatory composition with deliberate grouping, alignment, rhythm, and negative space; "
             "do not collapse into a generic top-heading, centered-visual, bottom-footer poster."
         )
@@ -4966,6 +5183,180 @@ class AIOrchestratorService:
             f"Layout discipline: {layout_target}",
             "Brand and asset discipline: every image, icon, chart cue, or decorative asset must earn its place by explaining the message and matching the brand system. Prefer fewer stronger elements over decorative clutter or generic stock filler.",
         ]
+
+    @classmethod
+    def _social_media_ad_composition_contract(
+        cls,
+        *,
+        format_name: Any,
+        platform: Any,
+    ) -> str:
+        normalized_format = cls._normalize_metadata_text(format_name, limit=32).casefold()
+        normalized_platform = cls._normalize_metadata_text(platform, limit=48) or "social media"
+        base = (
+            f"Social media ad composition contract for {normalized_platform}: make the image feel like a native feed ad, not a document, slide, report, or template preview. "
+            "Use a clean background, one immediate visual hook, strong readable type hierarchy, brand-color restraint, and a CTA treatment that is visible without overpowering the message. "
+            "Keep the layout simple, modern, and creative: fewer elements, stronger focal path, no crowded paragraphs, no random icon clutter, and no generic stock-business fallback."
+        )
+        if normalized_format == "infographic":
+            return (
+                base
+                + " For infographic posts, use a compact social infographic: 3-5 clear modules, icons/charts/diagrams only when they explain the prompt, short labels, clear section rhythm, and enough spacing for mobile readability."
+            )
+        if normalized_format == "static":
+            return (
+                base
+                + " For static posts, use one bold central message, one supporting line at most, one topic-matched hero visual or metaphor, and one clean CTA button or CTA chip."
+            )
+        return base
+
+    @classmethod
+    def _image_hallucination_control_contract(
+        cls,
+        *,
+        format_name: Any,
+        use_backend_text_overlay: bool = False,
+    ) -> str:
+        normalized_format = cls._normalize_metadata_text(format_name, limit=32).casefold() or "image"
+        text_authority = (
+            "Backend will place exact text later, so the image model must not create visible wording, numbers, logos, badges, source labels, or pseudo-text."
+            if use_backend_text_overlay
+            else "For static/infographic creatives, render only content that is present in the current user prompt, approved text payload, retrieved verified facts, live-research facts, or brand context."
+        )
+        return (
+            f"Image hallucination control for {normalized_format}: treat every visible word, number, ranking, chart label, table row, country/company/person/product name, source label, badge, logo-like mark, legal claim, metric, screenshot, and UI detail as a factual claim. "
+            "Do not invent, borrow, or carry over any such detail from model memory, previous requests, sample/template content, placeholder examples, or generic social media patterns. "
+            "If a detail is unsupported, omit it or replace it with qualitative, non-specific visual language rather than fake specificity. "
+            f"{text_authority} "
+            "Every visual subject, icon, chart cue, object, and scene must stay tied to the current prompt and approved brand context; never introduce unrelated people, industries, countries, policy themes, template topics, or stale visual metaphors."
+        )
+
+    @classmethod
+    def _compact_static_infographic_hallucination_guard(
+        cls,
+        *,
+        request: AIOrchestrationRequest | None,
+        format_name: Any,
+    ) -> str:
+        normalized_format = cls._normalize_metadata_text(format_name, limit=32).casefold()
+        if normalized_format not in {"static", "infographic"}:
+            return ""
+        topic_anchors = sorted(cls._final_render_request_topic_tokens(request))[:8] if request is not None else []
+        anchors_summary = ", ".join(topic_anchors) if topic_anchors else "the current prompt topic"
+        return (
+            "Compact hallucination guard / Image hallucination control: treat every visible word, number, ranking, chart label, logo, source, name, metric, and UI detail as factual; each must come only from the prompt, approved copy, verified facts, live research, or brand context. "
+            f"Do not invent, borrow, or carry over facts from samples, templates, placeholders, unrelated industries, or model memory; if unsupported, omit it or use qualitative visuals tied to {anchors_summary}. Never invent fake values, stale template topics, placeholders, unrelated industries, or model-memory facts."
+        )
+
+    @classmethod
+    def _content_visual_explanation_contract(
+        cls,
+        *,
+        request: AIOrchestrationRequest | None,
+        format_name: Any,
+        platform: Any,
+    ) -> str:
+        normalized_format = cls._normalize_metadata_text(format_name, limit=32).casefold()
+        normalized_platform = cls._normalize_metadata_text(platform, limit=48) or "social media"
+        topic_anchors = sorted(cls._final_render_request_topic_tokens(request))[:8]
+        anchors_summary = ", ".join(topic_anchors) if topic_anchors else "the current prompt topic"
+        base = (
+            f"Content + visual explanation contract for {normalized_platform}: the post must explain the topic through both concise readable content and topic-matched imagery. "
+            "Use a two-channel composition: text states the idea; visuals show, compare, demonstrate, or symbolize the same idea. "
+            "Do not produce a mostly text-only poster, a blank card layout, or a beautiful image with weak token copy. "
+            f"Derive the visual metaphor, icons, charts, objects, or diagram logic from these prompt anchors: {anchors_summary}."
+        )
+        if normalized_format == "infographic":
+            return (
+                base
+                + " For infographic output, pair each major text module with an explanatory visual cue such as an icon, mini chart, flow connector, comparison bar, map-like cue, or diagram shape when it helps the topic; maintain visual hierarchy so the reader can learn by scanning."
+            )
+        if normalized_format == "static":
+            return (
+                base
+                + " For static output, use one strong hero visual or metaphor, one sharp headline, one short supporting line, and one visible CTA path; the hero visual must carry meaning, not decoration."
+            )
+        return base
+
+    @classmethod
+    def _creative_topic_3d_visual_contract(
+        cls,
+        *,
+        request: AIOrchestrationRequest | None,
+        format_name: Any,
+        compiled_context: dict[str, Any] | None,
+        reference_assets: list[dict[str, Any]] | None = None,
+    ) -> str:
+        normalized_format = cls._normalize_metadata_text(format_name, limit=32).casefold()
+        if normalized_format not in {"static", "infographic"}:
+            return ""
+        policy = cls._compiled_visual_style_policy(compiled_context, format_name=normalized_format)
+        selected_reference_profile = cls._select_reference_visual_profile(
+            compiled_context,
+            reference_assets=reference_assets,
+        )
+        policy_three_d_usage = cls._normalize_metadata_text(policy.get("three_d_usage"), limit=24).casefold()
+        dominant_image_mode = cls._normalize_metadata_text(policy.get("dominant_image_mode"), limit=24).casefold()
+        dominant_depth_mode = cls._normalize_metadata_text(policy.get("dominant_depth_mode"), limit=24).casefold()
+        dominant_rendering_mode = cls._normalize_metadata_text(policy.get("dominant_rendering_mode"), limit=24).casefold()
+        selected_values = {
+            cls._normalize_metadata_text(selected_reference_profile.get("image_mode"), limit=24).casefold(),
+            cls._normalize_metadata_text(selected_reference_profile.get("depth_mode"), limit=24).casefold(),
+            cls._normalize_metadata_text(selected_reference_profile.get("rendering_mode"), limit=24).casefold(),
+        }
+        selected_values.discard("")
+        selected_reference_is_3d = bool(selected_values & {"3d", "true_3d", "3d_render", "isometric", "2.5d"})
+        selected_reference_is_flat_or_photo = bool(
+            selected_values
+            and not selected_reference_is_3d
+            and selected_values & {"flat", "photo", "photo_led", "vector", "2d", "illustration"}
+        )
+        policy_blocks_3d = (
+            policy_three_d_usage == "none"
+            or selected_reference_is_flat_or_photo
+            or (
+                dominant_depth_mode == "flat"
+                and dominant_rendering_mode in {"photo", "vector", "illustration"}
+                and dominant_image_mode not in {"3d", "isometric"}
+            )
+        )
+        if policy_blocks_3d:
+            return ""
+
+        topic_anchors = sorted(cls._final_render_request_topic_tokens(request))[:8] if request is not None else []
+        anchors_summary = ", ".join(topic_anchors) if topic_anchors else "the current prompt topic"
+        return (
+            "Creative topic-specific 3D visual direction: prefer premium 3D/2.5D/isometric topic visuals built from "
+            f"{anchors_summary}. Use custom rendered objects, material depth, lighting, and spatial metaphors; "
+            "avoid generic coins, arrows, stock dashboards, business portraits, random icon scatter, or unrelated 3D decor."
+        )
+
+    @classmethod
+    def _final_render_static_infographic_quality_floor_contract(
+        cls,
+        *,
+        request: AIOrchestrationRequest | None,
+        format_name: Any,
+    ) -> str:
+        normalized_format = cls._normalize_metadata_text(format_name, limit=32).casefold()
+        if normalized_format not in {"static", "infographic"}:
+            return ""
+        topic_anchors = sorted(cls._final_render_request_topic_tokens(request))[:8]
+        anchors_summary = ", ".join(topic_anchors) if topic_anchors else "the current prompt topic"
+        base = (
+            "Minimum output quality floor for final static/infographic image: finished premium social creative at thumbnail size and full size; "
+            "clear focal path, crisp contrast, deliberate spacing, clean module edges, coherent visual treatment, and at least one topic-specific visual unit tied to "
+            f"{anchors_summary}; never blank, text-only, generic-stock, or random-icon output."
+        )
+        if normalized_format == "infographic":
+            return (
+                base
+                + " Infographic floor: show a scannable section rhythm with visible row/card/module structure, paired visual cues, and mobile-readable labels."
+            )
+        return (
+            base
+            + " Static floor: show one dominant topic-specific hero concept with concise readable copy support, clear CTA path, and no clutter competing with the main message."
+        )
 
     @classmethod
     def _multimodal_balance_contract(
@@ -5081,6 +5472,8 @@ class AIOrchestratorService:
         text_area = sum(cls._element_normalized_area(element) for element in text_elements)
         image_area = sum(cls._element_normalized_area(element) for element in image_elements)
         if text_area >= 0.58 and image_area <= 0.18:
+            return "text_heavy"
+        if len(text_elements) >= 4 and text_area >= 0.32 and image_area <= 0.05:
             return "text_heavy"
         if image_area >= 0.78 and text_area <= 0.1 and len(text_elements) <= 2:
             return "image_heavy"
@@ -5210,13 +5603,34 @@ class AIOrchestratorService:
     ) -> dict[str, Any]:
         payload = dict(scene_graph_payload or {})
         profile = cls._reference_family_profile(compiled_context)
-        if not profile:
-            return payload
-        slide_profile = cls._reference_family_active_slide_profile(compiled_context)
+        slide_profile = cls._reference_family_active_slide_profile(compiled_context) if profile else {}
         zone_boxes = cls._reference_family_zone_boxes(slide_profile.get("zone_boxes") or profile.get("zone_boxes"))
+        reference_template_lock = False
+        reference_template_layout_type = ""
+        if not zone_boxes:
+            context = cls._coerce_mapping(compiled_context)
+            adaptation_profile = cls._coerce_mapping(context.get("reference_adaptation_profile"))
+            source_family = cls._normalize_metadata_text(adaptation_profile.get("source_format_family"), limit=32).casefold()
+            output_family = cls._normalize_metadata_text(adaptation_profile.get("output_format_family"), limit=32).casefold()
+            if source_family == output_family and output_family in {"static", "infographic"}:
+                template_structure = cls._coerce_mapping(adaptation_profile.get("template_structure"))
+                sample_page_blueprint = cls._coerce_mapping(template_structure.get("sample_page_blueprint"))
+                layout_dna = cls._coerce_mapping(template_structure.get("layout_dna"))
+                reference_template_layout_type = (
+                    cls._normalize_metadata_text(layout_dna.get("layout_type"), limit=64)
+                    or cls._normalize_metadata_text(sample_page_blueprint.get("layout_category"), limit=64)
+                )
+                zone_boxes = cls._reference_family_zone_boxes(
+                    layout_dna.get("zones")
+                    or sample_page_blueprint.get("zones")
+                    or sample_page_blueprint.get("image_zones")
+                )
+                reference_template_lock = bool(zone_boxes)
         if not zone_boxes:
             return payload
         lock_strength = cls._normalize_metadata_text(profile.get("layout_lock_strength"), limit=24).casefold()
+        if reference_template_lock and lock_strength in {"", "light"}:
+            lock_strength = "strong"
         minimum_iou = {"strict": 0.62, "strong": 0.45, "guided": 0.3}.get(lock_strength, 0.0)
         normalized_elements: list[dict[str, Any]] = []
         for element in cls._coerce_list(payload.get("elements")):
@@ -5252,6 +5666,8 @@ class AIOrchestratorService:
             validation_hints = cls._coerce_mapping(element_copy.get("validation_hints"))
             validation_hints.setdefault("reference_zone_role", str(target_box.get("role") or ""))
             validation_hints["reference_family_lock_strength"] = lock_strength or "guided"
+            if reference_template_lock:
+                validation_hints["reference_template_layout_locked"] = True
             if validation_hints:
                 element_copy["validation_hints"] = validation_hints
             normalized_elements.append(element_copy)
@@ -5260,8 +5676,11 @@ class AIOrchestratorService:
             styles["layout_archetype"] = (
                 cls._normalize_metadata_text(slide_profile.get("layout_type"), limit=64)
                 or next(iter(cls._normalize_metadata_list(profile.get("layout_archetypes"), limit=1)), "")
+                or reference_template_layout_type
             )
         styles["reference_family_lock_strength"] = lock_strength or "guided"
+        if reference_template_lock:
+            styles["reference_template_layout_locked"] = True
         payload["styles"] = styles
         payload["elements"] = normalized_elements
         payload = cls._apply_context_visual_craft_hints(
@@ -6957,6 +7376,253 @@ class AIOrchestratorService:
         return False
 
     @classmethod
+    def _infographic_surface_intent(
+        cls,
+        *,
+        prompt: Any,
+        format_name: str,
+        visual_plan: dict[str, Any] | None = None,
+    ) -> bool:
+        if str(format_name or "").strip().casefold() != "infographic":
+            return False
+        text = cls._normalize_metadata_text(prompt, limit=720).casefold()
+        plan = visual_plan if isinstance(visual_plan, dict) else {}
+        mode = cls._normalize_metadata_text(plan.get("mode"), limit=40).casefold()
+        if mode in {"comparison", "data_cue", "process_steps"}:
+            return True
+        if cls._has_explicit_data_visual_request(text, text_payload=None):
+            return True
+        return bool(
+            re.search(
+                r"\b(top\s+\d{1,2}|rank(?:ed|ing)?|compar(?:e|ing|ison)|versus|vs\.?|by\s+[a-z0-9 -]{2,80})\b",
+                text,
+                flags=re.IGNORECASE,
+            )
+        )
+
+    @classmethod
+    def _explicit_top_n_item_count(cls, *values: Any) -> int | None:
+        text = cls._normalize_metadata_text(" ".join(cls._coerce_text_value(value) for value in values), limit=900)
+        if not text:
+            return None
+        match = re.search(r"\btop\s+(\d{1,2})\b", text, flags=re.IGNORECASE)
+        if not match:
+            return None
+        try:
+            value = int(match.group(1))
+        except (TypeError, ValueError):
+            return None
+        return value if 1 <= value <= 20 else None
+
+    @classmethod
+    def _data_list_surface_available_count(cls, metadata: Any) -> int:
+        if not isinstance(metadata, dict):
+            return 0
+        counts = [
+            cls._rough_collection_length(metadata.get("proof_points")),
+            cls._rough_collection_length(metadata.get("stat_highlights")),
+            cls._rough_collection_length(metadata.get("claim_evidence_pairs")),
+        ]
+        static_panel_spec = metadata.get("static_panel_spec")
+        if isinstance(static_panel_spec, dict):
+            counts.extend(
+                [
+                    cls._rough_collection_length(static_panel_spec.get("proof_points")),
+                    cls._rough_collection_length(static_panel_spec.get("stat_highlights")),
+                    cls._rough_collection_length(static_panel_spec.get("claim_evidence_pairs")),
+                ]
+            )
+        infographic_sections = metadata.get("infographic_section_specs")
+        if isinstance(infographic_sections, list):
+            valid_sections = [section for section in infographic_sections if isinstance(section, dict)]
+            counts.append(len(valid_sections))
+            for section in valid_sections:
+                counts.extend(
+                    [
+                        cls._rough_collection_length(section.get("body_points")),
+                        cls._rough_collection_length(section.get("proof_points")),
+                        cls._rough_collection_length(section.get("stat_highlights")),
+                        cls._rough_collection_length(section.get("claim_evidence_pairs")),
+                    ]
+                )
+        return max(counts or [0])
+
+    @classmethod
+    def _data_list_surface_intent(
+        cls,
+        *,
+        prompt: Any,
+        format_name: str,
+        metadata: dict[str, Any] | None = None,
+        text_payload: StructuredTextPayload | None = None,
+        visual_plan: dict[str, Any] | None = None,
+    ) -> bool:
+        normalized_format = str(format_name or "").strip().casefold()
+        if normalized_format not in {"static", "infographic"}:
+            return False
+        metadata = metadata if isinstance(metadata, dict) else {}
+        if cls._explicit_top_n_item_count(prompt, metadata):
+            return True
+        plan = visual_plan if isinstance(visual_plan, dict) else {}
+        mode = cls._normalize_metadata_text(plan.get("mode"), limit=40).casefold()
+        if mode in {"comparison", "data_cue", "process_steps"}:
+            return True
+        if cls._has_explicit_data_visual_request(str(prompt or ""), text_payload=text_payload):
+            return True
+        combined = " ".join(
+            cls._coerce_text_value(value)
+            for value in (
+                prompt,
+                metadata.get("panel_goal"),
+                metadata.get("visual_focus"),
+                metadata.get("proof_points"),
+                metadata.get("stat_highlights"),
+                metadata.get("claim_evidence_pairs"),
+                metadata.get("static_panel_spec"),
+                metadata.get("infographic_section_specs"),
+            )
+            if cls._coerce_text_value(value)
+        ).casefold()
+        if not combined:
+            return False
+        return bool(
+            re.search(
+                r"\b("
+                r"rank(?:ed|ing)?|compar(?:e|ing|ison)|versus|vs\.?|"
+                r"list(?:ing)?|checklist|scorecard|matrix|table|"
+                r"rules?|requirements?|criteria|fees?|charges?|rates?|penalt(?:y|ies)|"
+                r"key\s+(?:rules|points|factors|takeaways)|"
+                r"options?|items?|categories|providers"
+                r")\b",
+                combined,
+                flags=re.IGNORECASE,
+            )
+        )
+
+    @classmethod
+    def _data_list_surface_contract(
+        cls,
+        *,
+        prompt: Any,
+        format_name: str,
+        metadata: dict[str, Any] | None = None,
+        text_payload: StructuredTextPayload | None = None,
+        visual_plan: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        normalized_format = str(format_name or "").strip().casefold()
+        if not cls._data_list_surface_intent(
+            prompt=prompt,
+            format_name=normalized_format,
+            metadata=metadata,
+            text_payload=text_payload,
+            visual_plan=visual_plan,
+        ):
+            return None
+        metadata = metadata if isinstance(metadata, dict) else {}
+        top_n = cls._explicit_top_n_item_count(prompt, metadata)
+        available_count = cls._data_list_surface_available_count(metadata)
+        requested_count = top_n or max(available_count, 3)
+        module_cap = 10 if normalized_format == "static" and top_n else 6 if normalized_format == "static" else 10
+        module_count = max(1, min(module_cap, requested_count))
+        intent = "top_n_list" if top_n else "comparison_or_list"
+        ranking_surface = bool(
+            top_n
+            or re.search(
+                r"\b(rank(?:ed|ing)?|table|scorecard|matrix|compar(?:e|ing|ison)|versus|vs\.?)\b",
+                cls._coerce_text_value(prompt).casefold(),
+            )
+        )
+        return {
+            "intent": intent,
+            "format": normalized_format,
+            "surface_mode": "ranking_table" if ranking_surface and module_count >= 7 else "comparison_cards",
+            "requested_count": requested_count,
+            "available_count": available_count,
+            "module_count": module_count,
+        }
+
+    @classmethod
+    def _sanitize_infographic_surface_visual_metadata_fields(
+        cls,
+        metadata: dict[str, Any],
+        *,
+        request_prompt: Any,
+        format_name: str,
+    ) -> tuple[dict[str, Any], list[str]]:
+        cleaned = dict(metadata or {})
+        if not cleaned or not cls._infographic_surface_intent(
+            prompt=request_prompt,
+            format_name=format_name,
+        ):
+            return cleaned, []
+
+        prompt_text = cls._normalize_metadata_text(request_prompt, limit=720)
+        prompt_keywords = cls._topic_anchor_keywords(prompt_text, limit=14)
+        prompt_allows_photo_scene = bool(
+            re.search(
+                r"\b(photo|photographic|realistic|portrait|lifestyle|image[- ]led|environment)\b",
+                prompt_text,
+                flags=re.IGNORECASE,
+            )
+        )
+        removed_fields: list[str] = []
+        for field, limit in cls.VISUAL_METADATA_FIELD_LIMITS.items():
+            text = cls._normalize_metadata_text(cleaned.get(field), limit=limit)
+            cleaned[field] = text
+            if not text:
+                continue
+            treatment, _source = cls._visual_treatment_from_text(text)
+            field_keywords = cls._visual_metadata_keywords(text, limit=12)
+            shared_topic = bool(field_keywords & prompt_keywords)
+            scene_led = treatment == "photo_composite" or bool(
+                re.search(
+                    r"\b(full[- ]bleed|single[- ]subject|lifestyle|portrait|backdrop|environment)\b",
+                    text,
+                    flags=re.IGNORECASE,
+                )
+            )
+            if scene_led and not prompt_allows_photo_scene and not shared_topic:
+                cleaned[field] = ""
+                removed_fields.append(field)
+        return cleaned, removed_fields
+
+    @classmethod
+    def _infographic_surface_enforcement_section(
+        cls,
+        *,
+        request: AIOrchestrationRequest,
+        format_name: str,
+        structured_visual_metadata: Any = None,
+        visual_plan: dict[str, Any] | None = None,
+    ) -> str:
+        if not cls._infographic_surface_intent(
+            prompt=getattr(request, "prompt", ""),
+            format_name=format_name,
+            visual_plan=visual_plan,
+        ):
+            return ""
+        structured = structured_visual_metadata if isinstance(structured_visual_metadata, dict) else {}
+        strict_anchors = structured.get("data_anchors") if isinstance(structured.get("data_anchors"), list) else []
+        top_n = cls._explicit_top_n_item_count(getattr(request, "prompt", ""))
+        top_n_rule = (
+            f"Top-N comparison contract: the prompt asks for {top_n} item slot(s); represent that count with {top_n} visible comparison modules, cards, rows, or grouped list slots when the layout budget allows."
+            if top_n
+            else "Comparison contract: represent the requested compared categories with visible modules, cards, rows, or grouped list slots when the layout budget allows."
+        )
+        data_rule = (
+            "Strict anchors are present: any table, bar, metric, ranking, label, value, axis, or legend must use only those approved anchors."
+            if strict_anchors
+            else "No strict approved data_anchors are present: keep the comparison qualitative and non-numeric; do not invent item labels, values, axes, bars, rankings, legends, dashboard tiles, or map-data values."
+        )
+        return (
+            "Infographic surface enforcement: selected format is infographic, so the visual must be a module-first infographic surface with clear comparison structure, not an unrelated single-scene backdrop or generic image-led poster. "
+            f"{top_n_rule} "
+            "Show the relationship between compared items through ranked/list/card/module structure, connectors, dividers, grouped panels, or a non-numeric matrix that matches the user prompt intent. "
+            f"{data_rule} "
+            "Decorative imagery must stay secondary to the data/comparison surface. Keep title, modules, icons, and any comparison structure outside backend header/logo and footer/disclaimer safe areas."
+        )
+
+    @classmethod
     def _data_visualization_requested(cls, *values: Any) -> bool:
         combined = " ".join(
             cls._normalize_metadata_text(value, limit=520)
@@ -6999,6 +7665,17 @@ class AIOrchestratorService:
                     text = cls._normalize_metadata_text(value.get(key), limit=260)
                     if text:
                         anchors.append(text)
+                for key in (
+                    "body_points",
+                    "proof_points",
+                    "stat_highlights",
+                    "claim_evidence_pairs",
+                    "static_panel_spec",
+                    "infographic_section_specs",
+                ):
+                    nested = value.get(key)
+                    if nested:
+                        anchors.extend(cls._data_visualization_anchor_lines(nested, limit=limit))
                 continue
             if isinstance(value, list):
                 for item in value:
@@ -7343,6 +8020,7 @@ class AIOrchestratorService:
         asset_catalog: Any = None,
         compiled_context: dict[str, Any] | None = None,
         limit: int = 5,
+        include_reusable_design_assets: bool = True,
     ) -> list[str]:
         evidence: list[str] = []
 
@@ -7358,7 +8036,7 @@ class AIOrchestratorService:
             for key in ("visual_style", "brand_mood", "illustration_style", "design_style", "composition_style"):
                 add(visual_identity.get(key), item_limit=90)
             reusable_assets = visual_identity.get("reusable_design_assets")
-            if isinstance(reusable_assets, list):
+            if include_reusable_design_assets and isinstance(reusable_assets, list):
                 for asset in reusable_assets[:6]:
                     if not isinstance(asset, dict):
                         add(asset, item_limit=80)
@@ -7735,6 +8413,7 @@ class AIOrchestratorService:
             reference_assets=reference_assets,
             asset_catalog=asset_catalog,
             compiled_context=compiled_context,
+            include_reusable_design_assets=not bool(blueprint),
         )
         existing_preference = raw.get("visual_treatment_preference") if isinstance(raw.get("visual_treatment_preference"), dict) else {}
         treatment_preference = cls._resolve_visual_treatment_preference(
@@ -7987,6 +8666,12 @@ class AIOrchestratorService:
         identity = visual_identity if isinstance(visual_identity, dict) else {}
         plan = visual_plan if isinstance(visual_plan, dict) else {}
         structured = structured_visual_metadata if isinstance(structured_visual_metadata, dict) else {}
+        context = compiled_context if isinstance(compiled_context, dict) else {}
+        adaptation_profile = (
+            context.get("reference_adaptation_profile")
+            if isinstance(context.get("reference_adaptation_profile"), dict)
+            else {}
+        )
         preference = structured.get("visual_treatment_preference") if isinstance(structured.get("visual_treatment_preference"), dict) else {}
         budget = layout_budget if isinstance(layout_budget, dict) else {}
         slide_payload = slide if isinstance(slide, dict) else {}
@@ -8045,6 +8730,7 @@ class AIOrchestratorService:
             reference_assets=reference_assets,
             asset_catalog=asset_catalog,
             compiled_context=compiled_context,
+            include_reusable_design_assets=not bool(blueprint),
             limit=4,
         )
         image_style_parts = [
@@ -8115,6 +8801,8 @@ class AIOrchestratorService:
         )
 
         logo_policy = cls._normalize_metadata_text(budget.get("brand_header_policy"), limit=180)
+        if logo_policy and "brand header slot" in logo_policy.casefold() and "brand-header" not in logo_policy.casefold():
+            logo_policy = f"{logo_policy}; brand-header slot alias for the reserved logo/header zone"
         if not logo_policy:
             logo_position = (
                 cls._normalize_metadata_text(logo_position_hint, limit=64)
@@ -8171,19 +8859,556 @@ class AIOrchestratorService:
             "persona_policy": persona_policy,
             "object_density": object_density,
             "visual_treatment_consistency": treatment_policy,
-            "reference_obedience": "sample_first" if blueprint else "brand_context_first",
+            "reference_obedience": (
+                "sample_first"
+                if blueprint
+                else (
+                    cls._normalize_metadata_text(adaptation_profile.get("adaptation_mode"), limit=64)
+                    if adaptation_profile
+                    else "brand_context_first"
+                )
+            ),
+            "reference_adaptation_mode": cls._normalize_metadata_text(adaptation_profile.get("adaptation_mode"), limit=64) if adaptation_profile else "",
         }
 
     @classmethod
     def _reference_creative_profile_prompt_section(cls, profile: Any) -> str:
         if not isinstance(profile, dict) or not profile:
             return ""
+        profile = dict(profile)
+        if "logo_header_policy" not in profile and profile.get("brand_header_policy"):
+            profile["logo_header_policy"] = profile.get("brand_header_policy")
+        if "footer_safe_policy" not in profile and profile.get("footer_policy"):
+            profile["footer_safe_policy"] = profile.get("footer_policy")
         compact = json.dumps(profile, ensure_ascii=True, separators=(",", ":"))
         return (
             f"Reference creative profile JSON: {compact}. "
             "Use this as source-aware creative DNA for layout, color roles, typography hierarchy, image composition, persona continuity, brand-header handling, footer-safe placement, and object density. "
             "It must enhance only approved slots; do not copy literal sample text, artwork, brand mark, or unrelated subject matter, and do not modify structured_visual_metadata.data_anchors."
         )
+
+    @classmethod
+    def _compact_prompt_json_value(
+        cls,
+        value: Any,
+        *,
+        depth: int = 0,
+        max_depth: int = 3,
+        list_limit: int = 6,
+        text_limit: int = 180,
+    ) -> Any:
+        if value in ("", None, [], {}):
+            return None
+        if isinstance(value, dict):
+            compact: dict[str, Any] = {}
+            for key, item in value.items():
+                normalized_key = cls._normalize_metadata_text(key, limit=64)
+                if not normalized_key:
+                    continue
+                if depth >= max_depth and isinstance(item, (dict, list, tuple, set)):
+                    if isinstance(item, dict):
+                        scalar_items = {
+                            cls._normalize_metadata_text(nested_key, limit=64): cls._compact_prompt_json_value(
+                                nested_value,
+                                depth=depth + 1,
+                                max_depth=max_depth,
+                                list_limit=list_limit,
+                                text_limit=text_limit,
+                            )
+                            for nested_key, nested_value in list(item.items())[:list_limit]
+                            if not isinstance(nested_value, (dict, list, tuple, set))
+                        }
+                        compact_value = {k: v for k, v in scalar_items.items() if k and v not in ("", None, [], {})}
+                    else:
+                        compact_value = [
+                            cls._compact_prompt_json_value(
+                                nested,
+                                depth=depth + 1,
+                                max_depth=max_depth,
+                                list_limit=list_limit,
+                                text_limit=text_limit,
+                            )
+                            for nested in list(item)[:list_limit]
+                        ]
+                        compact_value = [nested for nested in compact_value if nested not in ("", None, [], {})]
+                else:
+                    compact_value = cls._compact_prompt_json_value(
+                        item,
+                        depth=depth + 1,
+                        max_depth=max_depth,
+                        list_limit=list_limit,
+                        text_limit=text_limit,
+                    )
+                if compact_value not in ("", None, [], {}):
+                    compact[normalized_key] = compact_value
+            return compact or None
+        if isinstance(value, (list, tuple, set)):
+            compact_list = [
+                cls._compact_prompt_json_value(
+                    item,
+                    depth=depth + 1,
+                    max_depth=max_depth,
+                    list_limit=list_limit,
+                    text_limit=text_limit,
+                )
+                for item in list(value)[:list_limit]
+            ]
+            compact_list = [item for item in compact_list if item not in ("", None, [], {})]
+            return compact_list or None
+        if isinstance(value, str):
+            return cls._normalize_metadata_text(value, limit=text_limit)
+        return value
+
+    @classmethod
+    def _compact_reference_adaptation_profile_for_prompt(cls, profile: dict[str, Any]) -> dict[str, Any]:
+        compact: dict[str, Any] = {}
+        for key in (
+            "source_format_family",
+            "output_format_family",
+            "selected_output_behavior",
+            "adaptation_mode",
+            "confidence",
+            "adapt",
+            "do_not_adapt",
+            "balance",
+        ):
+            if key not in profile:
+                continue
+            compact_value = cls._compact_prompt_json_value(
+                profile.get(key),
+                max_depth=3,
+                list_limit=6,
+                text_limit=160,
+            )
+            if compact_value not in ("", None, [], {}):
+                compact[key] = compact_value
+        if isinstance(profile.get("template_structure"), dict) and profile.get("template_structure"):
+            compact["template_structure_available"] = True
+        return compact or dict(profile)
+
+    @classmethod
+    def _reference_adaptation_profile_prompt_section(cls, profile: Any) -> str:
+        if not isinstance(profile, dict) or not profile:
+            return ""
+        compact_profile = cls._compact_reference_adaptation_profile_for_prompt(profile)
+        compact = json.dumps(compact_profile, ensure_ascii=True, separators=(",", ":"))
+        return (
+            f"Reference adaptation profile JSON: {compact}. "
+            "Use adaptation_mode to decide whether the active source is a template sequence, infographic surface, static creative, hybrid visual guide, or brand-only fallback. "
+            "Apply only the visual-system traits marked in adapt; do not copy literal source text, source subject matter, unsupported claims, brand marks without permission, or unsupported data visuals. "
+            "Conflict rule: current prompt content and approved evidence come first, reference visual system second, and footer/logo/data-anchor safety overrides both."
+        )
+
+    @classmethod
+    def _generation_surface_contract_prompt_section(cls, contract: Any) -> str:
+        if not isinstance(contract, dict) or not contract:
+            return ""
+        compact = json.dumps(contract, ensure_ascii=True, separators=(",", ":"))
+        return (
+            f"Generation surface contract JSON: {compact}. "
+            "Selected format, platform, size, file type, and campaign goal define the output surface. "
+            "Reference format can guide only compatible visual grammar; it must not convert static output into carousel, carousel output into a poster, or infographic output into generic static layout. "
+            "File type controls export/render path only, not content meaning."
+        )
+
+    @classmethod
+    def _reference_template_structure_payload(
+        cls,
+        compiled_context: dict[str, Any] | None,
+        profile: dict[str, Any],
+        *,
+        source_family: str,
+        output_family: str,
+        layout_content_budget: dict[str, Any] | None = None,
+        sample_page_blueprint: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        context = compiled_context if isinstance(compiled_context, dict) else {}
+        structure = profile.get("template_structure") if isinstance(profile.get("template_structure"), dict) else {}
+        runtime_blueprint = sample_page_blueprint if isinstance(sample_page_blueprint, dict) else {}
+
+        def normalize_family(value: Any) -> str:
+            text = cls._normalize_metadata_text(value, limit=48).casefold()
+            normalized = text.replace("-", "_").replace(" ", "_").replace("/", "_").strip("_")
+            if normalized in {"static", "story", "poster", "hero", "single_frame"}:
+                return "static"
+            if normalized in {"carousel", "carousel_series", "slide_deck", "slide_series"}:
+                return "carousel"
+            if normalized in {"infographic", "diagram", "visual_explainer"}:
+                return "infographic"
+            return normalized if normalized in {"static", "carousel", "infographic"} else ""
+
+        def trusted_reference(item: Any) -> bool:
+            if not isinstance(item, dict):
+                return False
+            role = cls._normalize_metadata_text(item.get("role") or item.get("asset_role"), limit=32).casefold()
+            trust = cls._normalize_metadata_text(item.get("trust_level"), limit=32).casefold()
+            return (
+                role in {"reference_creative", "template", "reference", "template_sequence"}
+                and trust not in {"rejected", "blocked", "untrusted"}
+            )
+
+        selected_asset: dict[str, Any] = {}
+        for item in context.get("reference_asset_brief") or []:
+            if not isinstance(item, dict) or not trusted_reference(item):
+                continue
+            if normalize_family(item.get("format_family") or item.get("format")) == source_family:
+                selected_asset = item
+                break
+
+        blueprint = (
+            structure.get("sample_page_blueprint")
+            if isinstance(structure.get("sample_page_blueprint"), dict)
+            else profile.get("sample_page_blueprint")
+            if isinstance(profile.get("sample_page_blueprint"), dict)
+            else selected_asset.get("sample_page_blueprint")
+            if isinstance(selected_asset.get("sample_page_blueprint"), dict)
+            else runtime_blueprint
+            if runtime_blueprint
+            else {}
+        )
+        blueprint = cls._sample_blueprint_without_rendered_footer_text(blueprint) if blueprint else {}
+        module_counts = (
+            blueprint.get("module_counts")
+            if isinstance(blueprint.get("module_counts"), dict)
+            else structure.get("module_counts")
+            if isinstance(structure.get("module_counts"), dict)
+            else profile.get("module_counts")
+            if isinstance(profile.get("module_counts"), dict)
+            else {}
+        )
+        visual_permissions = (
+            blueprint.get("visual_permissions")
+            if isinstance(blueprint.get("visual_permissions"), dict)
+            else structure.get("visual_permissions")
+            if isinstance(structure.get("visual_permissions"), dict)
+            else profile.get("visual_permissions")
+            if isinstance(profile.get("visual_permissions"), dict)
+            else {}
+        )
+        layout_dna = (
+            structure.get("layout_dna")
+            if isinstance(structure.get("layout_dna"), dict)
+            else selected_asset.get("layout_dna")
+            if isinstance(selected_asset.get("layout_dna"), dict)
+            else {}
+        )
+        composition_logic = (
+            structure.get("composition_logic")
+            if isinstance(structure.get("composition_logic"), dict)
+            else selected_asset.get("composition_logic")
+            if isinstance(selected_asset.get("composition_logic"), dict)
+            else {}
+        )
+        structural_cues = (
+            structure.get("structural_cues")
+            if isinstance(structure.get("structural_cues"), list)
+            else selected_asset.get("structural_cues")
+            if isinstance(selected_asset.get("structural_cues"), list)
+            else []
+        )
+        template_layout_grammar = (
+            structure.get("template_layout_grammar")
+            if isinstance(structure.get("template_layout_grammar"), dict)
+            else profile.get("template_layout_grammar")
+            if isinstance(profile.get("template_layout_grammar"), dict)
+            else selected_asset.get("template_layout_grammar")
+            if isinstance(selected_asset.get("template_layout_grammar"), dict)
+            else {}
+        )
+        budget = layout_content_budget if isinstance(layout_content_budget, dict) else {}
+        surface_contract = (
+            context.get("generation_surface_contract")
+            if isinstance(context.get("generation_surface_contract"), dict)
+            else {}
+        )
+        surface_budget = surface_contract.get("content_budget") if isinstance(surface_contract.get("content_budget"), dict) else {}
+
+        payload: dict[str, Any] = {
+            "selected_output_format": output_family,
+            "reference_source_family": source_family,
+        }
+        if blueprint:
+            sample_payload: dict[str, Any] = {}
+            for key, limit in (("layout_category", 80), ("density", 40)):
+                value = cls._normalize_metadata_text(blueprint.get(key), limit=limit)
+                if value:
+                    sample_payload[key] = value
+            layout_mode = cls._sample_blueprint_layout_mode(blueprint)
+            if layout_mode:
+                sample_payload["layout_mode"] = layout_mode
+            if module_counts:
+                sample_payload["module_counts"] = module_counts
+            if visual_permissions:
+                sample_payload["visual_permissions"] = visual_permissions
+            image_zones = blueprint.get("image_zones") if isinstance(blueprint.get("image_zones"), list) else []
+            if image_zones:
+                sample_payload["image_zones"] = image_zones[:4]
+            layout_instruction = cls._sample_blueprint_layout_instruction(blueprint)
+            if layout_instruction:
+                sample_payload["layout_instruction"] = layout_instruction
+            if sample_payload:
+                payload["sample_page_blueprint"] = sample_payload
+        elif module_counts or visual_permissions:
+            payload["sample_page_blueprint"] = {
+                **({"module_counts": module_counts} if module_counts else {}),
+                **({"visual_permissions": visual_permissions} if visual_permissions else {}),
+            }
+        if layout_dna:
+            compact_layout_dna = cls._compact_prompt_json_value(
+                layout_dna,
+                max_depth=2,
+                list_limit=6,
+                text_limit=120,
+            )
+            if compact_layout_dna:
+                payload["layout_dna"] = compact_layout_dna
+        if composition_logic:
+            compact_composition_logic = cls._compact_prompt_json_value(
+                composition_logic,
+                max_depth=2,
+                list_limit=6,
+                text_limit=120,
+            )
+            if compact_composition_logic:
+                payload["composition_logic"] = compact_composition_logic
+        if structural_cues:
+            payload["structural_cues"] = [
+                cls._normalize_metadata_text(item, limit=80)
+                for item in structural_cues[:8]
+                if cls._normalize_metadata_text(item, limit=80)
+            ]
+        if template_layout_grammar:
+            compact_template_layout_grammar = cls._compact_prompt_json_value(
+                template_layout_grammar,
+                max_depth=2,
+                list_limit=8,
+                text_limit=100,
+            )
+            if compact_template_layout_grammar:
+                payload["template_layout_grammar"] = compact_template_layout_grammar
+        layout_budget_payload: dict[str, Any] = {}
+        for key in (
+            "canvas_summary",
+            "brand_header_policy",
+            "footer_policy",
+            "cta_policy",
+            "visible_capacity",
+            "overflow_count",
+            "capacity_source",
+            "density_label",
+            "density_policy",
+        ):
+            value = budget.get(key)
+            if value not in ("", {}, [], None):
+                layout_budget_payload[key] = value
+        if layout_budget_payload:
+            payload["layout_content_budget"] = layout_budget_payload
+        elif surface_budget:
+            payload["surface_content_budget"] = surface_budget
+        return {key: value for key, value in payload.items() if value not in ("", None, {}, [])}
+
+    @classmethod
+    def _reference_template_sample_page_blueprint(
+        cls,
+        compiled_context: dict[str, Any] | None,
+        *,
+        format_name: str,
+    ) -> dict[str, Any]:
+        context = compiled_context if isinstance(compiled_context, dict) else {}
+        profile = context.get("reference_adaptation_profile") if isinstance(context.get("reference_adaptation_profile"), dict) else {}
+        if not profile:
+            return {}
+        source_family = cls._normalize_metadata_text(profile.get("source_format_family"), limit=32).casefold()
+        output_family = (
+            cls._normalize_metadata_text(profile.get("output_format_family"), limit=32).casefold()
+            or cls._normalize_metadata_text(format_name, limit=32).casefold()
+        )
+        if source_family != output_family or output_family not in {"static", "infographic"}:
+            return {}
+        try:
+            confidence = float(profile.get("confidence") or 0.0)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        if confidence <= 0.0:
+            return {}
+        payload = cls._reference_template_structure_payload(
+            context,
+            profile,
+            source_family=source_family,
+            output_family=output_family,
+        )
+        sample = payload.get("sample_page_blueprint") if isinstance(payload.get("sample_page_blueprint"), dict) else {}
+        blueprint = (
+            profile.get("template_structure", {}).get("sample_page_blueprint")
+            if isinstance(profile.get("template_structure"), dict)
+            and isinstance(profile.get("template_structure", {}).get("sample_page_blueprint"), dict)
+            else profile.get("sample_page_blueprint")
+            if isinstance(profile.get("sample_page_blueprint"), dict)
+            else {}
+        )
+        if not blueprint:
+            for item in context.get("reference_asset_brief") or []:
+                if not isinstance(item, dict):
+                    continue
+                family = cls._normalize_metadata_text(item.get("format_family") or item.get("format"), limit=32).casefold()
+                if family == source_family and isinstance(item.get("sample_page_blueprint"), dict):
+                    blueprint = item.get("sample_page_blueprint")
+                    break
+        if blueprint:
+            return cls._sample_blueprint_without_rendered_footer_text(blueprint)
+        return sample
+
+    @classmethod
+    def _reference_template_adaptation_prompt_sections(
+        cls,
+        compiled_context: dict[str, Any] | None,
+        *,
+        format_name: str,
+        layout_content_budget: dict[str, Any] | None = None,
+        sample_page_blueprint: dict[str, Any] | None = None,
+    ) -> list[str]:
+        context = compiled_context if isinstance(compiled_context, dict) else {}
+        profile = context.get("reference_adaptation_profile") if isinstance(context.get("reference_adaptation_profile"), dict) else {}
+        runtime_blueprint = sample_page_blueprint if isinstance(sample_page_blueprint, dict) else {}
+        if not profile:
+            output_family = cls._normalize_metadata_text(format_name, limit=32).casefold()
+            if output_family not in {"static", "infographic"} or not runtime_blueprint:
+                return []
+            profile = {
+                "source_format_family": output_family,
+                "output_format_family": output_family,
+                "selected_output_behavior": (
+                    "infographic_surface_output"
+                    if output_family == "infographic"
+                    else "static_creative_output"
+                ),
+                "adaptation_mode": (
+                    "infographic_surface_adaptation"
+                    if output_family == "infographic"
+                    else "static_creative_adaptation"
+                ),
+                "confidence": 1.0,
+                "adapt": {
+                    "layout_rhythm": True,
+                    "module_density": True,
+                    "logo_footer_policy": True,
+                    "slide_archetype": True,
+                },
+                "template_structure": {
+                    "sample_page_blueprint": cls._sample_blueprint_without_rendered_footer_text(runtime_blueprint),
+                },
+            }
+        mode = cls._normalize_metadata_text(profile.get("adaptation_mode"), limit=64).casefold()
+        if mode in {"", "brand_only", "video_output_disabled_or_unsupported"}:
+            return []
+        source_family = cls._normalize_metadata_text(profile.get("source_format_family"), limit=32).casefold()
+        output_family = (
+            cls._normalize_metadata_text(profile.get("output_format_family"), limit=32).casefold()
+            or cls._normalize_metadata_text(format_name, limit=32).casefold()
+        )
+        if source_family not in {"carousel", "infographic", "static"}:
+            return []
+        if output_family not in {"carousel", "infographic", "static"}:
+            return []
+        if output_family == "carousel" and source_family == "carousel":
+            return []
+        try:
+            confidence = float(profile.get("confidence") or 0.0)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        if confidence <= 0.0:
+            return []
+
+        adapt = profile.get("adapt") if isinstance(profile.get("adapt"), dict) else {}
+        active_traits = [
+            label
+            for key, label in (
+                ("layout_rhythm", "layout rhythm"),
+                ("module_density", "module density"),
+                ("color_roles", "color roles"),
+                ("typography_hierarchy", "typography hierarchy"),
+                ("image_treatment", "image treatment"),
+                ("logo_footer_policy", "logo/header and footer policy"),
+                ("slide_archetype", "surface/slide archetype"),
+            )
+            if adapt.get(key)
+        ]
+        selected_behavior = cls._normalize_metadata_text(profile.get("selected_output_behavior"), limit=64)
+        trait_summary = ", ".join(active_traits) if active_traits else "compatible visual-system traits"
+        sections = [
+            (
+                "Reference template adaptation contract: "
+                f"selected output format is {output_family}; reference source family is {source_family}; "
+                f"adaptation mode is {mode}; selected output behavior is {selected_behavior or output_family}. "
+                f"Apply only these approved visual-system traits: {trait_summary}. "
+                "Prompt content and approved evidence remain the subject authority; reference text, claims, topic, and brand marks are not source material."
+            ),
+            (
+                "Reference adaptation safety: preserve layout rhythm, module positions, hierarchy, typography scale roles, color roles, image treatment, object density, logo/header policy, footer/legal policy, spacing rhythm, and composition grammar only where compatible. "
+                "This contract does not authorize charts, tables, dashboards, metrics, or data visuals; structured_visual_metadata.data_anchors and sample visual_permissions remain the only data-visual gate."
+            ),
+        ]
+        structure_payload = cls._reference_template_structure_payload(
+            context,
+            profile,
+            source_family=source_family,
+            output_family=output_family,
+            layout_content_budget=layout_content_budget,
+            sample_page_blueprint=runtime_blueprint,
+        )
+        if structure_payload and source_family == output_family and output_family in {"static", "infographic"}:
+            compact_structure = json.dumps(structure_payload, ensure_ascii=True, separators=(",", ":"))
+            infographic_structure_guidance = (
+                "For infographic outputs, preserve repeated card/row/panel rhythm, section cadence, connector/callout spacing, and vertical explanatory flow before adding new decorative ideas. "
+                if output_family == "infographic"
+                else ""
+            )
+            sections.append(
+                f"{output_family.title()} template structure lock JSON: {compact_structure}. "
+                "Treat sample_page_blueprint, template_layout_grammar, module_counts, visual_permissions, image_zones, and layout_content_budget as the prompt-visible layout payload. "
+                "Map the current prompt content into the observed template modules; preserve macro flow, section ordering, card/panel/box shells, row/column rhythm, connector/callout/takeaway behavior, visual density, spacing roles, typography roles, color roles, and safe-area posture before adding new decorative ideas. "
+                f"{infographic_structure_guidance}"
+                "Replace the reference topic, copy, claims, numbers, image objects, icons, and assets with prompt-relevant content and prompt-relevant replacement visuals. "
+                "If content exceeds visible capacity, compress or summarize within the observed layout instead of changing module counts, inventing unsupported regions, or copying reference source text."
+            )
+            sections.append(
+                f"{output_family.title()} fallback takeover guard: any fallback photo, illustration, object, or human-subject visual can only fill an approved image zone or large-visual slot from the template payload. "
+                "It must not become the whole composition, turn into an unrelated scenic, cartographic, dashboard, or hero redesign, erase headline/support/proof/CTA surfaces, remove card/panel/row/callout shells, or override header/logo and footer safe areas."
+            )
+        elif structure_payload and source_family != output_family:
+            compact_structure = json.dumps(structure_payload, ensure_ascii=True, separators=(",", ":"))
+            sections.append(
+                f"Compatible reference template structure JSON: {compact_structure}. "
+                "Use this only as compatible layout DNA; selected output format remains authoritative and current prompt content remains the subject authority."
+            )
+        if output_family == "static":
+            if source_family == "static":
+                sections.append(
+                    "Static template adaptation: strongly adapt the trusted static reference as a single finished poster/hero system. "
+                    "Preserve header/body/CTA/footer hierarchy, dominant-message path, image placement and focal object structure, whitespace, object density, color-role logic, typography-role hierarchy, logo/header policy, and footer/legal safe zones."
+                )
+            else:
+                sections.append(
+                    "Static cross-format adaptation: selected Static output remains a single static creative. "
+                    "Use the reference only as compatible visual-system guidance; do not force carousel pagination, multi-slide sequence logic, infographic row structure, or a diagram-first surface unless the selected static layout and prompt explicitly support it."
+                )
+        elif output_family == "infographic":
+            if source_family == "infographic":
+                sections.append(
+                    "Infographic template adaptation: strongly adapt the trusted infographic surface grammar. "
+                    "Preserve section hierarchy, module grouping, row/column rhythm, connector/arrow relationship logic, callout/card/panel hierarchy, compact typography, diagram-first composition, color-role logic, and header/footer safe zones."
+                )
+            else:
+                sections.append(
+                    "Infographic cross-format adaptation: selected Infographic output remains an infographic surface. "
+                    "Use the reference only for compatible visual rhythm, hierarchy, and craft; do not collapse into a generic static poster, a plain hero image, or carousel pagination."
+                )
+        elif output_family == "carousel" and source_family != "carousel":
+            sections.append(
+                "Carousel cross-format adaptation: selected Carousel output remains a slide sequence. "
+                "Translate compatible reference rhythm into slide-safe modules and recurring visual grammar; do not let a static reference cause single-frame takeover or an infographic reference force one dense all-in-one surface."
+            )
+        return sections
 
     @classmethod
     def _visual_quality_bar_for_treatment(cls, structured_visual_metadata: Any) -> str:
@@ -8220,7 +9445,7 @@ class AIOrchestratorService:
                 "Visual quality bar: credible document/evidence-led composition with clean hierarchy, realistic context cues, and no fabricated values."
             )
         return (
-            "Visual quality bar: polished brand-led imagery with elegant negative space, clear hierarchy, and brand-safe color accents."
+            "Visual quality bar: premium, high-end, richly detailed brand-led imagery with elegant negative space, clear hierarchy, and brand-safe color accents."
         )
 
     @classmethod
@@ -8883,8 +10108,22 @@ class AIOrchestratorService:
     ) -> str:
         research = request.live_research if isinstance(request.live_research, dict) else {}
         fact_model = research.get("fact_model") if isinstance(research.get("fact_model"), dict) else research
+        raw_fact_limit = cls._int_or_none(
+            research.get("verified_fact_limit")
+            or research.get("fact_limit")
+            or fact_model.get("verified_fact_limit")
+            or fact_model.get("fact_limit")
+        ) or 6
+        data_surface_contract = cls._data_list_surface_contract(
+            prompt=request.prompt,
+            format_name=str(request.studio_panel.get("format") or ""),
+            metadata={},
+        )
+        if isinstance(data_surface_contract, dict):
+            raw_fact_limit = max(raw_fact_limit, int(data_surface_contract.get("module_count") or 0))
+        fact_limit = max(1, min(raw_fact_limit, 10))
         facts: list[str] = []
-        for fact in (fact_model.get("verified_facts") or [])[:6]:
+        for fact in (fact_model.get("verified_facts") or [])[:fact_limit]:
             if not isinstance(fact, dict):
                 continue
             label = cls._normalize_metadata_text(fact.get("label") or fact.get("title"), limit=90)
@@ -8901,6 +10140,10 @@ class AIOrchestratorService:
     def _strip_blocked_compliance_phrases(value: str) -> str:
         text = str(value or "")
         text = re.sub(r"\bSEBI[-\s]*(?:regulated|licensed|registered|aware)?\b", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\bregulated\b", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\b(?:guaranteed|assured|risk[-\s]*free)\b", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\bwith confidence\b", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\btransparent\s+platform\b", "", text, flags=re.IGNORECASE)
         text = re.sub(r"#SEBI\w*", "", text, flags=re.IGNORECASE)
         text = re.sub(r"\s{2,}", " ", text)
         text = re.sub(r"\s+([,.;:])", r"\1", text)
@@ -8928,6 +10171,79 @@ class AIOrchestratorService:
         )
         for pattern, substitute in substitutions:
             text = re.sub(pattern, substitute, text, flags=re.IGNORECASE)
+        text = re.sub(
+            r"legal copy, and empty space after image generation",
+            "legal copy, and logo after image generation",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"must contain zero standalone graphics, stray text, brand-name text",
+            "must contain zero logos, wordmarks, brand-name signatures",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"The exact stored standalone graphics is composited afterward as a separate asset",
+            "The exact stored brand logo is composited afterward as a separate asset",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"Never write or paint ([^.]+?) in the corner-safe area",
+            r"Never write or paint \1 in the logo-safe corner",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"never as a standalone graphics, masthead, signature, stray text, standalone standalone graphics, or top-corner stray text",
+            "never as a logo, masthead, signature, watermark, standalone brand mark, or top-corner wordmark",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"no ghosted stray text",
+            "no ghosted wordmark",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(r"SAMPLE empty space EXCEPTION", "SAMPLE LOGO EXCEPTION", text, flags=re.IGNORECASE)
+        text = re.sub(
+            r"copy only the empty empty space zone geometry",
+            "copy only the empty logo-safe zone geometry",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"Do not copy the sample page's empty space artwork",
+            "Do not copy the sample page's logo artwork",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"literal text, empty space, or exact original artwork",
+            "literal text, logo, or exact original artwork",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"derived from the (?:empty|reserved) space",
+            "derived from the logo",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"stretching under the (?:empty|reserved) space",
+            "stretching under the logo",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r'"(?:empty|reserved) space_header_policy"',
+            '"logo_header_policy"',
+            text,
+            flags=re.IGNORECASE,
+        )
         text = re.sub(r"\s{2,}", " ", text)
         text = re.sub(r"\s+([,.;:])", r"\1", text)
         return text.strip()
@@ -9190,7 +10506,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest,
         compiled_context: dict[str, Any],
     ) -> bool:
-        if not cls._image_generation_requested(request):
+        ai_final_render_required = cls._request_requires_ai_final_render(request)
+        if not cls._image_generation_requested(request) and not ai_final_render_required:
             return False
         platform = str(request.studio_panel.get("platform_preset") or "").strip().lower()
         format_name = str(request.studio_panel.get("format") or "").strip().lower()
@@ -9198,7 +10515,6 @@ class AIOrchestratorService:
             return False
         if format_name not in cls.AI_FINAL_RENDER_FORMATS:
             return False
-        ai_final_render_required = cls._request_requires_ai_final_render(request)
         if cls._should_force_sequence_pack(request) and not ai_final_render_required:
             return False
         planning_hints = request.layout_decision or {}
@@ -9255,13 +10571,60 @@ class AIOrchestratorService:
         )
 
     @classmethod
+    def _generation_to_export_fit_guidance(cls, studio_panel: dict[str, Any]) -> str:
+        target_width, target_height = cls._requested_canvas_dimensions(studio_panel)
+        generation_size = cls._image_generation_size(studio_panel)
+        try:
+            generation_width, generation_height = [int(part) for part in generation_size.lower().split("x", 1)]
+        except (TypeError, ValueError):
+            generation_width, generation_height = target_width, target_height
+        target_ratio = target_width / max(target_height, 1)
+        generation_ratio = generation_width / max(generation_height, 1)
+        aspect_delta = abs(generation_ratio - target_ratio) / max(target_ratio, 0.01)
+        if aspect_delta < 0.06:
+            return (
+                f"Generation-to-export fit: model canvas {generation_size} closely matches the final {target_width}x{target_height} export. "
+                "Keep all modules, visual anchors, and overlay-safe surfaces inside the requested canvas."
+            )
+        return (
+            f"Generation-to-export fit: model canvas {generation_size} will be center-fitted into the final {target_width}x{target_height} export. "
+            "Keep every important module, face, object, divider, card shell, and overlay-safe surface inside the central target-aspect safe frame; avoid critical detail near the model-canvas edges."
+        )
+
+    @classmethod
     def _should_use_ai_final_render(
         cls,
         request: AIOrchestrationRequest,
         generation_path: str,
         creative_decision: CreativeDecisionPayload,
     ) -> bool:
-        if not cls._image_generation_requested(request) or generation_path != "image_led_social":
+        if generation_path != "image_led_social":
+            return False
+        if cls._request_requires_ai_final_render(request) and cls._image_generation_requested(request):
+            return True
+        layout_mode = str(getattr(creative_decision, "layout_mode", "") or "").strip().lower()
+        request_layout = request.layout_decision if isinstance(request.layout_decision, dict) else {}
+        request_mode = str(request_layout.get("mode") or "").strip().lower()
+        request_template_context = request.template_context if isinstance(request.template_context, dict) else {}
+        request_sequence_pack = (
+            request_template_context.get("sequence_pack")
+            if isinstance(request_template_context.get("sequence_pack"), dict)
+            else {}
+        )
+        template_surface_policy = cls._effective_template_surface_policy(
+            request,
+            creative_decision=creative_decision,
+            metadata=request_layout,
+        )
+        if (
+            cls._request_requires_ai_final_render(request)
+            and (
+                request_mode in {"adapted_template", "exact_template"}
+                or str(request_sequence_pack.get("surface_policy") or "").strip().lower() == "style_reference_only"
+            )
+        ):
+            return True
+        if not cls._image_generation_requested(request):
             return False
         return cls._request_requires_ai_final_render(request)
 
@@ -12631,6 +13994,319 @@ class AIOrchestratorService:
         return None
 
     @classmethod
+    def _reference_text_surface_metadata_sources(cls, asset: dict[str, Any]) -> list[dict[str, Any]]:
+        metadata = cls._asset_metadata(asset)
+        sources: list[dict[str, Any]] = []
+        for candidate in (
+            metadata,
+            metadata.get("normalized_metadata") if isinstance(metadata.get("normalized_metadata"), dict) else {},
+            metadata.get("source_metadata") if isinstance(metadata.get("source_metadata"), dict) else {},
+            asset.get("analysis") if isinstance(asset.get("analysis"), dict) else {},
+        ):
+            if isinstance(candidate, dict) and candidate not in sources:
+                sources.append(candidate)
+        return sources
+
+    @classmethod
+    def _reference_asset_sample_blueprints(cls, asset: dict[str, Any]) -> list[dict[str, Any]]:
+        blueprints: list[dict[str, Any]] = []
+        for source in cls._reference_text_surface_metadata_sources(asset):
+            candidates: list[Any] = [
+                source.get("sample_page_blueprint"),
+                source.get("blueprint_payload"),
+                source.get("rendered_blueprint"),
+            ]
+            template_structure = source.get("template_structure")
+            if isinstance(template_structure, dict):
+                candidates.append(template_structure.get("sample_page_blueprint"))
+            for candidate in candidates:
+                if not isinstance(candidate, dict):
+                    continue
+                nested = candidate.get("sample_page_blueprint")
+                if isinstance(nested, dict):
+                    candidate = nested
+                if isinstance(candidate, dict) and candidate and candidate not in blueprints:
+                    blueprints.append(candidate)
+        return blueprints
+
+    @classmethod
+    def _reference_asset_text_surface_evidence(cls, asset: dict[str, Any]) -> str:
+        parts: list[str] = []
+        ocr_sources: list[dict[str, Any]] = []
+        for source in cls._reference_text_surface_metadata_sources(asset):
+            for key in (
+                "ocr_text",
+                "detected_text",
+                "recognized_text",
+                "extracted_text",
+                "extracted_text_preview",
+                "surface_text",
+                "rendered_text",
+                "visible_text",
+                "text_preview",
+            ):
+                value = cls._normalize_metadata_text(source.get(key), limit=360)
+                if value:
+                    parts.append(value)
+            for ocr_candidate in (
+                source.get("ocr_structure"),
+                source.get("ocr"),
+                source.get("vision_ocr"),
+            ):
+                if isinstance(ocr_candidate, dict) and ocr_candidate not in ocr_sources:
+                    ocr_sources.append(ocr_candidate)
+        for blueprint in cls._reference_asset_sample_blueprints(asset):
+            ocr_candidate = blueprint.get("ocr_structure")
+            if isinstance(ocr_candidate, dict) and ocr_candidate not in ocr_sources:
+                ocr_sources.append(ocr_candidate)
+        for ocr in ocr_sources:
+            for key in ("full_text", "ocr_text", "detected_text", "recognized_text", "visible_text", "text_preview"):
+                value = cls._normalize_metadata_text(ocr.get(key), limit=360)
+                if value:
+                    parts.append(value)
+            block_summary = ocr.get("block_summary")
+            if isinstance(block_summary, list):
+                for block in block_summary[:8]:
+                    if not isinstance(block, dict):
+                        continue
+                    value = cls._normalize_metadata_text(
+                        block.get("text_excerpt") or block.get("text") or block.get("label") or block.get("value"),
+                        limit=160,
+                    )
+                    if value:
+                        parts.append(value)
+        return cls._normalize_metadata_text(" ".join(parts), limit=1200)
+
+    @classmethod
+    def _reference_asset_readable_text_block_count(cls, asset: dict[str, Any]) -> int:
+        counts: list[int] = []
+        for source in cls._reference_text_surface_metadata_sources(asset):
+            ocr_candidates = (
+                source.get("ocr_structure"),
+                source.get("ocr"),
+                source.get("vision_ocr"),
+            )
+            for ocr in ocr_candidates:
+                if not isinstance(ocr, dict):
+                    continue
+                for key in ("readable_text_blocks", "text_block_count", "visible_text_blocks"):
+                    try:
+                        count = int(ocr.get(key))
+                    except (TypeError, ValueError):
+                        continue
+                    if count > 0:
+                        counts.append(count)
+                block_summary = ocr.get("block_summary")
+                if isinstance(block_summary, list):
+                    text_blocks = [
+                        block
+                        for block in block_summary
+                        if isinstance(block, dict)
+                        and cls._normalize_metadata_text(
+                            block.get("text_excerpt") or block.get("text") or block.get("label") or block.get("value"),
+                            limit=80,
+                        )
+                    ]
+                    if text_blocks:
+                        counts.append(len(text_blocks))
+        for blueprint in cls._reference_asset_sample_blueprints(asset):
+            ocr = blueprint.get("ocr_structure")
+            if not isinstance(ocr, dict):
+                continue
+            for key in ("readable_text_blocks", "text_block_count", "visible_text_blocks"):
+                try:
+                    count = int(ocr.get(key))
+                except (TypeError, ValueError):
+                    continue
+                if count > 0:
+                    counts.append(count)
+        return max(counts or [0])
+
+    @classmethod
+    def _reference_asset_layout_text_module_count(cls, asset: dict[str, Any]) -> int:
+        counts: list[int] = []
+        for blueprint in cls._reference_asset_sample_blueprints(asset):
+            module_counts = blueprint.get("module_counts") if isinstance(blueprint.get("module_counts"), dict) else {}
+            total = 0
+            for key in (
+                "top_text_band_count",
+                "text_block_count",
+                "horizontal_band_count",
+                "card_like_count",
+                "row_module_count",
+                "list_item_count",
+            ):
+                try:
+                    total += max(int(module_counts.get(key) or 0), 0)
+                except (TypeError, ValueError):
+                    continue
+            if total > 0:
+                counts.append(total)
+        return max(counts or [0])
+
+    @classmethod
+    def _reference_asset_is_text_bearing_surface(cls, asset: dict[str, Any]) -> bool:
+        asset_role = str(asset.get("asset_role") or "").strip().lower()
+        surface_role = asset_role in {"reference_creative", "template_preview", "template", "hero_image", "image", "photo"}
+        format_family = cls._reference_asset_format_family(asset)
+        surface_kind = cls._reference_conditioning_surface_kind(asset)
+        surface_kind_normalized = surface_kind.replace("-", "_").replace(" ", "_")
+        if not surface_role and format_family not in {"static", "infographic", "poster", "story"}:
+            return False
+        if "flattened" in surface_kind_normalized and "text" in surface_kind_normalized:
+            return True
+        if any(token in surface_kind_normalized for token in ("text_heavy", "text_surface", "rendered_text")):
+            return True
+        for source in cls._reference_text_surface_metadata_sources(asset):
+            for key in (
+                "text_heavy",
+                "contains_readable_text",
+                "has_readable_text",
+                "visible_text_present",
+                "generated_text_present",
+                "rendered_text_present",
+            ):
+                if source.get(key) is True:
+                    return True
+        if cls._reference_asset_readable_text_block_count(asset) >= 2:
+            return True
+        if cls._reference_asset_layout_text_module_count(asset) >= 2:
+            return True
+        evidence_tokens = cls._normalized_prompt_tokens(cls._reference_asset_text_surface_evidence(asset))
+        return len(evidence_tokens) >= 6
+
+    @classmethod
+    def _reference_tokens_align_with_request_topic(
+        cls,
+        reference_tokens: set[str],
+        *,
+        request: AIOrchestrationRequest | None,
+    ) -> bool:
+        request_tokens = cls._request_topic_tokens(request)
+        if not request_tokens or not reference_tokens:
+            return False
+        overlap = request_tokens & reference_tokens
+        if not overlap:
+            return False
+        weak_overlap_tokens = {
+            "compare",
+            "compared",
+            "compares",
+            "comparing",
+            "comparison",
+            "country",
+            "countries",
+            "global",
+            "india",
+            "indian",
+            "rank",
+            "ranking",
+            "rankings",
+            "rate",
+            "rates",
+            "static",
+            "top",
+            "world",
+            "worldwide",
+        }
+        return any(token not in weak_overlap_tokens for token in overlap)
+
+    @classmethod
+    def _reference_text_surface_topic_mismatch(
+        cls,
+        asset: dict[str, Any],
+        *,
+        request: AIOrchestrationRequest | None,
+    ) -> bool:
+        if request is None or not cls._request_topic_tokens(request):
+            return False
+        evidence = cls._reference_asset_text_surface_evidence(asset)
+        evidence_tokens = {
+            token
+            for token in cls._normalized_prompt_tokens(evidence)
+            if len(token) >= 3
+            and any(ch.isalpha() for ch in token)
+            and token not in cls.TOPIC_MATCH_NOISE_TOKENS
+            and not re.fullmatch(r"[a-f0-9]{8,}", token)
+        }
+        if evidence_tokens:
+            return not cls._reference_tokens_align_with_request_topic(evidence_tokens, request=request)
+        asset_tokens = cls._reference_asset_topic_tokens(asset)
+        if asset_tokens:
+            return not cls._reference_tokens_align_with_request_topic(asset_tokens, request=request)
+        return cls._reference_asset_topic_score(asset, request=request) <= 0
+
+    @classmethod
+    def _reference_asset_is_mismatched_text_surface_conditioning(
+        cls,
+        asset: dict[str, Any],
+        *,
+        request: AIOrchestrationRequest | None,
+    ) -> bool:
+        requested_family = cls._requested_reference_format_family(request)
+        asset_family = cls._reference_asset_format_family(asset)
+        return (
+            (requested_family in {"static", "infographic"} or asset_family in {"static", "infographic", "poster", "story"})
+            and cls._reference_asset_is_text_bearing_surface(asset)
+            and cls._reference_text_surface_topic_mismatch(asset, request=request)
+        )
+
+    @classmethod
+    def _reference_asset_has_layout_surface_metadata(cls, asset: dict[str, Any]) -> bool:
+        layout_keys = {
+            "sample_page_blueprint",
+            "blueprint_payload",
+            "rendered_blueprint",
+            "template_structure",
+            "zone_map",
+            "reference_zone_map",
+            "module_counts",
+            "visual_permissions",
+            "image_zones",
+            "layout_dna",
+            "layout_blueprint",
+        }
+        for source in cls._reference_text_surface_metadata_sources(asset):
+            if any(isinstance(source.get(key), (dict, list)) and bool(source.get(key)) for key in layout_keys):
+                return True
+        return bool(cls._reference_asset_sample_blueprints(asset))
+
+    @classmethod
+    def _reference_asset_is_layout_only_static_infographic_surface(
+        cls,
+        asset: dict[str, Any],
+        *,
+        request: AIOrchestrationRequest | None,
+    ) -> bool:
+        requested_family = cls._requested_reference_format_family(request)
+        if requested_family not in {"static", "infographic"}:
+            return False
+        asset_role = str(asset.get("asset_role") or "").strip().lower()
+        asset_family = cls._reference_asset_format_family(asset)
+        if asset_role in {"template", "template_preview"}:
+            return True
+        if asset_role not in {"reference_creative", "reference"}:
+            return False
+        if asset_family in {"static", "infographic", "poster", "story"}:
+            return True
+        if cls._reference_asset_is_text_bearing_surface(asset):
+            return True
+        if cls._reference_asset_has_layout_surface_metadata(asset):
+            return True
+        label_text = cls._asset_label_text(asset)
+        return any(
+            token in label_text
+            for token in (
+                "layout reference",
+                "static layout",
+                "infographic layout",
+                "template surface",
+                "single post",
+                "single-page",
+            )
+        )
+
+    @classmethod
     def _is_reference_image_asset(cls, asset: dict[str, Any]) -> bool:
         if not isinstance(asset, dict):
             return False
@@ -12674,6 +14350,10 @@ class AIOrchestratorService:
             return False
         if overlay_safe is False:
             return False
+        if cls._reference_asset_is_mismatched_text_surface_conditioning(asset, request=request):
+            return False
+        if cls._reference_asset_is_layout_only_static_infographic_surface(asset, request=request):
+            return False
         if asset_role == "template_preview":
             allow_conditioning = bool(
                 metadata.get("allow_conditioning")
@@ -12686,6 +14366,8 @@ class AIOrchestratorService:
         if template_surface_policy == "style_reference_only":
             preferred_paths = cls._preferred_sequence_reference_paths(request, creative_decision=creative_decision)
             asset_storage_path = str(asset.get("storage_path") or "").strip()
+            if request is None and overlay_safe is True:
+                return True
             if asset_role in {"template_preview", "reference_creative", "template"} and asset_storage_path not in preferred_paths:
                 topic_score = cls._reference_asset_topic_score(asset, request=request) if request is not None else 0
                 best_topic_score = 0
@@ -12922,6 +14604,25 @@ class AIOrchestratorService:
             if isinstance(asset, dict)
             and cls._is_conditioning_safe_reference_image_asset(asset, creative_decision=creative_decision, request=request)
         ]
+
+    @classmethod
+    def _layout_analysis_reference_image_assets(
+        cls,
+        reference_assets: list[dict[str, Any]],
+        *,
+        request: AIOrchestrationRequest | None,
+    ) -> list[dict[str, Any]]:
+        assets = [dict(asset) for asset in reference_assets if isinstance(asset, dict)]
+        if cls._requested_reference_format_family(request) not in {"static", "infographic"}:
+            return assets
+        layout_assets = [
+            dict(asset)
+            for asset in assets
+            if cls._reference_asset_is_layout_only_static_infographic_surface(asset, request=request)
+            or cls._reference_asset_format_family(asset) in {"static", "infographic", "poster", "story"}
+            or cls._reference_asset_has_layout_surface_metadata(asset)
+        ]
+        return layout_assets or assets
 
     @classmethod
     def _carousel_sequence_uses_multiple_reference_images(
@@ -13570,7 +15271,7 @@ class AIOrchestratorService:
             issues.append("ai_generated_logo_or_wordmark_detected")
             hard_retry_issues.add("ai_generated_logo_or_wordmark_detected")
             corrections.append(
-                "The exact asset is deferred to post-generation overlay, so the AI base image must contain zero brand marks, wordmarks, brand signatures, ghost marks, or graphic shapes. Leave only an empty safe background area."
+                "The exact asset is deferred to post-generation overlay, so the AI base image must contain zero logos, wordmarks, brand signatures, ghost marks, or graphic shapes. Leave only an empty safe background area."
             )
             score_parts.append(0.15)
 
@@ -14208,6 +15909,8 @@ class AIOrchestratorService:
                     "cta_count": "cta_count",
                     "chart_count": "chart_count",
                     "table_count": "table_count",
+                    "metric_tile_count": "metric_tile_count",
+                    "metric_tiles_count": "metric_tiles_count",
                     "logo_count": "logo_count",
                 }
                 for source_key, target_key in key_map.items():
@@ -14220,7 +15923,7 @@ class AIOrchestratorService:
                     **(merged.get("visual_permissions") if isinstance(merged.get("visual_permissions"), dict) else {}),
                     **page_blueprint.get("visual_permissions"),
                 }
-        for key in ("ocr_structure", "premium_quality", "visual_craft_dna", "image_treatment", "typography_dna", "composition_logic", "content_structure"):
+        for key in ("ocr_structure", "premium_quality", "visual_craft_dna", "image_treatment", "typography_dna", "composition_logic", "content_structure", "subject_semantics"):
             value = vision_analysis.get(key)
             if isinstance(value, dict) and value:
                 merged[key] = value
@@ -14796,6 +16499,25 @@ class AIOrchestratorService:
         has_headline = any(element.visible and element.role == "headline" for element in scene_graph.elements)
         visible_elements = self._scene_graph_visible_elements(scene_graph)
         content_elements = [element for element in visible_elements if element.role != "background"]
+        text_by_role: dict[str, set[str]] = {}
+        for element in visible_elements:
+            role = str(getattr(element, "role", "") or "").strip().lower()
+            if role not in {"headline", "supporting_line", "body", "cta", "proof_point"}:
+                continue
+            text_value = self._normalize_metadata_text(getattr(element, "text", None), limit=220).casefold()
+            if not text_value:
+                continue
+            text_by_role.setdefault(text_value, set()).add(role)
+        if any(len(roles) >= 2 for roles in text_by_role.values()):
+            issues.append(
+                SceneGraphValidationIssue(
+                    severity="warning",
+                    rule_id="repeated_content_roles",
+                    message="The same visible copy is assigned to multiple content roles.",
+                    expected_correction="Keep headline, support copy, body, CTA, and proof roles distinct.",
+                    repairable=True,
+                )
+            )
         logo_geometry = self._logo_safe_zone_geometry(scene_graph)
         logo_position_hint = self._normalize_metadata_text(
             (scene_graph.styles or {}).get("logo_position")
@@ -15343,6 +17065,1137 @@ class AIOrchestratorService:
         assert last_error is not None
         raise last_error
 
+    @staticmethod
+    def _requested_canvas_dimensions(studio_panel: dict[str, Any] | None) -> tuple[int, int]:
+        size = (studio_panel or {}).get("size") if isinstance(studio_panel, dict) else {}
+        if not isinstance(size, dict):
+            size = {}
+        try:
+            width = int(size.get("width") or 1080)
+            height = int(size.get("height") or 1080)
+        except (TypeError, ValueError):
+            width, height = 1080, 1080
+        return max(width, 1), max(height, 1)
+
+    @classmethod
+    def _final_render_subject_tokens(cls, value: Any) -> set[str]:
+        empty_subject_tokens = {"none", "null", "unknown", "unspecified"}
+        return {
+            token
+            for token in cls._normalized_prompt_tokens(cls._coerce_text_value(value))
+            if len(token) >= 3
+            and any(ch.isalpha() for ch in token)
+            and token not in cls.TOPIC_MATCH_NOISE_TOKENS
+            and token not in empty_subject_tokens
+            and not re.fullmatch(r"[a-f0-9]{8,}", token)
+        }
+
+    @classmethod
+    def _final_render_request_topic_tokens(cls, request: AIOrchestrationRequest | None) -> set[str]:
+        if request is None:
+            return set()
+        return cls._final_render_subject_tokens(getattr(request, "prompt", ""))
+
+    @classmethod
+    def _final_render_topic_alignment_report(
+        cls,
+        *,
+        request: AIOrchestrationRequest,
+        subject_blob: str,
+    ) -> dict[str, Any]:
+        request_tokens = cls._final_render_request_topic_tokens(request)
+        subject_tokens = cls._final_render_subject_tokens(subject_blob)
+        overlap = request_tokens & subject_tokens
+        if not request_tokens:
+            status = "unknown"
+        elif not subject_tokens:
+            status = "missing"
+        elif cls._reference_tokens_align_with_request_topic(subject_tokens, request=request):
+            status = "aligned"
+        else:
+            status = "weak"
+        return {
+            "status": status,
+            "request_tokens": sorted(request_tokens)[:12],
+            "subject_tokens": sorted(subject_tokens)[:16],
+            "overlap": sorted(overlap)[:8],
+            "missing_request_tokens": sorted(request_tokens - subject_tokens)[:8],
+        }
+
+    @classmethod
+    def _final_render_visible_claim_hallucination_report(
+        cls,
+        *,
+        request: AIOrchestrationRequest,
+        ocr_structure: dict[str, Any],
+        approved_text_payload: Any | None = None,
+    ) -> dict[str, Any]:
+        if not isinstance(ocr_structure, dict) or not ocr_structure:
+            return {}
+        visible_parts: list[str] = []
+        for key in ("headline_text", "full_text", "ocr_text", "detected_text", "recognized_text", "visible_text", "text_preview"):
+            text = cls._normalize_metadata_text(ocr_structure.get(key), limit=360)
+            if text:
+                visible_parts.append(text)
+        block_summary = ocr_structure.get("block_summary")
+        if isinstance(block_summary, list):
+            for block in block_summary[:12]:
+                if not isinstance(block, dict):
+                    continue
+                text = cls._normalize_metadata_text(
+                    block.get("text_excerpt") or block.get("text") or block.get("label"),
+                    limit=220,
+                )
+                if text:
+                    visible_parts.append(text)
+        visible_text = " ".join(visible_parts).strip()
+        if not visible_text:
+            return {}
+
+        allowed_parts = [cls._coerce_text_value(getattr(request, "prompt", ""))]
+        allowed_parts.extend(cls._final_render_approved_text_claim_parts(approved_text_payload))
+        brand_context = getattr(request, "resolved_brand_context", None)
+        if isinstance(brand_context, dict):
+            allowed_parts.append(cls._coerce_text_value(brand_context.get("brand_name")))
+            guardrails = brand_context.get("guardrails") if isinstance(brand_context.get("guardrails"), dict) else {}
+            allowed_parts.append(cls._coerce_text_value(guardrails.get("required_disclaimer")))
+        retrieved_knowledge = getattr(request, "retrieved_knowledge", None)
+        if isinstance(retrieved_knowledge, (dict, list)) and retrieved_knowledge:
+            allowed_parts.append(json.dumps(retrieved_knowledge, ensure_ascii=True, default=str))
+        allowed_blob = " ".join(part for part in allowed_parts if part).casefold()
+        specific_claim_fragments = [
+            match.group(0).strip()
+            for match in re.finditer(
+                r"(?<!\w)(?:\d+(?:\.\d+)?\s?%|(?:19|20)\d{2}|[$₹€£]\s?\d[\d,]*(?:\.\d+)?|#\s?\d+|rank\s+\d+|top\s+\d+|source\s*:|https?://\S+|www\.\S+)",
+                visible_text,
+                flags=re.IGNORECASE,
+            )
+            if match.group(0).strip()
+        ]
+        unsupported_specific_claims = [
+            claim
+            for claim in specific_claim_fragments
+            if claim.casefold() not in allowed_blob
+        ][:8]
+        allowed_tokens = cls._final_render_subject_tokens(allowed_blob)
+        factual_claim_markers = {
+            "act",
+            "acts",
+            "bank",
+            "banks",
+            "bill",
+            "bills",
+            "commission",
+            "commissions",
+            "country",
+            "countries",
+            "court",
+            "courts",
+            "department",
+            "departments",
+            "exchange",
+            "exchanges",
+            "government",
+            "governments",
+            "law",
+            "laws",
+            "legal",
+            "ministry",
+            "ministries",
+            "nation",
+            "nations",
+            "policy",
+            "policies",
+            "regulation",
+            "regulations",
+            "tariff",
+            "tariffs",
+            "tax",
+            "taxes",
+            "treaty",
+            "treaties",
+            "union",
+            "unions",
+        }
+        high_risk_acronyms = {"BRICS", "EU", "FDI", "GDP", "GST", "RBI", "SEBI", "UAE", "UK", "UN", "US", "USA"}
+        unsupported_named_claims: list[str] = []
+        for visible_part in visible_parts:
+            for match in re.finditer(
+                r"\b(?:[A-Z]{2,}|[A-Z][a-z]+)(?:\s+(?:[A-Z]{2,}|[A-Z][a-z]+)){0,4}\b",
+                visible_part,
+            ):
+                claim = match.group(0).strip()
+                if not claim or claim.casefold() in allowed_blob:
+                    continue
+                claim_tokens = cls._final_render_subject_tokens(claim)
+                if not claim_tokens or claim_tokens <= allowed_tokens:
+                    continue
+                raw_acronyms = {token for token in re.findall(r"\b[A-Z]{2,}\b", claim)}
+                has_high_risk_acronym = bool(raw_acronyms & high_risk_acronyms)
+                has_factual_marker = bool(claim_tokens & factual_claim_markers)
+                if not has_high_risk_acronym and not has_factual_marker:
+                    continue
+                unsupported_named_claims.append(claim)
+                if len(unsupported_named_claims) >= 8:
+                    break
+            if len(unsupported_named_claims) >= 8:
+                break
+        visible_tokens = cls._final_render_subject_tokens(visible_text)
+        overlap_tokens = sorted(visible_tokens & allowed_tokens)
+        unsupported_topic_tokens = sorted(visible_tokens - allowed_tokens)[:12]
+        low_topic_overlap = (
+            len(visible_tokens) >= 5
+            and len(overlap_tokens) <= 1
+            and len(unsupported_topic_tokens) >= 4
+        )
+        if unsupported_specific_claims:
+            status = "unsupported_specificity"
+        elif unsupported_named_claims:
+            status = "unsupported_named_claim"
+        elif low_topic_overlap:
+            status = "topic_drift_risk"
+        else:
+            status = "ok"
+        return {
+            "status": status,
+            "visible_text_excerpt": cls._normalize_metadata_text(visible_text, limit=420),
+            "unsupported_specific_claims": unsupported_specific_claims,
+            "unsupported_named_claims": unsupported_named_claims,
+            "unsupported_topic_tokens": unsupported_topic_tokens,
+            "overlap_tokens": overlap_tokens[:8],
+        }
+
+    @classmethod
+    def _final_render_approved_text_claim_parts(cls, approved_text_payload: Any | None) -> list[str]:
+        if approved_text_payload is None:
+            return []
+
+        parts: list[str] = []
+
+        def add_value(value: Any) -> None:
+            if value is None:
+                return
+            if isinstance(value, str):
+                text = cls._normalize_metadata_text(value, limit=700)
+                if text:
+                    parts.append(text)
+                return
+            if isinstance(value, (int, float, bool)):
+                parts.append(str(value))
+                return
+            if isinstance(value, dict):
+                for item in value.values():
+                    add_value(item)
+                return
+            if isinstance(value, (list, tuple, set)):
+                for item in value:
+                    add_value(item)
+
+        for attr in ("headline", "body", "cta", "hashtags"):
+            add_value(getattr(approved_text_payload, attr, None))
+
+        metadata = getattr(approved_text_payload, "metadata", None)
+        if isinstance(metadata, dict):
+            for key in (
+                "claim_evidence_pairs",
+                "data_points",
+                "disclaimer",
+                "infographic_section_specs",
+                "legal_footer",
+                "proof_points",
+                "stat_highlights",
+                "static_panel_spec",
+                "supporting_line",
+            ):
+                add_value(metadata.get(key))
+
+        return parts[:80]
+
+    @classmethod
+    def _final_render_topic_fit_contract(
+        cls,
+        *,
+        request: AIOrchestrationRequest,
+        format_name: str,
+    ) -> str:
+        if not cls._llm_led_static_infographic_format(format_name):
+            return ""
+        topic_anchors = sorted(cls._final_render_request_topic_tokens(request))[:10]
+        prompt_text = cls._normalize_metadata_text(getattr(request, "prompt", ""), limit=420)
+        requested_count = cls._explicit_top_n_item_count(prompt_text)
+        structure_hints: list[str] = []
+        lowered_prompt = prompt_text.casefold()
+        if requested_count:
+            structure_hints.append(f"include a visible {requested_count}-item comparison/ranking/list structure")
+        if re.search(r"\b(compare|comparison|versus|vs\.?|ranking|ranked|top\s+\d{1,2})\b", lowered_prompt):
+            structure_hints.append("use comparison/ranking hierarchy instead of a generic hero photo")
+        if re.search(r"\b(infographic|chart|table|data|inflow|rate|rates|fee|fees|percentage|percent)\b", lowered_prompt):
+            structure_hints.append("use structured modules, rows, cards, bars, or callouts that explain the requested data concept")
+        structure_summary = "; ".join(structure_hints) or "choose a topic-specific explanatory structure that matches the prompt intent"
+        anchors_summary = ", ".join(topic_anchors) if topic_anchors else "derive concrete topic anchors from the current user prompt"
+        return (
+            "Static/infographic topic-fit checklist: "
+            f"current prompt='{prompt_text}'. "
+            f"Strong topic anchors={anchors_summary}. "
+            f"Required visual/content behavior: {structure_summary}. "
+            "The finished image must visibly communicate these anchors through headline wording, module labels, visual metaphor, objects, icons, or chart-like surfaces. "
+            "Reject generic finance decoration, generic people photos, stale template subjects, previous-request concepts, and unrelated macro/policy/trade scenes unless those concepts are explicitly present in the current prompt."
+        )
+
+    @classmethod
+    def _final_render_requested_structure_report(
+        cls,
+        *,
+        request: AIOrchestrationRequest,
+        module_counts: dict[str, Any],
+        visual_permissions: dict[str, Any],
+    ) -> dict[str, Any]:
+        prompt_text = cls._coerce_text_value(getattr(request, "prompt", ""))
+        requested_count = cls._explicit_top_n_item_count(prompt_text)
+        if not requested_count:
+            return {}
+        lowered_prompt = prompt_text.casefold()
+        if not re.search(r"\b(top\s+\d{1,2}|rank(?:ed|ing)?|compare|comparison|versus|vs\.?)\b", lowered_prompt):
+            return {}
+
+        def count_value(*keys: str) -> int:
+            values: list[int] = []
+            for key in keys:
+                try:
+                    values.append(int(module_counts.get(key) or 0))
+                except (TypeError, ValueError):
+                    values.append(0)
+            return max(values or [0])
+
+        visible_item_modules = max(
+            count_value("row_module_count", "horizontal_band_count"),
+            count_value("card_module_count", "card_like_count"),
+            count_value("metric_tile_count", "metric_tiles_count"),
+            count_value("small_icon_like_count", "icon_count"),
+            count_value("text_block_count"),
+        )
+        table_or_chart_count = max(
+            count_value("table_count"),
+            count_value("chart_count"),
+        )
+        table_or_chart_visible = table_or_chart_count > 0 and any(
+            bool(visual_permissions.get(key))
+            for key in ("table_allowed", "chart_or_graph_allowed", "metric_tiles_allowed")
+        )
+        required_modules = max(3, min(requested_count, 8))
+        if table_or_chart_visible or visible_item_modules >= required_modules:
+            status = "satisfied"
+        else:
+            status = "underbuilt"
+        return {
+            "status": status,
+            "requested_count": requested_count,
+            "required_visible_modules": required_modules,
+            "visible_item_modules": visible_item_modules,
+            "table_or_chart_visible": table_or_chart_visible,
+            "table_or_chart_count": table_or_chart_count,
+        }
+
+    @classmethod
+    def _final_render_data_surface_report(
+        cls,
+        *,
+        request: AIOrchestrationRequest,
+        format_name: str,
+        module_counts: dict[str, Any],
+        visual_permissions: dict[str, Any],
+    ) -> dict[str, Any]:
+        normalized_format = str(format_name or "").strip().casefold()
+        if normalized_format not in {"static", "infographic"}:
+            return {}
+        prompt_text = cls._coerce_text_value(getattr(request, "prompt", ""))
+        if not cls._data_list_surface_intent(
+            prompt=prompt_text,
+            format_name=normalized_format,
+        ):
+            return {}
+        lowered_prompt = prompt_text.casefold()
+
+        def count_value(*keys: str) -> int:
+            values: list[int] = []
+            for key in keys:
+                try:
+                    values.append(int(module_counts.get(key) or 0))
+                except (TypeError, ValueError):
+                    values.append(0)
+            return max(values or [0])
+
+        row_modules = count_value("row_module_count", "horizontal_band_count")
+        card_modules = count_value("card_module_count", "card_like_count")
+        metric_modules = count_value("metric_tile_count", "metric_tiles_count")
+        text_blocks = count_value("text_block_count")
+        table_count = count_value("table_count")
+        chart_count = count_value("chart_count")
+        visible_structured_modules = max(row_modules, card_modules, metric_modules, text_blocks)
+        table_or_chart_visible = max(table_count, chart_count) > 0 and any(
+            bool(visual_permissions.get(key))
+            for key in ("table_allowed", "chart_or_graph_allowed", "metric_tiles_allowed")
+        )
+        metric_surface_visible = metric_modules > 0 and bool(visual_permissions.get("metric_tiles_allowed"))
+        explicit_chart_or_table_request = bool(
+            re.search(r"\b(chart|graph|table|matrix|dashboard|scorecard)\b", lowered_prompt)
+        )
+        requested_count = cls._explicit_top_n_item_count(prompt_text)
+        if requested_count:
+            required_structured_modules = max(3, min(requested_count, 8))
+        elif normalized_format == "infographic":
+            required_structured_modules = 4
+        else:
+            required_structured_modules = 3
+        if explicit_chart_or_table_request and not table_or_chart_visible:
+            status = "missing_requested_chart_or_table"
+        elif table_or_chart_visible or metric_surface_visible or visible_structured_modules >= required_structured_modules:
+            status = "satisfied"
+        else:
+            status = "underbuilt"
+        return {
+            "status": status,
+            "required_structured_modules": required_structured_modules,
+            "visible_structured_modules": visible_structured_modules,
+            "row_module_count": row_modules,
+            "card_module_count": card_modules,
+            "metric_tile_count": metric_modules,
+            "text_block_count": text_blocks,
+            "table_or_chart_visible": table_or_chart_visible,
+            "metric_surface_visible": metric_surface_visible,
+            "explicit_chart_or_table_request": explicit_chart_or_table_request,
+        }
+
+    @classmethod
+    def _final_render_content_visual_balance_report(
+        cls,
+        *,
+        request: AIOrchestrationRequest,
+        format_name: str,
+        module_counts: dict[str, Any],
+        subject_semantics: dict[str, Any],
+        ocr_structure: dict[str, Any],
+    ) -> dict[str, Any]:
+        normalized_format = str(format_name or "").strip().casefold()
+        if normalized_format not in {"static", "infographic"}:
+            return {}
+
+        def count_value(*keys: str) -> int:
+            values: list[int] = []
+            for key in keys:
+                try:
+                    values.append(int(module_counts.get(key) or 0))
+                except (TypeError, ValueError):
+                    values.append(0)
+            return max(values or [0])
+
+        try:
+            readable_blocks = int(ocr_structure.get("readable_text_blocks") or 0)
+        except (TypeError, ValueError):
+            readable_blocks = 0
+        text_blocks = max(readable_blocks, count_value("text_block_count", "headline_block_count", "support_block_count"))
+        icon_count = count_value("small_icon_like_count", "icon_count")
+        large_visual_count = count_value("large_visual_count", "image_count")
+        chart_count = count_value("chart_count", "graph_count")
+        table_count = count_value("table_count")
+        metric_tile_count = count_value("metric_tile_count", "metric_tiles_count")
+        explanatory_visual_units = icon_count + large_visual_count + chart_count + table_count + metric_tile_count
+        subject_blob = " ".join(
+            [
+                cls._coerce_text_value(subject_semantics.get("scene_type")),
+                cls._coerce_text_value(subject_semantics.get("environment")),
+                cls._coerce_text_value(subject_semantics.get("abstraction_level")),
+                cls._compact_named_items(subject_semantics.get("primary_subjects"), limit=6),
+                cls._compact_named_items(subject_semantics.get("domain_cues"), limit=6),
+                cls._compact_named_items(subject_semantics.get("financial_objects"), limit=6),
+            ]
+        ).strip()
+        topic_alignment = (
+            cls._final_render_topic_alignment_report(request=request, subject_blob=subject_blob)
+            if subject_blob
+            else {"status": "missing", "overlap": []}
+        )
+        has_topic_visual_semantics = (
+            topic_alignment.get("status") == "aligned"
+            and bool(topic_alignment.get("overlap"))
+        )
+        if text_blocks <= 0 and explanatory_visual_units > 0:
+            status = "image_only"
+        elif text_blocks > 0 and explanatory_visual_units <= 0 and not has_topic_visual_semantics:
+            status = "text_heavy"
+        elif (
+            normalized_format == "infographic"
+            and text_blocks >= 4
+            and explanatory_visual_units < 2
+            and not has_topic_visual_semantics
+        ):
+            status = "visual_explanation_thin"
+        else:
+            status = "satisfied"
+        return {
+            "status": status,
+            "text_block_count": text_blocks,
+            "icon_count": icon_count,
+            "large_visual_count": large_visual_count,
+            "chart_count": chart_count,
+            "table_count": table_count,
+            "metric_tile_count": metric_tile_count,
+            "explanatory_visual_units": explanatory_visual_units,
+            "topic_visual_alignment": topic_alignment,
+        }
+
+    @classmethod
+    def _final_render_visual_metaphor_report(
+        cls,
+        *,
+        request: AIOrchestrationRequest,
+        subject_blob: str,
+        data_surface: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        prompt_text = cls._coerce_text_value(getattr(request, "prompt", ""))
+        data_surface = data_surface if isinstance(data_surface, dict) else {}
+        if not (
+            data_surface
+            or cls._data_list_surface_intent(
+                prompt=prompt_text,
+                format_name=str((getattr(request, "studio_panel", {}) or {}).get("format") or ""),
+            )
+        ):
+            return {}
+        request_tokens = cls._final_render_request_topic_tokens(request)
+        subject_tokens = cls._final_render_subject_tokens(subject_blob)
+        if not request_tokens or not subject_tokens:
+            return {}
+        weak_overlap_tokens = {
+            "compare",
+            "compared",
+            "compares",
+            "comparing",
+            "comparison",
+            "country",
+            "countries",
+            "global",
+            "india",
+            "indian",
+            "rank",
+            "ranking",
+            "rankings",
+            "rate",
+            "rates",
+            "static",
+            "top",
+            "world",
+            "worldwide",
+        }
+        generic_visual_tokens = {
+            "analytics",
+            "arrow",
+            "arrows",
+            "bars",
+            "business",
+            "chart",
+            "charts",
+            "coin",
+            "coins",
+            "currency",
+            "dashboard",
+            "dashboards",
+            "document",
+            "documents",
+            "finance",
+            "financial",
+            "graph",
+            "graphs",
+            "growth",
+            "money",
+            "office",
+            "person",
+            "portrait",
+            "rupee",
+            "rupees",
+            "stock",
+            "stocks",
+            "symbol",
+            "symbols",
+        }
+        request_domain_tokens = request_tokens - weak_overlap_tokens - generic_visual_tokens
+        if not request_domain_tokens:
+            return {}
+        generic_subject_tokens = sorted((subject_tokens & generic_visual_tokens) - request_tokens)
+        domain_overlap = sorted(request_domain_tokens & subject_tokens)
+        missing_domain_tokens = sorted(request_domain_tokens - subject_tokens)
+        required_overlap = min(2, len(request_domain_tokens))
+        if generic_subject_tokens and len(domain_overlap) < required_overlap:
+            status = "generic"
+        elif generic_subject_tokens and missing_domain_tokens and len(domain_overlap) <= required_overlap:
+            status = "weak"
+        else:
+            status = "specific"
+        return {
+            "status": status,
+            "domain_overlap": domain_overlap[:8],
+            "missing_domain_tokens": missing_domain_tokens[:8],
+            "generic_subject_tokens": generic_subject_tokens[:8],
+            "required_domain_overlap": required_overlap,
+        }
+
+    def _assess_final_render_output_image(
+        self,
+        *,
+        request: AIOrchestrationRequest,
+        asset: dict[str, Any],
+        image_size: str | None,
+        approved_text_payload: Any | None = None,
+    ) -> dict[str, Any] | None:
+        format_name = str((request.studio_panel or {}).get("format") or "").strip().lower()
+        if format_name not in {"static", "infographic"}:
+            return None
+        storage_path = str(asset.get("storage_path") or "").strip()
+        if not storage_path:
+            return {
+                "score": 0.0,
+                "issues": ["missing_output_storage_path"],
+                "retry_recommended": False,
+                "format": format_name,
+                "requested_image_size": image_size,
+            }
+        if not self.storage.exists(storage_path):
+            return {
+                "score": 0.0,
+                "issues": ["output_asset_not_found"],
+                "retry_recommended": False,
+                "format": format_name,
+                "storage_path": storage_path,
+                "requested_image_size": image_size,
+            }
+        try:
+            with Image.open(self.storage.absolute_path(storage_path)) as raw:
+                image = raw.convert("RGB")
+                width, height = image.size
+                sample = image.resize((64, 64), Image.Resampling.BILINEAR).convert("L")
+                luminance_stddev = float(ImageStat.Stat(sample).stddev[0])
+                edge_mean = float(ImageStat.Stat(sample.filter(ImageFilter.FIND_EDGES)).mean[0])
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "score": 0.0,
+                "issues": ["output_asset_unreadable"],
+                "retry_recommended": False,
+                "format": format_name,
+                "storage_path": storage_path,
+                "error": str(exc),
+                "requested_image_size": image_size,
+            }
+
+        target_width, target_height = self._requested_canvas_dimensions(request.studio_panel)
+        generated_ratio = width / max(height, 1)
+        target_ratio = target_width / max(target_height, 1)
+        aspect_delta = abs(generated_ratio - target_ratio) / max(target_ratio, 0.01)
+        main_text_expected = self._llm_led_static_infographic_format(format_name)
+        score = 0.92
+        issues: list[str] = []
+        if min(width, height) < 768:
+            score -= 0.2
+            issues.append("low_resolution_output")
+        if luminance_stddev < 2.0 or (luminance_stddev < 5.0 and edge_mean < 3.0):
+            score -= 0.28
+            issues.append("low_detail_or_blank_output")
+        elif luminance_stddev < 8.0 and edge_mean < 4.5:
+            score -= 0.12
+            issues.append("weak_visual_detail")
+        if aspect_delta > 0.28:
+            score -= 0.1
+            issues.append("generated_target_aspect_mismatch")
+        vision_summary: dict[str, Any] = {}
+        vision_retry_issues: set[str] = set()
+        visible_claims: dict[str, Any] = {}
+        content_visual_balance: dict[str, Any] = {}
+        if (
+            bool(getattr(self.settings, "final_render_output_vision_quality_enabled", True))
+            and getattr(getattr(self, "template_vision", None), "client", None)
+        ):
+            base_blueprint = {
+                "layout_category": "editorial_explainer" if format_name == "static" else "stacked_sections",
+                "density": "balanced" if format_name == "static" else "dense",
+                "module_counts": {},
+                "visual_permissions": {"cta_allowed": False},
+            }
+            try:
+                vision_blueprint = self._vision_enhance_page_blueprint(
+                    image_path=self.storage.absolute_path(storage_path),
+                    base_blueprint=base_blueprint,
+                )
+            except Exception:  # noqa: BLE001
+                vision_blueprint = {}
+            if isinstance(vision_blueprint, dict) and vision_blueprint.get("vision_analysis_status") == "openai_vision_enhanced":
+                premium_quality = vision_blueprint.get("premium_quality") if isinstance(vision_blueprint.get("premium_quality"), dict) else {}
+                ocr_structure = vision_blueprint.get("ocr_structure") if isinstance(vision_blueprint.get("ocr_structure"), dict) else {}
+                visual_craft = vision_blueprint.get("visual_craft_dna") if isinstance(vision_blueprint.get("visual_craft_dna"), dict) else {}
+                subject_semantics = vision_blueprint.get("subject_semantics") if isinstance(vision_blueprint.get("subject_semantics"), dict) else {}
+                module_counts = vision_blueprint.get("module_counts") if isinstance(vision_blueprint.get("module_counts"), dict) else {}
+                page_permissions = vision_blueprint.get("visual_permissions") if isinstance(vision_blueprint.get("visual_permissions"), dict) else {}
+
+                def _quality_value(key: str) -> float | None:
+                    raw = premium_quality.get(key)
+                    try:
+                        value = float(raw)
+                    except (TypeError, ValueError):
+                        return None
+                    if value > 1.0:
+                        value = value / 100.0
+                    return max(0.0, min(value, 1.0))
+
+                overall_quality = _quality_value("overall_score")
+                craft_quality = _quality_value("craft_score")
+                spacing_quality = _quality_value("spacing_score")
+                if overall_quality is not None and overall_quality < 0.68:
+                    score -= 0.16
+                    issues.append("vision_low_premium_quality")
+                    if overall_quality < 0.58:
+                        vision_retry_issues.add("vision_low_premium_quality")
+                if craft_quality is not None and craft_quality < 0.66:
+                    score -= 0.08
+                    issues.append("vision_weak_visual_craft")
+                if spacing_quality is not None and spacing_quality < 0.62:
+                    score -= 0.08
+                    issues.append("vision_weak_spacing")
+                try:
+                    readable_blocks = int(ocr_structure.get("readable_text_blocks") or 0)
+                except (TypeError, ValueError):
+                    readable_blocks = 0
+                if readable_blocks > 0 and not main_text_expected:
+                    score -= min(0.3, 0.12 + (readable_blocks * 0.025))
+                    issues.append("vision_readable_text_in_substrate")
+                    vision_retry_issues.add("vision_readable_text_in_substrate")
+                if bool(ocr_structure.get("logo_text_present")):
+                    score -= 0.14
+                    issues.append("vision_ai_generated_logo_text")
+                    vision_retry_issues.add("vision_ai_generated_logo_text")
+                collision_risk = self._normalize_metadata_text(ocr_structure.get("text_overlap_or_collision_risk"), limit=24).casefold()
+                if collision_risk in {"medium", "high"}:
+                    score -= 0.08 if collision_risk == "medium" else 0.14
+                    issues.append("vision_text_collision_risk")
+                    if collision_risk == "high":
+                        vision_retry_issues.add("vision_text_collision_risk")
+                truncation_risk = self._normalize_metadata_text(ocr_structure.get("text_truncation_or_crop_risk"), limit=24).casefold()
+                if truncation_risk in {"medium", "high"}:
+                    score -= 0.1 if truncation_risk == "medium" else 0.16
+                    issues.append("vision_text_truncation_risk")
+                    vision_retry_issues.add("vision_text_truncation_risk")
+
+                subject_blob = " ".join(
+                    [
+                        self._coerce_text_value(subject_semantics.get("scene_type")),
+                        self._coerce_text_value(subject_semantics.get("environment")),
+                        self._coerce_text_value(subject_semantics.get("abstraction_level")),
+                        self._compact_named_items(subject_semantics.get("primary_subjects"), limit=6),
+                        self._compact_named_items(subject_semantics.get("domain_cues"), limit=6),
+                        self._compact_named_items(subject_semantics.get("financial_objects"), limit=6),
+                        json.dumps(subject_semantics, default=str),
+                    ]
+                )
+                topic_alignment = self._final_render_topic_alignment_report(
+                    request=request,
+                    subject_blob=subject_blob,
+                )
+                if topic_alignment.get("status") in {"missing", "weak"}:
+                    score -= 0.16 if topic_alignment.get("status") == "missing" else 0.18
+                    issue_code = (
+                        "vision_subject_relevance_missing"
+                        if topic_alignment.get("status") == "missing"
+                        else "vision_subject_relevance_weak"
+                    )
+                    issues.append(issue_code)
+                    vision_retry_issues.add(issue_code)
+
+                visible_claims = self._final_render_visible_claim_hallucination_report(
+                    request=request,
+                    ocr_structure=ocr_structure,
+                    approved_text_payload=approved_text_payload,
+                )
+                if visible_claims.get("status") in {"unsupported_specificity", "unsupported_named_claim"}:
+                    score -= 0.18
+                    issues.append("vision_visible_claim_hallucination")
+                    vision_retry_issues.add("vision_visible_claim_hallucination")
+                elif (
+                    visible_claims.get("status") == "topic_drift_risk"
+                    and topic_alignment.get("status") in {"missing", "weak"}
+                ):
+                    score -= 0.14
+                    issues.append("vision_visible_text_topic_drift")
+                    vision_retry_issues.add("vision_visible_text_topic_drift")
+
+                if format_name == "infographic":
+                    structured_modules = sum(
+                        int(module_counts.get(key) or 0)
+                        for key in ("row_module_count", "card_like_count", "card_module_count", "horizontal_band_count", "text_block_count")
+                    )
+                    if structured_modules < 3 and not any(bool(page_permissions.get(key)) for key in ("chart_or_graph_allowed", "table_allowed", "metric_tiles_allowed")):
+                        score -= 0.1
+                        issues.append("vision_infographic_structure_weak")
+
+                requested_structure = self._final_render_requested_structure_report(
+                    request=request,
+                    module_counts=module_counts,
+                    visual_permissions=page_permissions,
+                )
+                if requested_structure.get("status") == "underbuilt":
+                    score -= 0.14
+                    issues.append("vision_requested_structure_underbuilt")
+                    vision_retry_issues.add("vision_requested_structure_underbuilt")
+
+                data_surface = self._final_render_data_surface_report(
+                    request=request,
+                    format_name=format_name,
+                    module_counts=module_counts,
+                    visual_permissions=page_permissions,
+                )
+                if data_surface.get("status") in {"underbuilt", "missing_requested_chart_or_table"}:
+                    score -= 0.12
+                    issues.append("vision_data_surface_underbuilt")
+                    vision_retry_issues.add("vision_data_surface_underbuilt")
+
+                content_visual_balance = self._final_render_content_visual_balance_report(
+                    request=request,
+                    format_name=format_name,
+                    module_counts=module_counts,
+                    subject_semantics=subject_semantics,
+                    ocr_structure=ocr_structure,
+                )
+                if content_visual_balance.get("status") in {"text_heavy", "image_only"}:
+                    score -= 0.14
+                    issues.append("vision_content_visual_balance_weak")
+                    vision_retry_issues.add("vision_content_visual_balance_weak")
+                elif content_visual_balance.get("status") == "visual_explanation_thin":
+                    score -= 0.08
+                    issues.append("vision_content_visual_balance_thin")
+
+                visual_metaphor = self._final_render_visual_metaphor_report(
+                    request=request,
+                    subject_blob=subject_blob,
+                    data_surface=data_surface,
+                )
+                if visual_metaphor.get("status") in {"generic", "weak"}:
+                    score -= 0.12
+                    issues.append("vision_visual_metaphor_generic")
+                    vision_retry_issues.add("vision_visual_metaphor_generic")
+
+                vision_summary = {
+                    "status": "openai_vision_enhanced",
+                    "premium_quality": premium_quality,
+                    "ocr_structure": {
+                        "readable_text_blocks": readable_blocks,
+                        "text_overlap_or_collision_risk": collision_risk or None,
+                        "text_truncation_or_crop_risk": truncation_risk or None,
+                        "logo_text_present": bool(ocr_structure.get("logo_text_present")),
+                    },
+                    "visual_craft_dna": visual_craft,
+                    "subject_semantics": subject_semantics,
+                    "topic_alignment": topic_alignment,
+                    "visible_claims": visible_claims or None,
+                    "requested_structure": requested_structure or None,
+                    "data_surface": data_surface or None,
+                    "content_visual_balance": content_visual_balance or None,
+                    "visual_metaphor": visual_metaphor or None,
+                    "module_counts": module_counts,
+                    "visual_permissions": page_permissions,
+                }
+        retry_recommended = any(
+            issue in {"low_resolution_output", "low_detail_or_blank_output"}
+            for issue in issues
+        ) or bool(vision_retry_issues)
+        return {
+            "score": max(0.0, round(score, 2)),
+            "issues": issues,
+            "hard_retry_issues": sorted(vision_retry_issues),
+            "retry_recommended": retry_recommended,
+            "format": format_name,
+            "generated_size": {"width": width, "height": height},
+            "target_size": {"width": target_width, "height": target_height},
+            "requested_image_size": image_size,
+            "aspect_delta": round(aspect_delta, 4),
+            "luminance_stddev": round(luminance_stddev, 3),
+            "edge_mean": round(edge_mean, 3),
+            "vision_quality": vision_summary or None,
+        }
+
+    @classmethod
+    def _append_final_render_output_quality_repair_prompt(
+        cls,
+        prompt: str,
+        *,
+        quality_report: dict[str, Any],
+        request: AIOrchestrationRequest | None = None,
+    ) -> str:
+        prompt = cls._strip_leading_final_render_output_quality_repair_prompt(prompt)
+        format_name = cls._format_name_from_request(request) if request is not None else ""
+        llm_led_static_infographic = cls._llm_led_static_infographic_format(format_name)
+        current_prompt = cls._normalize_metadata_text(
+            getattr(request, "prompt", "") if request is not None else "",
+            limit=360,
+        )
+        topic_anchors = sorted(cls._final_render_request_topic_tokens(request))[:10] if request is not None else []
+        vision_quality = quality_report.get("vision_quality") if isinstance(quality_report.get("vision_quality"), dict) else {}
+        topic_alignment = (
+            vision_quality.get("topic_alignment")
+            if isinstance(vision_quality.get("topic_alignment"), dict)
+            else {}
+        )
+        requested_structure = (
+            vision_quality.get("requested_structure")
+            if isinstance(vision_quality.get("requested_structure"), dict)
+            else {}
+        )
+        data_surface = (
+            vision_quality.get("data_surface")
+            if isinstance(vision_quality.get("data_surface"), dict)
+            else {}
+        )
+        visual_metaphor = (
+            vision_quality.get("visual_metaphor")
+            if isinstance(vision_quality.get("visual_metaphor"), dict)
+            else {}
+        )
+        visible_claims = (
+            vision_quality.get("visible_claims")
+            if isinstance(vision_quality.get("visible_claims"), dict)
+            else {}
+        )
+        ocr_structure = (
+            vision_quality.get("ocr_structure")
+            if isinstance(vision_quality.get("ocr_structure"), dict)
+            else {}
+        )
+        content_visual_balance = (
+            vision_quality.get("content_visual_balance")
+            if isinstance(vision_quality.get("content_visual_balance"), dict)
+            else {}
+        )
+        premium_quality = (
+            vision_quality.get("premium_quality")
+            if isinstance(vision_quality.get("premium_quality"), dict)
+            else {}
+        )
+        quality_floor_contract = cls._final_render_static_infographic_quality_floor_contract(
+            request=request,
+            format_name=format_name,
+        )
+        quality_issues = {
+            str(issue)
+            for issue in (quality_report.get("issues") or [])
+            if str(issue or "").strip()
+        }
+        structure_repair_instruction = ""
+        if (
+            llm_led_static_infographic
+            and (
+                "vision_requested_structure_underbuilt" in quality_issues
+                or requested_structure.get("status") == "underbuilt"
+            )
+        ):
+            requested_count = cls._int_or_none(requested_structure.get("requested_count"))
+            required_modules = cls._int_or_none(requested_structure.get("required_visible_modules"))
+            visible_modules = cls._int_or_none(requested_structure.get("visible_item_modules"))
+            if requested_count and required_modules:
+                structure_requirement = (
+                    f"Build at least {required_modules} distinct visible item modules for the requested "
+                    f"{requested_count}-item comparison/ranking/list"
+                )
+            elif required_modules:
+                structure_requirement = f"Build at least {required_modules} distinct visible comparison/ranking/list modules"
+            else:
+                structure_requirement = "Build distinct visible comparison/ranking/list modules"
+            if visible_modules is not None:
+                previous_attempt_note = (
+                    f" The previous attempt had about {visible_modules} visible item module(s), which was underbuilt."
+                )
+            else:
+                previous_attempt_note = ""
+            structure_repair_instruction = (
+                f" {structure_requirement}, or use one clearly readable real chart/table surface that visibly carries "
+                f"the requested comparison.{previous_attempt_note}"
+            )
+        data_surface_repair_instruction = ""
+        if (
+            llm_led_static_infographic
+            and (
+                "vision_data_surface_underbuilt" in quality_issues
+                or data_surface.get("status") in {"underbuilt", "missing_requested_chart_or_table"}
+            )
+        ):
+            required_modules = cls._int_or_none(data_surface.get("required_structured_modules"))
+            visible_modules = cls._int_or_none(data_surface.get("visible_structured_modules"))
+            if data_surface.get("status") == "missing_requested_chart_or_table":
+                data_requirement = "Include the requested readable chart/table/matrix-style data surface"
+            elif required_modules:
+                data_requirement = (
+                    f"Use a data-first layout with at least {required_modules} visible rows, cards, metric tiles, "
+                    "bars, or grouped comparison modules"
+                )
+            else:
+                data_requirement = "Use a data-first layout with visible rows, cards, metric tiles, bars, or grouped comparison modules"
+            if visible_modules is not None:
+                data_attempt_note = f" The previous attempt showed about {visible_modules} structured module(s)."
+            else:
+                data_attempt_note = ""
+            data_surface_repair_instruction = (
+                f" {data_requirement}; keep decorative imagery secondary to the requested data/comparison surface."
+                f"{data_attempt_note}"
+            )
+        visual_metaphor_repair_instruction = ""
+        if (
+            llm_led_static_infographic
+            and (
+                "vision_visual_metaphor_generic" in quality_issues
+                or visual_metaphor.get("status") in {"generic", "weak"}
+            )
+        ):
+            missing_tokens = [
+                str(token).strip()
+                for token in (visual_metaphor.get("missing_domain_tokens") or [])
+                if str(token).strip()
+            ][:6]
+            generic_tokens = [
+                str(token).strip()
+                for token in (visual_metaphor.get("generic_subject_tokens") or [])
+                if str(token).strip()
+            ][:6]
+            missing_summary = ", ".join(missing_tokens) if missing_tokens else "the strongest current-prompt domain anchors"
+            generic_summary = ", ".join(generic_tokens) if generic_tokens else "generic finance decoration"
+            visual_metaphor_repair_instruction = (
+                f" Replace generic visual subjects ({generic_summary}) with prompt-specific visual anchors tied to: "
+                f"{missing_summary}. Use objects, icons, modules, chart labels, and scene logic that make those anchors visible."
+            )
+        content_visual_repair_instruction = ""
+        if (
+            llm_led_static_infographic
+            and (
+                "vision_content_visual_balance_weak" in quality_issues
+                or "vision_content_visual_balance_thin" in quality_issues
+                or content_visual_balance.get("status") in {"text_heavy", "image_only", "visual_explanation_thin"}
+            )
+        ):
+            content_visual_repair_instruction = (
+                " Rebalance the creative so content and imagery explain the same topic together: pair concise readable text "
+                "with a topic-specific hero visual, icon set, mini chart, diagram, comparison modules, or visual metaphor. "
+                "Avoid text-only poster layouts and avoid image-only scenes with weak token copy."
+            )
+        craft_repair_instruction = ""
+        if (
+            "low_detail_or_blank_output" in quality_issues
+            or "weak_visual_detail" in quality_issues
+            or "vision_low_premium_quality" in quality_issues
+            or "vision_weak_visual_craft" in quality_issues
+            or "vision_weak_spacing" in quality_issues
+        ):
+            craft_repair_instruction = (
+                " Raise the craft level before changing the message: add clearer visual hierarchy, cleaner module surfaces, "
+                "more deliberate spacing, stronger contrast, crisp edges, and a coherent foreground/midground/background structure. "
+                "The next image must visibly satisfy the minimum output quality floor."
+            )
+        text_fit_repair_instruction = ""
+        if (
+            "vision_text_truncation_risk" in quality_issues
+            or cls._normalize_metadata_text(ocr_structure.get("text_truncation_or_crop_risk"), limit=24).casefold() in {"medium", "high"}
+        ):
+            text_fit_repair_instruction = (
+                " Fix text fit before improving decoration: every headline, label, row, number, CTA, and proof line must be fully visible inside its card/module/canvas boundaries with padding. "
+                "No cropped letters, half words, fading edge text, hidden rows, or text running under the logo/footer safe zones. Shorten, wrap, reduce modules, or enlarge text containers when needed."
+            )
+        if llm_led_static_infographic:
+            instruction = (
+                "Regenerate the finished static/infographic creative, not a blank substrate. Keep the main headline, "
+                "modules, labels, comparison/ranking content, and CTA as readable finished image text. Improve visual craft, "
+                "spacing, hierarchy, and target-aspect fit while keeping the logo-safe corner and footer/disclaimer strip empty. "
+                "Every visual metaphor, icon, chart-like module, object, scene, and headline must directly match the current user prompt. "
+                "Remove stale template subjects, previous-request topics, generic portraits, unrelated policy/trade themes, placeholder rows, "
+                "unsupported visible words, numbers, source labels, logos, brand-like marks, fake values, and off-topic decorative objects. "
+                f"Do not replace missing facts with generic fallback imagery or model-memory claims. {quality_floor_contract}"
+                f"{craft_repair_instruction}{text_fit_repair_instruction}{structure_repair_instruction}{data_surface_repair_instruction}{visual_metaphor_repair_instruction}{content_visual_repair_instruction}"
+            )
+        else:
+            instruction = (
+                "Regenerate the premium text-safe substrate with richer visual craft, clearer module surfaces, "
+                "stronger topic-specific focal detail, and stable centered target-aspect composition. "
+                "Do not add readable text, pseudo-text, logos, watermarks, or placeholder lettering."
+            )
+        repair_payload = {
+            "post_generation_output_quality_repair": {
+                "issues": quality_report.get("issues", []),
+                "score": quality_report.get("score"),
+                "target_size": quality_report.get("target_size"),
+                "generated_size": quality_report.get("generated_size"),
+                "current_user_prompt": current_prompt,
+                "topic_anchors": topic_anchors,
+                "topic_alignment": topic_alignment,
+                "visible_claims": visible_claims,
+                "ocr_structure": ocr_structure,
+                "content_visual_balance": content_visual_balance,
+                "premium_quality": premium_quality,
+                "quality_floor": quality_floor_contract,
+                "requested_structure": requested_structure,
+                "data_surface": data_surface,
+                "visual_metaphor": visual_metaphor,
+                "instruction": instruction,
+            }
+        }
+        return cls._trim_prompt(
+            f"{json.dumps(repair_payload, ensure_ascii=True)} {prompt}",
+            cls.IMAGE_PROMPT_MAX_LENGTH,
+        )
+
+    @classmethod
+    def _strip_leading_final_render_output_quality_repair_prompt(cls, prompt: str) -> str:
+        text = str(prompt or "")
+        stripped = text.lstrip()
+        leading_whitespace = len(text) - len(stripped)
+        if not stripped.startswith("{"):
+            return text
+        try:
+            parsed, end_index = json.JSONDecoder().raw_decode(stripped)
+        except json.JSONDecodeError:
+            return text
+        if not isinstance(parsed, dict) or "post_generation_output_quality_repair" not in parsed:
+            return text
+        return text[leading_whitespace + end_index :].lstrip()
+
+    @classmethod
+    def _final_render_output_quality_blocking_issues(cls, report: dict[str, Any] | None) -> set[str]:
+        if not isinstance(report, dict):
+            return set()
+        issues = {
+            cls._normalize_metadata_text(issue, limit=80)
+            for issue in (report.get("issues") or [])
+            if cls._normalize_metadata_text(issue, limit=80)
+        }
+        hard_issues = {
+            cls._normalize_metadata_text(issue, limit=80)
+            for issue in (report.get("hard_retry_issues") or [])
+            if cls._normalize_metadata_text(issue, limit=80)
+        }
+        blocking_base_issues = {
+            "low_resolution_output",
+            "low_detail_or_blank_output",
+        }
+        return hard_issues | (issues & blocking_base_issues)
+
+    @classmethod
+    def _mark_final_render_output_quality_visible_with_warning(
+        cls,
+        asset: dict[str, Any],
+        *,
+        report: dict[str, Any],
+        retry_attempts: int,
+    ) -> dict[str, Any]:
+        blocking_issues = sorted(cls._final_render_output_quality_blocking_issues(report))
+        asset["output_quality_assessment"] = report
+        asset["output_quality_retry_attempts"] = retry_attempts
+        asset["output_quality_status"] = "visible_with_warnings"
+        asset["output_quality_blocking_issues"] = blocking_issues
+        asset["output_quality_user_warning"] = (
+            "The generated image is visible, but it did not meet the final static/infographic quality bar."
+        )
+        return asset
+
     def _generate_final_render_image_with_sample_guard(
         self,
         *,
@@ -15356,28 +18209,45 @@ class AIOrchestratorService:
         sample_blueprint: dict[str, Any] | None,
         slide_index: int,
         slide_count: int,
+        approved_text_payload: Any | None = None,
         exact_logo_overlay_deferred: bool = False,
         legal_footer_overlay_deferred: bool = False,
+        sample_reference_image_paths: list[str] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any] | None, int, str]:
         current_prompt = prompt
         similarity_report: dict[str, Any] | None = None
         similarity_retry_attempts = 0
-        max_similarity_retries = 1
+        static_infographic_no_retry = self._llm_led_static_infographic_format(self._format_name_from_request(request))
+        max_similarity_retries = 0 if static_infographic_no_retry else 1
+        output_quality_retry_attempts = 0
+        configured_output_quality_retries = max(int(self.settings.image_quality_retry_attempts or 1), 0)
+        max_output_quality_retries = 0 if static_infographic_no_retry else configured_output_quality_retries
+        max_generation_attempts = max(max_similarity_retries, max_output_quality_retries) + 1
         best_asset: dict[str, Any] | None = None
         best_similarity_report: dict[str, Any] | None = None
         best_prompt = current_prompt
         best_score = -1.0
         stable_sample_blueprint = sample_blueprint
-        if reference_image_paths and isinstance(sample_blueprint, dict) and sample_blueprint:
+        sample_reference_paths = [
+            str(path)
+            for path in (sample_reference_image_paths or reference_image_paths or [])
+            if str(path or "").strip()
+        ]
+        if sample_reference_paths and isinstance(sample_blueprint, dict) and sample_blueprint:
             stable_sample_blueprint = (
                 sample_blueprint
                 if sample_blueprint.get("vision_analysis_status") == "openai_vision_enhanced"
                 else self._vision_enhance_page_blueprint(
-                    image_path=reference_image_paths[0],
+                    image_path=sample_reference_paths[0],
                     base_blueprint=sample_blueprint,
-                )
+                    )
             )
-        for attempt in range(1, max_similarity_retries + 2):
+        sample_similarity_active = bool(
+            sample_reference_paths
+            and isinstance(stable_sample_blueprint, dict)
+            and stable_sample_blueprint
+        )
+        for attempt in range(1, max_generation_attempts + 1):
             trace_label = (
                 f"final_render_conditioned_generation{trace_suffix}"
                 if reference_image_paths and attempt == 1
@@ -15409,13 +18279,126 @@ class AIOrchestratorService:
                     trace_id=trace_id,
                     trace_label=trace_label,
                 )
-            if not (reference_image_paths and isinstance(stable_sample_blueprint, dict) and stable_sample_blueprint):
-                return asset, similarity_report, similarity_retry_attempts, current_prompt
+            output_quality_report = self._assess_final_render_output_image(
+                request=request,
+                asset=asset,
+                image_size=image_size,
+                approved_text_payload=approved_text_payload,
+            )
+            if output_quality_report:
+                asset["output_quality_assessment"] = output_quality_report
+                asset["output_quality_retry_attempts"] = output_quality_retry_attempts
+                try:
+                    output_quality_score = float(output_quality_report.get("score") or 0.0)
+                except (TypeError, ValueError):
+                    output_quality_score = 0.0
+                output_quality_blocking = self._final_render_output_quality_blocking_issues(output_quality_report)
+                best_quality_report = (
+                    best_asset.get("output_quality_assessment")
+                    if isinstance(best_asset, dict) and isinstance(best_asset.get("output_quality_assessment"), dict)
+                    else None
+                )
+                best_quality_blocking = self._final_render_output_quality_blocking_issues(best_quality_report)
+                if (
+                    not sample_similarity_active
+                    and (
+                        best_asset is None
+                        or (best_quality_blocking and not output_quality_blocking)
+                        or (bool(best_quality_blocking) == bool(output_quality_blocking) and output_quality_score > best_score)
+                    )
+                ):
+                    best_asset = asset
+                    best_similarity_report = similarity_report
+                    best_prompt = current_prompt
+                    best_score = output_quality_score
+                self._trace_payload(
+                    trace_id,
+                    self.trace,
+                    f"final_render_output_quality{trace_suffix}_attempt_{attempt:02d}",
+                    {
+                        "attempt": attempt,
+                        "asset_storage_path": str(asset.get("storage_path") or "").strip(),
+                        "report": output_quality_report,
+                        "slide_index": slide_index,
+                        "slide_count": slide_count,
+                    },
+                )
+                if (
+                    bool(output_quality_report.get("retry_recommended"))
+                    and output_quality_retry_attempts < max_output_quality_retries
+                ):
+                    output_quality_retry_attempts += 1
+                    current_prompt = self._append_final_render_output_quality_repair_prompt(
+                        current_prompt,
+                        quality_report=output_quality_report,
+                        request=request,
+                    )
+                    self._trace_payload(
+                        trace_id,
+                        self.trace,
+                        f"final_render_output_quality_repair_prompt{trace_suffix}_attempt_{attempt + 1:02d}",
+                        {
+                            "prompt": current_prompt,
+                            **self._prompt_length_metrics(current_prompt),
+                            "previous_quality_report": output_quality_report,
+                            "slide_index": slide_index,
+                            "slide_count": slide_count,
+                        },
+                    )
+                    continue
+                if output_quality_blocking and sample_similarity_active:
+                    self._trace_payload(
+                        trace_id,
+                        self.trace,
+                        f"final_render_output_quality_visible_with_warnings{trace_suffix}",
+                        {
+                            "blocking_issues": sorted(output_quality_blocking),
+                            "quality_report": output_quality_report,
+                            "output_quality_retry_attempts": output_quality_retry_attempts,
+                            "slide_index": slide_index,
+                            "slide_count": slide_count,
+                        },
+                    )
+                    return self._mark_final_render_output_quality_visible_with_warning(
+                        asset,
+                        report=output_quality_report,
+                        retry_attempts=output_quality_retry_attempts,
+                    ), similarity_report, similarity_retry_attempts, current_prompt
+            if not sample_similarity_active:
+                selected_asset = best_asset or asset
+                selected_asset["output_quality_retry_attempts"] = output_quality_retry_attempts
+                selected_quality_report = (
+                    selected_asset.get("output_quality_assessment")
+                    if isinstance(selected_asset.get("output_quality_assessment"), dict)
+                    else output_quality_report
+                    if isinstance(output_quality_report, dict)
+                    else {}
+                )
+                blocking_issues = self._final_render_output_quality_blocking_issues(selected_quality_report)
+                if blocking_issues:
+                    self._trace_payload(
+                        trace_id,
+                        self.trace,
+                        f"final_render_output_quality_visible_with_warnings{trace_suffix}",
+                        {
+                            "blocking_issues": sorted(blocking_issues),
+                            "quality_report": selected_quality_report,
+                            "output_quality_retry_attempts": output_quality_retry_attempts,
+                            "slide_index": slide_index,
+                            "slide_count": slide_count,
+                        },
+                    )
+                    selected_asset = self._mark_final_render_output_quality_visible_with_warning(
+                        selected_asset,
+                        report=selected_quality_report,
+                        retry_attempts=output_quality_retry_attempts,
+                    )
+                return selected_asset, similarity_report, similarity_retry_attempts, best_prompt or current_prompt
             output_storage_path = str(asset.get("storage_path") or "").strip()
             if not output_storage_path or not self.storage.exists(output_storage_path):
                 return asset, similarity_report, similarity_retry_attempts, current_prompt
             similarity_report = self._sample_output_similarity_from_paths_with_vision(
-                sample_image_path=reference_image_paths[0],
+                sample_image_path=sample_reference_paths[0],
                 output_image_path=self.storage.absolute_path(output_storage_path),
                 sample_blueprint=stable_sample_blueprint,
                 slide_index=slide_index,
@@ -15478,7 +18461,7 @@ class AIOrchestratorService:
                 f"final_render_sample_similarity_repair_prompt{trace_suffix}_attempt_{attempt + 1:02d}",
                 {
                     "prompt": current_prompt,
-                    "prompt_length": len(current_prompt),
+                    **self._prompt_length_metrics(current_prompt),
                     "previous_similarity_report": similarity_report,
                     "slide_index": slide_index,
                     "slide_count": slide_count,
@@ -15526,7 +18509,8 @@ class AIOrchestratorService:
                 creative_decision=creative_decision,
                 request=request,
             )
-        is_carousel_render = str(request.studio_panel.get("format") or "").strip().lower() == "carousel"
+        final_render_format_name = str(request.studio_panel.get("format") or "").strip().lower()
+        is_carousel_render = final_render_format_name == "carousel"
         carousel_slide_specs = (
             self._build_carousel_slide_specs(
                 text_payload,
@@ -15621,7 +18605,42 @@ class AIOrchestratorService:
             selected_reference_images,
             message_strategy,
         )
-        if request.generate_image and not scene_graph_ignored_for_final_render and self._should_block_low_quality_final_render(quality_assessment):
+        low_quality_plan_deferred_to_final_render = (
+            request.generate_image
+            and not scene_graph_ignored_for_final_render
+            and self._should_block_low_quality_final_render(quality_assessment)
+            and self._should_defer_low_quality_plan_to_llm_final_render(
+                request=request,
+                generation_path=generation_path,
+                creative_decision=creative_decision,
+            )
+        )
+        if low_quality_plan_deferred_to_final_render:
+            quality_improvement_note = self._final_render_quality_improvement_note(quality_assessment)
+            final_render_retry_note = " ".join(
+                part
+                for part in [
+                    final_render_retry_note,
+                    quality_improvement_note,
+                ]
+                if part
+            ).strip()
+            self._trace_payload(
+                trace_id,
+                self.trace,
+                "final_render_low_quality_plan_deferred",
+                {
+                    "quality_assessment": quality_assessment,
+                    "reason": "static_infographic_llm_led_final_render_can_recompose",
+                    "retry_note": final_render_retry_note,
+                },
+            )
+        if (
+            request.generate_image
+            and not scene_graph_ignored_for_final_render
+            and self._should_block_low_quality_final_render(quality_assessment)
+            and not low_quality_plan_deferred_to_final_render
+        ):
             self._trace_payload(
                 trace_id,
                 self.trace,
@@ -15669,7 +18688,11 @@ class AIOrchestratorService:
             scene_graph=final_render_scene_graph,
         )
         exact_logo_overlay_required = bool(logo_storage_path and self.storage.exists(logo_storage_path))
-        prompt_reference_images = list(conditioning_reference_images)
+        layout_prompt_reference_images = selected_reference_images if final_render_format_name in {"static", "infographic"} else []
+        prompt_reference_images = self._merge_reference_asset_lists(
+            conditioning_reference_images,
+            layout_prompt_reference_images,
+        )
         conditioning_reference_images, skipped_logo_reference_images = self._filter_logo_bearing_conditioning_reference_images(
             conditioning_reference_images,
             exact_logo_overlay_required=exact_logo_overlay_required,
@@ -15679,12 +18702,22 @@ class AIOrchestratorService:
             creative_decision=creative_decision,
             limit=2,
         )
-        if self._style_reference_only_carousel_active(request, creative_decision):
+        if self._reference_layout_adaptation_active(
+            request,
+            creative_decision=creative_decision,
+            compiled_context=compiled_context,
+            reference_images=conditioning_reference_images,
+        ):
             topic_reference_images = []
         if topic_reference_images:
             prompt_reference_images = self._merge_reference_asset_lists(topic_reference_images, prompt_reference_images)
-            conditioning_reference_images = self._merge_reference_asset_lists(
+            conditioning_topic_reference_images = self._conditioning_reference_image_assets(
                 topic_reference_images,
+                creative_decision=creative_decision,
+                request=request,
+            )
+            conditioning_reference_images = self._merge_reference_asset_lists(
+                conditioning_topic_reference_images,
                 conditioning_reference_images,
             )
             conditioning_reference_images, topic_skipped_logo_reference_images = self._filter_logo_bearing_conditioning_reference_images(
@@ -15697,7 +18730,11 @@ class AIOrchestratorService:
                     topic_skipped_logo_reference_images,
                 )
         if skipped_logo_reference_images:
-            prompt_reference_images = [*conditioning_reference_images, *skipped_logo_reference_images]
+            prompt_reference_images = self._merge_reference_asset_lists(
+                conditioning_reference_images,
+                skipped_logo_reference_images,
+                layout_prompt_reference_images,
+            )
             self._trace_payload(
                 trace_id,
                 self.trace,
@@ -15760,6 +18797,7 @@ class AIOrchestratorService:
                     slide_conditioning_reference_images,
                     request=request,
                     creative_decision=creative_decision,
+                    for_conditioning=True,
                 )
                 slide_metadata = slide.get("metadata") if isinstance(slide.get("metadata"), dict) else {}
                 desired_reference_path = str(slide_metadata.get("reference_asset_path") or "").strip()
@@ -15791,16 +18829,39 @@ class AIOrchestratorService:
                     request=request,
                     cache=pdf_reference_conditioning_cache,
                 )
-                if self._style_reference_only_carousel_active(request, creative_decision):
+                layout_analysis_reference_images = (
+                    self._layout_analysis_reference_image_assets(
+                        self._merge_reference_asset_lists(
+                            slide_prompt_reference_images,
+                            slide_conditioning_reference_images,
+                        ),
+                        request=request,
+                    )
+                    if not is_carousel_render
+                    else [dict(asset) for asset in slide_conditioning_reference_images if isinstance(asset, dict)]
+                )
+                layout_reference_image_paths = self._conditioning_reference_image_paths(
+                    layout_analysis_reference_images,
+                    request=request,
+                    cache=pdf_reference_conditioning_cache,
+                )
+                reference_layout_adaptation_active = self._reference_layout_adaptation_active(
+                    request,
+                    creative_decision=creative_decision,
+                    metadata=slide_metadata,
+                    compiled_context=compiled_context,
+                    reference_images=layout_analysis_reference_images,
+                )
+                if reference_layout_adaptation_active:
                     slide = self._annotate_slide_with_sample_page_blueprint(
                         slide,
-                        reference_image_paths=reference_image_paths,
+                        reference_image_paths=layout_reference_image_paths,
                     )
-                    if reference_image_paths:
+                    if layout_reference_image_paths:
                         metadata = dict(slide.get("metadata") or {})
                         blueprint = metadata.get("sample_page_blueprint") if isinstance(metadata.get("sample_page_blueprint"), dict) else {}
                         enhanced_blueprint = self._vision_enhance_page_blueprint(
-                            image_path=reference_image_paths[0],
+                            image_path=layout_reference_image_paths[0],
                             base_blueprint=blueprint,
                         )
                         if enhanced_blueprint:
@@ -15824,9 +18885,19 @@ class AIOrchestratorService:
                         compiled_context=compiled_context,
                     )
                 else:
+                    prompt_text_payload = text_payload
+                    if slide_metadata:
+                        prompt_text_payload = text_payload.model_copy(
+                            update={
+                                "metadata": {
+                                    **(text_payload.metadata or {}),
+                                    **slide_metadata,
+                                }
+                            }
+                        )
                     final_render_prompt = self.build_final_render_prompt(
                         request=request,
-                        text_payload=text_payload,
+                        text_payload=prompt_text_payload,
                         creative_decision=creative_decision,
                         scene_graph=final_render_scene_graph,
                         message_strategy=message_strategy,
@@ -15849,7 +18920,7 @@ class AIOrchestratorService:
                         "prompt": final_render_prompt,
                         "size": image_size,
                         "model": self.settings.image_model,
-                        "prompt_length": len(final_render_prompt),
+                        **self._prompt_length_metrics(final_render_prompt),
                         "text_overlay_strategy": text_overlay_strategy,
                         "slide_index": slide_index,
                         "slide_count": slide_count,
@@ -15875,8 +18946,10 @@ class AIOrchestratorService:
                         sample_blueprint=sample_page_blueprint,
                         slide_index=slide_index,
                         slide_count=slide_count,
+                        approved_text_payload=text_payload,
                         exact_logo_overlay_deferred=exact_logo_overlay_required,
                         legal_footer_overlay_deferred=bool(legal_footer_text),
+                        sample_reference_image_paths=layout_reference_image_paths,
                     )
                 )
                 base_asset = GeneratedImageAsset(
@@ -15933,7 +19006,7 @@ class AIOrchestratorService:
                     "generation_stage": "final_render",
                     "provider": asset.get("provider"),
                     "model": asset.get("model") or self.settings.image_model,
-                    "prompt_length": len(final_render_prompt),
+                    **self._prompt_length_metrics(final_render_prompt),
                     "text_overlay_strategy": text_overlay_strategy,
                     "requested_size": asset.get("size", image_size),
                     "generation_path": generation_path,
@@ -15951,8 +19024,14 @@ class AIOrchestratorService:
                     "visual_explanation_rationale": visual_explanation_plan.get("rationale"),
                     "quality_assessment": quality_assessment,
                     "quality_retry_attempts": quality_retry_attempts,
+                    "output_quality_assessment": asset.get("output_quality_assessment"),
+                    "output_quality_retry_attempts": asset.get("output_quality_retry_attempts", 0),
+                    "output_quality_status": asset.get("output_quality_status"),
+                    "output_quality_blocking_issues": asset.get("output_quality_blocking_issues", []),
+                    "output_quality_user_warning": asset.get("output_quality_user_warning"),
                     "sample_page_blueprint": sample_page_blueprint,
                     "sample_page_conditioning_image_path": reference_image_paths[0] if reference_image_paths else None,
+                    "sample_page_layout_image_path": layout_reference_image_paths[0] if layout_reference_image_paths else None,
                     "sample_visual_similarity": sample_similarity_report,
                     "sample_visual_similarity_retry_attempts": sample_similarity_retry_attempts,
                     "slide_index": slide_index,
@@ -15961,7 +19040,7 @@ class AIOrchestratorService:
                 }
                 if use_backend_text_overlay:
                     filtered_scene = final_render_scene_graph.model_copy(deep=True)
-                    if not is_carousel_render:
+                    if final_render_format_name not in self.BACKEND_TEXT_OVERLAY_SCENE_GRAPH_FORMATS:
                         filtered_scene.elements = [e for e in filtered_scene.elements if e.role in ("legal", "footer", "disclaimer")]
                     final_asset_metadata["render_overlay_scene_graph"] = filtered_scene.model_dump(mode="json")
 
@@ -16005,6 +19084,8 @@ class AIOrchestratorService:
                         metadata=final_asset_metadata,
                     )
                 )
+        except GenerationFailureError:
+            raise
         except Exception as exc:  # pragma: no cover - resilience path
             image_generation_error = str(exc)
             logger.warning(
@@ -16073,8 +19154,120 @@ class AIOrchestratorService:
         return cls._normalize_metadata_text(request.studio_panel.get("format"), limit=32).casefold()
 
     @classmethod
+    def _llm_led_static_infographic_format(cls, format_name: Any) -> bool:
+        return cls._normalize_metadata_text(format_name, limit=32).casefold() in {"static", "infographic"}
+
+    @classmethod
     def _needs_content_semantic_validation(cls, request: AIOrchestrationRequest) -> bool:
         return cls._format_name_from_request(request) in {"carousel", "infographic", "static"}
+
+    DATA_SURFACE_BLOCKING_ISSUE_CODES = {
+        "carousel_unsupported_exact_claim",
+        "carousel_slide_unsupported_exact_claim",
+        "carousel_data_visual_unsupported_claims",
+    }
+
+    @classmethod
+    def _unresolved_data_surface_issue_codes(cls, report: dict[str, Any] | None) -> set[str]:
+        if not isinstance(report, dict) or str(report.get("status") or "").casefold() == "clean":
+            return set()
+        return {
+            code
+            for code in [
+                cls._normalize_metadata_text(issue.get("code"), limit=80)
+                for issue in (report.get("issues") or [])
+                if isinstance(issue, dict)
+            ]
+            if code in cls.DATA_SURFACE_BLOCKING_ISSUE_CODES
+        }
+
+    @classmethod
+    def _data_surface_contract_active(
+        cls,
+        *,
+        request: AIOrchestrationRequest,
+        text_payload: StructuredTextPayload,
+    ) -> bool:
+        return bool(
+            cls._data_list_surface_contract(
+                prompt=request.prompt,
+                format_name=cls._format_name_from_request(request),
+                metadata=text_payload.metadata if isinstance(text_payload.metadata, dict) else {},
+                text_payload=text_payload,
+            )
+        )
+
+    @classmethod
+    def _should_defer_data_surface_layout_validation(
+        cls,
+        *,
+        request: AIOrchestrationRequest,
+        text_payload: StructuredTextPayload,
+        validation_report: SceneGraphValidationReport,
+        ) -> bool:
+        if validation_report.status == "clean":
+            return False
+        if cls._format_name_from_request(request) not in {"static", "infographic"}:
+            return False
+        return cls._data_surface_contract_active(request=request, text_payload=text_payload)
+
+    @classmethod
+    def _should_defer_low_quality_plan_to_llm_final_render(
+        cls,
+        *,
+        request: AIOrchestrationRequest,
+        generation_path: str | None,
+        creative_decision: CreativeDecisionPayload | None = None,
+    ) -> bool:
+        if not cls._llm_led_static_infographic_format(cls._format_name_from_request(request)):
+            return False
+        return cls._should_use_ai_final_render(request, generation_path, creative_decision)
+
+    @classmethod
+    def _final_render_quality_improvement_note(cls, quality_assessment: dict[str, Any] | None) -> str:
+        assessment = quality_assessment if isinstance(quality_assessment, dict) else {}
+        try:
+            score = float(assessment.get("score") or 0.0)
+        except (TypeError, ValueError):
+            score = 0.0
+        issues = [
+            cls._normalize_metadata_text(issue, limit=80)
+            for issue in (assessment.get("issues") or [])
+            if cls._normalize_metadata_text(issue, limit=80)
+        ]
+        issue_text = ", ".join(issues[:6]) if issues else "unspecified quality issues"
+        return (
+            f"Quality improvement note: the planning draft scored {score:.2f}, below the premium threshold. "
+            f"Resolve these issues in the final image model composition: {issue_text}. "
+            "Use a stronger topic-specific focal idea, clearer hierarchy, better evidence grouping, premium spacing, high contrast, and richer craft. "
+            "Do not fall back to generic people, stale templates, blank cards, weak decorative icons, or unrelated visual topics."
+        )
+
+    @classmethod
+    def _data_surface_generation_failure(
+        cls,
+        *,
+        report: dict[str, Any],
+        reason_code: str = "data_surface_content_unresolved",
+    ) -> GenerationFailureError:
+        issue_codes = sorted(cls._unresolved_data_surface_issue_codes(report))
+        summary = (
+            "Data/ranking surface generation blocked because exact values or claims are unresolved; "
+            "generic visual fallback is disabled for this request."
+        )
+        return GenerationFailureError(
+            summary,
+            failure_type="content_semantic_validation",
+            reason_code=reason_code,
+            user_safe_message=(
+                "Verified exact values or claims were missing for this ranking/table request, so generation stopped before inventing data. "
+                "Attach source data or run live research upstream before final rendering."
+            ),
+            retryable=True,
+            rule_source="data_surface_no_fallback",
+            suggested_next_action="Provide verified exact values for the requested ranking/table, or run the research step before image generation.",
+            details={"issue_codes": issue_codes, "report": report},
+        )
 
     @classmethod
     def _build_content_semantic_rewrite_instruction(
@@ -16136,6 +19329,7 @@ class AIOrchestratorService:
             "Rewrite the structured static content so the panel has one dominant message with concrete support instead of generic or repeated lines."
             f" Fix these issues: {'; '.join(issue_messages)}."
             " Strengthen metadata.static_panel_spec, body, proof_points, stat_highlights, and claim_evidence_pairs."
+            " If the user requested a top-N/ranking/list count, preserve that requested count as distinct row-ready metadata entries whenever verified/user-provided facts support it."
             " If the static panel uses a table, chart, graph, dashboard, matrix, timeline, scorecard, or metric module, tie every label/value/bucket to approved panel facts; otherwise downgrade it to qualitative cards or a single evidence module."
             " Keep the message concise and keep CTA treatment secondary to the main claim."
         )
@@ -16463,6 +19657,92 @@ class AIOrchestratorService:
         return " ".join(kept).strip()
 
     @classmethod
+    def _filter_unsupported_exact_claim_items(
+        cls,
+        value: Any,
+        unsupported_markers: set[str],
+        *,
+        limit: int = 10,
+    ) -> list[str]:
+        values = cls._normalize_metadata_list(value, limit=limit)
+        if not unsupported_markers:
+            return values
+        return [
+            line
+            for line in values
+            if not cls._text_contains_unsupported_marker(line, unsupported_markers)
+        ]
+
+    @classmethod
+    def _filter_unsupported_claim_evidence_pairs(
+        cls,
+        value: Any,
+        unsupported_markers: set[str],
+        *,
+        limit: int = 10,
+    ) -> list[dict[str, str]]:
+        pairs = cls._normalize_claim_evidence_pairs(value, limit=limit)
+        if not unsupported_markers:
+            return pairs
+        return [
+            pair
+            for pair in pairs
+            if not cls._text_contains_unsupported_marker(
+                " ".join(
+                    [
+                        cls._coerce_text_value(pair.get("claim")),
+                        cls._coerce_text_value(pair.get("evidence")),
+                    ]
+                ),
+                unsupported_markers,
+            )
+        ]
+
+    @classmethod
+    def _qualitative_data_surface_visual_focus(
+        cls,
+        *,
+        request: AIOrchestrationRequest,
+        format_name: str,
+    ) -> str:
+        requested_count = cls._explicit_top_n_item_count(request.prompt)
+        count_phrase = f"{requested_count} clear slots" if requested_count else "clear grouped slots"
+        surface = "sectioned explainer" if format_name == "infographic" else "single-panel creative"
+        return (
+            f"Topic-specific qualitative comparison modules for a {surface}, with {count_phrase}, concise labels, "
+            "icons, dividers, and grouped cards; avoid exact numbers or measured labels unless verified anchors are available."
+        )
+
+    @classmethod
+    def _sanitize_structured_visual_data_anchors(
+        cls,
+        value: Any,
+        unsupported_markers: set[str],
+    ) -> tuple[Any, bool]:
+        if not isinstance(value, dict) or not isinstance(value.get("data_anchors"), list):
+            return value, False
+        cleaned = dict(value)
+        original = list(value.get("data_anchors") or [])
+        filtered: list[Any] = []
+        for item in original:
+            text = item.get("text") if isinstance(item, dict) else item
+            if unsupported_markers and cls._text_contains_unsupported_marker(text, unsupported_markers):
+                continue
+            filtered.append(item)
+        if filtered == original:
+            return value, False
+        cleaned["data_anchors"] = filtered
+        for key in ("table_intent", "chart_intent"):
+            intent = cleaned.get(key)
+            if isinstance(intent, dict) and not filtered:
+                cleaned[key] = {
+                    **intent,
+                    "allowed": False,
+                    "anchor_count": 0,
+                }
+        return cleaned, True
+
+    @classmethod
     def _line_is_research_process_filler(cls, value: Any) -> bool:
         text = cls._normalize_metadata_text(value, limit=220).casefold()
         if not text:
@@ -16638,6 +19918,169 @@ class AIOrchestratorService:
         return False
 
     @classmethod
+    def _preflight_static_infographic_text_payload_semantics(
+        cls,
+        *,
+        request: AIOrchestrationRequest,
+        text_payload: StructuredTextPayload,
+        compiled_context: dict[str, Any] | None,
+        format_name: str,
+    ) -> StructuredTextPayload:
+        payload = text_payload.model_dump(mode="json")
+        metadata = deepcopy(payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {})
+        unsupported_markers = cls._unsupported_exact_claim_markers(
+            json.dumps(payload, ensure_ascii=False, default=str),
+            request=request,
+            compiled_context=compiled_context,
+        )
+        changed = False
+
+        for key in ("body", "cta"):
+            cleaned = cls._remove_unsupported_exact_claim_lines(payload.get(key), unsupported_markers)
+            if cleaned != cls._coerce_text_value(payload.get(key)):
+                payload[key] = cleaned
+                changed = True
+        headline = cls._coerce_text_value(payload.get("headline"))
+        cleaned_headline = cls._remove_unsupported_exact_claim_lines(headline, unsupported_markers)
+        if cleaned_headline and cleaned_headline != headline:
+            payload["headline"] = cleaned_headline
+            changed = True
+
+        for key in ("proof_points", "stat_highlights", "trust_builders"):
+            if key not in metadata:
+                continue
+            original = cls._normalize_metadata_list(metadata.get(key), limit=10)
+            filtered = cls._filter_unsupported_exact_claim_items(metadata.get(key), unsupported_markers, limit=10)
+            if filtered != original:
+                metadata[key] = filtered
+                changed = True
+        if "claim_evidence_pairs" in metadata:
+            original_pairs = cls._normalize_claim_evidence_pairs(metadata.get("claim_evidence_pairs"), limit=10)
+            filtered_pairs = cls._filter_unsupported_claim_evidence_pairs(
+                metadata.get("claim_evidence_pairs"),
+                unsupported_markers,
+                limit=10,
+            )
+            if filtered_pairs != original_pairs:
+                metadata["claim_evidence_pairs"] = filtered_pairs
+                changed = True
+
+        structured_visual_metadata, structured_changed = cls._sanitize_structured_visual_data_anchors(
+            metadata.get("structured_visual_metadata"),
+            unsupported_markers,
+        )
+        if structured_changed:
+            metadata["structured_visual_metadata"] = structured_visual_metadata
+            changed = True
+
+        def sanitize_surface_container(container: dict[str, Any]) -> bool:
+            local_changed = False
+            for key in ("body", "supporting_line", "dominant_message"):
+                if key not in container:
+                    continue
+                cleaned = cls._remove_unsupported_exact_claim_lines(container.get(key), unsupported_markers)
+                if cleaned != cls._coerce_text_value(container.get(key)):
+                    container[key] = cleaned
+                    local_changed = True
+            for key in ("proof_points", "body_points", "supporting_lines", "stat_highlights"):
+                if key not in container:
+                    continue
+                original = cls._normalize_metadata_list(container.get(key), limit=10)
+                filtered = cls._filter_unsupported_exact_claim_items(container.get(key), unsupported_markers, limit=10)
+                if filtered != original:
+                    container[key] = filtered
+                    local_changed = True
+            if "claim_evidence_pairs" in container:
+                original_pairs = cls._normalize_claim_evidence_pairs(container.get("claim_evidence_pairs"), limit=10)
+                filtered_pairs = cls._filter_unsupported_claim_evidence_pairs(
+                    container.get("claim_evidence_pairs"),
+                    unsupported_markers,
+                    limit=10,
+                )
+                if filtered_pairs != original_pairs:
+                    container["claim_evidence_pairs"] = filtered_pairs
+                    local_changed = True
+            return local_changed
+
+        panel = metadata.get("static_panel_spec")
+        if isinstance(panel, dict):
+            panel = dict(panel)
+            if sanitize_surface_container(panel):
+                changed = True
+            metadata["static_panel_spec"] = panel
+
+        sections = metadata.get("infographic_section_specs")
+        if isinstance(sections, list):
+            cleaned_sections: list[Any] = []
+            for section in sections:
+                if not isinstance(section, dict):
+                    cleaned_sections.append(section)
+                    continue
+                section_copy = dict(section)
+                if sanitize_surface_container(section_copy):
+                    changed = True
+                cleaned_sections.append(section_copy)
+            if cleaned_sections != sections:
+                metadata["infographic_section_specs"] = cleaned_sections
+                changed = True
+
+        surface_contract = cls._data_list_surface_contract(
+            prompt=request.prompt,
+            format_name=format_name,
+            metadata=metadata,
+            text_payload=StructuredTextPayload(**{**payload, "metadata": metadata}),
+        )
+        if surface_contract:
+            anchors = cls._data_visualization_anchor_lines(
+                metadata.get("proof_points"),
+                metadata.get("stat_highlights"),
+                metadata.get("claim_evidence_pairs"),
+                metadata.get("static_panel_spec"),
+                metadata.get("infographic_section_specs"),
+                payload.get("body"),
+                limit=max(cls._int_or_none(surface_contract.get("module_count")) or 0, 8),
+            )
+            has_exact_anchor = any(cls._exact_claim_markers(anchor) for anchor in anchors)
+            if not has_exact_anchor:
+                qualitative_focus = cls._qualitative_data_surface_visual_focus(
+                    request=request,
+                    format_name=format_name,
+                )
+                for key in ("visual_focus", "visual_direction", "image_prompt"):
+                    if cls._data_visualization_visual_focus(metadata.get(key)):
+                        metadata[key] = qualitative_focus
+                        changed = True
+                panel = metadata.get("static_panel_spec")
+                if isinstance(panel, dict) and cls._data_visualization_visual_focus(panel.get("visual_focus")):
+                    panel = dict(panel)
+                    panel["visual_focus"] = qualitative_focus
+                    metadata["static_panel_spec"] = panel
+                    changed = True
+                sections = metadata.get("infographic_section_specs")
+                if isinstance(sections, list):
+                    cleaned_sections = []
+                    for section in sections:
+                        if not isinstance(section, dict):
+                            cleaned_sections.append(section)
+                            continue
+                        section_copy = dict(section)
+                        for key in ("visual_focus", "visual_direction", "image_prompt"):
+                            if cls._data_visualization_visual_focus(section_copy.get(key)):
+                                section_copy[key] = qualitative_focus
+                                changed = True
+                        cleaned_sections.append(section_copy)
+                    if cleaned_sections != sections:
+                        metadata["infographic_section_specs"] = cleaned_sections
+            if changed:
+                metadata["data_surface_exact_values_sanitized"] = bool(unsupported_markers)
+                metadata["data_surface_visual_mode"] = "qualitative_until_verified"
+
+        if not changed:
+            return text_payload
+        payload["metadata"] = metadata
+        return StructuredTextPayload(**payload)
+
+    @classmethod
     def _preflight_text_payload_semantics(
         cls,
         *,
@@ -16645,7 +20088,15 @@ class AIOrchestratorService:
         text_payload: StructuredTextPayload,
         compiled_context: dict[str, Any] | None,
     ) -> StructuredTextPayload:
-        if cls._format_name_from_request(request) != "carousel":
+        format_name = cls._format_name_from_request(request)
+        if format_name in {"static", "infographic"}:
+            return cls._preflight_static_infographic_text_payload_semantics(
+                request=request,
+                text_payload=text_payload,
+                compiled_context=compiled_context,
+                format_name=format_name,
+            )
+        if format_name != "carousel":
             return text_payload
         payload = text_payload.model_dump(mode="json")
         metadata = deepcopy(payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {})
@@ -17133,11 +20584,14 @@ class AIOrchestratorService:
                         request=request,
                         sample_allows_data_or_product=cls._sample_contract_allows_product_cta(raw_sample_contract),
                     )
-                    and cls._style_reference_visual_focus_needs_sample_reset(
-                        normalized_visual_focus,
-                        request=request,
-                        sample_allows_data_or_product=cls._sample_page_visualizes_data_or_product(normalized_slide)
-                        or cls._sample_contract_allows_product_cta(raw_sample_contract),
+                    and (
+                        not raw_sequence_count_matches_sample
+                        or cls._style_reference_visual_focus_needs_sample_reset(
+                            normalized_visual_focus,
+                            request=request,
+                            sample_allows_data_or_product=cls._sample_page_visualizes_data_or_product(normalized_slide)
+                            or cls._sample_contract_allows_product_cta(raw_sample_contract),
+                        )
                     )
                 ):
                     issues.append(
@@ -17493,6 +20947,45 @@ class AIOrchestratorService:
 
         elif format_name == "infographic":
             sections = [dict(item) for item in (metadata.get("infographic_section_specs") or []) if isinstance(item, dict)]
+            surface_contract = cls._data_list_surface_contract(
+                prompt=request.prompt,
+                format_name=format_name,
+                metadata=metadata,
+                text_payload=text_payload,
+            )
+            requested_count = cls._int_or_none((surface_contract or {}).get("requested_count")) or 0
+            module_count = cls._int_or_none((surface_contract or {}).get("module_count")) or requested_count
+            surface_rows = cls._data_visualization_anchor_lines(
+                metadata.get("proof_points"),
+                metadata.get("stat_highlights"),
+                metadata.get("claim_evidence_pairs"),
+                metadata.get("infographic_section_specs"),
+                limit=max(module_count, 8),
+            )
+            if surface_contract and requested_count and len(surface_rows) < min(requested_count, module_count or requested_count):
+                issues.append(
+                    cls._clean_content_semantic_issue(
+                        code="infographic_missing_requested_ranking_rows",
+                        message=f"The infographic request asks for {requested_count} list/ranking item(s), but the structured metadata only provides {len(surface_rows)} usable row anchor(s).",
+                        targeted_fields=["body", "metadata"],
+                    )
+                )
+            unsupported_infographic_markers = cls._unsupported_exact_claim_markers(
+                " ".join([text_payload.headline, text_payload.body, text_payload.cta, *surface_rows]),
+                request=request,
+                compiled_context=compiled_context,
+            )
+            if unsupported_infographic_markers:
+                issues.append(
+                    cls._clean_content_semantic_issue(
+                        code="infographic_unsupported_exact_claim",
+                        message=(
+                            "The infographic includes exact numeric/date/currency claims that are not present in verified facts or the user prompt: "
+                            + ", ".join(sorted(unsupported_infographic_markers)[:4])
+                        ),
+                        targeted_fields=["body", "metadata"],
+                    )
+                )
             if len(sections) < 2:
                 issues.append(
                     cls._clean_content_semantic_issue(
@@ -17590,9 +21083,27 @@ class AIOrchestratorService:
             panel = metadata.get("static_panel_spec") if isinstance(metadata.get("static_panel_spec"), dict) else {}
             dominant_message = cls._normalize_metadata_text(panel.get("dominant_message"), limit=180)
             supporting_line = cls._normalize_metadata_text(metadata.get("supporting_line"), limit=180)
-            proof_points = cls._normalize_metadata_list(metadata.get("proof_points"), limit=3)
-            claim_pairs = cls._normalize_claim_evidence_pairs(panel.get("claim_evidence_pairs") or metadata.get("claim_evidence_pairs"), limit=1)
-            stat_highlights = cls._normalize_metadata_list(panel.get("stat_highlights") or metadata.get("stat_highlights"), limit=3)
+            surface_contract = cls._data_list_surface_contract(
+                prompt=request.prompt,
+                format_name=format_name,
+                metadata=metadata,
+                text_payload=text_payload,
+            )
+            requested_count = cls._int_or_none((surface_contract or {}).get("requested_count")) or 0
+            module_count = cls._int_or_none((surface_contract or {}).get("module_count")) or requested_count
+            row_limit = max(module_count, 8)
+            proof_points = cls._normalize_metadata_list(
+                metadata.get("proof_points") or panel.get("proof_points"),
+                limit=row_limit,
+            )
+            claim_pairs = cls._normalize_claim_evidence_pairs(
+                panel.get("claim_evidence_pairs") or metadata.get("claim_evidence_pairs"),
+                limit=row_limit,
+            )
+            stat_highlights = cls._normalize_metadata_list(
+                panel.get("stat_highlights") or metadata.get("stat_highlights"),
+                limit=row_limit,
+            )
             visual_focus = cls._normalize_metadata_text(
                 panel.get("visual_focus")
                 or metadata.get("visual_focus")
@@ -17608,8 +21119,33 @@ class AIOrchestratorService:
                 supporting_line,
                 dominant_message,
                 text_payload.body,
-                limit=8,
+                metadata.get("static_panel_spec"),
+                limit=row_limit,
             )
+            if surface_contract and requested_count and len(data_visual_anchors) < min(requested_count, module_count or requested_count):
+                issues.append(
+                    cls._clean_content_semantic_issue(
+                        code="static_missing_requested_ranking_rows",
+                        message=f"The static request asks for {requested_count} list/ranking item(s), but the structured metadata only provides {len(data_visual_anchors)} usable row anchor(s).",
+                        targeted_fields=["body", "metadata"],
+                    )
+                )
+            unsupported_static_markers = cls._unsupported_exact_claim_markers(
+                " ".join([text_payload.headline, text_payload.body, text_payload.cta, *data_visual_anchors]),
+                request=request,
+                compiled_context=compiled_context,
+            )
+            if unsupported_static_markers:
+                issues.append(
+                    cls._clean_content_semantic_issue(
+                        code="static_unsupported_exact_claim",
+                        message=(
+                            "The static creative includes exact numeric/date/currency claims that are not present in verified facts or the user prompt: "
+                            + ", ".join(sorted(unsupported_static_markers)[:4])
+                        ),
+                        targeted_fields=["body", "metadata"],
+                    )
+                )
             if not dominant_message:
                 issues.append(
                     cls._clean_content_semantic_issue(
@@ -17655,6 +21191,14 @@ class AIOrchestratorService:
                     cls._clean_content_semantic_issue(
                         code="static_unsupported_numeric_data_visual",
                         message="The static creative implies a numeric chart/axis/graph but has no approved exact values to chart; use qualitative modules or evidence cards instead.",
+                        targeted_fields=["metadata"],
+                    )
+                )
+            if data_visual_requested and unsupported_static_markers:
+                issues.append(
+                    cls._clean_content_semantic_issue(
+                        code="static_data_visual_unsupported_claims",
+                        message="The static data/list visual would rely on exact values not backed by verified facts or the user prompt.",
                         targeted_fields=["metadata"],
                     )
                 )
@@ -17821,6 +21365,13 @@ class AIOrchestratorService:
         request.objective_context = input_access_tracker.wrap_source("objective_context", request.objective_context)
         request.retrieved_knowledge = input_access_tracker.wrap_source("retrieved_knowledge", request.retrieved_knowledge)
         request.template_context = input_access_tracker.wrap_source("template_context", request.template_context or {})
+        if not request.content_format_guide and hasattr(self, "content_format_guide"):
+            try:
+                loaded_content_format_guide = self.content_format_guide.load()
+            except Exception:
+                loaded_content_format_guide = {}
+            if isinstance(loaded_content_format_guide, dict):
+                request.content_format_guide = loaded_content_format_guide
         request.content_format_guide = input_access_tracker.wrap_source("content_format_guide", request.content_format_guide or {})
         request.template_candidates = input_access_tracker.wrap_source("template_candidates", request.template_candidates)
         request.reference_assets = input_access_tracker.wrap_source("reference_assets", request.reference_assets)
@@ -17867,6 +21418,7 @@ class AIOrchestratorService:
             template_context=request.template_context,
             layout_decision=request.layout_decision,
             reference_assets=request.reference_assets,
+            asset_catalog=request.asset_catalog,
             content_format_guide=request.content_format_guide,
             research_editorial_brief=request.research_editorial_brief,
             format_family_plan=request.format_family_plan,
@@ -17874,7 +21426,41 @@ class AIOrchestratorService:
             visual_plan=request.visual_plan,
             resolution_instructions=plan.instructions,
             research_summary="",
+            live_research=request.live_research,
         )
+        if not request.live_research and hasattr(self, "live_research"):
+            try:
+                gathered_live_research = self.live_research.gather_sync(
+                    prompt=request.prompt,
+                    studio_panel=request.studio_panel,
+                    compiled_context=compiled_context,
+                )
+            except Exception:
+                gathered_live_research = {}
+            if isinstance(gathered_live_research, dict) and gathered_live_research:
+                request.live_research = input_access_tracker.wrap_source("live_research", gathered_live_research)
+                compiled_context = self.compiler.compile(
+                    prompt=request.prompt,
+                    brand_context=request.resolved_brand_context,
+                    persona_context=request.persona_context,
+                    objective_context=request.objective_context,
+                    ordered_knowledge=plan.ordered_knowledge,
+                    studio_panel=request.studio_panel,
+                    conversation_context=request.conversation_context,
+                    session_memory=request.session_memory,
+                    template_context=request.template_context,
+                    layout_decision=request.layout_decision,
+                    reference_assets=request.reference_assets,
+                    asset_catalog=request.asset_catalog,
+                    content_format_guide=request.content_format_guide,
+                    research_editorial_brief=request.research_editorial_brief,
+                    format_family_plan=request.format_family_plan,
+                    content_plan=request.content_plan,
+                    visual_plan=request.visual_plan,
+                    resolution_instructions=plan.instructions,
+                    research_summary="",
+                    live_research=request.live_research,
+                )
         latency_ms["context_compile_ms"] = round((perf_counter() - compile_started_at) * 1000, 2)
 
         research_started_at = perf_counter()
@@ -18221,7 +21807,7 @@ class AIOrchestratorService:
         text_payload = StructuredTextPayload(**text_dict)
         text_payload = self._repair_prompt_echo_text_payload(text_payload, prompt=request.prompt)
         latency_ms["text_generation_ms"] = round((perf_counter() - text_started_at) * 1000, 2)
-        if not use_image_led_social and isinstance(planning_response.get("message_strategy"), dict):
+        if isinstance(planning_response.get("message_strategy"), dict):
             message_strategy = self.normalize_message_strategy_payload(
                 planning_response.get("message_strategy"),
                 fallback_message_strategy,
@@ -18276,6 +21862,19 @@ class AIOrchestratorService:
                 brand_name=brand_name,
                 trace_id=trace_id,
             )
+            unresolved_data_surface_codes = self._unresolved_data_surface_issue_codes(content_semantic_report)
+            if unresolved_data_surface_codes:
+                self._trace_payload(
+                    trace_id,
+                    self.trace,
+                    "data_surface_generation_blocked",
+                    {
+                        "reason": "unresolved_content_semantics",
+                        "issue_codes": sorted(unresolved_data_surface_codes),
+                        "report": content_semantic_report,
+                    },
+                )
+                raise self._data_surface_generation_failure(report=content_semantic_report)
         scene_graph = self.normalize_scene_graph_payload(
             planning_response.get("scene_graph"),
             fallback=fallback_scene_graph,
@@ -18536,6 +22135,19 @@ class AIOrchestratorService:
                     trace_id=trace_id,
                 )
                 content_semantic_repair_attempts += extra_semantic_attempts
+                unresolved_data_surface_codes = self._unresolved_data_surface_issue_codes(content_semantic_report)
+                if unresolved_data_surface_codes:
+                    self._trace_payload(
+                        trace_id,
+                        self.trace,
+                        "data_surface_generation_blocked",
+                        {
+                            "reason": "unresolved_content_semantics_after_replan",
+                            "issue_codes": sorted(unresolved_data_surface_codes),
+                            "report": content_semantic_report,
+                        },
+                    )
+                    raise self._data_surface_generation_failure(report=content_semantic_report)
             scene_graph = self.normalize_scene_graph_payload(
                 fresh_replan_response.get("scene_graph"),
                 fallback=fallback_scene_graph,
@@ -18550,6 +22162,55 @@ class AIOrchestratorService:
                 request=request,
                 compiled_context=compiled_context,
             )
+        if self._data_surface_contract_active(request=request, text_payload=text_payload) and validation_report.status != "clean":
+            validation_issues = [issue.rule_id for issue in validation_report.issues]
+            if self._should_defer_data_surface_layout_validation(
+                request=request,
+                text_payload=text_payload,
+                validation_report=validation_report,
+            ):
+                self._trace_payload(
+                    trace_id,
+                    self.trace,
+                    "data_surface_layout_validation_deferred_to_final_render",
+                    {
+                        "reason": "static_infographic_final_render_uses_data_surface_prompt_contract",
+                        "issue_codes": validation_issues,
+                        "status": validation_report.status,
+                    },
+                )
+                validation_report = SceneGraphValidationReport(
+                    status="clean",
+                    issues=[],
+                    summary=[
+                        "Data/list surface layout validation deferred to final render prompt contract; exact unsupported values remain blocked by semantic validation."
+                    ],
+                    repairable=False,
+                )
+            else:
+                self._trace_payload(
+                    trace_id,
+                    self.trace,
+                    "data_surface_generation_blocked",
+                    {
+                        "reason": "unresolved_layout_validation",
+                        "issue_codes": validation_issues,
+                        "status": validation_report.status,
+                    },
+                )
+                raise GenerationFailureError(
+                    "Data/ranking surface layout remained unresolved; generic visual fallback is disabled for this request.",
+                    failure_type="layout_validation",
+                    reason_code="data_surface_layout_unresolved",
+                    user_safe_message=(
+                        "I could not safely lay out this ranking/table image because the required rows or exact values are not verified. "
+                        "I will not replace it with a generic fallback photo. Provide approved row data or enable research for this request."
+                    ),
+                    retryable=True,
+                    rule_source="data_surface_no_fallback",
+                    suggested_next_action="Provide verified rows/values, attach source data, or run the research step before image generation.",
+                    details={"validation_status": validation_report.status, "issue_codes": validation_issues},
+                )
         used_support_fallback = False
         if self._should_apply_support_fallback(scene_graph=scene_graph, validation_report=validation_report):
             issues = [issue.rule_id for issue in validation_report.issues]
@@ -18788,7 +22449,42 @@ class AIOrchestratorService:
             selected_reference_images,
             message_strategy,
         )
-        if request.generate_image and not scene_graph_ignored_for_final_render and self._should_block_low_quality_final_render(quality_assessment):
+        low_quality_plan_deferred_to_final_render = (
+            request.generate_image
+            and not scene_graph_ignored_for_final_render
+            and self._should_block_low_quality_final_render(quality_assessment)
+            and self._should_defer_low_quality_plan_to_llm_final_render(
+                request=request,
+                generation_path=generation_path,
+                creative_decision=creative_decision,
+            )
+        )
+        if low_quality_plan_deferred_to_final_render:
+            quality_improvement_note = self._final_render_quality_improvement_note(quality_assessment)
+            final_render_retry_note = " ".join(
+                part
+                for part in [
+                    final_render_retry_note,
+                    quality_improvement_note,
+                ]
+                if part
+            ).strip()
+            self._trace_payload(
+                trace_id,
+                self.trace,
+                "final_render_low_quality_plan_deferred",
+                {
+                    "quality_assessment": quality_assessment,
+                    "reason": "static_infographic_llm_led_final_render_can_recompose",
+                    "retry_note": final_render_retry_note,
+                },
+            )
+        if (
+            request.generate_image
+            and not scene_graph_ignored_for_final_render
+            and self._should_block_low_quality_final_render(quality_assessment)
+            and not low_quality_plan_deferred_to_final_render
+        ):
             self._trace_payload(
                 trace_id,
                 self.trace,
@@ -18840,7 +22536,8 @@ class AIOrchestratorService:
         render_authority = "backend"
         image_generation_error: str | None = None
         image_size = self._image_generation_size(request.studio_panel)
-        is_carousel_render = str(request.studio_panel.get("format") or "").strip().lower() == "carousel"
+        final_render_format_name = str(request.studio_panel.get("format") or "").strip().lower()
+        is_carousel_render = final_render_format_name == "carousel"
         carousel_slide_specs = (
             self._build_carousel_slide_specs(
                 text_payload,
@@ -18884,7 +22581,11 @@ class AIOrchestratorService:
                     scene_graph=final_render_scene_graph,
                 )
                 exact_logo_overlay_required = bool(logo_storage_path and self.storage.exists(logo_storage_path))
-                prompt_reference_images = list(conditioning_reference_images)
+                layout_prompt_reference_images = selected_reference_images if final_render_format_name in {"static", "infographic"} else []
+                prompt_reference_images = self._merge_reference_asset_lists(
+                    conditioning_reference_images,
+                    layout_prompt_reference_images,
+                )
                 conditioning_reference_images, skipped_logo_reference_images = self._filter_logo_bearing_conditioning_reference_images(
                     conditioning_reference_images,
                     exact_logo_overlay_required=exact_logo_overlay_required,
@@ -18894,12 +22595,22 @@ class AIOrchestratorService:
                     creative_decision=creative_decision,
                     limit=2,
                 )
-                if self._style_reference_only_carousel_active(request, creative_decision):
+                if self._reference_layout_adaptation_active(
+                    request,
+                    creative_decision=creative_decision,
+                    compiled_context=compiled_context,
+                    reference_images=conditioning_reference_images,
+                ):
                     topic_reference_images = []
                 if topic_reference_images:
                     prompt_reference_images = self._merge_reference_asset_lists(topic_reference_images, prompt_reference_images)
-                    conditioning_reference_images = self._merge_reference_asset_lists(
+                    conditioning_topic_reference_images = self._conditioning_reference_image_assets(
                         topic_reference_images,
+                        creative_decision=creative_decision,
+                        request=request,
+                    )
+                    conditioning_reference_images = self._merge_reference_asset_lists(
+                        conditioning_topic_reference_images,
                         conditioning_reference_images,
                     )
                     conditioning_reference_images, topic_skipped_logo_reference_images = self._filter_logo_bearing_conditioning_reference_images(
@@ -18912,7 +22623,11 @@ class AIOrchestratorService:
                             topic_skipped_logo_reference_images,
                         )
                 if skipped_logo_reference_images:
-                    prompt_reference_images = [*conditioning_reference_images, *skipped_logo_reference_images]
+                    prompt_reference_images = self._merge_reference_asset_lists(
+                        conditioning_reference_images,
+                        skipped_logo_reference_images,
+                        layout_prompt_reference_images,
+                    )
                     self._trace_payload(
                         trace_id,
                         self.trace,
@@ -18971,6 +22686,7 @@ class AIOrchestratorService:
                         slide_conditioning_reference_images,
                         request=request,
                         creative_decision=creative_decision,
+                        for_conditioning=True,
                     )
                     slide_metadata = slide.get("metadata") if isinstance(slide.get("metadata"), dict) else {}
                     desired_reference_path = str(slide_metadata.get("reference_asset_path") or "").strip()
@@ -19002,16 +22718,39 @@ class AIOrchestratorService:
                         request=request,
                         cache=pdf_reference_conditioning_cache,
                     )
-                    if self._style_reference_only_carousel_active(request, creative_decision):
+                    layout_analysis_reference_images = (
+                        self._layout_analysis_reference_image_assets(
+                            self._merge_reference_asset_lists(
+                                slide_prompt_reference_images,
+                                slide_conditioning_reference_images,
+                            ),
+                            request=request,
+                        )
+                        if not is_carousel_render
+                        else [dict(asset) for asset in slide_conditioning_reference_images if isinstance(asset, dict)]
+                    )
+                    layout_reference_image_paths = self._conditioning_reference_image_paths(
+                        layout_analysis_reference_images,
+                        request=request,
+                        cache=pdf_reference_conditioning_cache,
+                    )
+                    reference_layout_adaptation_active = self._reference_layout_adaptation_active(
+                        request,
+                        creative_decision=creative_decision,
+                        metadata=slide_metadata,
+                        compiled_context=compiled_context,
+                        reference_images=layout_analysis_reference_images,
+                    )
+                    if reference_layout_adaptation_active:
                         slide = self._annotate_slide_with_sample_page_blueprint(
                             slide,
-                            reference_image_paths=reference_image_paths,
+                            reference_image_paths=layout_reference_image_paths,
                         )
-                        if reference_image_paths:
+                        if layout_reference_image_paths:
                             metadata = dict(slide.get("metadata") or {})
                             blueprint = metadata.get("sample_page_blueprint") if isinstance(metadata.get("sample_page_blueprint"), dict) else {}
                             enhanced_blueprint = self._vision_enhance_page_blueprint(
-                                image_path=reference_image_paths[0],
+                                image_path=layout_reference_image_paths[0],
                                 base_blueprint=blueprint,
                             )
                             if enhanced_blueprint:
@@ -19035,9 +22774,19 @@ class AIOrchestratorService:
                             compiled_context=compiled_context,
                         )
                     else:
+                        prompt_text_payload = text_payload
+                        if slide_metadata:
+                            prompt_text_payload = text_payload.model_copy(
+                                update={
+                                    "metadata": {
+                                        **(text_payload.metadata or {}),
+                                        **slide_metadata,
+                                    }
+                                }
+                            )
                         final_render_prompt = self.build_final_render_prompt(
                             request=request,
-                            text_payload=text_payload,
+                            text_payload=prompt_text_payload,
                             creative_decision=creative_decision,
                             scene_graph=final_render_scene_graph,
                             message_strategy=message_strategy,
@@ -19060,7 +22809,7 @@ class AIOrchestratorService:
                         "prompt": final_render_prompt,
                         "size": image_size,
                         "model": self.settings.image_model,
-                        "prompt_length": len(final_render_prompt),
+                        **self._prompt_length_metrics(final_render_prompt),
                         "text_overlay_strategy": text_overlay_strategy,
                         "slide_index": slide_index,
                         "slide_count": slide_count,
@@ -19085,8 +22834,10 @@ class AIOrchestratorService:
                             sample_blueprint=sample_page_blueprint,
                             slide_index=slide_index,
                             slide_count=slide_count,
+                            approved_text_payload=text_payload,
                             exact_logo_overlay_deferred=exact_logo_overlay_required,
                             legal_footer_overlay_deferred=bool(legal_footer_text),
+                            sample_reference_image_paths=layout_reference_image_paths,
                         )
                     )
                     base_asset = GeneratedImageAsset(
@@ -19144,7 +22895,7 @@ class AIOrchestratorService:
                         "generation_stage": "final_render",
                         "provider": asset.get("provider"),
                         "model": asset.get("model") or self.settings.image_model,
-                        "prompt_length": len(final_render_prompt),
+                        **self._prompt_length_metrics(final_render_prompt),
                         "text_overlay_strategy": text_overlay_strategy,
                         "requested_size": asset.get("size", image_size),
                         "generation_path": generation_path,
@@ -19162,8 +22913,14 @@ class AIOrchestratorService:
                         "visual_explanation_rationale": visual_explanation_plan.get("rationale"),
                         "quality_assessment": quality_assessment,
                         "quality_retry_attempts": quality_retry_attempts,
+                        "output_quality_assessment": asset.get("output_quality_assessment"),
+                        "output_quality_retry_attempts": asset.get("output_quality_retry_attempts", 0),
+                        "output_quality_status": asset.get("output_quality_status"),
+                        "output_quality_blocking_issues": asset.get("output_quality_blocking_issues", []),
+                        "output_quality_user_warning": asset.get("output_quality_user_warning"),
                         "sample_page_blueprint": sample_page_blueprint,
                         "sample_page_conditioning_image_path": reference_image_paths[0] if reference_image_paths else None,
+                        "sample_page_layout_image_path": layout_reference_image_paths[0] if layout_reference_image_paths else None,
                         "sample_visual_similarity": sample_similarity_report,
                         "sample_visual_similarity_retry_attempts": sample_similarity_retry_attempts,
                         "slide_index": slide_index,
@@ -19172,7 +22929,7 @@ class AIOrchestratorService:
                     }
                     if use_backend_text_overlay:
                         filtered_scene = final_render_scene_graph.model_copy(deep=True)
-                        if not is_carousel_render:
+                        if final_render_format_name not in self.BACKEND_TEXT_OVERLAY_SCENE_GRAPH_FORMATS:
                             filtered_scene.elements = [e for e in filtered_scene.elements if e.role in ("legal", "footer", "disclaimer")]
                         final_asset_metadata["render_overlay_scene_graph"] = filtered_scene.model_dump(mode="json")
 
@@ -19227,6 +22984,8 @@ class AIOrchestratorService:
                         "assets": [asset.model_dump(mode="json") for asset in final_render_assets],
                     },
                 )
+            except GenerationFailureError:
+                raise
             except Exception as exc:  # pragma: no cover - resilience path
                 image_generation_error = str(exc)
                 latency_ms["final_render_ms"] = round(latency_ms.get("final_render_ms", 0.0), 2)
@@ -19266,7 +23025,12 @@ class AIOrchestratorService:
                     compiled_context=compiled_context,
                     visual_explanation_plan=visual_explanation_plan,
                 )
-                self._trace_payload(trace_id, self.trace, "image_prompt", {"prompt": image_prompt})
+                self._trace_payload(
+                    trace_id,
+                    self.trace,
+                    "image_prompt",
+                    {"prompt": image_prompt, **self._prompt_length_metrics(image_prompt)},
+                )
                 asset = self._generate_image_with_retries(
                     image_provider=image_provider,
                     tenant_id=request.tenant_id,
@@ -19290,6 +23054,7 @@ class AIOrchestratorService:
                             "provider": asset.get("provider"),
                             "requested_size": asset.get("size", image_size),
                             "generation_path": generation_path,
+                            **self._prompt_length_metrics(image_prompt),
                             "visual_explanation_mode": visual_explanation_plan.get("mode"),
                             "visual_explanation_need": visual_explanation_plan.get("need"),
                             "visual_explanation_density": visual_explanation_plan.get("density"),
@@ -19432,6 +23197,154 @@ class AIOrchestratorService:
         )
 
     @staticmethod
+    def _structure_text_payload_for_layout(
+        text_payload: StructuredTextPayload,
+        *,
+        studio_panel: dict[str, Any] | None = None,
+        compiled_context: dict[str, Any] | None = None,
+    ) -> StructuredTextPayload:
+        studio_panel = studio_panel if isinstance(studio_panel, dict) else {}
+        context = dict(compiled_context or {})
+        format_name = str(studio_panel.get("format") or "").strip().casefold() or "static"
+        content_format_brief = (
+            dict(context.get("content_format_brief"))
+            if isinstance(context.get("content_format_brief"), dict)
+            else {}
+        )
+        content_format_brief.setdefault("format", format_name)
+        context["content_format_brief"] = content_format_brief
+
+        source_metadata = dict(text_payload.metadata or {})
+        source_metadata.setdefault("headline", text_payload.headline)
+        source_metadata.setdefault("cta", text_payload.cta)
+        source = {
+            "headline": text_payload.headline,
+            "body": text_payload.body,
+            "cta": text_payload.cta,
+            "hashtags": list(text_payload.hashtags or []),
+            "metadata": source_metadata,
+        }
+        normalized = AIOrchestratorService.normalize_text_payload(
+            source,
+            source,
+            compiled_context=context,
+        )
+
+        def strip_text(value: Any, *, limit: int = 260) -> str:
+            return AIOrchestratorService._normalize_metadata_text(
+                AIOrchestratorService._strip_blocked_compliance_phrases(
+                    AIOrchestratorService._coerce_text_value(value)
+                ),
+                limit=limit,
+            )
+
+        headline = strip_text(normalized.get("headline"), limit=180)
+        body = AIOrchestratorService._strip_blocked_compliance_phrases(normalized.get("body") or "")
+        cta = strip_text(normalized.get("cta"), limit=90)
+        hashtags = [
+            tag
+            for tag in [
+                AIOrchestratorService._strip_blocked_compliance_phrases(tag)
+                for tag in normalized.get("hashtags", [])
+            ]
+            if tag
+        ]
+        metadata = dict(normalized.get("metadata") or {})
+        supporting_line = strip_text(metadata.get("supporting_line"), limit=180)
+        sentences = [
+            strip_text(sentence, limit=220)
+            for sentence in AIOrchestratorService._sentences(body)
+            if strip_text(sentence, limit=220)
+        ]
+        blocked = [headline, supporting_line, cta]
+        proof_points = [
+            strip_text(item, limit=180)
+            for item in AIOrchestratorService._normalize_metadata_list(metadata.get("proof_points"), limit=6)
+        ]
+        proof_points = AIOrchestratorService._dedupe_metadata_collection(
+            [*proof_points, *sentences],
+            blocked_texts=blocked,
+            limit=4 if format_name == "infographic" else 3,
+        )
+        numeric_candidates = [
+            sentence
+            for sentence in sentences
+            if re.search(r"(?:\d|%|₹|rs\.?|\$|lakh|crore|million|billion)", sentence, flags=re.IGNORECASE)
+        ]
+        stat_highlights = [
+            strip_text(item, limit=180)
+            for item in AIOrchestratorService._normalize_metadata_list(metadata.get("stat_highlights"), limit=4)
+        ]
+        stat_highlights = AIOrchestratorService._dedupe_metadata_collection(
+            [*stat_highlights, *numeric_candidates],
+            blocked_texts=[headline, cta],
+            limit=4 if format_name == "infographic" else 2,
+        )
+        if not supporting_line:
+            supporting_line = next(
+                (
+                    candidate
+                    for candidate in [*sentences, *proof_points]
+                    if candidate.casefold() not in {headline.casefold(), cta.casefold()}
+                ),
+                "",
+            )
+        body_display = next(
+            (
+                candidate
+                for candidate in [*sentences, *proof_points]
+                if candidate
+                and candidate.casefold()
+                not in {headline.casefold(), supporting_line.casefold(), cta.casefold()}
+            ),
+            body,
+        )
+
+        metadata["supporting_line"] = supporting_line
+        metadata["proof_points"] = proof_points
+        metadata["stat_highlights"] = stat_highlights
+        metadata["render_sections"] = {
+            "creative_type": format_name,
+            "supporting_line": supporting_line,
+            "body_display": body_display,
+            "proof_points": proof_points,
+            "stat_highlights": stat_highlights,
+            "cta": cta,
+        }
+        metadata["content_structure"] = {
+            "creative_type": format_name,
+            "repetition_flags": {
+                "support_matches_headline": bool(supporting_line)
+                and supporting_line.casefold() == headline.casefold(),
+                "body_matches_support": bool(body_display)
+                and body_display.casefold() == supporting_line.casefold(),
+                "proof_repeats_support": any(
+                    point.casefold() == supporting_line.casefold()
+                    for point in proof_points
+                    if point and supporting_line
+                ),
+            },
+        }
+
+        structured = StructuredTextPayload(
+            headline=headline,
+            body=body,
+            cta=cta,
+            hashtags=hashtags,
+            metadata=metadata,
+        )
+        if format_name == "carousel":
+            carousel_slides = AIOrchestratorService._build_carousel_slide_specs(structured)
+            if carousel_slides:
+                if carousel_slides[0].get("role") == "cover":
+                    carousel_slides[0]["role"] = "hook"
+                if cta:
+                    carousel_slides[-1]["role"] = "closing"
+                    carousel_slides[-1]["headline"] = cta
+            structured.metadata["carousel_slide_specs"] = carousel_slides
+        return structured
+
+    @staticmethod
     def normalize_text_payload(
         text_dict: dict,
         fallback: dict,
@@ -19526,6 +23439,7 @@ class AIOrchestratorService:
         metadata: dict[str, Any],
         body: str | None = None,
         compiled_context: dict[str, Any] | None = None,
+        prompt: str | None = None,
     ) -> dict[str, int]:
         content_format_brief = (
             compiled_context.get("content_format_brief")
@@ -19544,6 +23458,16 @@ class AIOrchestratorService:
         objection_count = cls._rough_collection_length(metadata.get("objection_handling"))
         trust_count = cls._rough_collection_length(metadata.get("trust_builders"))
         claim_count = cls._rough_collection_length(metadata.get("claim_evidence_pairs"))
+        data_surface_contract = cls._data_list_surface_contract(
+            prompt=prompt,
+            format_name=format_name,
+            metadata=metadata,
+        )
+        data_surface_count = (
+            int(data_surface_contract.get("module_count") or 0)
+            if isinstance(data_surface_contract, dict)
+            else 0
+        )
         if format_name == "carousel":
             story_span = max(
                 preferred_slide_count or 0,
@@ -19562,18 +23486,18 @@ class AIOrchestratorService:
         if format_name == "infographic":
             info_span = max(sentence_count, proof_count, stat_count, preferred_slide_count or 0)
             return {
-                "proof_points": max(proof_count, info_span, 4),
-                "stat_highlights": max(stat_count, preferred_slide_count or 0, 4),
+                "proof_points": max(proof_count, info_span, data_surface_count, 4),
+                "stat_highlights": max(stat_count, preferred_slide_count or 0, data_surface_count, 4),
                 "objection_handling": max(objection_count, 3),
                 "trust_builders": max(trust_count, 4),
-                "claim_evidence_pairs": max(claim_count, 3),
+                "claim_evidence_pairs": max(claim_count, data_surface_count, 3),
             }
         return {
-            "proof_points": max(proof_count, min(max(sentence_count, 1), 6), 3),
-            "stat_highlights": max(stat_count, min(sentence_count, 4), 2),
+            "proof_points": max(proof_count, min(max(sentence_count, 1), 6), data_surface_count, 3),
+            "stat_highlights": max(stat_count, min(sentence_count, 4), data_surface_count, 2),
             "objection_handling": max(objection_count, 3),
             "trust_builders": max(trust_count, 3),
-            "claim_evidence_pairs": max(claim_count, 3),
+            "claim_evidence_pairs": max(claim_count, data_surface_count, 3),
         }
 
     @staticmethod
@@ -19606,6 +23530,7 @@ class AIOrchestratorService:
             metadata=base,
             body=body,
             compiled_context=compiled_context,
+            prompt=prompt,
         )
         base["proof_points"] = AIOrchestratorService._normalize_metadata_list(
             base.get("proof_points"),
@@ -19683,11 +23608,13 @@ class AIOrchestratorService:
             base = AIOrchestratorService._repair_static_metadata_semantics(
                 base,
                 body=body or "",
+                prompt=prompt,
             )
         elif format_name == "infographic":
             base = AIOrchestratorService._repair_infographic_metadata_semantics(
                 base,
                 body=body or "",
+                prompt=prompt,
             )
 
         structured_anchor_sources = AIOrchestratorService._structured_visual_data_anchor_sources(
@@ -19772,8 +23699,17 @@ class AIOrchestratorService:
         claim_evidence_pairs: list[dict[str, str]],
         cta: str,
         body: str,
+        surface_contract: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         raw = value if isinstance(value, dict) else {}
+        contract = surface_contract if isinstance(surface_contract, dict) else {}
+        module_limit = cls._int_or_none(contract.get("module_count")) or 2
+        module_limit = max(1, min(module_limit, 12))
+        fallback_panel_goal = (
+            "ranked_list"
+            if contract.get("intent") == "top_n_list"
+            else "comparison_or_list" if contract else "single_dominant_message"
+        )
         dominant_message = cls._normalize_metadata_text(
             raw.get("dominant_message") or supporting_line or headline or body,
             limit=180,
@@ -19783,13 +23719,13 @@ class AIOrchestratorService:
             limit=2,
         ) or ([supporting_line] if supporting_line else [])
         return {
-            "panel_goal": cls._normalize_metadata_text(raw.get("panel_goal"), limit=48) or "single_dominant_message",
+            "panel_goal": cls._normalize_metadata_text(raw.get("panel_goal"), limit=48) or fallback_panel_goal,
             "dominant_message": dominant_message,
             "supporting_lines": supporting_lines[:2],
-            "proof_points": proof_points[:2],
-            "stat_highlights": stat_highlights[:2],
-            "claim_evidence_pairs": cls._normalize_claim_evidence_pairs(raw.get("claim_evidence_pairs"), limit=1)
-            or claim_evidence_pairs[:1],
+            "proof_points": proof_points[:module_limit],
+            "stat_highlights": stat_highlights[:module_limit],
+            "claim_evidence_pairs": cls._normalize_claim_evidence_pairs(raw.get("claim_evidence_pairs"), limit=module_limit)
+            or claim_evidence_pairs[:module_limit],
             "visual_focus": cls._normalize_metadata_text(raw.get("visual_focus"), limit=160)
             or cls._normalize_metadata_text(raw.get("visual_direction"), limit=160),
             "cta_mode": cls._normalize_metadata_text(raw.get("cta_mode"), limit=48)
@@ -19807,7 +23743,10 @@ class AIOrchestratorService:
         stat_highlights: list[str],
         claim_evidence_pairs: list[dict[str, str]],
         body: str,
+        section_limit: int = 4,
+        data_list_surface: bool = False,
     ) -> list[dict[str, Any]]:
+        section_limit = max(1, min(int(section_limit or 4), 10))
         raw_sections = [dict(item) for item in value if isinstance(item, dict)] if isinstance(value, list) else []
         normalized_sections: list[dict[str, Any]] = []
         if raw_sections:
@@ -19840,10 +23779,31 @@ class AIOrchestratorService:
                     }
                 )
         if normalized_sections:
-            return normalized_sections[:4]
+            return normalized_sections[:section_limit]
 
         sentences = cls._sentences(body)
-        claim_lines = cls._claim_evidence_pair_lines(claim_evidence_pairs, limit=3)
+        claim_lines = cls._claim_evidence_pair_lines(claim_evidence_pairs, limit=section_limit)
+        if data_list_surface and proof_points:
+            sections: list[dict[str, Any]] = []
+            for index, proof_point in enumerate(proof_points[:section_limit], start=1):
+                stat_slice = stat_highlights[index - 1 : index]
+                claim_slice = claim_evidence_pairs[index - 1 : index]
+                sections.append(
+                    {
+                        "section_number": index,
+                        "section_role": "comparison_item",
+                        "section_label": "",
+                        "headline": proof_point,
+                        "body": stat_slice[0] if stat_slice else "",
+                        "body_points": [],
+                        "proof_points": [proof_point],
+                        "stat_highlights": stat_slice,
+                        "claim_evidence_pairs": claim_slice,
+                        "visual_focus": "",
+                    }
+                )
+            if sections:
+                return sections
         sections: list[dict[str, Any]] = [
             {
                 "section_number": 1,
@@ -19887,7 +23847,7 @@ class AIOrchestratorService:
                 "visual_focus": "",
             }
         )
-        return sections[:4]
+        return sections[:section_limit]
 
     @classmethod
     def _repair_static_metadata_semantics(
@@ -19895,15 +23855,33 @@ class AIOrchestratorService:
         metadata: dict[str, Any],
         *,
         body: str,
+        prompt: str | None = None,
     ) -> dict[str, Any]:
         repaired = dict(metadata or {})
+        surface_contract = cls._data_list_surface_contract(
+            prompt=prompt or body,
+            format_name="static",
+            metadata=repaired,
+        )
+        row_limit = (
+            max(2, min(cls._int_or_none(surface_contract.get("module_count")) or 2, 12))
+            if surface_contract
+            else 2
+        )
         sentences = cls._sentences(body)
         headline = cls._normalize_metadata_text(repaired.get("headline"), limit=180)
         cta = cls._normalize_metadata_text(repaired.get("cta"), limit=90)
         original_supporting_line = cls._normalize_metadata_text(repaired.get("supporting_line"), limit=180)
         supporting_line = original_supporting_line
-        raw_proof_points = cls._normalize_metadata_list(repaired.get("proof_points"), limit=3)
-        raw_stat_highlights = cls._normalize_metadata_list(repaired.get("stat_highlights"), limit=3)
+        raw_static_panel_spec = repaired.get("static_panel_spec") if isinstance(repaired.get("static_panel_spec"), dict) else {}
+        raw_proof_points = cls._normalize_metadata_list(
+            repaired.get("proof_points") or raw_static_panel_spec.get("proof_points"),
+            limit=max(3, row_limit),
+        )
+        raw_stat_highlights = cls._normalize_metadata_list(
+            repaired.get("stat_highlights") or raw_static_panel_spec.get("stat_highlights"),
+            limit=max(3, row_limit),
+        )
         if (
             not supporting_line
             or (cta and supporting_line.casefold() == cta.casefold())
@@ -19925,14 +23903,17 @@ class AIOrchestratorService:
         repaired["proof_points"] = cls._dedupe_metadata_collection(
             raw_proof_points,
             blocked_texts=[headline, original_supporting_line, supporting_line, cta],
-            limit=2,
+            limit=row_limit,
         )
         repaired["stat_highlights"] = cls._dedupe_metadata_collection(
             raw_stat_highlights,
             blocked_texts=[headline, original_supporting_line, supporting_line, cta, *repaired["proof_points"]],
-            limit=2,
+            limit=row_limit,
         )
-        normalized_claim_pairs = cls._normalize_claim_evidence_pairs(repaired.get("claim_evidence_pairs"), limit=3)
+        normalized_claim_pairs = cls._normalize_claim_evidence_pairs(
+            repaired.get("claim_evidence_pairs") or raw_static_panel_spec.get("claim_evidence_pairs"),
+            limit=max(3, row_limit),
+        )
         if normalized_claim_pairs:
             allocations = cls._allocate_claim_evidence_pairs_to_slots(
                 [
@@ -19950,11 +23931,11 @@ class AIOrchestratorService:
             )
             assigned_pairs = allocations[0] if allocations else []
             if assigned_pairs:
-                claim_lines = cls._claim_evidence_pair_lines(assigned_pairs, limit=1)
+                claim_lines = cls._claim_evidence_pair_lines(assigned_pairs, limit=row_limit)
                 repaired["proof_points"] = cls._dedupe_metadata_collection(
                     [*claim_lines, *repaired["proof_points"]],
                     blocked_texts=[headline, original_supporting_line, supporting_line, cta],
-                    limit=2,
+                    limit=row_limit,
                 )
                 repaired["claim_evidence_pairs"] = assigned_pairs
         repaired["static_panel_spec"] = cls._normalize_static_panel_spec(
@@ -19963,10 +23944,22 @@ class AIOrchestratorService:
             supporting_line=supporting_line,
             proof_points=repaired["proof_points"],
             stat_highlights=repaired["stat_highlights"],
-            claim_evidence_pairs=cls._normalize_claim_evidence_pairs(repaired.get("claim_evidence_pairs"), limit=1),
+            claim_evidence_pairs=cls._normalize_claim_evidence_pairs(repaired.get("claim_evidence_pairs"), limit=row_limit),
             cta=cta,
             body=body,
+            surface_contract=surface_contract,
         )
+        if surface_contract:
+            available_count = max(
+                surface_contract.get("available_count") or 0,
+                len(repaired["proof_points"]),
+                len(repaired["stat_highlights"]),
+                len(cls._normalize_claim_evidence_pairs(repaired.get("claim_evidence_pairs"), limit=row_limit)),
+            )
+            repaired["data_list_surface_contract"] = {
+                **surface_contract,
+                "available_count": available_count,
+            }
         return repaired
 
     @classmethod
@@ -19975,27 +23968,38 @@ class AIOrchestratorService:
         metadata: dict[str, Any],
         *,
         body: str,
+        prompt: str | None = None,
     ) -> dict[str, Any]:
         repaired = dict(metadata or {})
+        surface_contract = cls._data_list_surface_contract(
+            prompt=prompt or body,
+            format_name="infographic",
+            metadata=repaired,
+        )
+        row_limit = (
+            max(4, min(cls._int_or_none(surface_contract.get("module_count")) or 4, 10))
+            if surface_contract
+            else 4
+        )
         sentences = cls._sentences(body)
         headline = cls._normalize_metadata_text(repaired.get("headline"), limit=180)
         cta = cls._normalize_metadata_text(repaired.get("cta"), limit=90)
         supporting_line = cls._normalize_metadata_text(repaired.get("supporting_line"), limit=180)
         claim_lines = cls._claim_evidence_pair_lines(
-            cls._normalize_claim_evidence_pairs(repaired.get("claim_evidence_pairs"), limit=4),
-            limit=4,
+            cls._normalize_claim_evidence_pairs(repaired.get("claim_evidence_pairs"), limit=row_limit),
+            limit=row_limit,
         )
         repaired["proof_points"] = cls._dedupe_metadata_collection(
-            cls._normalize_metadata_list(repaired.get("proof_points"), limit=5) or claim_lines or sentences[1:5],
+            cls._normalize_metadata_list(repaired.get("proof_points"), limit=max(5, row_limit)) or claim_lines or sentences[1 : row_limit + 1],
             blocked_texts=[headline, supporting_line, cta],
-            limit=4,
+            limit=row_limit,
         )
         repaired["stat_highlights"] = cls._dedupe_metadata_collection(
-            cls._normalize_metadata_list(repaired.get("stat_highlights"), limit=4),
+            cls._normalize_metadata_list(repaired.get("stat_highlights"), limit=row_limit),
             blocked_texts=[headline, supporting_line, cta, *repaired["proof_points"]],
-            limit=3,
+            limit=row_limit,
         )
-        normalized_claim_pairs = cls._normalize_claim_evidence_pairs(repaired.get("claim_evidence_pairs"), limit=4)
+        normalized_claim_pairs = cls._normalize_claim_evidence_pairs(repaired.get("claim_evidence_pairs"), limit=row_limit)
         repaired["claim_evidence_pairs"] = normalized_claim_pairs
         if not supporting_line:
             supporting_line = next(
@@ -20023,6 +24027,8 @@ class AIOrchestratorService:
             stat_highlights=repaired["stat_highlights"],
             claim_evidence_pairs=normalized_claim_pairs,
             body=body,
+            section_limit=row_limit,
+            data_list_surface=bool(surface_contract),
         )
         section_allocations = cls._allocate_claim_evidence_pairs_to_slots(
             repaired["infographic_section_specs"],
@@ -20048,6 +24054,17 @@ class AIOrchestratorService:
                     blocked_texts=[section.get("headline"), section.get("section_label")],
                     limit=3,
                 )
+        if surface_contract:
+            repaired["data_list_surface_contract"] = {
+                **surface_contract,
+                "available_count": max(
+                    surface_contract.get("available_count") or 0,
+                    len(repaired["proof_points"]),
+                    len(repaired["stat_highlights"]),
+                    len(normalized_claim_pairs),
+                    len(repaired["infographic_section_specs"]),
+                ),
+            }
         return repaired
 
     @classmethod
@@ -20548,11 +24565,13 @@ class AIOrchestratorService:
         return AIOrchestratorService._sanitize_text_for_canvas(str(value))
 
     @staticmethod
-    def _compact_infographic_section_specs(value: Any) -> str:
+    def _compact_infographic_section_specs(value: Any, *, section_limit: int = 4, item_limit: int = 2) -> str:
         if not isinstance(value, list):
             return ""
+        section_limit = max(1, min(int(section_limit or 4), 10))
+        item_limit = max(1, min(int(item_limit or 2), 12))
         sections: list[str] = []
-        for item in value[:4]:
+        for item in value[:section_limit]:
             if not isinstance(item, dict):
                 continue
             role = AIOrchestratorService._normalize_metadata_text(item.get("section_role"), limit=32)
@@ -20560,40 +24579,98 @@ class AIOrchestratorService:
                 item.get("headline") or item.get("section_label"),
                 limit=80,
             )
-            proof = AIOrchestratorService._compact_named_items(item.get("proof_points"), limit=2)
-            stats = AIOrchestratorService._compact_named_items(item.get("stat_highlights"), limit=2)
+            proof = AIOrchestratorService._compact_named_items(item.get("proof_points"), limit=item_limit)
+            stats = AIOrchestratorService._compact_named_items(item.get("stat_highlights"), limit=item_limit)
             claims = AIOrchestratorService._compact_named_items(
                 AIOrchestratorService._claim_evidence_pair_lines(
-                    AIOrchestratorService._normalize_claim_evidence_pairs(item.get("claim_evidence_pairs"), limit=2),
-                    limit=1,
+                    AIOrchestratorService._normalize_claim_evidence_pairs(item.get("claim_evidence_pairs"), limit=item_limit),
+                    limit=item_limit,
                 ),
-                limit=1,
+                limit=item_limit,
             )
             parts = [part for part in [role, headline, proof, stats, claims] if part]
             if parts:
                 sections.append(" | ".join(parts))
-        return "; ".join(sections[:4])
+        return "; ".join(sections[:section_limit])
 
     @staticmethod
-    def _compact_static_panel_spec(value: Any) -> str:
+    def _compact_static_panel_spec(value: Any, *, item_limit: int = 2) -> str:
         if not isinstance(value, dict):
             return ""
+        item_limit = max(1, min(int(item_limit or 2), 12))
         dominant = AIOrchestratorService._normalize_metadata_text(value.get("dominant_message"), limit=120)
         supporting = AIOrchestratorService._compact_named_items(value.get("supporting_lines"), limit=2)
-        proof = AIOrchestratorService._compact_named_items(value.get("proof_points"), limit=2)
-        stats = AIOrchestratorService._compact_named_items(value.get("stat_highlights"), limit=2)
+        proof = AIOrchestratorService._compact_named_items(value.get("proof_points"), limit=item_limit)
+        stats = AIOrchestratorService._compact_named_items(value.get("stat_highlights"), limit=item_limit)
         claims = AIOrchestratorService._compact_named_items(
             AIOrchestratorService._claim_evidence_pair_lines(
-                AIOrchestratorService._normalize_claim_evidence_pairs(value.get("claim_evidence_pairs"), limit=1),
-                limit=1,
+                AIOrchestratorService._normalize_claim_evidence_pairs(value.get("claim_evidence_pairs"), limit=item_limit),
+                limit=item_limit,
             ),
-            limit=1,
+            limit=item_limit,
         )
         return " | ".join(part for part in [dominant, supporting, proof, stats, claims] if part)
 
+    @classmethod
+    def _data_list_surface_prompt_section(
+        cls,
+        *,
+        request: AIOrchestrationRequest,
+        text_payload: StructuredTextPayload,
+        metadata: dict[str, Any],
+        format_name: str,
+        use_backend_text_overlay: bool,
+        visual_plan: dict[str, Any] | None = None,
+    ) -> str:
+        contract = metadata.get("data_list_surface_contract") if isinstance(metadata.get("data_list_surface_contract"), dict) else None
+        if not contract:
+            contract = cls._data_list_surface_contract(
+                prompt=getattr(request, "prompt", ""),
+                format_name=format_name,
+                metadata=metadata,
+                text_payload=text_payload,
+                visual_plan=visual_plan,
+            )
+        if not contract:
+            return ""
+        requested_count = cls._int_or_none(contract.get("requested_count")) or cls._int_or_none(contract.get("module_count")) or 1
+        module_count = cls._int_or_none(contract.get("module_count")) or requested_count
+        available_count = cls._int_or_none(contract.get("available_count")) or 0
+        surface_mode = cls._normalize_metadata_text(contract.get("surface_mode"), limit=40).casefold()
+        text_mode = (
+            "Backend overlay will place the exact row/card copy afterward; the AI image must create only empty, high-contrast row/card/module shells."
+            if use_backend_text_overlay
+            else "Use only approved copy/data anchors for any visible row/card labels and keep each module readable."
+        )
+        overflow_guidance = (
+            f"The request asks for {requested_count} item(s), but this format should visibly reserve {module_count} module slot(s); group or compress any overflow without inventing labels."
+            if requested_count > module_count
+            else f"Reserve {module_count} distinct module slot(s), matching the requested item count when layout space allows."
+        )
+        anchor_gap_guidance = (
+            f"Only {available_count} approved row/card anchor(s) are available: still build the requested {module_count}-slot structure as clean blank overlay-safe shells, dividers, ranking markers, or card containers; do not invent missing row labels, values, countries, banks, dates, percentages, axes, or legends."
+            if available_count < module_count
+            else "The available anchors satisfy the requested module structure; keep every row/card slot aligned to those approved anchors."
+        )
+        surface_mode_guidance = (
+            "Use a dense ranking-table composition: compact title/subtitle region, one large table/list panel, consistent row dividers, clear left-to-right scan order, and no oversized hero illustration, paragraph card, CTA block, fake chart, or decorative metric tiles."
+            if surface_mode == "ranking_table"
+            else "Use repeated cards, rows, compact comparison blocks, separators, or grouped callout shells with consistent spacing and clear scan order."
+        )
+        return (
+            "DATA/LIST SURFACE CONTRACT: this request needs a structured list, comparison, rule, rate, fee, scorecard, or ranked surface; do not collapse it into a single generic hero illustration. "
+            f"{overflow_guidance} "
+            f"Approved content anchor count available to downstream overlay: {available_count}. "
+            f"{anchor_gap_guidance} "
+            f"{surface_mode_guidance} "
+            "Do not use a human portrait, lifestyle scene, worried/emotional person, abstract mood photo, or generic finance reaction image as a fallback for this structured surface. "
+            f"{text_mode}"
+        )
+
     @staticmethod
     def _disclaimer_overlay_guidance(request: AIOrchestrationRequest) -> str:
-        brief = request.research_editorial_brief if isinstance(request.research_editorial_brief, dict) else {}
+        request_brief = getattr(request, "research_editorial_brief", None)
+        brief = request_brief if isinstance(request_brief, dict) else {}
         requested = bool(brief.get("disclaimer_requested"))
         if not requested:
             prompt_lower = str(getattr(request, "prompt", "") or "").casefold()
@@ -20628,11 +24705,15 @@ class AIOrchestratorService:
         claim_evidence_pairs: Any = None,
         cta: Any = "",
         slide_role: Any = "",
+        proof_points_limit: int = 3,
     ) -> list[str]:
         normalized_headline = AIOrchestratorService._normalize_metadata_text(headline, limit=180)
         normalized_supporting = AIOrchestratorService._normalize_metadata_text(supporting_line, limit=220)
         normalized_body = AIOrchestratorService._normalize_metadata_text(body, limit=260)
-        normalized_proof_items = AIOrchestratorService._normalize_metadata_list(proof_points, limit=3)
+        normalized_proof_items = AIOrchestratorService._normalize_metadata_list(
+            proof_points,
+            limit=max(1, min(int(proof_points_limit or 3), 12)),
+        )
         claim_lines = AIOrchestratorService._compact_named_items(
             AIOrchestratorService._claim_evidence_pair_lines(
                 AIOrchestratorService._normalize_claim_evidence_pairs(claim_evidence_pairs, limit=2),
@@ -20679,6 +24760,8 @@ class AIOrchestratorService:
         creative_decision: CreativeDecisionPayload | None = None,
     ) -> bool:
         format_name = str((request.studio_panel or {}).get("format") or "").strip().lower()
+        if format_name in {"static", "infographic"}:
+            return False
         if format_name != "carousel":
             return True
         template_surface_policy = cls._effective_template_surface_policy(
@@ -20715,7 +24798,7 @@ class AIOrchestratorService:
         normalized_body = AIOrchestratorService._normalize_metadata_text(body, limit=260)
         normalized_proof_items = AIOrchestratorService._normalize_metadata_list(
             proof_points,
-            limit=max(1, min(int(proof_points_limit or 3), 8)),
+            limit=max(1, min(int(proof_points_limit or 3), 12)),
         )
         claim_lines = AIOrchestratorService._claim_evidence_pair_lines(
             AIOrchestratorService._normalize_claim_evidence_pairs(claim_evidence_pairs, limit=2),
@@ -20813,6 +24896,21 @@ class AIOrchestratorService:
         return ""
 
     @staticmethod
+    def _dedupe_prompt_sections(sections: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for section in sections:
+            text = " ".join(str(section or "").split()).strip()
+            if not text or text.endswith(": ."):
+                continue
+            key = text.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(text)
+        return cleaned
+
+    @staticmethod
     def _compose_prompt_sections(
         *,
         required_sections: list[str],
@@ -20821,18 +24919,35 @@ class AIOrchestratorService:
     ) -> str:
         parts: list[str] = []
         current_length = 0
-        for section in [item for item in required_sections if item and not item.endswith(": .")]:
+        required = AIOrchestratorService._dedupe_prompt_sections(required_sections)
+        required_keys = {section.casefold() for section in required}
+        optional = [
+            section
+            for section in AIOrchestratorService._dedupe_prompt_sections(optional_sections)
+            if section.casefold() not in required_keys
+        ]
+        deferred_required: list[str] = []
+        for section in required:
             separator = 1 if parts else 0
             section_length = len(section) + separator
-            if parts and current_length + section_length > limit:
-                break
-            if not parts and len(section) > limit:
-                return AIOrchestratorService._trim_prompt(section, limit)
+            if current_length + section_length > limit:
+                deferred_required.append(section)
+                continue
             if separator:
                 current_length += 1
             parts.append(section)
             current_length += len(section)
-        for section in [item for item in optional_sections if item and not item.endswith(": .")]:
+        for section in deferred_required:
+            separator = 1 if parts else 0
+            remaining = limit - current_length - separator
+            if remaining <= 96:
+                continue
+            trimmed = AIOrchestratorService._trim_prompt(section, remaining)
+            if separator:
+                current_length += 1
+            parts.append(trimmed)
+            current_length += len(trimmed)
+        for section in optional:
             separator = 1 if parts else 0
             section_length = len(section) + separator
             if current_length + section_length > limit:
@@ -20870,11 +24985,30 @@ class AIOrchestratorService:
             creative_decision=creative_decision,
             metadata=metadata if isinstance(metadata, dict) else {},
         )
-        proof_points = AIOrchestratorService._strip_blocked_compliance_phrases(
-            AIOrchestratorService._compact_named_items(metadata.get("proof_points"), limit=4)
+        early_format_name = str(request.studio_panel.get("format") or "static")
+        data_list_surface_contract = AIOrchestratorService._data_list_surface_contract(
+            prompt=getattr(request, "prompt", ""),
+            format_name=early_format_name,
+            metadata=metadata if isinstance(metadata, dict) else {},
+            text_payload=text_payload,
         )
-        infographic_sections = AIOrchestratorService._compact_infographic_section_specs(metadata.get("infographic_section_specs"))
-        static_panel_spec = AIOrchestratorService._compact_static_panel_spec(metadata.get("static_panel_spec"))
+        data_list_module_count = (
+            AIOrchestratorService._int_or_none(data_list_surface_contract.get("module_count"))
+            if isinstance(data_list_surface_contract, dict)
+            else None
+        ) or 0
+        proof_points = AIOrchestratorService._strip_blocked_compliance_phrases(
+            AIOrchestratorService._compact_named_items(metadata.get("proof_points"), limit=max(4, data_list_module_count))
+        )
+        infographic_sections = AIOrchestratorService._compact_infographic_section_specs(
+            metadata.get("infographic_section_specs"),
+            section_limit=max(4, data_list_module_count or 4),
+            item_limit=max(2, min(data_list_module_count or 2, 4)),
+        )
+        static_panel_spec = AIOrchestratorService._compact_static_panel_spec(
+            metadata.get("static_panel_spec"),
+            item_limit=max(2, data_list_module_count or 2),
+        )
         geometry_contract = AIOrchestratorService._compact_scene_graph_geometry(scene_graph)
         layout_dna_contract = AIOrchestratorService._compact_layout_dna_contract(compiled_context)
         layout_archetype = AIOrchestratorService._normalize_metadata_text(
@@ -20900,12 +25034,18 @@ class AIOrchestratorService:
         )
         file_type = str(request.studio_panel.get("file_type") or "png").upper()
         platform = str(request.studio_panel.get("platform_preset") or "social")
-        format_name = str(request.studio_panel.get("format") or "static")
+        format_name = early_format_name
+        legal_footer_text = AIOrchestratorService._scene_graph_legal_footer_text(scene_graph)
+        use_backend_text_overlay = AIOrchestratorService._should_use_backend_text_overlay_for_ai_final_render(
+            request,
+            creative_decision,
+        )
         explicit_data_visual_request = AIOrchestratorService._has_explicit_data_visual_request(
             getattr(request, "prompt", ""),
             text_payload=text_payload,
         )
         canvas_fit_guidance = AIOrchestratorService._canvas_fit_guidance(request.studio_panel)
+        generation_to_export_fit_guidance = AIOrchestratorService._generation_to_export_fit_guidance(request.studio_panel)
         supporting_visual_system = AIOrchestratorService._normalized_supporting_visual_system(creative_decision.asset_strategy or {})
         iconography_supported = (
             format_name in {"carousel", "infographic"}
@@ -20930,6 +25070,41 @@ class AIOrchestratorService:
                 scene_graph=scene_graph,
             )
         )
+        reference_template_blueprint = AIOrchestratorService._reference_template_sample_page_blueprint(
+            compiled_context,
+            format_name=format_name,
+        )
+        active_sample_page_blueprint = (
+            metadata.get("sample_page_blueprint")
+            if isinstance(metadata.get("sample_page_blueprint"), dict)
+            else reference_template_blueprint
+        )
+        normalized_format_name = AIOrchestratorService._normalize_metadata_text(format_name, limit=32).casefold()
+        llm_led_static_infographic = AIOrchestratorService._llm_led_static_infographic_format(normalized_format_name)
+        scene_graph_has_text_regions = any(
+            bool(getattr(element, "visible", True)) and AIOrchestratorService._scene_graph_text_like_element(element)
+            for element in (scene_graph.elements or [])
+        )
+        reference_template_structure_active = bool(active_sample_page_blueprint) and normalized_format_name in {
+            "static",
+            "infographic",
+        } and not llm_led_static_infographic
+        final_render_layout_content_budget = AIOrchestratorService._dynamic_layout_content_budget(
+            request=request,
+            format_name=format_name,
+            text_payload=text_payload,
+            metadata=metadata,
+            sample_page_blueprint=active_sample_page_blueprint,
+            scene_graph=scene_graph,
+            legal_footer_text=legal_footer_text,
+            disclaimer_guidance=AIOrchestratorService._disclaimer_overlay_guidance(request),
+            logo_position_hint=logo_position_hint,
+        )
+        default_format_guidance = (
+            "Treat this as one premium branded visual substrate with final text reserved for backend overlay."
+            if use_backend_text_overlay
+            else "Treat this as one finished branded social image."
+        )
         format_guidance = {
             "carousel": (
                 "Treat this as a premium carousel panel or cover image with strong sectioning, "
@@ -20940,7 +25115,11 @@ class AIOrchestratorService:
                 "with 3-4 clearly separated sections and strong vertical pacing. Only use chart, icon, or diagram callouts "
                 "when the supplied content clearly requires them. Do not default to stock growth arrows, rising bars, or generic finance stickers."
             ),
-        }.get(format_name, "Treat this as one finished branded social image.")
+        }.get(format_name, default_format_guidance)
+        if llm_led_static_infographic:
+            format_guidance = (
+                "Treat this as a finished static/infographic social creative. Let the image model choose the composition, module count, visual metaphor, table/list/ranking treatment, and content hierarchy required by the current prompt while keeping only the logo-safe corner and footer/disclaimer strip reserved."
+            )
         reference_summary = AIOrchestratorService._compact_reference_assets(reference_images or [])
         grounding_sections = AIOrchestratorService._final_render_grounding_sections(
             request=request,
@@ -20949,6 +25128,9 @@ class AIOrchestratorService:
             compiled_context=compiled_context,
             reference_assets=reference_images,
         )
+        if llm_led_static_infographic:
+            grounding_sections = []
+            reference_summary = "None"
         research_quality_section = AIOrchestratorService._research_editorial_prompt_section(
             request,
             compiled_context,
@@ -20956,6 +25138,7 @@ class AIOrchestratorService:
         consultant_contract = AIOrchestratorService._consultant_quality_contract(
             for_visual_only=False,
             for_carousel=format_name == "carousel",
+            for_static_infographic_ad=llm_led_static_infographic,
         )
         multimodal_balance_contract = AIOrchestratorService._multimodal_balance_contract(
             format_name=format_name,
@@ -20967,6 +25150,22 @@ class AIOrchestratorService:
         reference_family_contract = AIOrchestratorService._reference_family_contract_sections(
             compiled_context,
             for_visual_only=False,
+        )
+        reference_adaptation_profile_section = AIOrchestratorService._reference_adaptation_profile_prompt_section(
+            compiled_context.get("reference_adaptation_profile")
+        )
+        generation_surface_contract_section = AIOrchestratorService._generation_surface_contract_prompt_section(
+            compiled_context.get("generation_surface_contract")
+        )
+        reference_template_adaptation_sections = (
+            []
+            if llm_led_static_infographic
+            else AIOrchestratorService._reference_template_adaptation_prompt_sections(
+                compiled_context,
+                format_name=format_name,
+                layout_content_budget=final_render_layout_content_budget,
+                sample_page_blueprint=active_sample_page_blueprint,
+            )
         )
         visual_style_policy_sections = AIOrchestratorService._visual_style_policy_prompt_sections(
             compiled_context,
@@ -20985,35 +25184,257 @@ class AIOrchestratorService:
             reference_images,
             message_strategy,
         )
+        infographic_surface_enforcement = (
+            ""
+            if llm_led_static_infographic
+            else AIOrchestratorService._infographic_surface_enforcement_section(
+                request=request,
+                format_name=format_name,
+                structured_visual_metadata=metadata.get("structured_visual_metadata"),
+                visual_plan=visual_plan,
+            )
+        )
+        data_list_surface_guidance = (
+            ""
+            if llm_led_static_infographic
+            else AIOrchestratorService._data_list_surface_prompt_section(
+                request=request,
+                text_payload=text_payload,
+                metadata=metadata if isinstance(metadata, dict) else {},
+                format_name=format_name,
+                use_backend_text_overlay=use_backend_text_overlay,
+                visual_plan=visual_plan,
+            )
+        )
         visual_plan_guidance = AIOrchestratorService._visual_explanation_guidance(visual_plan)
         disclaimer_overlay_guidance = AIOrchestratorService._disclaimer_overlay_guidance(request)
         content_format_guide_section = AIOrchestratorService._content_format_guide_prompt_section(request)
         live_research_facts_section = AIOrchestratorService._live_research_verified_facts_prompt_section(request)
         retry_instruction = AIOrchestratorService._normalize_metadata_text(retry_note, limit=260)
-        text_overlay_contract = AIOrchestratorService._text_overlay_substrate_contract(
-            headline=text_payload.headline,
-            supporting_line=metadata.get("supporting_line") or text_payload.body,
-            body=text_payload.body,
-            proof_points=metadata.get("proof_points"),
-            claim_evidence_pairs=metadata.get("claim_evidence_pairs"),
-            cta=text_payload.cta,
+        proof_points_limit = max(3, data_list_module_count or 3)
+        llm_led_current_prompt_instruction = (
+            f"Current user prompt is the subject authority: {AIOrchestratorService._normalize_metadata_text(request.prompt, limit=420)}."
+            if llm_led_static_infographic
+            else ""
+        )
+        llm_led_topic_fit_contract = AIOrchestratorService._final_render_topic_fit_contract(
+            request=request,
+            format_name=format_name,
+        )
+        llm_led_composition_instruction = (
+            "LLM-led composition authority for static/infographic: design the complete content hierarchy, wording, modules, comparison/ranking treatment, topic-specific imagery, spacing, and visual emphasis from the current user prompt and approved context. Backend controls only the logo-safe corner and the footer/disclaimer strip; do not preserve sample/template geometry, scene-graph regions, extracted layout controls, or old scaffold content."
+            if llm_led_static_infographic
+            else ""
+        )
+        social_media_ad_contract = (
+            AIOrchestratorService._social_media_ad_composition_contract(
+                format_name=format_name,
+                platform=platform,
+            )
+            if llm_led_static_infographic
+            else ""
+        )
+        content_visual_explanation_contract = (
+            AIOrchestratorService._content_visual_explanation_contract(
+                request=request,
+                format_name=format_name,
+                platform=platform,
+            )
+            if llm_led_static_infographic
+            else ""
+        )
+        creative_topic_3d_visual_contract = (
+            AIOrchestratorService._creative_topic_3d_visual_contract(
+                request=request,
+                format_name=format_name,
+                compiled_context=compiled_context,
+                reference_assets=reference_images,
+            )
+            if llm_led_static_infographic
+            else ""
+        )
+        quality_floor_contract = (
+            AIOrchestratorService._final_render_static_infographic_quality_floor_contract(
+                request=request,
+                format_name=format_name,
+            )
+            if llm_led_static_infographic
+            else ""
+        )
+        compact_hallucination_guard = (
+            AIOrchestratorService._compact_static_infographic_hallucination_guard(
+                request=request,
+                format_name=format_name,
+            )
+            if llm_led_static_infographic
+            else ""
+        )
+        hallucination_control_contract = (
+            AIOrchestratorService._image_hallucination_control_contract(
+                format_name=format_name,
+                use_backend_text_overlay=use_backend_text_overlay,
+            )
+            if llm_led_static_infographic or use_backend_text_overlay
+            else ""
+        )
+        llm_led_text_contract = [
+            "Static/infographic content authority: render topic-correct main content directly in the image. Use upstream headline, body, proof points, CTA, and metadata only as optional semantic hints; if they conflict with the current user prompt, rewrite them to match the current prompt.",
+            "Do not carry over unrelated previous-request topics, sample headlines, template copy, sample labels, old section titles, placeholder rows, or stale visual objects.",
+            "Do not invent exact dates, percentages, currency amounts, rankings, table values, regulatory claims, or source attributions unless they are present in the current user prompt, approved text payload, retrieved verified facts, or live-research facts. If exact values are unavailable, use qualitative comparison/ranking language instead of fake numbers.",
+            f"Optional upstream semantic hints: headline={AIOrchestratorService._normalize_metadata_text(text_payload.headline, limit=160)}; body={AIOrchestratorService._normalize_metadata_text(text_payload.body, limit=260)}; cta={AIOrchestratorService._normalize_metadata_text(text_payload.cta, limit=120)}.",
+            f"Optional approved proof/list hints: {proof_points}.",
+        ]
+        text_overlay_contract = (
+            AIOrchestratorService._text_overlay_substrate_contract(
+                headline=text_payload.headline,
+                supporting_line=metadata.get("supporting_line") or text_payload.body,
+                body=text_payload.body,
+                proof_points=metadata.get("proof_points"),
+                claim_evidence_pairs=metadata.get("claim_evidence_pairs"),
+                cta=text_payload.cta,
+                proof_points_limit=proof_points_limit,
+            )
+            if use_backend_text_overlay
+            else AIOrchestratorService._final_text_render_contract(
+                headline=text_payload.headline,
+                supporting_line=metadata.get("supporting_line") or text_payload.body,
+                body=text_payload.body,
+                proof_points=metadata.get("proof_points"),
+                claim_evidence_pairs=metadata.get("claim_evidence_pairs"),
+                cta=text_payload.cta,
+                legal_footer=legal_footer_text,
+                proof_points_limit=proof_points_limit,
+            )
+            if llm_led_static_infographic and scene_graph_has_text_regions
+            else llm_led_text_contract
+            if llm_led_static_infographic
+            else AIOrchestratorService._final_text_render_contract(
+                headline=text_payload.headline,
+                supporting_line=metadata.get("supporting_line") or text_payload.body,
+                body=text_payload.body,
+                proof_points=metadata.get("proof_points"),
+                claim_evidence_pairs=metadata.get("claim_evidence_pairs"),
+                cta=text_payload.cta,
+                legal_footer=legal_footer_text,
+                proof_points_limit=proof_points_limit,
+            )
+        )
+        opening_instruction = (
+            "Create a premium, client-ready visual substrate for backend text and logo overlay."
+            if use_backend_text_overlay
+            else "Create one finished premium branded social creative."
+        )
+        cohesive_visual_instruction = (
+            "Render a cohesive, modern, client-ready visual substrate with clean hierarchy, premium spacing, clear focal path, and no readable text."
+            if use_backend_text_overlay
+            else "Render a cohesive, modern, client-ready finished visual with clean hierarchy, premium spacing, and a clear focal path."
+        )
+        final_text_safety_instruction = (
+            "Backend overlay collision guard: do not render headline, body, CTA, legal copy, labels, bullets, letters, numbers, pseudo-text, or any visible lettering. Leave clean high-contrast surfaces inside the contracted text zones so the renderer can place exact copy afterward."
+            if use_backend_text_overlay
+            else "CRITICAL TEXT WRAPPING RULE: Render the approved headline, body/proof content, labels, and CTA as final readable image text inside their designated zones. Keep every letter, word, number, label, row, CTA, and footer-safe boundary fully visible with generous padding; never clip, crop, truncate, fade out, hide, or continue text past a card/panel/canvas edge. If space is tight, shorten/wrap the copy, reduce module count, or simplify visuals before allowing cut-off text. Keep the corner-safe brand area and footer/disclaimer strip blank because only those exact elements are composited afterward."
+        )
+        main_text_authority_instruction = (
+            (
+                "Main content render authority: the image model must render headline, body, proof/list/table rows, labels, and CTA as finished readable content. Backend post-processing is limited to exact stored brand asset placement and legal footer/disclaimer only."
+                if scene_graph_has_text_regions
+                else llm_led_composition_instruction
+            )
+            if llm_led_static_infographic
+            else ""
+            if use_backend_text_overlay
+            else "Main content render authority: the image model must render headline, body, proof/list/table rows, labels, and CTA as finished readable content. Backend post-processing is limited to exact stored brand asset placement and legal footer/disclaimer only."
+        )
+        proof_point_render_instruction = (
+            "Proof points are optional semantic hints for the model; current prompt fit is more important than preserving their exact layout."
+            if llm_led_static_infographic
+            else f"Use these proof points only as semantic visual cues, not readable bullets: {proof_points}."
+            if use_backend_text_overlay
+            else f"Use these proof points as approved readable content only where they fit the layout; keep wording concise and do not invent unsupported values: {proof_points}."
+        )
+        if llm_led_static_infographic:
+            reference_adaptation_profile_section = ""
+            generation_surface_contract_section = ""
+            reference_family_contract = []
+            sequence_alignment_sections = []
+            geometry_contract = ""
+            layout_dna_contract = ""
+            infographic_sections = ""
+            static_panel_spec = ""
+            visual_plan_guidance = ""
+        brand_design_system_guidance_sections = [
+            f"Brand design-system layout guidance: {design_system_guidance.get('layout')}." if design_system_guidance.get("layout") else "",
+            f"Preferred zone roles from the brand system: {design_system_guidance.get('zones')}." if design_system_guidance.get("zones") else "",
+            f"Background style guidance from the brand system: {design_system_guidance.get('background')}." if design_system_guidance.get("background") else "",
+            f"Motif guidance from the brand system: {design_system_guidance.get('motifs')}." if design_system_guidance.get("motifs") else "",
+            f"Hierarchy guidance from the brand system: {design_system_guidance.get('hierarchy')}." if design_system_guidance.get("hierarchy") else "",
+            f"Content-structure guidance from the brand system: {design_system_guidance.get('content_structure')}." if design_system_guidance.get("content_structure") else "",
+            f"Image-treatment guidance from the brand system: {design_system_guidance.get('image_treatment')}." if design_system_guidance.get("image_treatment") else "",
+            f"Visual-craft guidance from the brand system: {design_system_guidance.get('visual_craft')}." if design_system_guidance.get("visual_craft") else "",
+            f"Composition guidance from the brand system: {design_system_guidance.get('composition')}." if design_system_guidance.get("composition") else "",
+            f"Subject guidance from the brand system: {design_system_guidance.get('subjects')}." if design_system_guidance.get("subjects") else "",
+            f"Editorial rhythm guidance from the brand system: {design_system_guidance.get('editorial')}." if design_system_guidance.get("editorial") else "",
+            f"Brand-cue guidance from the brand system: {design_system_guidance.get('brand_cues')}." if design_system_guidance.get("brand_cues") else "",
+        ]
+        crop_crowding_instruction = (
+            (
+                "Do not crop or crowd any reserved text, CTA, logo-safe corner, or footer/disclaimer strip. All other layout, text placement, and visual hierarchy are model-led."
+                if scene_graph_has_text_regions
+                else "Do not crop or crowd the logo-safe corner or footer/disclaimer strip. All other layout, text placement, and visual hierarchy are model-led."
+            )
+            if llm_led_static_infographic
+            else "Do not crop or crowd any reserved text, CTA, corner-safe, or legal-safe region. If space feels tight, simplify the visual substrate instead of pushing zones to the edge."
+        )
+        export_frame_fit_instruction = (
+            "All reserved overlay regions must remain fully inside the export frame; do not let cards, shells, dividers, or image subjects touch or cross the crop boundary."
+            if use_backend_text_overlay
+            else (
+                "All rendered text regions plus the reserved corner-safe and legal/footer areas must remain fully inside the export frame; do not let cards, shells, dividers, or image subjects touch or cross the crop boundary."
+                if llm_led_static_infographic and scene_graph_has_text_regions
+                else (
+                    "Keep the logo-safe corner and legal/footer strip fully inside the export frame; keep model-rendered content inside the canvas without crowding."
+                    if llm_led_static_infographic
+                    else "All rendered text regions plus the reserved corner-safe and legal/footer areas must remain fully inside the export frame; do not let cards, shells, dividers, or image subjects touch or cross the crop boundary."
+                )
+            )
         )
         sections = [
-            "Create one finished premium branded social creative.",
+            opening_instruction,
             f"Keep the {reserved_logo_area} area completely empty and visually clean. Do not place any headline, body copy, supporting text, proof point, CTA, icon, or visual element inside or immediately adjacent to this corner.",
+            "Do not typeset the brand name as a top-corner signature.",
+            *AIOrchestratorService._logo_non_generation_contract(
+                brand_name=brand_name,
+                reserved_logo_area=reserved_logo_area,
+            ),
+            logo_surface_guidance,
             disclaimer_overlay_guidance,
             f"Platform: {platform}.",
             f"Format: {format_name}.",
             f"Output type: {file_type}.",
+            llm_led_current_prompt_instruction,
+            llm_led_topic_fit_contract,
+            social_media_ad_contract,
+            content_visual_explanation_contract,
+            creative_topic_3d_visual_contract,
+            quality_floor_contract,
+            hallucination_control_contract,
             format_guidance,
+            infographic_surface_enforcement,
             content_format_guide_section,
             live_research_facts_section,
             retry_instruction,
             canvas_fit_guidance,
-            f"Creative mode: {creative_decision.layout_mode}.",
-            f"Layout archetype: {layout_archetype}.",
+            generation_to_export_fit_guidance,
+            "" if llm_led_static_infographic else f"Creative mode: {creative_decision.layout_mode}.",
+            "" if llm_led_static_infographic else f"Layout archetype: {layout_archetype}.",
+            main_text_authority_instruction,
+            *reference_template_adaptation_sections,
             (
-                f"Scene-graph geometry contract JSON: {geometry_contract}. Preserve these normalized regions closely; only make tiny adjustments for readability and never recompose from scratch."
+                (
+                    f"Scene-graph geometry contract JSON: {geometry_contract}. Preserve these normalized regions closely as empty overlay-safe surfaces; do not render lettering inside them and never recompose from scratch."
+                    if use_backend_text_overlay
+                    else f"Scene-graph geometry contract JSON: {geometry_contract}. Preserve these normalized regions closely; only make tiny adjustments for readability and never recompose from scratch."
+                )
                 if geometry_contract
                 else ""
             ),
@@ -21022,11 +25443,12 @@ class AIOrchestratorService:
                 if layout_dna_contract
                 else ""
             ),
-            "Respect the reference/template layout strictly: preserve the contracted regions, spacing rhythm, text-safe negative space, and image-zone discipline before adding decorative detail.",
+            "" if llm_led_static_infographic else "Respect the reference/template layout strictly: preserve the contracted regions, spacing rhythm, text-safe negative space, and image-zone discipline before adding decorative detail.",
             f"Campaign theme: {message_theme}.",
             f"Emotional direction: {emotional_direction}.",
             *text_overlay_contract,
-            f"Use these proof points only as semantic visual cues, not readable bullets: {proof_points}.",
+            data_list_surface_guidance,
+            proof_point_render_instruction,
             (
                 f"Infographic section plan to preserve: {infographic_sections}."
                 if infographic_sections and format_name == "infographic"
@@ -21041,39 +25463,51 @@ class AIOrchestratorService:
             *consultant_contract,
             *multimodal_balance_contract,
             *reference_family_contract,
+            reference_adaptation_profile_section,
+            generation_surface_contract_section,
+            *reference_template_adaptation_sections,
             *visual_style_policy_sections,
             *sequence_alignment_sections,
             f"Brand palette to honor: {palette}.",
             f"Palette role guidance: {palette_guidance}.",
             strict_palette_contract,
             f"Typography direction: {typography}.",
-            f"Brand design-system layout guidance: {design_system_guidance.get('layout')}." if design_system_guidance.get("layout") else "",
-            f"Preferred zone roles from the brand system: {design_system_guidance.get('zones')}." if design_system_guidance.get("zones") else "",
-            f"Background style guidance from the brand system: {design_system_guidance.get('background')}." if design_system_guidance.get("background") else "",
-            f"Motif guidance from the brand system: {design_system_guidance.get('motifs')}." if design_system_guidance.get("motifs") else "",
-            f"Hierarchy guidance from the brand system: {design_system_guidance.get('hierarchy')}." if design_system_guidance.get("hierarchy") else "",
-            f"Content-structure guidance from the brand system: {design_system_guidance.get('content_structure')}." if design_system_guidance.get("content_structure") else "",
-            f"Image-treatment guidance from the brand system: {design_system_guidance.get('image_treatment')}." if design_system_guidance.get("image_treatment") else "",
-            f"Visual-craft guidance from the brand system: {design_system_guidance.get('visual_craft')}." if design_system_guidance.get("visual_craft") else "",
-            f"Composition guidance from the brand system: {design_system_guidance.get('composition')}." if design_system_guidance.get("composition") else "",
-            f"Subject guidance from the brand system: {design_system_guidance.get('subjects')}." if design_system_guidance.get("subjects") else "",
-            f"Editorial rhythm guidance from the brand system: {design_system_guidance.get('editorial')}." if design_system_guidance.get("editorial") else "",
-            f"Brand-cue guidance from the brand system: {design_system_guidance.get('brand_cues')}." if design_system_guidance.get("brand_cues") else "",
+            *brand_design_system_guidance_sections,
             *grounding_sections,
-            f"Reference images available for composition: {reference_summary}.",
-            "Current request subject matter overrides reference subject matter: preserve only approved palette, spacing, layout rhythm, and visual craft from references; never import unrelated objects, industries, products, or scenes from a template.",
-            "Render a cohesive, modern, client-ready finished visual with clean hierarchy, premium spacing, and a clear focal path.",
-            "Do not crop or crowd any reserved text, CTA, corner-safe, or legal-safe region. If space feels tight, simplify the visual substrate instead of pushing zones to the edge.",
-            "All reserved overlay regions must remain fully inside the export frame; do not let cards, shells, dividers, or image subjects touch or cross the crop boundary.",
+            "" if llm_led_static_infographic else f"Reference images available for composition: {reference_summary}.",
+            (
+                "Reference/template material is inspiration only for static/infographic. Do not preserve its geometry or scaffold; generate a new topic-correct design from the current prompt while only reserving the logo-safe corner and footer/disclaimer strip."
+                if llm_led_static_infographic
+                else "Current request subject matter overrides reference subject matter: treat reference/template assets as layout DNA only; preserve approved palette, spacing, layout rhythm, and visual craft, but replace sample headlines, body, labels, icons, illustrations, charts, objects, and scenes with topic-specific content and visuals from the current prompt; never import unrelated objects, industries, products, or scenes from a template."
+            ),
+            cohesive_visual_instruction,
+            crop_crowding_instruction,
+            export_frame_fit_instruction,
             "Avoid defaulting to a plain text poster when the requested format calls for a richer explanatory layout.",
-            "Make the supporting visual explain the exact topic and benefit from the approved copy intent and user prompt, while leaving all words for backend overlay.",
+            (
+                "Template-active fallback policy: preserve the observed template scaffold as the primary composition. Any generated photo, illustration, or object scene may only occupy an approved visual slot; it must not replace module/card/panel/row/callout structure or reserved text-safe surfaces."
+                if reference_template_structure_active
+                else (
+                    "Make the supporting visual explain the exact topic and benefit from the approved copy intent and user prompt, while rendering the main approved words directly in the image."
+                    if not use_backend_text_overlay
+                    else "Make the supporting visual explain the exact topic and benefit from the approved copy intent and user prompt, while leaving all words for backend overlay."
+                )
+            ),
             visual_plan_guidance,
-            "Prefer content-specific explanatory imagery: product or process metaphors, comparison setups, outcome-focused objects, or structured visual anchors directly implied by the copy.",
+            (
+                "Use content-specific explanatory imagery only inside approved template image/module slots, while keeping the full layout skeleton visible."
+                if reference_template_structure_active
+                else "Prefer content-specific explanatory imagery: product or process metaphors, comparison setups, outcome-focused objects, or structured visual anchors directly implied by the copy."
+            ),
             "Do not default to a standalone business portrait, generic investor, or unrelated editorial person. Use people only when their action clearly explains the message.",
             (
+                "Keep template modules, blank text-safe shells, card/panel boundaries, section rhythm, and callout surfaces visible; do not collapse them into one oversized visual subject."
+                if reference_template_structure_active
+                else (
                 "When the composition supports explanation, use refined iconography, diagram cues, comparison motifs, or modular visual anchors to make the piece informative rather than decorative. Avoid repetitive stock finance motifs such as rising bars with arrows unless they are semantically required."
                 if iconography_supported
                 else "Favor one clear content-led visual focal subject so the base does not collapse into a generic portrait, blank gradient, or empty color field."
+                )
             ),
             (
                 "Do not add bar-chart icons, rising-arrow symbols, dashboard tiles, comparison stickers, decorative finance mini-graphics, or a chart/graph/bar-and-arrow hero image unless the user explicitly asked for a chart, graph, table, timeline, diagram, or infographic data visualization."
@@ -21095,23 +25529,156 @@ class AIOrchestratorService:
                 if any(token in str(design_system_guidance.get("image_treatment") or "").casefold() for token in ("diagram", "icon", "editorial", "abstract", "illustration"))
                 else ""
             ),
-            "Respect the reference/template layout strictly: place visual emphasis only where the selected layout reserves image space, preserve text-safe negative space, and keep the composition skeleton stable.",
+            "" if llm_led_static_infographic and not scene_graph_has_text_regions else "Respect the reference/template layout strictly: place visual emphasis only where the selected layout reserves image space, preserve text-safe negative space, and keep the composition skeleton stable.",
             (
                 "When sequence guidance is style-reference-only, preserve the sample's region proportions, spacing rhythm, negative space, and composition balance as closely as possible while rebuilding the artwork from scratch. Do not copy the literal sample surface, but do imitate its structural discipline."
-                if template_surface_policy == "style_reference_only"
+                if template_surface_policy == "style_reference_only" and not llm_led_static_infographic
                 else ""
             ),
             "Use one coherent composition, not a collage of unrelated stickers, icons, or panels.",
-            "Keep every future text-overlay surface clean, calm, high-contrast, and intentionally aligned with premium editorial spacing.",
+            (
+                "Keep every future text-overlay surface clean, calm, high-contrast, and intentionally aligned with premium editorial spacing."
+                if use_backend_text_overlay
+                else "Keep every rendered text zone clean, calm, high-contrast, and intentionally aligned with premium editorial spacing."
+            ),
             "Avoid generic clip-art, fake logos, placeholder UI, awkward overlaps, washed-out buttons, repeated poster templates, or low-contrast pale text on pale backgrounds.",
-            "CRITICAL TEXT WRAPPING RULE: You must aggressively wrap the headline and body text so they stay strictly inside their designated coordinate zones. Never let any letters or words stretch into the 'empty space' corner. Keep the 'empty space' 100% blank and free of text so the backend overlay does not clash with your lettering.",
+            final_text_safety_instruction,
         ]
-        prompt = AIOrchestratorService._trim_prompt(
-            " ".join(section for section in sections if section and not section.endswith(": .")),
-            AIOrchestratorService.IMAGE_PROMPT_MAX_LENGTH,
+        required_sections = [
+            opening_instruction,
+            f"Keep the {reserved_logo_area} area completely empty and visually clean. Do not place any headline, body copy, supporting text, proof point, CTA, icon, or visual element inside or immediately adjacent to this corner.",
+            "Do not typeset the brand name as a top-corner signature.",
+            *AIOrchestratorService._logo_non_generation_contract(
+                brand_name=brand_name,
+                reserved_logo_area=reserved_logo_area,
+            ),
+            logo_surface_guidance,
+            disclaimer_overlay_guidance,
+            f"Platform: {platform}.",
+            f"Format: {format_name}.",
+            f"Output type: {file_type}.",
+            llm_led_current_prompt_instruction,
+            llm_led_topic_fit_contract,
+            social_media_ad_contract,
+            creative_topic_3d_visual_contract,
+            quality_floor_contract,
+            compact_hallucination_guard,
+            format_guidance,
+            content_format_guide_section,
+            live_research_facts_section,
+            *visual_style_policy_sections,
+            *brand_design_system_guidance_sections,
+            (
+                "If the brand design system implies airy hierarchy or generous whitespace, preserve clean negative space instead of packing every proof point into the frame."
+                if "airy" in str(design_system_guidance.get("hierarchy") or "").casefold() or "generous" in str(design_system_guidance.get("hierarchy") or "").casefold()
+                else ""
+            ),
+            (
+                "Bias away from generic business-person imagery when the brand design system points toward diagram-led, icon-led, editorial, or abstract treatment."
+                if any(token in str(design_system_guidance.get("image_treatment") or "").casefold() for token in ("diagram", "icon", "editorial", "abstract", "illustration"))
+                else ""
+            ),
+            reference_adaptation_profile_section,
+            generation_surface_contract_section,
+            canvas_fit_guidance,
+            generation_to_export_fit_guidance,
+            crop_crowding_instruction,
+            export_frame_fit_instruction,
+            "" if llm_led_static_infographic else f"Creative mode: {creative_decision.layout_mode}.",
+            "" if llm_led_static_infographic else f"Layout archetype: {layout_archetype}.",
+            main_text_authority_instruction,
+            *reference_template_adaptation_sections,
+            (
+                "Template-active fallback policy: preserve the observed template scaffold as the primary composition. Any generated photo, illustration, or object scene may only occupy an approved visual slot; it must not replace module/card/panel/row/callout structure or reserved text-safe surfaces."
+                if reference_template_structure_active
+                else (
+                    "Make the supporting visual explain the exact topic and benefit from the approved copy intent and user prompt, while rendering the main approved words directly in the image."
+                    if not use_backend_text_overlay
+                    else "Make the supporting visual explain the exact topic and benefit from the approved copy intent and user prompt, while leaving all words for backend overlay."
+                )
+            ),
+            (
+                "Reference/template material is inspiration only for static/infographic. Do not preserve its geometry or scaffold; generate a new topic-correct design from the current prompt while only reserving the logo-safe corner and footer/disclaimer strip."
+                if llm_led_static_infographic
+                else "Current request subject matter overrides reference subject matter: treat reference/template assets as layout DNA only; preserve approved palette, spacing, layout rhythm, and visual craft, but replace sample headlines, body, labels, icons, illustrations, charts, objects, and scenes with topic-specific content and visuals from the current prompt; never import unrelated objects, industries, products, or scenes from a template."
+            ),
+            "Do not default to a standalone business portrait, generic investor, or unrelated editorial person. Use people only when their action clearly explains the message.",
+            (
+                (
+                    f"Scene-graph geometry contract JSON: {geometry_contract}. Preserve these normalized regions closely as empty overlay-safe surfaces; do not render lettering inside them and never recompose from scratch."
+                    if use_backend_text_overlay
+                    else f"Scene-graph geometry contract JSON: {geometry_contract}. Preserve these normalized regions closely; only make tiny adjustments for readability and never recompose from scratch."
+                )
+                if geometry_contract
+                else ""
+            ),
+            (
+                f"Template/layout DNA contract JSON: {layout_dna_contract}. Use this as the authoritative composition skeleton for region balance, hierarchy, and spacing."
+                if layout_dna_contract
+                else ""
+            ),
+            "" if llm_led_static_infographic and not scene_graph_has_text_regions else "Respect the reference/template layout strictly: preserve the contracted regions, spacing rhythm, text-safe negative space, and image-zone discipline before adding decorative detail.",
+            *text_overlay_contract,
+            data_list_surface_guidance,
+            proof_point_render_instruction,
+            (
+                f"Infographic section plan to preserve: {infographic_sections}."
+                if infographic_sections and format_name == "infographic"
+                else ""
+            ),
+            (
+                f"Static panel plan to preserve: {static_panel_spec}."
+                if static_panel_spec and format_name == "static"
+                else ""
+            ),
+            research_quality_section,
+            *consultant_contract,
+            *multimodal_balance_contract,
+            *reference_family_contract,
+            reference_adaptation_profile_section,
+            generation_surface_contract_section,
+            f"Brand palette to honor: {palette}.",
+            f"Palette role guidance: {palette_guidance}.",
+            strict_palette_contract,
+            f"Typography direction: {typography}.",
+            *sequence_alignment_sections,
+            cohesive_visual_instruction,
+            crop_crowding_instruction,
+            export_frame_fit_instruction,
+            (
+                "Template-active fallback policy: preserve the observed template scaffold as the primary composition. Any generated photo, illustration, or object scene may only occupy an approved visual slot; it must not replace module/card/panel/row/callout structure or reserved text-safe surfaces."
+                if reference_template_structure_active
+                else (
+                    "Make the supporting visual explain the exact topic and benefit from the approved copy intent and user prompt, while rendering the main approved words directly in the image."
+                    if not use_backend_text_overlay
+                    else "Make the supporting visual explain the exact topic and benefit from the approved copy intent and user prompt, while leaving all words for backend overlay."
+                )
+            ),
+            visual_plan_guidance,
+            (
+                "Keep template modules, blank text-safe shells, card/panel boundaries, section rhythm, and callout surfaces visible; do not collapse them into one oversized visual subject."
+                if reference_template_structure_active
+                else (
+                "When the composition supports explanation, use refined iconography, diagram cues, comparison motifs, or modular visual anchors to make the piece informative rather than decorative. Avoid repetitive stock finance motifs such as rising bars with arrows unless they are semantically required."
+                if iconography_supported
+                else "Favor one clear content-led visual focal subject so the base does not collapse into a generic portrait, blank gradient, or empty color field."
+                )
+            ),
+            (
+                "Do not add bar-chart icons, rising-arrow symbols, dashboard tiles, comparison stickers, decorative finance mini-graphics, or a chart/graph/bar-and-arrow hero image unless the user explicitly asked for a chart, graph, table, timeline, diagram, or infographic data visualization."
+                if not explicit_data_visual_request
+                else "If a chart or diagram is explicitly requested, keep it literal, sparse, and directly tied to the supplied data instead of using generic symbolic finance icons."
+            ),
+            final_text_safety_instruction,
+        ]
+        prompt = AIOrchestratorService._compose_prompt_sections(
+            required_sections=required_sections,
+            optional_sections=sections,
+            limit=AIOrchestratorService.IMAGE_PROMPT_MAX_LENGTH,
         )
         prompt = AIOrchestratorService._strip_blocked_compliance_phrases(prompt)
-        return AIOrchestratorService._scrub_image_prompt_brand_mark_triggers(prompt)
+        prompt = AIOrchestratorService._scrub_image_prompt_brand_mark_triggers(prompt)
+        return AIOrchestratorService._trim_prompt(prompt, AIOrchestratorService.IMAGE_PROMPT_MAX_LENGTH)
 
     @classmethod
     def _collapse_carousel_segments(cls, segments: list[str], max_slides: int) -> list[str]:
@@ -23820,19 +28387,22 @@ class AIOrchestratorService:
             creative_decision=creative_decision,
             metadata=metadata if isinstance(metadata, dict) else {},
         )
+        explicit_style_reference_policy = bool(
+            creative_decision
+            and isinstance(getattr(creative_decision, "asset_strategy", None), dict)
+            and str((creative_decision.asset_strategy or {}).get("template_surface_policy") or "").strip().lower() == "style_reference_only"
+        )
         preferred_editorial_slide_count = cls._int_or_none(
             metadata.get("preferred_slide_count")
             or metadata.get("slide_count")
             or ((request.content_plan or {}).get("preferred_slide_count") if request and isinstance(request.content_plan, dict) else None)
             or ((request.research_editorial_brief or {}).get("preferred_slide_count") if request and isinstance(request.research_editorial_brief, dict) else None)
         )
-        if force_sequence_pack and sequence_pack_slide_count:
+        if (force_sequence_pack or explicit_style_reference_policy) and sequence_pack_slide_count:
             raw_target_slide_count = sequence_pack_slide_count
         elif template_surface_policy == "style_reference_only":
             if prompt_requested_slide_count:
                 raw_target_slide_count = prompt_requested_slide_count
-            elif sequence_pack_slide_count:
-                raw_target_slide_count = sequence_pack_slide_count
             elif structured_slide_count:
                 bounded_targets = [
                     count
@@ -23840,6 +28410,8 @@ class AIOrchestratorService:
                     if count and count <= structured_slide_count
                 ]
                 raw_target_slide_count = bounded_targets[0] if bounded_targets else structured_slide_count
+            elif sequence_pack_slide_count:
+                raw_target_slide_count = sequence_pack_slide_count
             else:
                 raw_target_slide_count = cls._int_or_none(
                     outline_slide_count
@@ -24376,7 +28948,18 @@ class AIOrchestratorService:
             and not sample_allows_product_cta
             and story_role_normalized in {"takeaway", "close", "closing", "cta", "final", "macro_takeaway", "strategic_meaning"}
         )
-        if style_reference_sample_active and sample_layout_mode == "numbered_or_icon_row_list":
+        if closing_sample_disallows_product:
+            editorial_structure_lock = (
+                " Preserve the editorial explainer structure: large visual region(s), supporting text blocks, and explanatory hierarchy must stay distinct."
+                if sample_layout_mode == "editorial_explainer"
+                else ""
+            )
+            story_role_visual_execution = (
+                "Execution guidance from selected sample page: preserve the sample's macro-takeaway closing grammar. "
+                "Show wider strategic consequence, future signal, and subtle brand presence without platform, product, dashboard, laptop, or investment-CTA treatment."
+                + editorial_structure_lock
+            )
+        elif style_reference_sample_active and sample_layout_mode == "numbered_or_icon_row_list":
             story_role_visual_execution = (
                 "Execution guidance from selected sample page: "
                 + AIOrchestratorService._sample_blueprint_layout_instruction(sample_page_blueprint)
@@ -24400,11 +28983,6 @@ class AIOrchestratorService:
                 + AIOrchestratorService._sample_blueprint_layout_instruction(sample_page_blueprint)
                 + " Preserve the editorial explainer structure: large visual region(s), supporting text blocks, and explanatory hierarchy must stay distinct. "
                 "Do not convert this page into a card grid, numbered list, dashboard, product surface, or generic finance poster."
-            )
-        elif closing_sample_disallows_product:
-            story_role_visual_execution = (
-                "Execution guidance from selected sample page: preserve the sample's macro-takeaway closing grammar. "
-                "Show wider strategic consequence, future signal, and subtle brand presence without platform, product, dashboard, laptop, or investment-CTA treatment."
             )
         visual_focus_for_prompt = AIOrchestratorService._overlay_prompt_safe_visual_focus(slide)
         if closing_sample_disallows_product and (
@@ -24625,7 +29203,12 @@ class AIOrchestratorService:
             ("proof_points", slide.get("proof_points")),
             ("body_points", slide.get("body_points")),
             ("supporting_line", slide.get("supporting_line")),
-            ("body", AIOrchestratorService._carousel_slide_body_text(slide, fallback_text="")),
+            (
+                "body",
+                ""
+                if sample_support_only_cover
+                else AIOrchestratorService._carousel_slide_body_text(slide, fallback_text=""),
+            ),
         ]
         if AIOrchestratorService._prompt_has_explicit_data_anchor(getattr(request, "prompt", "")):
             data_visualization_anchor_sources.insert(0, ("user_prompt", getattr(request, "prompt", "")))
@@ -24639,7 +29222,7 @@ class AIOrchestratorService:
             prompt_slide.get("proof_points"),
             prompt_slide.get("body_points"),
             prompt_slide.get("supporting_line"),
-            AIOrchestratorService._carousel_slide_body_text(prompt_slide, fallback_text=""),
+            "" if sample_support_only_cover else AIOrchestratorService._carousel_slide_body_text(prompt_slide, fallback_text=""),
             limit=5,
         )
         broad_visual_context_section = AIOrchestratorService._broad_visual_context_prompt_section(
@@ -24703,7 +29286,7 @@ class AIOrchestratorService:
                     getattr(request, "prompt", ""),
                     prompt_slide.get("headline"),
                     prompt_slide.get("supporting_line"),
-                    prompt_slide_text_payload.body,
+                    carousel_body_for_text_contract,
                     prompt_slide.get("visual_focus"),
                     "; ".join(factual_visual_anchors),
                 ]
@@ -24752,6 +29335,12 @@ class AIOrchestratorService:
         )
         reference_creative_profile_section = AIOrchestratorService._reference_creative_profile_prompt_section(
             reference_creative_profile
+        )
+        reference_adaptation_profile_section = AIOrchestratorService._reference_adaptation_profile_prompt_section(
+            compiled_context.get("reference_adaptation_profile")
+        )
+        generation_surface_contract_section = AIOrchestratorService._generation_surface_contract_prompt_section(
+            compiled_context.get("generation_surface_contract")
         )
         layout_quality_guard = AIOrchestratorService._dynamic_layout_quality_guard_section(
             request=request,
@@ -24909,8 +29498,8 @@ class AIOrchestratorService:
             else ""
         )
         sample_logo_exclusion_contract = (
-            "SAMPLE CORNER EXCEPTION: when following the selected sample page, copy only the empty corner reserved zone geometry and surrounding whitespace. "
-            "Do not copy the sample page's corner artwork, wordmark, brand name, symbol cluster, or any top-corner brand mark; that area must stay blank because the exact stored asset is overlaid after generation."
+            "SAMPLE LOGO EXCEPTION: when following the selected sample page, copy only the empty logo-safe zone geometry and surrounding whitespace. "
+            "Do not copy the sample page's logo artwork, wordmark, brand name, symbol cluster, or any top-corner brand mark; that area must stay blank because the exact stored asset is overlaid after generation."
             if style_reference_sample_active
             else ""
         )
@@ -24945,7 +29534,12 @@ class AIOrchestratorService:
             sample_logo_exclusion_contract,
             "Brand visual constraints: Use the approved color palette and styling, but never write the brand name or place any standalone graphic or signature mark anywhere in the canvas.",
             "Never typeset the brand name in the corners.",
+            "Do not typeset the brand name as a top-corner signature.",
             f"Keep the {reserved_logo_area} area completely empty and visually clean. Do not place any headline, body copy, supporting text, proof point, CTA, icon, or visual element inside or immediately adjacent to this corner.",
+            *AIOrchestratorService._logo_non_generation_contract(
+                brand_name=brand_name,
+                reserved_logo_area=reserved_logo_area,
+            ),
             disclaimer_overlay_guidance,
             f"Platform: {platform}.",
             f"Output type: {file_type}.",
@@ -25024,6 +29618,8 @@ class AIOrchestratorService:
             broad_visual_context_section,
             structured_visual_metadata_section,
             dynamic_visual_art_direction,
+            reference_adaptation_profile_section,
+            generation_surface_contract_section,
             reference_creative_profile_section,
             (
                 (
@@ -25033,7 +29629,7 @@ class AIOrchestratorService:
                 )
                 if AIOrchestratorService._normalize_metadata_text(prompt_slide.get("cta"), limit=80)
                 else (
-                    "Do not add a CTA button on this slide; preserve only a thin quiet blank bottom strip for post-processing compliance text."
+                    "Do not add a CTA button on this slide; preserve only a thin quiet legal-footer-safe strip at the bottom."
                     if legal_footer_text
                     else "Do not add a CTA button or footer treatment on this slide."
                 )
@@ -25206,7 +29802,8 @@ class AIOrchestratorService:
             optional_sections=optional_sections,
             limit=AIOrchestratorService.CAROUSEL_IMAGE_PROMPT_MAX_LENGTH,
         )
-        return AIOrchestratorService._scrub_image_prompt_brand_mark_triggers(prompt)
+        prompt = AIOrchestratorService._scrub_image_prompt_brand_mark_triggers(prompt)
+        return AIOrchestratorService._trim_prompt(prompt, AIOrchestratorService.CAROUSEL_IMAGE_PROMPT_MAX_LENGTH)
 
     @staticmethod
     def build_logo_composite_prompt(
@@ -25259,11 +29856,44 @@ class AIOrchestratorService:
     ) -> str:
         compiled_context = compiled_context or {}
         creative_decision = creative_decision or CreativeDecisionPayload()
+        if not isinstance(text_payload, StructuredTextPayload):
+            text_payload = StructuredTextPayload(
+                headline=AIOrchestratorService._coerce_text_value(getattr(text_payload, "headline", "")),
+                body=AIOrchestratorService._coerce_text_value(getattr(text_payload, "body", "")),
+                cta=AIOrchestratorService._coerce_text_value(getattr(text_payload, "cta", "")),
+                hashtags=list(getattr(text_payload, "hashtags", []) or []),
+                metadata=(
+                    dict(getattr(text_payload, "metadata", {}) or {})
+                    if isinstance(getattr(text_payload, "metadata", {}), dict)
+                    else {}
+                ),
+            )
+        request_prompt = AIOrchestratorService._coerce_text_value(getattr(request, "prompt", ""))
+        studio_panel = getattr(request, "studio_panel", {}) or {}
+        resolved_brand_context = getattr(request, "resolved_brand_context", {}) or {}
+        reference_asset_list = getattr(request, "reference_assets", []) or []
+        asset_catalog = getattr(request, "asset_catalog", []) or []
+        layout_decision_payload = getattr(request, "layout_decision", {}) or {}
+        format_name = str(studio_panel.get("format") or "static").strip().lower()
+        llm_led_static_infographic = AIOrchestratorService._llm_led_static_infographic_format(format_name)
         metadata, sanitized_visual_fields = AIOrchestratorService._sanitize_visual_metadata_fields(
             text_payload.metadata or {},
             compiled_context=compiled_context,
         )
-        visual_identity = request.resolved_brand_context.get("visual_identity", {})
+        metadata, infographic_sanitized_visual_fields = AIOrchestratorService._sanitize_infographic_surface_visual_metadata_fields(
+            metadata,
+            request_prompt=request_prompt,
+            format_name=format_name,
+        )
+        sanitized_visual_fields = [
+            *sanitized_visual_fields,
+            *[
+                field
+                for field in infographic_sanitized_visual_fields
+                if field not in sanitized_visual_fields
+            ],
+        ]
+        visual_identity = resolved_brand_context.get("visual_identity", {}) if isinstance(resolved_brand_context, dict) else {}
         palette = AIOrchestratorService._compact_palette_summary(visual_identity)
         palette_guidance = AIOrchestratorService._palette_role_guidance(visual_identity)
         strict_palette_contract = AIOrchestratorService._strict_palette_contract(visual_identity)
@@ -25276,9 +29906,8 @@ class AIOrchestratorService:
         )
         dominant_visual_system = AIOrchestratorService._normalized_dominant_visual_system(asset_strategy) or "generated_image"
         supporting_visual_system = AIOrchestratorService._normalized_supporting_visual_system(asset_strategy)
-        format_name = str(request.studio_panel.get("format") or "static").strip().lower()
         explicit_data_visual_request = AIOrchestratorService._has_explicit_data_visual_request(
-            request.prompt,
+            request_prompt,
             text_payload=text_payload,
         )
         iconography_supported = (
@@ -25305,12 +29934,21 @@ class AIOrchestratorService:
             "Sequence-approved style guidance only; do not recreate, trace, or literalize uploaded sample slides."
             if template_surface_policy == "style_reference_only"
             else (
-                AIOrchestratorService._compact_reference_assets(request.reference_assets)
+                AIOrchestratorService._compact_reference_assets(reference_asset_list)
                 if include_reference_system
                 else "Use these only as abstract style guidance, not as literal icon or logo content."
             )
         )
-        layout_decision = AIOrchestratorService._compact_layout_decision(request.layout_decision)
+        layout_decision = AIOrchestratorService._compact_layout_decision(layout_decision_payload)
+        if llm_led_static_infographic:
+            reference_assets = (
+                "Reference/template assets have no content or layout authority for this static/infographic ad creative; "
+                "use them only for broad brand style if they reinforce the current prompt."
+            )
+            layout_decision = (
+                "AI-led paid-social composition; choose the most attractive topic-specific ad layout dynamically, "
+                "reserve only the backend logo/footer safe areas, and do not preserve template geometry."
+            )
         if template_surface_policy == "style_reference_only" and "template " in layout_decision.casefold():
             layout_decision = (
                 "adapted sequence-guided composition using approved spacing, hierarchy, and zones only; "
@@ -25358,10 +29996,10 @@ class AIOrchestratorService:
             re.sub(
                 r"^(create|make|design|generate|write|craft)\s+(an?|the)?\s*(engaging|compelling|instagram|social|media|post|creative|visual)*\s*",
                 "",
-                request.prompt,
+                request_prompt,
                 flags=re.IGNORECASE,
             ).strip()
-            or request.prompt,
+            or request_prompt,
             limit=220,
         )
         resolved_copy_theme = AIOrchestratorService._normalize_metadata_text(
@@ -25401,19 +30039,19 @@ class AIOrchestratorService:
             ("supporting_line", metadata.get("supporting_line")),
             ("body", text_payload.body),
         ]
-        if AIOrchestratorService._prompt_has_explicit_data_anchor(request.prompt):
-            data_visualization_anchor_sources.insert(0, ("user_prompt", request.prompt))
+        if AIOrchestratorService._prompt_has_explicit_data_anchor(request_prompt):
+            data_visualization_anchor_sources.insert(0, ("user_prompt", request_prompt))
         data_visualization_anchor_lines = AIOrchestratorService._data_visualization_anchor_lines(
             *[value for _, value in data_visualization_anchor_sources],
             limit=10,
         )
         broad_visual_context_section = AIOrchestratorService._broad_visual_context_prompt_section(
             data_visualization_anchor_lines,
-            limit=5,
+            limit=8,
         )
         structured_anchor_sources = AIOrchestratorService._structured_visual_data_anchor_sources(
             metadata,
-            prompt=request.prompt,
+            prompt=request_prompt,
             request=request,
         )
         visual_intent = " ".join(
@@ -25423,6 +30061,65 @@ class AIOrchestratorService:
                 preferred_scene,
                 AIOrchestratorService._coerce_text_value(metadata.get("visual_focus")),
             ]
+        )
+        reference_template_blueprint = AIOrchestratorService._reference_template_sample_page_blueprint(
+            compiled_context,
+            format_name=format_name,
+        )
+        reference_profile = (
+            compiled_context.get("reference_adaptation_profile")
+            if isinstance(compiled_context.get("reference_adaptation_profile"), dict)
+            else {}
+        )
+        reference_source_family = AIOrchestratorService._normalize_metadata_text(
+            reference_profile.get("source_format_family"),
+            limit=32,
+        ).casefold()
+        reference_output_family = (
+            AIOrchestratorService._normalize_metadata_text(reference_profile.get("output_format_family"), limit=32).casefold()
+            or format_name
+        )
+        runtime_sample_page_blueprint = (
+            metadata.get("sample_page_blueprint")
+            if isinstance(metadata.get("sample_page_blueprint"), dict)
+            else {}
+        )
+        reference_template_structure_payload = (
+            AIOrchestratorService._reference_template_structure_payload(
+                compiled_context,
+                reference_profile,
+                source_family=reference_source_family,
+                output_family=reference_output_family,
+                sample_page_blueprint=runtime_sample_page_blueprint,
+            )
+            if (
+                reference_profile
+                and reference_source_family in {"static", "infographic"}
+                and reference_output_family in {"static", "infographic"}
+            )
+            or (runtime_sample_page_blueprint and format_name in {"static", "infographic"})
+            else {}
+        )
+        active_sample_page_blueprint = (
+            runtime_sample_page_blueprint
+            if runtime_sample_page_blueprint
+            else reference_template_blueprint
+        )
+        reference_profile_same_surface = reference_source_family == reference_output_family == format_name
+        reference_template_structure_active = (
+            format_name in {"static", "infographic"}
+            and not llm_led_static_infographic
+            and bool(
+                active_sample_page_blueprint
+                or (
+                    reference_profile_same_surface
+                    and (
+                        reference_template_structure_payload.get("template_layout_grammar")
+                        or reference_template_structure_payload.get("layout_dna")
+                        or reference_template_structure_payload.get("sample_page_blueprint")
+                    )
+                )
+            )
         )
         structured_visual_metadata = AIOrchestratorService._normalize_structured_visual_metadata(
             metadata=metadata,
@@ -25434,15 +30131,21 @@ class AIOrchestratorService:
                 limit=8,
             ),
             format_name=format_name,
-            sample_page_blueprint=metadata.get("sample_page_blueprint"),
+            sample_page_blueprint=active_sample_page_blueprint,
             visual_plan=visual_explanation_plan,
             visual_identity=visual_identity,
-            reference_assets=request.reference_assets,
-            asset_catalog=request.asset_catalog,
+            reference_assets=reference_asset_list,
+            asset_catalog=asset_catalog,
             compiled_context=compiled_context,
         )
         structured_visual_metadata_section = AIOrchestratorService._structured_visual_metadata_prompt_section(
             structured_visual_metadata
+        )
+        infographic_surface_enforcement = AIOrchestratorService._infographic_surface_enforcement_section(
+            request=request,
+            format_name=format_name,
+            structured_visual_metadata=structured_visual_metadata,
+            visual_plan=visual_explanation_plan,
         )
         strict_data_visualization_anchor_lines = [
             AIOrchestratorService._normalize_metadata_text(anchor.get("text"), limit=260)
@@ -25460,6 +30163,8 @@ class AIOrchestratorService:
         resolved_copy_keywords = AIOrchestratorService._topic_anchor_keywords(resolved_copy_theme)
         theme_anchor = (
             stripped_prompt_theme
+            if llm_led_static_infographic
+            else stripped_prompt_theme
             if stripped_prompt_keywords and resolved_copy_keywords and stripped_prompt_keywords & resolved_copy_keywords
             else (message_theme or resolved_copy_theme or stripped_prompt_theme)
         )
@@ -25484,7 +30189,7 @@ class AIOrchestratorService:
             format_name=format_name,
             text_payload=text_payload,
             metadata=metadata,
-            sample_page_blueprint=metadata.get("sample_page_blueprint"),
+            sample_page_blueprint=active_sample_page_blueprint,
             scene_graph=None,
             legal_footer_text="",
             disclaimer_guidance=AIOrchestratorService._disclaimer_overlay_guidance(request),
@@ -25516,7 +30221,7 @@ class AIOrchestratorService:
             request,
             prompt_text_payload,
             creative_decision,
-            request.reference_assets,
+            reference_asset_list,
             message_strategy,
         )
         research_quality_section = AIOrchestratorService._research_editorial_prompt_section(
@@ -25526,6 +30231,7 @@ class AIOrchestratorService:
         consultant_contract = AIOrchestratorService._consultant_quality_contract(
             for_visual_only=True,
             for_carousel=format_name == "carousel",
+            for_static_infographic_ad=llm_led_static_infographic,
         )
         multimodal_balance_contract = AIOrchestratorService._multimodal_balance_contract(
             format_name=format_name,
@@ -25546,7 +30252,7 @@ class AIOrchestratorService:
         visual_style_policy_sections = AIOrchestratorService._visual_style_policy_prompt_sections(
             compiled_context,
             format_name=format_name,
-            reference_assets=request.reference_assets,
+            reference_assets=reference_asset_list,
         )
         sequence_alignment_sections = AIOrchestratorService._sequence_blueprint_alignment_sections(
             compiled_context,
@@ -25562,51 +30268,156 @@ class AIOrchestratorService:
             visual_plan=visual_plan,
             visual_identity=visual_identity,
             data_visualization_anchor_lines=data_visualization_anchor_lines,
-            sample_page_blueprint=metadata.get("sample_page_blueprint"),
+            sample_page_blueprint=active_sample_page_blueprint,
             slide_purpose=message_theme or audience_message or resolved_copy_theme,
-            reference_assets=request.reference_assets,
-            asset_catalog=request.asset_catalog,
+            reference_assets=reference_asset_list,
+            asset_catalog=asset_catalog,
             compiled_context=compiled_context,
         )
         reference_creative_profile = AIOrchestratorService._resolve_reference_creative_profile(
             request=request,
             format_name=format_name,
-            sample_page_blueprint=metadata.get("sample_page_blueprint"),
+            sample_page_blueprint=active_sample_page_blueprint,
             visual_identity=visual_identity,
             visual_plan=visual_plan,
             structured_visual_metadata=structured_visual_metadata,
             layout_budget=layout_content_budget,
             metadata=prompt_metadata,
             slide_purpose=message_theme or audience_message or resolved_copy_theme,
-            reference_assets=request.reference_assets,
-            asset_catalog=request.asset_catalog,
+            reference_assets=reference_asset_list,
+            asset_catalog=asset_catalog,
             compiled_context=compiled_context,
             logo_position_hint=logo_position_hint,
         )
         reference_creative_profile_section = AIOrchestratorService._reference_creative_profile_prompt_section(
             reference_creative_profile
         )
+        reference_adaptation_profile_section = AIOrchestratorService._reference_adaptation_profile_prompt_section(
+            compiled_context.get("reference_adaptation_profile")
+        )
+        generation_surface_contract_section = AIOrchestratorService._generation_surface_contract_prompt_section(
+            compiled_context.get("generation_surface_contract")
+        )
+        reference_template_adaptation_sections = (
+            []
+            if llm_led_static_infographic
+            else AIOrchestratorService._reference_template_adaptation_prompt_sections(
+                compiled_context,
+                format_name=format_name,
+                layout_content_budget=layout_content_budget,
+                sample_page_blueprint=active_sample_page_blueprint,
+            )
+        )
         layout_quality_guard = AIOrchestratorService._dynamic_layout_quality_guard_section(
             request=request,
             format_name=format_name,
             text_payload=prompt_text_payload,
             metadata=prompt_metadata,
-            sample_page_blueprint=metadata.get("sample_page_blueprint"),
+            sample_page_blueprint=active_sample_page_blueprint,
             structured_visual_metadata=structured_visual_metadata,
             data_visualization_anchor_lines=data_visualization_anchor_lines,
             visual_intent=visual_intent,
             visual_plan=visual_plan,
             visual_identity=visual_identity,
-            reference_assets=request.reference_assets,
-            asset_catalog=request.asset_catalog,
+            reference_assets=reference_asset_list,
+            asset_catalog=asset_catalog,
             scene_graph=None,
             legal_footer_text="",
             disclaimer_guidance=AIOrchestratorService._disclaimer_overlay_guidance(request),
             layout_budget=layout_content_budget,
         )
+        llm_led_visual_authority_instruction = (
+            "LLM-led static/infographic ad authority: act as the creative designer. Create an attractive paid-social post from the current prompt, including the main layout, readable ad copy, topic-specific imagery, modules, visual metaphor, and CTA. Do not preserve reference/template scaffolds, panel shells, scene-graph geometry, stale sample subjects, or extracted sample layout controls. Reserve only the logo-safe corner and footer/disclaimer area for backend compositing."
+            if llm_led_static_infographic
+            else ""
+        )
+        social_media_ad_contract = (
+            AIOrchestratorService._social_media_ad_composition_contract(
+                format_name=format_name,
+                platform=studio_panel.get("platform_preset", "social"),
+            )
+            if llm_led_static_infographic
+            else ""
+        )
+        content_visual_explanation_contract = (
+            AIOrchestratorService._content_visual_explanation_contract(
+                request=request,
+                format_name=format_name,
+                platform=studio_panel.get("platform_preset", "social"),
+            )
+            if llm_led_static_infographic
+            else ""
+        )
+        quality_floor_contract = (
+            AIOrchestratorService._final_render_static_infographic_quality_floor_contract(
+                request=request,
+                format_name=format_name,
+            )
+            if llm_led_static_infographic
+            else ""
+        )
+        hallucination_control_contract = (
+            AIOrchestratorService._image_hallucination_control_contract(
+                format_name=format_name,
+                use_backend_text_overlay=False,
+            )
+            if llm_led_static_infographic
+            else ""
+        )
+        llm_led_topic_fit_contract = AIOrchestratorService._final_render_topic_fit_contract(
+            request=request,
+            format_name=format_name,
+        )
+        semantic_visual_brief_instruction = (
+            f"Semantic creative brief: communicate this exact idea through finished readable content plus topic-specific visual hierarchy: {prompt_semantic_visual_brief or semantic_visual_brief}."
+            if llm_led_static_infographic
+            else f"Semantic visual brief: communicate this exact idea visually, without relying on text: {prompt_semantic_visual_brief or semantic_visual_brief}."
+        )
+        image_text_generation_instruction = (
+            "Render finished readable main content for the static/infographic creative. Keep only the logo-safe corner and footer/disclaimer strip blank for backend compositing; do not generate logos, watermarks, placeholder brand marks, or legal/footer copy."
+            if llm_led_static_infographic
+            else (
+                "Do not include readable text, typography, letters, numbers, sample copy, or brand marks in the image. Preserve blank template panel/card/CTA shells and callout/module surfaces as layout structure; never fill them with pseudo-text or fake marks."
+                if reference_template_structure_active
+                else (
+                    "Do not include any text, typography, letters, numbers, logos, CTA buttons, UI panels, "
+                    "poster layouts, or branded wordmarks in the image. "
+                    "Generate only a clean visual, illustration, texture, or scene that the backend renderer can place into the layout."
+                )
+            )
+        )
+        if llm_led_static_infographic:
+            layout_quality_guard = ""
+            infographic_surface_enforcement = ""
+            data_visualization_contract = ""
+            structured_visual_metadata_section = ""
+            dynamic_visual_art_direction = ""
+            reference_creative_profile_section = ""
+            reference_adaptation_profile_section = ""
+            generation_surface_contract_section = ""
+            visual_plan_guidance = ""
+            visual_style_policy_sections = []
+            sample_alignment_sections = []
+            sequence_alignment_sections = []
+            reference_family_contract = []
 
         sections = [
-            "Create a clean supporting visual aligned to the brand system.",
+            (
+                "Create a finished premium static/infographic creative led by the current prompt."
+                if llm_led_static_infographic
+                else (
+                "Create a template-aware visual substrate that preserves the selected static/infographic layout scaffold, blank text-safe modules, image zones, and safe-area posture."
+                if reference_template_structure_active
+                else "Create a clean supporting visual aligned to the brand system."
+                )
+            ),
+            llm_led_visual_authority_instruction,
+            llm_led_topic_fit_contract,
+            social_media_ad_contract,
+            content_visual_explanation_contract,
+            hallucination_control_contract,
+            quality_floor_contract,
+            "Visual quality bar: premium, high-end, richly detailed composition with polished craft, clean hierarchy, and brand-safe restraint.",
             f"Keep the {reserved_logo_area} area completely empty and visually clean. Do not place any icon, illustration element, text, or visual detail inside or immediately adjacent to this corner.",
             f"Theme: {theme_anchor}.",
             f"Message strategy theme: {message_theme}.",
@@ -25614,17 +30425,21 @@ class AIOrchestratorService:
             f"Emotional direction: {emotional_direction}.",
             f"Important keywords: {keywords}.",
             f"Avoid these messaging cues in the visual: {avoid_list}.",
-            f"Platform: {request.studio_panel.get('platform_preset', 'social')}.",
-            f"Format: {request.studio_panel.get('format', 'static')}.",
+            f"Platform: {studio_panel.get('platform_preset', 'social')}.",
+            f"Format: {studio_panel.get('format', 'static')}.",
             layout_quality_guard,
+            infographic_surface_enforcement,
             f"Headline intent: {AIOrchestratorService._normalize_metadata_text(prompt_text_payload.headline, limit=160)}.",
             f"Body summary: {AIOrchestratorService._normalize_metadata_text(prompt_text_payload.body, limit=260)}.",
-            f"Semantic visual brief: communicate this exact idea visually, without relying on text: {prompt_semantic_visual_brief or semantic_visual_brief}.",
+            semantic_visual_brief_instruction,
             data_visualization_contract,
             broad_visual_context_section,
             structured_visual_metadata_section,
             dynamic_visual_art_direction,
             reference_creative_profile_section,
+            reference_adaptation_profile_section,
+            generation_surface_contract_section,
+            *reference_template_adaptation_sections,
             (
                 f"Brand knowledge grounding mode: {grounding_mode or 'brand_knowledge'} (strength: {grounding_strength or 'supported'})."
                 if direct_brand_grounding
@@ -25657,7 +30472,7 @@ class AIOrchestratorService:
             (
                 "When sequence guidance is style-reference-only, treat uploaded sample slides as strict composition and craft references. "
                 "Preserve their region proportions, negative space, sequencing, balance, and composition rhythm closely, but rebuild the artwork, poster surface, text blocks, background illustration, and sample typography from scratch."
-                if template_surface_policy == "style_reference_only"
+                if template_surface_policy == "style_reference_only" and not llm_led_static_infographic
                 else ""
             ),
             (
@@ -25709,18 +30524,34 @@ class AIOrchestratorService:
             "Choose background tones from true background or surface palette evidence rather than overpowering the canvas with a strong secondary brand color.",
             "Maintain clear contrast between any light surfaces and darker emphasis colors so later text placement stays readable and never fades into a white or dull field.",
             (
+                "Template-active fallback policy: preserve the observed module/card/panel/row/callout scaffold as the primary composition. Any fallback photo, illustration, object scene, or human-subject visual may only fill an approved visual slot and must not replace the whole layout."
+                if reference_template_structure_active
+                else (
                 "Prefer one coherent content-led hero concept: a product or process metaphor, comparison setup, outcome-focused object composition, "
                 "or structured explainer centerpiece tied directly to the semantic visual brief. Do not default to a standalone professional portrait or generic lifestyle scene."
+                )
             ),
             visual_plan_guidance,
             (
+                "Template-active explainer composition: keep observed template modules, blank card/panel shells, section rhythm, and callout surfaces visible; if an image slot exists, use topic-specific imagery only inside that slot."
+                if reference_template_structure_active
+                else (
                 "If the requested format is carousel or infographic, build a richer explainer composition with a clear focal subject and only the minimum supporting structure truly required by the content. Do not default to rising bars, upward arrows, dashboard tiles, symbolic finance stickers, or a chart/graph hero unless the user explicitly asked for chart or diagram content."
                 if iconography_supported
                 else "Keep the composition focused on one premium content-specific scene rather than many small supporting motifs."
+                )
             ),
             (
+                "Preserve the template's text-safe regions, image slots, card/panel shells, callout modules, header reservation, and footer reservation; simplify imagery before changing the layout scaffold."
+                if reference_template_structure_active
+                else (
+                "Compose a finished, creative ad post as a complete image-model design. Do not follow a reserved reference/template image slot; only leave the logo-safe corner and footer/disclaimer strip clear for backend overlay."
+                if llm_led_static_infographic
+                else (
                 "Reserve calm negative space where headline and CTA can sit cleanly after rendering. "
                 "Respect the selected reference/template layout by composing the focal visual for the reserved image area. Do not compose the image like a finished poster."
+                )
+                )
             ),
             (
                 "Avoid clip-art, flat stock-style icon grids, low-detail collage aesthetics, childish illustration, "
@@ -25731,20 +30562,24 @@ class AIOrchestratorService:
                 if include_reference_system and iconography_supported
                 else "Do not directly embed brand icon sets or decorative assets into the generated image."
             ),
+            image_text_generation_instruction,
             (
-                "Do not include any text, typography, letters, numbers, logos, CTA buttons, UI panels, "
-                "poster layouts, or branded wordmarks in the image. "
-                "Generate only a clean visual, illustration, texture, or scene that the backend renderer can place into the layout."
-            ),
-            (
+                "Keep any iconographic support inside the observed template modules; do not scatter unrelated symbols outside the approved card, row, panel, callout, or image-zone structure."
+                if reference_template_structure_active
+                else (
                 "Do not paint random sticker-like icons, fake logos, faux UI panels, or cluttered symbol dumps. Any infographic or iconographic support must feel intentional, premium, and integrated into the overall composition."
                 if iconography_supported
                 else "Do not paint standalone icons, infographic symbols, tables, badges, checkmarks, or faux UI graphics onto the scene unless they exist as real-world objects inside the photographed environment."
+                )
             ),
             (
+                "If the prompt is about tips, strategies, comparisons, or education, express the idea through the observed template modules and approved visual slots rather than creating a single full-frame fallback scene."
+                if reference_template_structure_active
+                else (
                 "If the prompt is about tips, strategies, comparisons, or financial education, keep the scene topic-led and avoid auto-inserting symbolic growth charts, rising bars, arrows, finance app mini-graphics, or a graph-like hero composition. Only add chart or diagram elements when the user explicitly requested them."
                 if iconography_supported
                 else "If the prompt is about tips, strategies, or comparisons, still create one premium unified hero scene rather than a collage of icon stickers."
+                )
             ),
             (
                 "Do not add bar-chart icons, rising-arrow symbols, dashboard tiles, comparison stickers, decorative finance mini-graphics, or a chart/graph/bar-and-arrow hero image unless the user explicitly asked for a chart, graph, table, timeline, diagram, or infographic data visualization."
@@ -25752,10 +30587,144 @@ class AIOrchestratorService:
                 else "If a chart or diagram is explicitly requested, keep it literal, sparse, and directly tied to the supplied data instead of using generic symbolic finance icons."
             ),
         ]
-        prompt = " ".join(section for section in sections if section and not section.endswith(": ."))
-        prompt = AIOrchestratorService._trim_prompt(prompt, AIOrchestratorService.IMAGE_PROMPT_MAX_LENGTH)
+        required_sections = [
+            (
+                "Create a finished premium static/infographic creative led by the current prompt."
+                if llm_led_static_infographic
+                else (
+                "Create a template-aware visual substrate that preserves the selected static/infographic layout scaffold, blank text-safe modules, image zones, and safe-area posture."
+                if reference_template_structure_active
+                else "Create a clean supporting visual aligned to the brand system."
+                )
+            ),
+            "Visual quality bar: premium, high-end, richly detailed composition with polished craft, clean hierarchy, and brand-safe restraint.",
+            AIOrchestratorService._visual_quality_bar_for_treatment(structured_visual_metadata),
+            f"Keep the {reserved_logo_area} area completely empty and visually clean. Do not place any icon, illustration element, text, or visual detail inside or immediately adjacent to this corner.",
+            f"Theme: {theme_anchor}.",
+            f"Platform: {studio_panel.get('platform_preset', 'social')}.",
+            f"Format: {studio_panel.get('format', 'static')}.",
+            llm_led_visual_authority_instruction,
+            llm_led_topic_fit_contract,
+            social_media_ad_contract,
+            quality_floor_contract,
+            reference_adaptation_profile_section,
+            generation_surface_contract_section,
+            *reference_template_adaptation_sections,
+            f"Headline intent: {AIOrchestratorService._normalize_metadata_text(prompt_text_payload.headline, limit=160)}.",
+            f"Body summary: {AIOrchestratorService._normalize_metadata_text(prompt_text_payload.body, limit=260)}.",
+            semantic_visual_brief_instruction,
+            broad_visual_context_section,
+            f"Layout approach: {layout_decision}.",
+            f"Reference assets: {reference_assets}.",
+            image_text_generation_instruction,
+            (
+                "Template-active fallback policy: preserve the observed module/card/panel/row/callout scaffold as the primary composition. Any fallback photo, illustration, object scene, or human-subject visual may only fill an approved visual slot and must not replace the whole layout."
+                if reference_template_structure_active
+                else (
+                "Prefer one coherent content-led hero concept: a product or process metaphor, comparison setup, outcome-focused object composition, "
+                "or structured explainer centerpiece tied directly to the semantic visual brief. Do not default to a standalone professional portrait or generic lifestyle scene."
+                )
+            ),
+            research_quality_section,
+            *consultant_contract,
+            layout_quality_guard,
+            infographic_surface_enforcement,
+            data_visualization_contract,
+            structured_visual_metadata_section,
+            dynamic_visual_art_direction,
+            (
+                f"Brand knowledge grounding mode: {grounding_mode or 'brand_knowledge'} (strength: {grounding_strength or 'supported'})."
+                if direct_brand_grounding
+                else (
+                    f"Brand knowledge grounding mode: llm_fallback (reason: {grounding_abstention_reason})."
+                    if grounding_abstention_reason
+                    else "Brand knowledge grounding mode: llm_fallback."
+                )
+            ),
+            (
+                f"Brand knowledge grounding: {direct_brand_grounding}. Use these retrieved brand-knowledge cues as the primary source of visual grounding."
+                if direct_brand_grounding
+                else "Brand knowledge grounding: no retrieved brand knowledge is available, so infer the visual grounding from the approved copy, message strategy, and brand visual system."
+            ),
+            (
+                "If retrieved brand knowledge is present, do not override it with a generic LLM-invented scene. Use LLM reasoning only to interpret and combine the retrieved cues coherently."
+                if direct_brand_grounding
+                else "Because retrieved brand knowledge is absent, generate the visual direction through LLM reasoning from the approved copy, message strategy, and brand visual system."
+            ),
+            (
+                "Template-derived cues were suppressed because stronger visual_identity or mood_board evidence exists."
+                if direct_brand_grounding and template_suppressed
+                else ""
+            ),
+            (
+                f"Secondary synthesis hints from approved metadata: {secondary_visual_hints}. "
+                "Use these only if they reinforce the retrieved brand-grounded cues and never let them override or "
+                "reintroduce suppressed template or rejected channel ideas."
+                if not use_llm_fallback_visual_metadata and secondary_visual_hints
+                else ""
+            ),
+            (
+                f"Discarded incompatible model-generated visual metadata for: {', '.join(sanitized_visual_fields)}."
+                if sanitized_visual_fields
+                else ""
+            ),
+            reference_creative_profile_section,
+            *visual_style_policy_sections,
+            *sample_alignment_sections,
+            *sequence_alignment_sections,
+            *reference_family_contract,
+            f"Brand palette: {palette}.",
+            f"Palette role guidance: {palette_guidance}.",
+            strict_palette_contract,
+            f"Typography vibe: {typography}.",
+            f"Dominant visual system: {dominant_visual_system}.",
+            f"Supporting visual system: {supporting_visual_system or 'none'}.",
+            (
+                "If reusable icons or diagram cues are available, you may integrate a small number of them as premium, brand-consistent supporting elements rather than ignoring them completely."
+                if include_reference_system and iconography_supported
+                else "Do not directly embed brand icon sets or decorative assets into the generated image."
+            ),
+            f"Key proof points: {proof_points}.",
+            f"Stat highlights: {stat_highlights}.",
+            *multimodal_balance_contract,
+            "Choose background tones from true background or surface palette evidence rather than overpowering the canvas with a strong secondary brand color.",
+            "Maintain clear contrast between any light surfaces and darker emphasis colors so later text placement stays readable and never fades into a white or dull field.",
+            visual_plan_guidance,
+            (
+                "Template-active explainer composition: keep observed template modules, blank card/panel shells, section rhythm, and callout surfaces visible; if an image slot exists, use topic-specific imagery only inside that slot."
+                if reference_template_structure_active
+                else (
+                "If the requested format is carousel or infographic, build a richer explainer composition with a clear focal subject and only the minimum supporting structure truly required by the content. Do not default to rising bars, upward arrows, dashboard tiles, symbolic finance stickers, or a chart/graph hero unless the user explicitly asked for chart or diagram content."
+                if iconography_supported
+                else "Keep the composition focused on one premium content-specific scene rather than many small supporting motifs."
+                )
+            ),
+            (
+                "Preserve the template's text-safe regions, image slots, card/panel shells, callout modules, header reservation, and footer reservation; simplify imagery before changing the layout scaffold."
+                if reference_template_structure_active
+                else (
+                "Compose a finished, creative ad post as a complete image-model design. Do not follow a reserved reference/template image slot; only leave the logo-safe corner and footer/disclaimer strip clear for backend overlay."
+                if llm_led_static_infographic
+                else (
+                "Reserve calm negative space where headline and CTA can sit cleanly after rendering. "
+                "Respect the selected reference/template layout by composing the focal visual for the reserved image area. Do not compose the image like a finished poster."
+                )
+                )
+            ),
+            (
+                "Do not add bar-chart icons, rising-arrow symbols, dashboard tiles, comparison stickers, decorative finance mini-graphics, or a chart/graph/bar-and-arrow hero image unless the user explicitly asked for a chart, graph, table, timeline, diagram, or infographic data visualization."
+                if not explicit_data_visual_request
+                else "If a chart or diagram is explicitly requested, keep it literal, sparse, and directly tied to the supplied data instead of using generic symbolic finance icons."
+            ),
+        ]
+        prompt = AIOrchestratorService._compose_prompt_sections(
+            required_sections=required_sections,
+            optional_sections=sections,
+            limit=AIOrchestratorService.IMAGE_PROMPT_MAX_LENGTH,
+        )
         prompt = AIOrchestratorService._strip_blocked_compliance_phrases(prompt)
-        return AIOrchestratorService._scrub_image_prompt_brand_mark_triggers(prompt)
+        prompt = AIOrchestratorService._scrub_image_prompt_brand_mark_triggers(prompt)
+        return AIOrchestratorService._trim_prompt(prompt, AIOrchestratorService.IMAGE_PROMPT_MAX_LENGTH)
 
     @staticmethod
     def _compact_named_items(value: Any, limit: int) -> str:
@@ -26027,3 +30996,14 @@ class AIOrchestratorService:
         if not value:
             return 0
         return max(1, (len(value.strip()) + 3) // 4)
+
+    @classmethod
+    def _prompt_length_metrics(cls, prompt: str | None) -> dict[str, int]:
+        text = str(prompt or "")
+        char_count = len(text)
+        return {
+            "prompt_length": char_count,
+            "prompt_length_chars": char_count,
+            "estimated_prompt_tokens": cls._estimate_tokens(text),
+            "prompt_word_count": len(text.split()) if text.strip() else 0,
+        }

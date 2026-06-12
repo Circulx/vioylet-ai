@@ -1758,6 +1758,48 @@ def test_context_compiler_preserves_research_editorial_fact_model() -> None:
     assert brief["ranked_sources"][0]["label"] == "Official release"
 
 
+def test_context_compiler_preserves_dense_research_fact_limit() -> None:
+    compiler = ContextCompilerService()
+    facts = [
+        {
+            "label": f"Rank {index}",
+            "value": f"Verified value {index}",
+            "source_title": "Ranking source",
+            "source_url": "https://example.com/ranking",
+        }
+        for index in range(1, 11)
+    ]
+
+    compiled = compiler.compile(
+        prompt="Create a static post comparing a metric and create a top 10 ranking.",
+        brand_context={"brand_name": "Jiraaf"},
+        persona_context={},
+        objective_context={},
+        ordered_knowledge={},
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        research_editorial_brief={
+            "active": True,
+            "mode": "research_editorial",
+            "format_family": "static",
+            "topic_focus": "Source-backed ranking",
+            "fact_limit": 10,
+            "fact_model": {"verified_facts": facts, "inferences": [], "uncertainties": []},
+            "source_pack": [
+                {"type": "verified_fact", "label": item["label"], "detail": item["value"], "source": item["source_title"]}
+                for item in facts
+            ],
+        },
+    )
+
+    brief = compiled["research_editorial_brief"]
+
+    assert brief["fact_limit"] == 10
+    assert len(brief["fact_model"]["verified_facts"]) == 10
+    assert len(brief["source_pack"]) == 10
+
+
 def test_context_compiler_expands_content_and_visual_plan_for_carousel_execution() -> None:
     compiler = ContextCompilerService()
 
@@ -1849,6 +1891,289 @@ def test_context_compiler_reference_asset_brief_keeps_sequence_cues() -> None:
     assert brief["sequence_kind"] == "hook_to_implication_sequence"
     assert brief["structural_cues"][0] == "cover hook"
     assert "undercovered implication" in brief["summary"].casefold()
+
+
+def test_context_compiler_builds_static_reference_adaptation_profile() -> None:
+    compiler = ContextCompilerService()
+
+    compiled = compiler.compile(
+        prompt="Create a static post about comparing options clearly.",
+        brand_context={
+            "brand_name": "Example Brand",
+            "visual_identity": {
+                "palette_roles": {"primary": "#123456"},
+                "typography": {"headline": "clear headline hierarchy"},
+            },
+        },
+        persona_context={},
+        objective_context={},
+        ordered_knowledge={},
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        reference_assets=[
+            {
+                "asset_role": "reference_creative",
+                "trust_level": "trusted",
+                "format_family": "static",
+                "metadata": {
+                    "format_family": "static",
+                    "structural_cues": ["top explanation band", "connector path", "bottom takeaway box"],
+                    "layout_dna": {"layout_type": "hero_with_proof_strip"},
+                    "composition_logic": {"balance": "hero_then_support"},
+                    "visual_craft_dna": {"image_mode": "editorial"},
+                    "background_style": {"dominant_mode": "light textured surface"},
+                    "typography_dna": {"headline": "largest text", "body": "compact support text"},
+                    "design_tokens": {"palette_roles": ["background", "surface", "accent"]},
+                    "sample_page_blueprint": {
+                        "layout_category": "cover_or_hero_visual",
+                        "module_counts": {"large_visual_count": 1, "text_block_count": 2},
+                        "visual_permissions": {"chart_or_graph_allowed": False, "table_allowed": False},
+                        "zones": [
+                            {"role": "header_logo_safe_zone", "x": 0.06, "y": 0.04, "w": 0.2, "h": 0.08},
+                            {"role": "headline", "x": 0.08, "y": 0.18, "w": 0.72, "h": 0.12},
+                            {"role": "hero_visual", "x": 0.12, "y": 0.34, "w": 0.76, "h": 0.32},
+                            {"role": "takeaway_box", "x": 0.1, "y": 0.72, "w": 0.8, "h": 0.12},
+                            {"role": "footer_disclaimer_safe_zone", "x": 0.08, "y": 0.9, "w": 0.84, "h": 0.06},
+                        ],
+                        "must_match": ["connector path between explanation and takeaway", "bottom takeaway box"],
+                    },
+                },
+            }
+        ],
+    )
+
+    profile = compiled["reference_adaptation_profile"]
+    assert profile["source_format_family"] == "static"
+    assert profile["output_format_family"] == "static"
+    assert profile["adaptation_mode"] == "static_creative_adaptation"
+    assert 0.0 < profile["confidence"] <= 1.0
+    assert profile["adapt"]["layout_rhythm"] is True
+    assert profile["template_structure"]["sample_page_blueprint"]["module_counts"]["large_visual_count"] == 1
+    assert profile["template_structure"]["visual_permissions"]["chart_or_graph_allowed"] is False
+    assert profile["template_structure"]["sample_page_blueprint"]["zones"][0]["role"] == "header_logo_safe_zone"
+    grammar = profile["template_structure"]["template_layout_grammar"]
+    assert "headline" in grammar["section_role_order"]
+    assert "hero_visual" in grammar["visual_zone_roles"]
+    assert "takeaway_box" in grammar["callout_takeaway_roles"]
+    assert "connector path" in " ".join(grammar["connector_behavior"])
+    assert "footer_disclaimer_safe_zone" in grammar["safe_area_policy"]
+    assert "background" in grammar["color_roles"]
+    assert "headline" in grammar["typography_roles"]
+    assert profile["do_not_adapt"]["literal_text"] is True
+
+
+def test_context_compiler_builds_infographic_reference_adaptation_profile_for_carousel() -> None:
+    compiler = ContextCompilerService()
+
+    compiled = compiler.compile(
+        prompt="Create a carousel that explains a decision process.",
+        brand_context={"brand_name": "Example Brand", "visual_identity": {}},
+        persona_context={},
+        objective_context={},
+        ordered_knowledge={},
+        studio_panel={"platform_preset": "linkedin", "format": "carousel", "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        reference_assets=[
+            {
+                "asset_role": "reference_creative",
+                "trust_level": "approved",
+                "format_family": "infographic",
+                "metadata": {
+                    "format_family": "infographic",
+                    "structural_cues": ["context band", "comparison grid", "takeaway strip"],
+                    "layout_dna": {"layout_type": "stacked_infographic"},
+                    "composition_logic": {"flow": "top_to_bottom_sections"},
+                },
+            }
+        ],
+    )
+
+    profile = compiled["reference_adaptation_profile"]
+    assert profile["source_format_family"] == "infographic"
+    assert profile["output_format_family"] == "carousel"
+    assert profile["adaptation_mode"] == "infographic_surface_adaptation"
+    assert profile["balance"]["conflict_resolution"] == "prompt_content_first_reference_visual_system_second"
+
+
+def test_context_compiler_keeps_carousel_sequence_profile_path() -> None:
+    compiler = ContextCompilerService()
+
+    compiled = compiler.compile(
+        prompt="Create a carousel about a planning workflow.",
+        brand_context={"brand_name": "Example Brand", "visual_identity": {}},
+        persona_context={},
+        objective_context={},
+        ordered_knowledge={},
+        studio_panel={"platform_preset": "linkedin", "format": "carousel", "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        template_context={
+            "sequence_pack": {
+                "surface_policy": "style_reference_only",
+                "slides": [
+                    {"slide_index": 1, "story_role": "hook"},
+                    {"slide_index": 2, "story_role": "structure"},
+                    {"slide_index": 3, "story_role": "takeaway"},
+                ],
+            }
+        },
+    )
+
+    profile = compiled["reference_adaptation_profile"]
+    assert profile["source_format_family"] == "carousel"
+    assert profile["adaptation_mode"] == "template_sequence_adaptation"
+
+
+def test_context_compiler_builds_generation_surface_contract_from_studio_selection() -> None:
+    compiler = ContextCompilerService()
+
+    compiled = compiler.compile(
+        prompt="Create a static education creative about a planning workflow.",
+        brand_context={"brand_name": "Example Brand", "visual_identity": {}},
+        persona_context={},
+        objective_context={
+            "name": "Education",
+            "configuration": {"primary_goal": "Teach the audience a useful decision pattern", "cta_bias": "soft"},
+        },
+        ordered_knowledge={},
+        studio_panel={
+            "platform_preset": "linkedin",
+            "format": "static",
+            "file_type": "pdf",
+            "size": {"width": 1080, "height": 1350},
+        },
+        conversation_context={},
+        session_memory={},
+        reference_assets=[
+            {
+                "asset_role": "reference_creative",
+                "trust_level": "trusted",
+                "format_family": "carousel",
+                "metadata": {
+                    "format_family": "carousel",
+                    "layout_dna": {"layout_type": "sequenced_hero_cards"},
+                    "composition_logic": {"flow": "cover_to_detail_to_takeaway"},
+                },
+            }
+        ],
+    )
+
+    contract = compiled["generation_surface_contract"]
+    profile = compiled["reference_adaptation_profile"]
+    assert contract["selected_format"] == "static"
+    assert contract["selected_platform"] == "linkedin"
+    assert contract["selected_size"] == "4:5"
+    assert contract["selected_file_type"] == "pdf"
+    assert contract["campaign_goal"] == "Education"
+    assert contract["layout_behavior"] == "static_creative_output"
+    assert contract["file_type_behavior"] == "export_render_path_only_not_content_meaning"
+    assert profile["source_format_family"] == "carousel"
+    assert profile["output_format_family"] == "static"
+    assert profile["adaptation_mode"] != "template_sequence_adaptation"
+
+
+def test_context_compiler_reference_profile_keeps_selected_output_format_authoritative() -> None:
+    compiler = ContextCompilerService()
+
+    cases = [
+        ("infographic", "carousel", "carousel_sequence_output", "infographic_surface_adaptation"),
+        ("static", "carousel", "carousel_sequence_output", "static_creative_adaptation"),
+        ("carousel", "infographic", "infographic_surface_output", "hybrid_reference_adaptation"),
+        ("carousel", "static", "static_creative_output", "hybrid_reference_adaptation"),
+    ]
+    for reference_family, selected_format, expected_behavior, expected_mode in cases:
+        compiled = compiler.compile(
+            prompt="Create a campaign creative about comparing options.",
+            brand_context={"brand_name": "Example Brand", "visual_identity": {}},
+            persona_context={},
+            objective_context={},
+            ordered_knowledge={},
+            studio_panel={"platform_preset": "instagram", "format": selected_format, "file_type": "png"},
+            conversation_context={},
+            session_memory={},
+            reference_assets=[
+                {
+                    "asset_role": "reference_creative",
+                    "trust_level": "approved",
+                    "format_family": reference_family,
+                    "metadata": {
+                        "format_family": reference_family,
+                        "layout_dna": {"layout_type": f"{reference_family}_system"},
+                        "composition_logic": {"flow": "structured_visual_rhythm"},
+                    },
+                }
+            ],
+        )
+
+        profile = compiled["reference_adaptation_profile"]
+        contract = compiled["generation_surface_contract"]
+        assert profile["source_format_family"] == reference_family
+        assert profile["output_format_family"] == selected_format
+        assert profile["adaptation_mode"] == expected_mode
+        assert contract["layout_behavior"] == expected_behavior
+        assert contract["selected_format"] == selected_format
+
+
+def test_context_compiler_surface_contract_budget_changes_with_aspect_ratio() -> None:
+    compiler = ContextCompilerService()
+
+    portrait = compiler.compile(
+        prompt="Create an educational static creative.",
+        brand_context={"brand_name": "Example Brand", "visual_identity": {}},
+        persona_context={},
+        objective_context={},
+        ordered_knowledge={},
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png", "size": {"width": 1080, "height": 1350}},
+        conversation_context={},
+        session_memory={},
+    )["generation_surface_contract"]["content_budget"]
+    landscape = compiler.compile(
+        prompt="Create an educational static creative.",
+        brand_context={"brand_name": "Example Brand", "visual_identity": {}},
+        persona_context={},
+        objective_context={},
+        ordered_knowledge={},
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png", "size": {"width": 1920, "height": 1080}},
+        conversation_context={},
+        session_memory={},
+    )["generation_surface_contract"]["content_budget"]
+
+    assert portrait["selected_size"] == "4:5"
+    assert portrait["orientation"] == "portrait"
+    assert landscape["selected_size"] == "16:9"
+    assert landscape["orientation"] == "landscape"
+    assert portrait["aspect_ratio"] != landscape["aspect_ratio"]
+
+
+def test_context_compiler_marks_video_surface_unsupported_without_activating_video_generation() -> None:
+    compiler = ContextCompilerService()
+
+    compiled = compiler.compile(
+        prompt="Create a short video concept.",
+        brand_context={"brand_name": "Example Brand", "visual_identity": {}},
+        persona_context={},
+        objective_context={},
+        ordered_knowledge={},
+        studio_panel={"platform_preset": "youtube", "format": "video", "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        reference_assets=[
+            {
+                "asset_role": "reference_creative",
+                "trust_level": "approved",
+                "format_family": "static",
+                "metadata": {"format_family": "static", "layout_dna": {"layout_type": "thumbnail_hero"}},
+            }
+        ],
+    )
+
+    contract = compiled["generation_surface_contract"]
+    profile = compiled["reference_adaptation_profile"]
+    assert contract["selected_format"] == "video"
+    assert contract["layout_behavior"] == "video_output_disabled_or_unsupported"
+    assert profile["adaptation_mode"] == "video_output_disabled_or_unsupported"
 
 
 def test_context_compiler_compact_sequence_pack_preserves_full_reference_asset_path() -> None:

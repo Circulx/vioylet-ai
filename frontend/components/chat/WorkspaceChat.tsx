@@ -78,10 +78,20 @@ const platformLabels: Record<Platform, string> = {
   youtube_thumbnail: "YouTube",
 };
 const fileTypeOptions: FileType[] = ["doc", "pdf", "jpg", "png"];
-const campaignGoalOptions = ["Brand awareness", "Engagement", "Lead generation", "Investor education", "Thought leadership"];
+const campaignGoalOptions = [
+  "Brand awareness",
+  "Lead generation",
+  "Website traffic",
+  "Engagement",
+  "Sales",
+  "App installs",
+  "Investor education",
+  "Thought leadership",
+  "Others",
+];
 const sizeOptionsByPlatform: Record<Platform, Array<{ label: string; width: number; height: number }>> = {
-  instagram: [{ label: "1:1", width: 1080, height: 1080 }, { label: "9:16", width: 1080, height: 1920 }],
-  linkedin: [{ label: "4:5", width: 1080, height: 1350 }, { label: "16:9", width: 1200, height: 675 }],
+  instagram: [{ label: "1:1", width: 1080, height: 1080 }, { label: "4:5", width: 1080, height: 1350 }, { label: "9:16", width: 1080, height: 1920 }],
+  linkedin: [{ label: "4:5", width: 1080, height: 1350 }, { label: "1:1", width: 1080, height: 1080 }, { label: "16:9", width: 1200, height: 675 }],
   x: [{ label: "1:1", width: 1080, height: 1080 }, { label: "16:9", width: 1600, height: 900 }],
   youtube_thumbnail: [{ label: "16:9", width: 1280, height: 720 }],
 };
@@ -164,6 +174,87 @@ function resizeComposer(node: HTMLTextAreaElement | null) {
   const nextHeight = Math.min(node.scrollHeight, MAX_COMPOSER_HEIGHT);
   node.style.height = `${Math.max(nextHeight, 44)}px`;
   node.style.overflowY = node.scrollHeight > MAX_COMPOSER_HEIGHT ? "auto" : "hidden";
+}
+
+function normalizeBriefLines(value: string) {
+  return value
+    .split(/\r?\n/)
+    .map((item) => item.replace(/^[\s\-*\d.)]+/, "").trim())
+    .filter(Boolean);
+}
+
+function buildAdPostGenerationBrief({
+  platform,
+  format,
+  sizeLabel,
+  fileType,
+  campaignGoal,
+  topic,
+  mainMessage,
+  supportingText,
+  bulletText,
+  cta,
+}: {
+  platform: Platform;
+  format: FormatMode;
+  sizeLabel: string;
+  fileType: FileType;
+  campaignGoal: string;
+  topic: string;
+  mainMessage: string;
+  supportingText: string;
+  bulletText: string;
+  cta: string;
+}) {
+  const bullets = normalizeBriefLines(bulletText);
+  const trimmedTopic = topic.trim();
+  const trimmedMainMessage = mainMessage.trim();
+  const trimmedSupportingText = supportingText.trim();
+  const trimmedGoal = campaignGoal.trim();
+  const trimmedCta = cta.trim();
+
+  if (!trimmedTopic && !trimmedMainMessage && !trimmedSupportingText && !bullets.length && !trimmedGoal) {
+    return "";
+  }
+
+  const formatLabel =
+    format === "infographic"
+      ? "infographic post"
+      : format === "carousel"
+        ? "carousel ad post"
+        : "static post";
+  const formatRules =
+    format === "infographic"
+      ? [
+          "Infographic post requirements: include charts, icons, or diagrams; use concise text blocks; create clear visual hierarchy.",
+          "Use one visual module per bullet or proof point, with topic-matched icons or illustrations.",
+        ]
+      : format === "carousel"
+        ? [
+            "Carousel requirements: create a multi-slide ad story with one idea per slide, strong opening hook, and final CTA.",
+          ]
+        : [
+            "Static post requirements: bold visual, minimal text, centered main message, and one visible actionable CTA button.",
+          ];
+
+  return [
+    "Generate a high-quality ad image for social media.",
+    `Selected format: ${formatLabel}.`,
+    `Selected platform: ${platform}.`,
+    `Selected size/aspect ratio: ${sizeLabel}.`,
+    `Selected export file type: ${fileType}.`,
+    trimmedGoal ? `Campaign goal: ${trimmedGoal}.` : "",
+    trimmedTopic ? `Topic/context: ${trimmedTopic}.` : "",
+    trimmedMainMessage ? `Main message: ${trimmedMainMessage}.` : "",
+    trimmedSupportingText ? `Supporting text: ${trimmedSupportingText}.` : "",
+    bullets.length ? `Bullet points:\n${bullets.map((item, index) => `${index + 1}. ${item}`).join("\n")}` : "",
+    trimmedCta ? `CTA button text: ${trimmedCta}.` : "CTA button text: create a short actionable CTA from the campaign goal.",
+    "Brand/layout requirements: use brand colors and readable brand-safe typography; reserve logo placement at top-right; keep the background clean.",
+    "Visual composition instructions: highlight the main message in the center; keep the CTA visible; make all visuals match the topic instead of using generic filler.",
+    ...formatRules,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function dedupeImageAssets(assets: AssetReference[]) {
@@ -795,6 +886,10 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
   const [campaignAudience, setCampaignAudience] = useState("");
   const [campaignObjective, setCampaignObjective] = useState("");
   const [socialGoal, setSocialGoal] = useState("");
+  const [socialMainMessage, setSocialMainMessage] = useState("");
+  const [socialSupportingText, setSocialSupportingText] = useState("");
+  const [socialBulletText, setSocialBulletText] = useState("");
+  const [socialCta, setSocialCta] = useState("");
   const [repurposeSource, setRepurposeSource] = useState("");
   const [repurposeTarget, setRepurposeTarget] = useState("");
   const [alignmentContent, setAlignmentContent] = useState("");
@@ -839,7 +934,17 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
         .join("\n");
     }
     if (selectedAction === "social") {
-      return [workspacePrompt, socialGoal || campaignGoal].map((item) => item.trim()).filter(Boolean).join("\n");
+      return [
+        workspacePrompt,
+        socialMainMessage,
+        socialSupportingText,
+        socialBulletText,
+        socialCta,
+        socialGoal || campaignGoal,
+      ]
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .join("\n");
     }
     if (selectedAction === "repurpose") {
       return [repurposeSource, repurposeTarget, workspacePrompt].map((item) => item.trim()).filter(Boolean).join("\n");
@@ -858,7 +963,11 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
     repurposeSource,
     repurposeTarget,
     selectedAction,
+    socialBulletText,
+    socialCta,
     socialGoal,
+    socialMainMessage,
+    socialSupportingText,
     workspacePrompt,
   ]);
   const debouncedRecommendationPrompt = useDebouncedValue(recommendationPrompt, 400);
@@ -1036,7 +1145,18 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
     }
     if (selectedAction === "social") {
       await dispatchGeneration(
-        `Create a ${studioPlatform} social media post.\nGoal: ${socialGoal || campaignGoal}\nTopic: ${workspacePrompt}\nCampaign focus: ${campaignFocus}`,
+        buildAdPostGenerationBrief({
+          platform: studioPlatform,
+          format: studioFormat,
+          sizeLabel: studioSizeLabel,
+          fileType: studioFileType,
+          campaignGoal: socialGoal || campaignGoal,
+          topic: workspacePrompt || campaignFocus,
+          mainMessage: socialMainMessage,
+          supportingText: socialSupportingText,
+          bulletText: socialBulletText,
+          cta: socialCta,
+        }),
       );
       return;
     }
@@ -1406,7 +1526,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                     </span>
                   </div>
 
-                  <div className="grid gap-5 md:max-w-md">
+                  <div className="grid gap-5 md:max-w-2xl">
                     {selectedAction === "idea" ? (
                       <>
                         <label className="space-y-2">
@@ -1425,10 +1545,55 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                     ) : null}
 
                     {selectedAction === "social" ? (
-                      <label className="space-y-2">
-                        <span className="text-base font-medium text-slate-700">Goal</span>
-                        <Input placeholder="What is the goal of this post" className="h-12 border-none bg-input-field shadow-none" value={socialGoal} onChange={(event) => setSocialGoal(event.target.value)} />
-                      </label>
+                      <>
+                        <label className="space-y-2">
+                          <span className="text-base font-medium text-slate-700">Main message</span>
+                          <Input
+                            placeholder="What should the ad say first"
+                            className="h-12 border-none bg-input-field shadow-none"
+                            value={socialMainMessage}
+                            onChange={(event) => setSocialMainMessage(event.target.value)}
+                          />
+                        </label>
+                        <label className="space-y-2">
+                          <span className="text-base font-medium text-slate-700">Supporting text</span>
+                          <Textarea
+                            placeholder="Short supporting line for static posts or intro context for infographics"
+                            className="min-h-24 border-none bg-input-field shadow-none"
+                            value={socialSupportingText}
+                            onChange={(event) => setSocialSupportingText(event.target.value)}
+                          />
+                        </label>
+                        <label className="space-y-2">
+                          <span className="text-base font-medium text-slate-700">Infographic bullets</span>
+                          <Textarea
+                            placeholder="Add one point per line for infographic modules"
+                            className="min-h-28 border-none bg-input-field shadow-none"
+                            value={socialBulletText}
+                            onChange={(event) => setSocialBulletText(event.target.value)}
+                          />
+                        </label>
+                        <div className="grid gap-5 md:grid-cols-2">
+                          <label className="space-y-2">
+                            <span className="text-base font-medium text-slate-700">CTA Button</span>
+                            <Input
+                              placeholder="Short action text"
+                              className="h-12 border-none bg-input-field shadow-none"
+                              value={socialCta}
+                              onChange={(event) => setSocialCta(event.target.value)}
+                            />
+                          </label>
+                          <label className="space-y-2">
+                            <span className="text-base font-medium text-slate-700">Goal</span>
+                            <Input
+                              placeholder="What outcome should this post drive"
+                              className="h-12 border-none bg-input-field shadow-none"
+                              value={socialGoal}
+                              onChange={(event) => setSocialGoal(event.target.value)}
+                            />
+                          </label>
+                        </div>
+                      </>
                     ) : null}
 
                     {selectedAction === "repurpose" ? (

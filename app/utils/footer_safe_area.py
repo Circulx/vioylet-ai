@@ -83,7 +83,11 @@ def calculate_footer_safe_area(
     total_line_height = sum(line_heights) + max(len(lines) - 1, 0) * spacing
     vertical_padding = max(int(minimum_text_strip_height * 0.16), 8)
     text_strip_height = min(max(minimum_text_strip_height, total_line_height + vertical_padding * 2), height)
-    clear_strip_height = min(max(minimum_clear_strip_height, text_strip_height), height)
+    wrapped_line_allowance = max(len(lines) - 2, 0) * spacing * 2
+    clear_strip_height = min(
+        max(minimum_clear_strip_height + wrapped_line_allowance, text_strip_height + wrapped_line_allowance),
+        height,
+    )
     clear_strip_top = max(height - clear_strip_height, 0)
     text_strip_top = clear_strip_top + max((clear_strip_height - text_strip_height) // 2, 0)
     max_text_height = max(text_strip_height - vertical_padding * 2, 1)

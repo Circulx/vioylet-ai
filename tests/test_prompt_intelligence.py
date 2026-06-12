@@ -1,6 +1,34 @@
 from app.ai.prompt_intelligence import PromptIntelligenceService
 
 
+def test_prompt_intelligence_preserves_dense_research_fact_limit() -> None:
+    facts = [
+        {
+            "label": f"Rank {index}",
+            "value": f"Verified value {index}",
+            "source_title": "Ranking source",
+            "source_url": "https://example.com/ranking",
+        }
+        for index in range(1, 11)
+    ]
+
+    payload = PromptIntelligenceService._research_editorial_prompt_payload(
+        {
+            "active": True,
+            "fact_limit": 10,
+            "fact_model": {"verified_facts": facts},
+            "source_pack": [
+                {"type": "verified_fact", "label": item["label"], "detail": item["value"], "source": item["source_title"]}
+                for item in facts
+            ],
+        }
+    )
+
+    assert payload["fact_limit"] == 10
+    assert len(payload["fact_model"]["verified_facts"]) == 10
+    assert len(payload["source_pack"]) == 10
+
+
 def test_generation_envelope_grounds_visual_metadata_from_visual_knowledge_brief() -> None:
     service = PromptIntelligenceService()
 
@@ -1093,3 +1121,63 @@ def test_generation_envelope_includes_native_infographic_and_static_contracts() 
     assert "metadata.static_panel_spec" in static_combined
     assert "panel_goal, dominant_message, supporting_lines, proof_points, stat_highlights, visual_focus, and cta_mode" in static_combined
     assert "\"sequence_contract\": \"native_static_panel_spec\"" in static_combined
+
+
+def test_generation_and_planning_envelopes_include_reference_adaptation_profile_without_contract_change() -> None:
+    service = PromptIntelligenceService()
+    compiled_context = {
+        "brand_copy_brief": {"brand_name": "Example Brand"},
+        "brand_visual_brief": {},
+        "audience_brief": {},
+        "knowledge_brief": [],
+        "prompt_intelligence_brief": {},
+        "visual_knowledge_brief": {},
+        "render_constraints": {},
+        "session_brief": {},
+        "template_fit_brief": {},
+        "reference_asset_brief": [],
+        "reference_adaptation_profile": {
+            "source_format_family": "infographic",
+            "output_format_family": "carousel",
+            "adaptation_mode": "infographic_surface_adaptation",
+            "confidence": 0.72,
+            "do_not_adapt": {"literal_text": True, "unsupported_data_visuals": True},
+            "balance": {
+                "reference_adaptation_score": 0.7,
+                "prompt_relevance_score": 0.8,
+                "conflict_resolution": "prompt_content_first_reference_visual_system_second",
+            },
+        },
+        "generation_surface_contract": {
+            "selected_format": "carousel",
+            "selected_platform": "linkedin",
+            "selected_file_type": "png",
+            "layout_behavior": "carousel_sequence_output",
+            "file_type_behavior": "export_render_path_only_not_content_meaning",
+        },
+        "content_format_brief": {"format": "carousel"},
+        "research_editorial_brief": {},
+        "format_family_plan": {"family": "carousel"},
+        "content_plan": {"sequence_contract": "native_carousel_metadata"},
+        "visual_plan": {"format_family": "carousel"},
+    }
+
+    generation = service.compose_generation_envelope(
+        user_prompt="Create a carousel about a decision process.",
+        compiled_context=compiled_context,
+        studio_panel={"platform_preset": "linkedin", "format": "carousel", "file_type": "png"},
+    )
+    planning = service.compose_creative_planning_envelope(
+        user_prompt="Create a carousel about a decision process.",
+        compiled_context=compiled_context,
+        studio_panel={"platform_preset": "linkedin", "format": "carousel", "file_type": "png"},
+    )
+
+    combined = f"{generation.system}\n{generation.user}\n{planning.system}\n{planning.user}"
+    assert "Reference adaptation profile" in combined
+    assert "Generation surface contract" in combined
+    assert "selected format, platform, size, file type, and campaign goal" in combined
+    assert "infographic_surface_adaptation" in combined
+    assert "carousel_sequence_output" in combined
+    assert "Return JSON only with keys: headline, body, cta, hashtags, metadata." in generation.system
+    assert "- scene_graph" in planning.system

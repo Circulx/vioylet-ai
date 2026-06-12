@@ -127,6 +127,63 @@ def test_renderer_scene_graph_renders_unlayered_overlay_footer_and_cta() -> None
     assert "legal" in rendered_roles
 
 
+def test_renderer_scene_graph_renders_ranking_table_rows_as_exact_overlay() -> None:
+    renderer = RendererService.__new__(RendererService)
+    payload = _payload("static", size={"width": 1080, "height": 1350})
+    renderer.payload = payload
+    renderer.settings = type("Settings", (), {"renderer_font_path": ""})()
+    renderer._active_font_candidates = []
+    renderer._used_font_paths = set()
+    renderer._used_font_families = set()
+    payload.scene_graph = GenerationSceneGraph(
+        canvas=SceneGraphCanvas(width=1080, height=1350, platform="linkedin", file_type="png"),
+        layout_mode="synthesized_layout",
+        confidence=0.9,
+        layers=["background", "content"],
+        elements=[
+            SceneGraphElement(
+                element_id="background",
+                element_type="background",
+                role="background",
+                layer="background",
+                geometry=SceneGraphGeometry(x=0, y=0, width=1, height=1, units="normalized"),
+                style={"primary_fill": "#F7FAFC"},
+            ),
+            SceneGraphElement(
+                element_id="headline",
+                element_type="text",
+                role="headline",
+                layer="content",
+                geometry=SceneGraphGeometry(x=0.08, y=0.08, width=0.7, height=0.1, units="normalized"),
+                text="Inflation ranking",
+                style={"font_size": 48, "fill_role": "primary", "max_lines": 2},
+            ),
+            SceneGraphElement(
+                element_id="proof_rows",
+                element_type="text",
+                role="proof_points",
+                layer="content",
+                geometry=SceneGraphGeometry(x=0.08, y=0.24, width=0.84, height=0.52, units="normalized"),
+                text="1. India - 4.0%\n2. Global median - 2.9%\n3. Top country - 682.1%",
+                style={"font_size": 26, "fill_role": "secondary_text", "row_layout": "ranking_table", "row_background_fill_role": "surface"},
+                validation_hints={"surface_mode": "ranking_table", "module_count": 3, "badge_style": "numbered"},
+            ),
+        ],
+        styles={"layout_archetype": "ranking_table"},
+    )
+
+    _image, flags = renderer._render_scene_graph(payload, {"width": 1080, "height": 1350})
+
+    table_block = next(item for item in flags["text_blocks_used"] if item["role"] == "proof_points")
+    assert table_block["surface_mode"] == "ranking_table"
+    assert table_block["text"] == ["1. India - 4.0%", "2. Global median - 2.9%", "3. Top country - 682.1%"]
+    proof_zones = [zone for zone in flags["zones_used"] if zone["role"] == "proof_point"]
+    assert len(proof_zones) == 3
+    row_fits = [fit for fit in flags["text_fit"] if fit.get("surface_mode") == "ranking_table"]
+    assert len(row_fits) == 3
+    assert all(fit["truncated"] is False for fit in row_fits)
+
+
 def test_renderer_build_page_payloads_prefers_structured_carousel_slide_specs() -> None:
     renderer = RendererService(session=None)  # type: ignore[arg-type]
     payload = _payload("carousel", preset="instagram", size={"width": 1080, "height": 1080})
@@ -661,6 +718,43 @@ def test_renderer_paste_logo_strips_light_background_before_compositing() -> Non
     finally:
         logo_path.unlink(missing_ok=True)
         root.rmdir()
+
+
+def test_renderer_paste_logo_uses_visible_bounds_and_alpha_mask() -> None:
+    renderer = RendererService(session=None)  # type: ignore[arg-type]
+    root = Path("tests") / f"logo-alpha-{uuid4()}"
+    root.mkdir(parents=True, exist_ok=True)
+    logo_path = root / "mark.png"
+    logo = Image.new("RGBA", (520, 180), (255, 255, 255, 0))
+    logo_draw = ImageDraw.Draw(logo)
+    logo_draw.rectangle((210, 70, 330, 118), fill=(245, 158, 11, 255))
+    logo.save(logo_path)
+
+    class Storage:
+        def absolute_path(self, path: str) -> str:
+            return str(logo_path)
+
+    renderer.storage = Storage()
+    canvas = Image.new("RGBA", (360, 180), (18, 28, 38, 255))
+    canvas.putpixel((26, 62), (11, 72, 130, 255))
+    zone = type("Zone", (), {"x": 20, "y": 30, "width": 240, "height": 90})()
+
+    try:
+        pasted = renderer._paste_logo(canvas, "tenant/brand/logo/mark.png", zone)
+        assert pasted is True
+        assert canvas.getpixel((26, 62))[:3] == (11, 72, 130)
+        assert canvas.getpixel((140, 70))[:3] == (245, 158, 11)
+    finally:
+        logo_path.unlink(missing_ok=True)
+        root.rmdir()
+
+
+def test_renderer_strip_logo_background_keeps_all_light_logo_visible() -> None:
+    logo = Image.new("RGBA", (120, 48), (250, 250, 250, 255))
+
+    stripped = RendererService._strip_logo_background_if_safe(logo)
+
+    assert stripped.getchannel("A").getbbox() == (0, 0, 120, 48)
 
 
 def test_renderer_builds_single_page_for_infographic() -> None:

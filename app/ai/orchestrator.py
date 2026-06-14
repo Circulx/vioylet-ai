@@ -56,7 +56,7 @@ class AIOrchestratorService:
     STATIC_INFOGRAPHIC_FINAL_PROMPT_MAX_LENGTH = 15500
     SAMPLE_SIMILARITY_ACCEPT_SCORE = 0.82
     SCENE_GRAPH_REPAIR_ATTEMPTS = 2
-    CONTENT_SEMANTIC_REPAIR_ATTEMPTS = 1
+    CONTENT_SEMANTIC_REPAIR_ATTEMPTS = 3
     IMAGE_QUALITY_MIN_SCORE = 0.72
     AI_FINAL_RENDER_FORMATS = {"static", "story", "poster", "carousel", "infographic"}
     TEMPLATE_LOCKED_IMAGE_LED_FORMATS = {"static", "story", "poster"}
@@ -3463,6 +3463,597 @@ class AIOrchestratorService:
         return tokens
 
     @classmethod
+    def _user_prompt_objective_token_union(cls, request: AIOrchestrationRequest | None) -> set[str]:
+        objective_tokens: set[str] = set()
+        for concept in cls._user_prompt_content_concepts(request):
+            for token in concept.get("tokens") or []:
+                objective_tokens.update(cls._prompt_concept_aliases(str(token)))
+        if objective_tokens:
+            return objective_tokens
+        prompt = cls._coerce_text_value(getattr(request, "prompt", "") if request is not None else "")
+        return cls._content_text_tokens_with_aliases(prompt)
+
+    @classmethod
+    def _carousel_slide_content_text(cls, slide: dict[str, Any]) -> str:
+        if not isinstance(slide, dict):
+            return ""
+        parts: list[Any] = [
+            slide.get("headline"),
+            slide.get("supporting_line"),
+            slide.get("body"),
+            slide.get("cta"),
+        ]
+        for key in ("body_points", "proof_points", "stat_highlights"):
+            parts.extend(slide.get(key) or [])
+        for pair in cls._normalize_claim_evidence_pairs(slide.get("claim_evidence_pairs"), limit=4):
+            parts.extend([pair.get("claim"), pair.get("evidence")])
+        return " ".join(cls._coerce_text_value(part) for part in parts if cls._coerce_text_value(part))
+
+    @classmethod
+    def _carousel_major_content_tokens(cls, value: Any) -> set[str]:
+        semantic_stopwords = cls.TOPIC_MATCH_NOISE_TOKENS | cls.CONTENT_ALLOCATION_STOPWORDS | {
+            "action",
+            "actions",
+            "benefit",
+            "benefits",
+            "conclusion",
+            "effect",
+            "effects",
+            "explain",
+            "explanation",
+            "final",
+            "guidance",
+            "impact",
+            "impacts",
+            "implication",
+            "implications",
+            "insight",
+            "insights",
+            "learn",
+            "learning",
+            "outcome",
+            "outcomes",
+            "recommendation",
+            "recommendations",
+            "summary",
+            "takeaway",
+            "tips",
+        }
+        tokens: set[str] = set()
+        for raw_token in cls._normalized_prompt_tokens(cls._coerce_text_value(value)):
+            token = cls._normalize_topic_anchor_token(raw_token)
+            if (
+                token
+                and len(token) >= 4
+                and token not in semantic_stopwords
+                and not any(ch.isdigit() for ch in token)
+            ):
+                tokens.update(cls._prompt_concept_aliases(token))
+        return tokens
+
+    @classmethod
+    def _carousel_slide_major_content_tokens(cls, slide: dict[str, Any]) -> set[str]:
+        return cls._carousel_major_content_tokens(cls._carousel_slide_content_text(slide))
+
+    @classmethod
+    def _carousel_slide_is_prompt_traceable(
+        cls,
+        *,
+        slide: dict[str, Any],
+        objective_tokens: set[str],
+    ) -> bool:
+        if not objective_tokens:
+            return True
+        slide_tokens = cls._carousel_slide_major_content_tokens(slide)
+        return bool(slide_tokens & objective_tokens)
+
+    @classmethod
+    def _line_has_causal_reasoning(cls, value: Any) -> bool:
+        text = cls._normalize_metadata_text(value, limit=320).casefold()
+        if not text:
+            return False
+        return bool(
+            re.search(
+                r"\b(?:because|so that|therefore|leads? to|results? in|works by|happens when|drives?|creates?|requires?|depends on|causes?|due to|as a result|which means|made up of|includes?)\b",
+                text,
+            )
+        )
+
+    @classmethod
+    def _line_states_outcome_without_reasoning(cls, value: Any) -> bool:
+        text = cls._normalize_metadata_text(value, limit=320).casefold()
+        if not text:
+            return False
+        tokens = cls._carousel_major_content_tokens(text)
+        if len(tokens) < 3:
+            return False
+        if cls._line_has_causal_reasoning(text):
+            return False
+        return bool(
+            re.search(
+                r"\b(?:impact|impacts|effect|effects|outcome|outcomes|implication|implications|benefit|benefits|opportunity|opportunities|risk|risks|change|changes|shift|shifts|requirement|requirements|takeaway|takeaways)\b",
+                text,
+            )
+        )
+
+    @classmethod
+    def _generic_specificity_stopwords(cls) -> set[str]:
+        return cls.TOPIC_MATCH_NOISE_TOKENS | cls.CONTENT_ALLOCATION_STOPWORDS | {
+            "able",
+            "across",
+            "affect",
+            "affects",
+            "better",
+            "bigger",
+            "clear",
+            "clearly",
+            "complete",
+            "critical",
+            "different",
+            "early",
+            "easy",
+            "effective",
+            "essential",
+            "future",
+            "good",
+            "great",
+            "help",
+            "helps",
+            "important",
+            "improve",
+            "improves",
+            "large",
+            "major",
+            "matter",
+            "matters",
+            "meaningful",
+            "more",
+            "most",
+            "need",
+            "needs",
+            "possible",
+            "right",
+            "significant",
+            "simple",
+            "specific",
+            "strong",
+            "success",
+            "useful",
+            "valuable",
+        }
+
+    @classmethod
+    def _line_prompt_concept_group_hits(
+        cls,
+        value: Any,
+        concepts: list[dict[str, Any]],
+    ) -> int:
+        if not concepts:
+            return 0
+        line_tokens = cls._carousel_major_content_tokens(value)
+        hits = 0
+        for concept in concepts:
+            aliases = cls._prompt_concept_alias_set(concept)
+            if aliases and line_tokens & aliases:
+                hits += 1
+        return hits
+
+    @classmethod
+    def _line_has_objective_specific_substance(
+        cls,
+        value: Any,
+        *,
+        objective_tokens: set[str],
+        concepts: list[dict[str, Any]],
+    ) -> bool:
+        text = cls._normalize_metadata_text(value, limit=340)
+        if not text or not objective_tokens:
+            return False
+        line_tokens = cls._carousel_major_content_tokens(text)
+        objective_overlap = line_tokens & objective_tokens
+        if not objective_overlap:
+            return False
+        supporting_tokens = {
+            token
+            for token in line_tokens
+            if token not in objective_tokens and token not in cls._generic_specificity_stopwords()
+        }
+        concept_group_hits = cls._line_prompt_concept_group_hits(text, concepts)
+        has_reasoning = cls._line_has_causal_reasoning(text) or cls._line_has_explanatory_context(text)
+        if concept_group_hits >= 2 and has_reasoning:
+            return True
+        if len(objective_overlap) >= 2 and has_reasoning and supporting_tokens:
+            return True
+        if len(objective_overlap) >= 2 and len(supporting_tokens) >= 3:
+            return True
+        if len(objective_overlap) >= 1 and concept_group_hits >= 1 and len(supporting_tokens) >= 5:
+            return True
+        if len(objective_overlap) >= 1 and has_reasoning and len(supporting_tokens) >= 3:
+            return True
+        return False
+
+    @classmethod
+    def _carousel_objective_traceability_summary(
+        cls,
+        *,
+        slides: list[dict[str, Any]],
+        objective_tokens: set[str],
+    ) -> tuple[int, int, list[int]]:
+        traceable = 0
+        total = 0
+        weak_slide_indexes: list[int] = []
+        if not objective_tokens:
+            return traceable, total, weak_slide_indexes
+        for index, slide in enumerate(slides, start=1):
+            slide_total = 0
+            slide_traceable = 0
+            for field_name, line in cls._carousel_slide_content_line_items(slide):
+                normalized_field = re.sub(r"\[\d+\]", "", field_name)
+                if normalized_field in {"cta"}:
+                    continue
+                line_tokens = cls._carousel_major_content_tokens(line)
+                if not line_tokens:
+                    continue
+                slide_total += 1
+                total += 1
+                if line_tokens & objective_tokens:
+                    slide_traceable += 1
+                    traceable += 1
+            if slide_total and slide_traceable == 0:
+                weak_slide_indexes.append(index)
+        return traceable, total, weak_slide_indexes
+
+    @classmethod
+    def _carousel_token_overlap_ratio(cls, first_tokens: set[str], second_tokens: set[str]) -> float:
+        if not first_tokens or not second_tokens:
+            return 0.0
+        return len(first_tokens & second_tokens) / max(1, min(len(first_tokens), len(second_tokens)))
+
+    @classmethod
+    def _carousel_line_semantically_repeats_prior(cls, line: Any, prior_lines: list[str]) -> bool:
+        line_tokens = cls._carousel_major_content_tokens(line)
+        if len(line_tokens) < 3:
+            return False
+        for prior in prior_lines:
+            prior_tokens = cls._carousel_major_content_tokens(prior)
+            if len(prior_tokens) < 3:
+                continue
+            overlap_ratio = cls._carousel_token_overlap_ratio(line_tokens, prior_tokens)
+            new_tokens = line_tokens - prior_tokens
+            if overlap_ratio >= 0.75 and len(new_tokens) <= 2:
+                return True
+        return False
+
+    @classmethod
+    def _carousel_prompt_relevance_issues(
+        cls,
+        *,
+        request: AIOrchestrationRequest,
+        slides: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if not slides:
+            return []
+        issues: list[dict[str, Any]] = []
+        objective_tokens = cls._user_prompt_objective_token_union(request)
+        if not objective_tokens:
+            return []
+        established_tokens: set[str] = set(objective_tokens)
+        previous_slide_tokens: list[set[str]] = []
+        prompt_text = cls._coerce_text_value(getattr(request, "prompt", "")).casefold()
+        promotional_requested = bool(
+            re.search(
+                r"\b(?:promote|promotion|sales|sell|signup|sign up|book a demo|download|subscribe|try|use our|product|platform)\b",
+                prompt_text,
+            )
+        )
+        concepts = cls._user_prompt_content_concepts(request)
+        traceable_lines, total_lines, weak_trace_slides = cls._carousel_objective_traceability_summary(
+            slides=slides,
+            objective_tokens=objective_tokens,
+        )
+        if total_lines >= 3 and traceable_lines * 2 <= total_lines:
+            issues.append(
+                cls._clean_content_semantic_issue(
+                    code="carousel_insufficient_objective_traceability",
+                    message="Less than a majority of visible carousel content is directly traceable to the original user objective.",
+                    targeted_fields=["body", "metadata"],
+                    slide_indexes=weak_trace_slides[:6],
+                    severity="critical",
+                )
+            )
+        for index, slide in enumerate(slides, start=1):
+            slide_text = cls._carousel_slide_content_text(slide)
+            slide_tokens = cls._carousel_major_content_tokens(slide_text)
+            headline_tokens = cls._carousel_major_content_tokens(slide.get("headline"))
+            prompt_overlap = slide_tokens & objective_tokens
+            line_items = cls._carousel_slide_content_line_items(slide)
+            objective_explanation_seen = False
+            objective_specific_explanation_seen = False
+            for field_name, line in line_items:
+                line_tokens = cls._carousel_major_content_tokens(line)
+                line_prompt_overlap = line_tokens & objective_tokens
+                line_established_overlap = line_tokens & established_tokens
+                normalized_field = re.sub(r"\[\d+\]", "", field_name)
+                is_explanatory_field = normalized_field in {
+                    "supporting_line",
+                    "body",
+                    "body_points",
+                    "proof_points",
+                    "stat_highlights",
+                    "claim_evidence_pairs.claim",
+                    "claim_evidence_pairs.evidence",
+                }
+                if is_explanatory_field and line_prompt_overlap:
+                    objective_explanation_seen = True
+                    if cls._line_has_objective_specific_substance(
+                        line,
+                        objective_tokens=objective_tokens,
+                        concepts=concepts,
+                    ):
+                        objective_specific_explanation_seen = True
+                if cls._line_has_internal_instruction_leakage(line):
+                    issues.append(
+                        cls._clean_content_semantic_issue(
+                            code="carousel_instruction_leakage",
+                            message=(
+                                f"Slide {index} {field_name} contains internal planning, strategy, metadata, "
+                                "or validation language that must never appear in user-facing content."
+                            ),
+                            targeted_fields=["body", "metadata"],
+                            slide_indexes=[index],
+                            slide_targets=[field_name],
+                            severity="critical",
+                        )
+                    )
+                if cls._line_is_generic_carousel_filler(line):
+                    issues.append(
+                        cls._clean_content_semantic_issue(
+                            code="carousel_generic_filler_line",
+                            message=(
+                                f"Slide {index} {field_name} is generic filler that could apply to unrelated topics "
+                                "instead of explaining the user's requested subject."
+                            ),
+                            targeted_fields=["body", "metadata"],
+                            slide_indexes=[index],
+                            slide_targets=[field_name],
+                            severity="critical",
+                        )
+                    )
+                if not promotional_requested and cls._line_replaces_explanation_with_recommendation_or_promotion(
+                    line,
+                    request=request,
+                ):
+                    issues.append(
+                        cls._clean_content_semantic_issue(
+                            code="carousel_recommendation_or_promotion_over_explanation",
+                            message=(
+                                f"Slide {index} {field_name} replaces explanation with guidance, recommendation, "
+                                "action, product, investment, or sales messaging that the user did not request."
+                            ),
+                            targeted_fields=["body", "metadata"],
+                            slide_indexes=[index],
+                            slide_targets=[field_name],
+                            severity="critical",
+                        )
+                    )
+                if (
+                    normalized_field in {
+                        "supporting_line",
+                        "body",
+                        "claim_evidence_pairs.claim",
+                        "claim_evidence_pairs.evidence",
+                    }
+                    and line_tokens
+                    and cls._line_has_low_information_value(line)
+                ):
+                    issues.append(
+                        cls._clean_content_semantic_issue(
+                            code="carousel_shallow_visible_line",
+                            message=(
+                                f"Slide {index} {field_name} is too shallow; it mentions an idea without adding "
+                                "context, reasoning, implication, or explanatory value."
+                            ),
+                            targeted_fields=["body", "metadata"],
+                            slide_indexes=[index],
+                            slide_targets=[field_name],
+                            severity="critical",
+                        )
+                    )
+                if (
+                    field_name in {"headline", "supporting_line", "body", "cta"}
+                    and line_tokens
+                    and not line_prompt_overlap
+                    and not line_established_overlap
+                ):
+                    issues.append(
+                        cls._clean_content_semantic_issue(
+                            code="carousel_visible_line_low_relevance",
+                            message=(
+                                f"Slide {index} {field_name} is not clearly traceable to the user's objective "
+                                "or the established carousel discussion."
+                            ),
+                            targeted_fields=["body", "metadata"],
+                            slide_indexes=[index],
+                            slide_targets=[field_name],
+                            severity="critical",
+                        )
+                    )
+                if (
+                    is_explanatory_field
+                    and cls._line_states_outcome_without_reasoning(line)
+                ):
+                    issues.append(
+                        cls._clean_content_semantic_issue(
+                            code="carousel_outcome_without_reasoning",
+                            message=(
+                                f"Slide {index} {field_name} states an outcome, implication, risk, or benefit "
+                                "without enough cause-and-effect reasoning."
+                            ),
+                            targeted_fields=["body", "metadata"],
+                            slide_indexes=[index],
+                            slide_targets=[field_name],
+                            severity="critical",
+                        )
+                    )
+                if (
+                    is_explanatory_field
+                    and line_prompt_overlap
+                    and not cls._line_has_objective_specific_substance(
+                        line,
+                        objective_tokens=objective_tokens,
+                        concepts=concepts,
+                    )
+                ):
+                    issues.append(
+                        cls._clean_content_semantic_issue(
+                            code="carousel_generic_objective_explanation",
+                            message=(
+                                f"Slide {index} {field_name} uses objective-related words but the explanation "
+                                "is too generic or interchangeable with other topics."
+                            ),
+                            targeted_fields=["body", "metadata"],
+                            slide_indexes=[index],
+                            slide_targets=[field_name],
+                            severity="critical",
+                        )
+                    )
+                if (
+                    normalized_field not in {"headline", "cta"}
+                    and line_tokens
+                    and len(line_tokens) >= 3
+                    and not (line_tokens & (headline_tokens | objective_tokens | established_tokens))
+                ):
+                    issues.append(
+                        cls._clean_content_semantic_issue(
+                            code="carousel_support_line_not_aligned",
+                            message=(
+                                f"Slide {index} {field_name} does not directly support the slide headline, "
+                                "the user prompt, or the established narrative."
+                            ),
+                            targeted_fields=["body", "metadata"],
+                            slide_indexes=[index],
+                            slide_targets=[field_name],
+                            severity="critical",
+                        )
+                    )
+            if prompt_overlap and objective_explanation_seen and not objective_specific_explanation_seen:
+                issues.append(
+                    cls._clean_content_semantic_issue(
+                        code="carousel_slide_lacks_objective_specific_substance",
+                        message=(
+                            f"Slide {index} is prompt-related but does not provide enough objective-specific "
+                            "reasoning, mechanism, implication, example, or insight."
+                        ),
+                        targeted_fields=["body", "metadata"],
+                        slide_indexes=[index],
+                        severity="critical",
+                    )
+                )
+            if slide_tokens and not prompt_overlap:
+                issues.append(
+                    cls._clean_content_semantic_issue(
+                        code="carousel_low_objective_relevance",
+                        message=(
+                            f"Slide {index} is only loosely related or not traceable to the user's actual objective; "
+                            "major slide content must come from the prompt request."
+                        ),
+                        targeted_fields=["body", "metadata"],
+                        slide_indexes=[index],
+                        severity="critical",
+                    )
+                )
+            unsupported_tokens = {
+                token
+                for token in slide_tokens
+                if token not in objective_tokens and token not in established_tokens
+            }
+            unsupported_ratio = len(unsupported_tokens) / max(1, len(slide_tokens)) if slide_tokens else 0.0
+            if (
+                index > 1
+                and len(unsupported_tokens) >= 4
+                and (
+                    not prompt_overlap
+                    or (unsupported_ratio >= 0.55 and not cls._carousel_slide_has_explanatory_depth(slide))
+                )
+            ):
+                issues.append(
+                    cls._clean_content_semantic_issue(
+                        code="carousel_unsupported_slide_topic",
+                        message=(
+                            f"Slide {index} introduces a major topic that is not derived from the user prompt "
+                            "or the established carousel narrative."
+                        ),
+                        targeted_fields=["body", "metadata"],
+                        slide_indexes=[index],
+                        severity="critical",
+                    )
+                )
+            if index > 1 and previous_slide_tokens:
+                prior_union = set().union(*previous_slide_tokens)
+                new_tokens = slide_tokens - prior_union
+                overlap_ratio = (
+                    len(slide_tokens & prior_union) / max(1, len(slide_tokens))
+                    if slide_tokens
+                    else 0.0
+                )
+                if slide_tokens and overlap_ratio >= 0.72 and len(new_tokens) <= 2:
+                    issues.append(
+                        cls._clean_content_semantic_issue(
+                            code="carousel_reworded_repetition",
+                            message=(
+                                f"Slide {index} appears to reword an earlier point instead of adding new information, "
+                                "deeper explanation, or a new perspective."
+                            ),
+                            targeted_fields=["body", "metadata"],
+                            slide_indexes=[index],
+                            severity="critical",
+                        )
+                    )
+                elif slide_tokens and len(new_tokens) <= 1 and not cls._carousel_slide_has_explanatory_depth(slide):
+                    issues.append(
+                        cls._clean_content_semantic_issue(
+                            code="carousel_no_meaningful_new_information",
+                            message=f"Slide {index} does not move the content forward with meaningful new information.",
+                            targeted_fields=["body", "metadata"],
+                            slide_indexes=[index],
+                            severity="critical",
+                        )
+                    )
+            established_tokens.update(slide_tokens)
+            previous_slide_tokens.append(slide_tokens)
+
+        if len(slides) >= 2:
+            final_index = len(slides)
+            final_tokens = previous_slide_tokens[-1] if previous_slide_tokens else set()
+            earlier_tokens = set().union(*previous_slide_tokens[:-1]) if previous_slide_tokens[:-1] else set()
+            final_new_tokens = {
+                token
+                for token in final_tokens
+                if token not in objective_tokens and token not in earlier_tokens
+            }
+            if final_tokens and not (final_tokens & objective_tokens):
+                issues.append(
+                    cls._clean_content_semantic_issue(
+                        code="carousel_conclusion_not_prompt_aligned",
+                        message="The conclusion does not reinforce the user's actual objective.",
+                        targeted_fields=["body", "metadata"],
+                        slide_indexes=[final_index],
+                        severity="critical",
+                    )
+                )
+            if len(final_new_tokens) >= 4:
+                issues.append(
+                    cls._clean_content_semantic_issue(
+                        code="carousel_conclusion_pivots_objective",
+                        message="The conclusion pivots into a new primary topic instead of synthesizing previously discussed information.",
+                        targeted_fields=["body", "metadata"],
+                        slide_indexes=[final_index],
+                        severity="critical",
+                    )
+                )
+        return issues
+
+    @classmethod
     def _prompt_concept_covered_by_tokens(cls, concept: dict[str, Any], text_tokens: set[str]) -> bool:
         concept_tokens = [
             token
@@ -3475,6 +4066,86 @@ class AIOrchestratorService:
         for token in concept_tokens:
             concept_aliases.update(cls._prompt_concept_aliases(str(token)))
         return bool(concept_aliases & text_tokens)
+
+    @classmethod
+    def _prompt_concept_alias_set(cls, concept: dict[str, Any]) -> set[str]:
+        aliases: set[str] = set()
+        for token in concept.get("tokens") or []:
+            aliases.update(cls._prompt_concept_aliases(str(token)))
+        return {token for token in aliases if token}
+
+    @classmethod
+    def _line_has_explanatory_context(cls, value: Any) -> bool:
+        text = cls._normalize_metadata_text(value, limit=320).casefold()
+        if not text:
+            return False
+        if re.search(
+            r"\b(?:because|why|means|so that|therefore|leads? to|results? in|helps?|prevents?|ensures?|works by|happens when|matters|impact|effect|consequence|tradeoff|trade-off|drives?|creates?|requires?|depends on|made up of|includes?)\b",
+            text,
+        ):
+            return True
+        if ":" in text or "->" in text:
+            return True
+        return False
+
+    @classmethod
+    def _line_explains_prompt_concept(cls, value: Any, concept_aliases: set[str]) -> bool:
+        if not concept_aliases:
+            return False
+        text = cls._normalize_metadata_text(value, limit=320)
+        if not text:
+            return False
+        line_tokens = cls._carousel_major_content_tokens(text)
+        if not (line_tokens & concept_aliases):
+            return False
+        if cls._line_has_explanatory_context(text):
+            return True
+        raw_tokens = [
+            cls._normalize_topic_anchor_token(token)
+            for token in cls._normalized_prompt_tokens(text)
+        ]
+        raw_tokens = [token for token in raw_tokens if token]
+        new_context_tokens = {
+            token
+            for token in line_tokens
+            if token not in concept_aliases and token not in cls.TOPIC_MATCH_NOISE_TOKENS
+        }
+        return len(raw_tokens) >= 8 and len(new_context_tokens) >= 3
+
+    @classmethod
+    def _carousel_concept_explanation_locations(
+        cls,
+        *,
+        concept: dict[str, Any],
+        slides: list[dict[str, Any]],
+    ) -> tuple[list[int], list[int]]:
+        concept_aliases = cls._prompt_concept_alias_set(concept)
+        mentioned: list[int] = []
+        explained: list[int] = []
+        explanatory_fields = {
+            "supporting_line",
+            "body",
+            "body_points",
+            "proof_points",
+            "stat_highlights",
+            "claim_evidence_pairs.claim",
+            "claim_evidence_pairs.evidence",
+        }
+        for index, slide in enumerate(slides, start=1):
+            slide_mentioned = False
+            slide_explained = False
+            for field_name, line in cls._carousel_slide_content_line_items(slide):
+                line_tokens = cls._carousel_major_content_tokens(line)
+                if line_tokens & concept_aliases:
+                    slide_mentioned = True
+                    normalized_field = re.sub(r"\[\d+\]", "", field_name)
+                    if normalized_field in explanatory_fields and cls._line_explains_prompt_concept(line, concept_aliases):
+                        slide_explained = True
+            if slide_mentioned:
+                mentioned.append(index)
+            if slide_explained:
+                explained.append(index)
+        return mentioned, explained
 
     @classmethod
     def _carousel_slide_prompt_alignment_text(cls, slide: dict[str, Any]) -> str:
@@ -3524,6 +4195,34 @@ class AIOrchestratorService:
                     ),
                     targeted_fields=["body", "metadata"],
                     slide_targets=missing_concepts[:5],
+                    severity="critical",
+                )
+            )
+        mentioned_but_unexplained: list[str] = []
+        explanation_slide_indexes: set[int] = set()
+        for concept in concepts:
+            label = str(concept.get("label") or "").strip()
+            if not label:
+                continue
+            mentioned_indexes, explained_indexes = cls._carousel_concept_explanation_locations(
+                concept=concept,
+                slides=slides,
+            )
+            if mentioned_indexes and not explained_indexes:
+                mentioned_but_unexplained.append(label)
+                explanation_slide_indexes.update(mentioned_indexes)
+        if mentioned_but_unexplained:
+            issues.append(
+                cls._clean_content_semantic_issue(
+                    code="carousel_prompt_concept_only_mentioned",
+                    message=(
+                        "Important user-requested concept(s) are mentioned but not explained with enough context: "
+                        + ", ".join(mentioned_but_unexplained[:5])
+                    ),
+                    targeted_fields=["body", "metadata"],
+                    slide_indexes=sorted(explanation_slide_indexes)[:6],
+                    slide_targets=mentioned_but_unexplained[:5],
+                    severity="critical",
                 )
             )
         concept_token_union: set[str] = set()
@@ -3549,6 +4248,7 @@ class AIOrchestratorService:
                         message=f"Slide {index} does not clearly connect to the user's requested topic or add useful prompt-relevant information.",
                         targeted_fields=["body", "metadata"],
                         slide_indexes=[index],
+                        severity="critical",
                     )
                 )
         if len(slides) >= 2 and concepts:
@@ -3564,6 +4264,17 @@ class AIOrchestratorService:
                         message="The conclusion slide does not summarize any major user-requested concept or learning from the carousel.",
                         targeted_fields=["body", "metadata"],
                         slide_indexes=[len(slides)],
+                        severity="critical",
+                    )
+                )
+            elif len(concepts) >= 2 and covered_in_close < min(2, len(concepts)):
+                issues.append(
+                    cls._clean_content_semantic_issue(
+                        code="carousel_weak_conclusion_synthesis",
+                        message="The conclusion slide should synthesize more than one major user-requested idea instead of closing on a narrow or repeated point.",
+                        targeted_fields=["body", "metadata"],
+                        slide_indexes=[len(slides)],
+                        severity="critical",
                     )
                 )
         return issues
@@ -3648,6 +4359,85 @@ class AIOrchestratorService:
         return lines
 
     @classmethod
+    def _carousel_slide_content_line_items(cls, slide: dict[str, Any]) -> list[tuple[str, str]]:
+        if not isinstance(slide, dict):
+            return []
+        items: list[tuple[str, str]] = []
+        for key in ("headline", "supporting_line", "body", "cta"):
+            text = cls._normalize_metadata_text(slide.get(key), limit=300)
+            if text:
+                items.append((key, text))
+        for key in ("body_points", "proof_points", "stat_highlights"):
+            for item in cls._normalize_metadata_list(slide.get(key), limit=10):
+                items.append((key, item))
+        for pair_index, pair in enumerate(cls._normalize_claim_evidence_pairs(slide.get("claim_evidence_pairs"), limit=5), start=1):
+            for key in ("claim", "evidence"):
+                text = cls._normalize_metadata_text(pair.get(key), limit=240)
+                if text:
+                    items.append((f"claim_evidence_pairs[{pair_index}].{key}", text))
+        return items
+
+    @classmethod
+    def _line_has_internal_instruction_leakage(cls, value: Any) -> bool:
+        text = cls._normalize_metadata_text(value, limit=360)
+        if not text:
+            return False
+        return bool(
+            re.search(
+                r"\b(?:objective lens|lead with education-first|content strategy|position as|brand voice|brand-safe|brand guardrails|"
+                r"message strategy|strategy notes?|planning rules?|framework labels?|validation notes?|system guidance|template guidance|"
+                r"visual guidance|metadata|slide_role|story_role|carousel_slide_specs|proof_points|stat_highlights|claim_evidence|"
+                r"copy_density|copy_behavior|sample cue|sample grammar|reference family|research memo|persona defaults?|"
+                r"prompt intelligence|compiled context|generation prompt|rewrite instruction|validation report)\b",
+                text,
+                flags=re.IGNORECASE,
+            )
+        )
+
+    @classmethod
+    def _line_is_generic_carousel_filler(cls, value: Any) -> bool:
+        text = cls._normalize_metadata_text(value, limit=260).casefold()
+        if not text:
+            return False
+        generic_patterns = (
+            r"^unlock(?:ing)? opportunities\b",
+            r"^key opportunities\b",
+            r"^a wealth of opportunities\b",
+            r"^leverage new opportunities\b",
+            r"^embrace the potential\b",
+            r"^long-term growth opportunities\b",
+            r"^strategize\b",
+            r"^what this means for your business\b",
+            r"^understanding your .{0,80} is essential\b",
+            r"^this can reshape your .{0,80}\b",
+            r"^take advantage of\b",
+            r"^newfound opportunities\b",
+            r"^future growth\b",
+        )
+        return any(re.search(pattern, text) for pattern in generic_patterns)
+
+    @classmethod
+    def _line_has_low_information_value(cls, value: Any) -> bool:
+        text = cls._normalize_metadata_text(value, limit=300)
+        if not text:
+            return False
+        if cls._line_has_explanatory_context(text):
+            return False
+        tokens = cls._carousel_major_content_tokens(text)
+        raw_tokens = [
+            cls._normalize_topic_anchor_token(token)
+            for token in cls._normalized_prompt_tokens(text)
+        ]
+        raw_tokens = [token for token in raw_tokens if token]
+        vague_statement = bool(
+            re.search(
+                r"\b(?:is|are|can be|may be|could be)\s+(?:important|critical|essential|significant|useful|helpful|valuable|key)\b",
+                text.casefold(),
+            )
+        )
+        return vague_statement or len(tokens) <= 2 or len(raw_tokens) < 5
+
+    @classmethod
     def _carousel_slide_has_explanatory_depth(cls, slide: dict[str, Any]) -> bool:
         text = cls._carousel_slide_prompt_alignment_text(slide).casefold()
         if re.search(
@@ -3659,6 +4449,23 @@ class AIOrchestratorService:
         body_points = cls._normalize_metadata_list(slide.get("body_points"), limit=5)
         claim_pairs = cls._normalize_claim_evidence_pairs(slide.get("claim_evidence_pairs"), limit=3)
         return len(body.split()) >= 14 or len(body_points) >= 2 or bool(claim_pairs)
+
+    @classmethod
+    def _line_replaces_explanation_with_recommendation_or_promotion(
+        cls,
+        value: Any,
+        *,
+        request: AIOrchestrationRequest | None = None,
+    ) -> bool:
+        text = cls._normalize_metadata_text(value, limit=260).casefold()
+        if not text:
+            return False
+        return bool(
+            re.search(
+                r"\b(?:you should|consider|start|try|explore|discover|subscribe|book|download|sign up|open an account|invest now|use our|choose our|our platform|our product|talk to|speak to|consult|recommend|recommendation|next step|action plan)\b",
+                text,
+            )
+        )
 
     @classmethod
     def _carousel_narrative_quality_issues(
@@ -3701,6 +4508,7 @@ class AIOrchestratorService:
                     message="The opening slide is too generic; it should create curiosity, relevance, or tension around the user's topic.",
                     targeted_fields=["body", "metadata"],
                     slide_indexes=[1],
+                    severity="critical",
                 )
             )
 
@@ -3718,6 +4526,7 @@ class AIOrchestratorService:
                             code=f"carousel_missing_{stage}_stage",
                             message=message,
                             targeted_fields=["body", "metadata"],
+                            severity="critical",
                         )
                     )
 
@@ -3746,6 +4555,7 @@ class AIOrchestratorService:
                         message="The carousel discusses implications or outcomes before giving enough foundational context.",
                         targeted_fields=["body", "metadata"],
                         slide_indexes=[first_effect_index],
+                        severity="critical",
                     )
                 )
 
@@ -3759,18 +4569,66 @@ class AIOrchestratorService:
                         code="carousel_weak_slide_continuity",
                         message="The carousel lacks enough slide-to-slide continuity; slides should feel connected instead of isolated.",
                         targeted_fields=["metadata"],
+                        severity="critical",
+                    )
+                )
+            adjacent_break_indexes: list[int] = []
+            unsupported_transition_indexes: list[int] = []
+            slide_token_sets = [
+                cls._carousel_major_content_tokens(cls._carousel_slide_content_text(slide))
+                for slide in slides
+            ]
+            for zero_index in range(1, len(slides)):
+                current_tokens = slide_token_sets[zero_index]
+                previous_tokens = slide_token_sets[zero_index - 1]
+                if len(current_tokens) < 4 or len(previous_tokens) < 4:
+                    continue
+                if current_tokens & previous_tokens:
+                    continue
+                transition_note = cls._carousel_slide_transition_note(slides[zero_index])
+                transition_tokens = cls._carousel_major_content_tokens(transition_note)
+                if transition_tokens & (current_tokens | previous_tokens):
+                    continue
+                adjacent_break_indexes.append(zero_index + 1)
+                new_tokens = current_tokens - set().union(*slide_token_sets[:zero_index])
+                if len(new_tokens) >= 4 and not (current_tokens & prompt_token_union):
+                    unsupported_transition_indexes.append(zero_index + 1)
+            if adjacent_break_indexes:
+                issues.append(
+                    cls._clean_content_semantic_issue(
+                        code="carousel_adjacent_slide_disconnect",
+                        message="One or more slides do not clearly build on the immediately previous slide or bridge the transition.",
+                        targeted_fields=["body", "metadata"],
+                        slide_indexes=adjacent_break_indexes[:4],
+                        severity="critical",
+                    )
+                )
+            if unsupported_transition_indexes:
+                issues.append(
+                    cls._clean_content_semantic_issue(
+                        code="carousel_unsupported_topic_transition",
+                        message="One or more slide transitions introduce unsupported new directions instead of extending the established narrative.",
+                        targeted_fields=["body", "metadata"],
+                        slide_indexes=unsupported_transition_indexes[:4],
+                        severity="critical",
                     )
                 )
 
         line_locations: dict[str, list[int]] = {}
+        prior_lines: list[str] = []
+        semantic_repetition_indexes: set[int] = set()
         for index, slide in enumerate(slides, start=1):
             for line in cls._carousel_slide_content_lines(slide):
+                if cls._carousel_line_semantically_repeats_prior(line, prior_lines):
+                    semantic_repetition_indexes.add(index)
                 fingerprint = cls._carousel_content_line_fingerprint(line)
                 if not fingerprint:
+                    prior_lines.append(line)
                     continue
                 line_locations.setdefault(fingerprint, [])
                 if index not in line_locations[fingerprint]:
                     line_locations[fingerprint].append(index)
+                prior_lines.append(line)
         repeated_locations = [
             locations
             for locations in line_locations.values()
@@ -3784,6 +4642,17 @@ class AIOrchestratorService:
                     message="Multiple slides repeat similar content instead of adding unique value.",
                     targeted_fields=["body", "metadata"],
                     slide_indexes=repeated_indexes[:4],
+                    severity="critical",
+                )
+            )
+        if semantic_repetition_indexes:
+            issues.append(
+                cls._clean_content_semantic_issue(
+                    code="carousel_semantic_repetition",
+                    message="Multiple slides repeat the same underlying idea with different wording instead of adding new understanding.",
+                    targeted_fields=["body", "metadata"],
+                    slide_indexes=sorted(semantic_repetition_indexes)[:4],
+                    severity="critical",
                 )
             )
 
@@ -3799,6 +4668,7 @@ class AIOrchestratorService:
                     message="Several interior slides state points without explaining why they matter or how they affect the topic.",
                     targeted_fields=["body", "metadata"],
                     slide_indexes=shallow_indexes[:4],
+                    severity="critical",
                 )
             )
 
@@ -3819,6 +4689,7 @@ class AIOrchestratorService:
                     message="The final slide does not clearly summarize the main insights already built in the carousel.",
                     targeted_fields=["body", "metadata"],
                     slide_indexes=[len(slides)],
+                    severity="critical",
                 )
             )
 
@@ -3830,7 +4701,7 @@ class AIOrchestratorService:
             )
         )
         if not promotional_requested and any(
-            cls._is_product_cta_like_line(line, request=request)
+            cls._line_replaces_explanation_with_recommendation_or_promotion(line, request=request)
             for line in cls._carousel_slide_content_lines(final_slide)
         ):
             issues.append(
@@ -3839,6 +4710,7 @@ class AIOrchestratorService:
                     message="The informational carousel ends with promotional or product-oriented copy instead of reinforcing the educational takeaway.",
                     targeted_fields=["body", "metadata"],
                     slide_indexes=[len(slides)],
+                    severity="critical",
                 )
             )
 
@@ -3846,6 +4718,40 @@ class AIOrchestratorService:
             earlier_tokens = cls._content_text_tokens_with_aliases(
                 " ".join(cls._carousel_slide_prompt_alignment_text(slide) for slide in slides[:-1])
             )
+            earlier_major_token_sets = [
+                cls._carousel_major_content_tokens(cls._carousel_slide_content_text(slide))
+                for slide in slides[:-1]
+            ]
+            final_major_tokens = cls._carousel_major_content_tokens(cls._carousel_slide_content_text(final_slide))
+            final_prior_overlap_count = sum(
+                1
+                for token_set in earlier_major_token_sets
+                if final_major_tokens & token_set
+            )
+            if concepts and len(concepts) >= 2 and final_major_tokens and final_prior_overlap_count < 2:
+                issues.append(
+                    cls._clean_content_semantic_issue(
+                        code="carousel_final_not_synthesizing_prior_content",
+                        message="The final slide does not combine enough of the previously established content to feel like a true synthesis.",
+                        targeted_fields=["body", "metadata"],
+                        slide_indexes=[len(slides)],
+                        severity="critical",
+                    )
+                )
+            if any(
+                cls._carousel_line_semantically_repeats_prior(line, cls._carousel_slide_content_lines(slide))
+                for slide in slides[:-1]
+                for line in cls._carousel_slide_content_lines(final_slide)
+            ):
+                issues.append(
+                    cls._clean_content_semantic_issue(
+                        code="carousel_final_repeats_without_synthesis",
+                        message="The final slide repeats earlier wording or ideas instead of synthesizing the learning.",
+                        targeted_fields=["body", "metadata"],
+                        slide_indexes=[len(slides)],
+                        severity="critical",
+                    )
+                )
             drift_tokens = {
                 token
                 for token in final_tokens
@@ -3861,6 +4767,7 @@ class AIOrchestratorService:
                         message="The ending introduces new themes instead of landing the story already established by earlier slides.",
                         targeted_fields=["body", "metadata"],
                         slide_indexes=[len(slides)],
+                        severity="critical",
                     )
                 )
 
@@ -15271,9 +16178,11 @@ class AIOrchestratorService:
         targeted_fields: list[str] | None = None,
         slide_indexes: list[int] | None = None,
         slide_targets: list[str] | None = None,
+        severity: str = "normal",
     ) -> dict[str, Any]:
         return {
             "code": cls._normalize_metadata_text(code, limit=64),
+            "severity": cls._normalize_metadata_text(severity, limit=24) or "normal",
             "message": cls._normalize_metadata_text(message, limit=240),
             "targeted_fields": [
                 field
@@ -15308,6 +16217,11 @@ class AIOrchestratorService:
             for issue in issues
             if isinstance(issue, dict)
         ]
+        has_critical_issues = any(
+            cls._normalize_metadata_text(issue.get("severity"), limit=24).casefold() == "critical"
+            for issue in issues
+            if isinstance(issue, dict)
+        )
         slide_scope = sorted(
             {
                 f"slide {int(index)}"
@@ -15333,11 +16247,22 @@ class AIOrchestratorService:
             return (
                 "Rewrite the structured carousel content so each slide carries one distinct editorial job and the sequence reads like a real narrative, not repeated summaries."
                 f" Fix these issues: {'; '.join(issue_messages)}."
+                f"{' Treat these as critical content failures, not minor polish issues.' if has_critical_issues else ''}"
                 " Strengthen metadata.carousel_slide_specs, body, proof_points, stat_highlights, and claim_evidence_pairs."
                 " Treat the user prompt as the primary content source: cover every major requested concept, keep every slide relevant to that topic, remove generic filler, and make the conclusion summarize the key learnings."
+                " Do not merely mention requested concepts: explain each important idea with concise context, reasoning, implication, example, or mechanism inside the existing slide copy budget."
+                " Replace generic objective-adjacent education with objective-specific substance: connect the user's actual concepts through concrete relationships, mechanisms, examples, implications, or insights that would not work unchanged for unrelated topics."
+                " Improve educational completeness by replacing shallow lines in place; do not increase slide count, text volume, or content density."
+                " Every major slide topic must be traceable to a concept, requirement, or expected outcome from the user's actual prompt; loose thematic similarity, brand context, product context, historical patterns, and template topics are not enough."
+                " Make supporting lines, proof points, and evidence directly support the slide headline and the previous narrative beat."
+                " Keep the same user objective active from opening to conclusion; remove adjacent-topic expansion, unsupported transitions, repeated ideas, and outcome claims that lack concise cause-and-effect reasoning."
+                " Remove any internal planning, reasoning, framework, strategy, validation, metadata, template, or system-guidance language from every visible content field."
+                " Rewrite each visible line so it reads like audience-facing educational carousel copy, never like instructions, notes, labels, or backend context."
+                " Prefer explanation over recommendations: do not replace educational content with guidance, suggestions, actions, product messaging, or promotional claims unless the user explicitly requested that objective."
                 " Rebuild the narrative in a clear educational order: hook the reader, establish the foundational context or mechanism, explain why it matters, show effects or implications, then land a final takeaway."
                 " Use transition_note and slide copy to connect each slide to the previous one; do not leave slides as isolated facts."
                 " Remove repeated benefits, repeated impacts, late-stage topic drift, and promotional copy unless the user explicitly requested promotion."
+                " Make the final slide combine and reinforce previously established ideas; it should not introduce unsupported new topics or simply repeat one earlier line."
                 " Make the copy strategic, audience-facing, platform-native, and sample-aware without copying generic sample headings verbatim."
                 " Preserve factual accuracy: exact dates, numbers, percentages, currency amounts, and regulatory claims must come only from verified facts or the user prompt."
                 " Give every slide a specific visual_focus that chooses a premium 3D, 2.5D/isometric, flat editorial, dashboard/product, chart/module, document/evidence, icon-system, or brand-led treatment based on slide role and sample style."
@@ -16505,6 +17430,12 @@ class AIOrchestratorService:
             )
             issues.extend(
                 cls._carousel_prompt_coverage_issues(
+                    request=request,
+                    slides=slides,
+                )
+            )
+            issues.extend(
+                cls._carousel_prompt_relevance_issues(
                     request=request,
                     slides=slides,
                 )
@@ -21328,7 +22259,6 @@ class AIOrchestratorService:
         if not isinstance(slide, dict):
             return
         headline = cls._normalize_metadata_text(slide.get("headline"), limit=140)
-        headline_lower = headline.casefold()
         body_points = [
             cls._normalize_metadata_text(item, limit=150)
             for item in (slide.get("body_points") or [])
@@ -21379,16 +22309,6 @@ class AIOrchestratorService:
         body_text = cls._normalize_metadata_text(slide.get("body"), limit=320)
         if body_text:
             return
-        combined_points = " ".join(body_points + proof_points).casefold()
-        if (
-            re.search(r"\b(retirement number|retirement target|retirement corpus|corpus)\b", headline_lower)
-            or re.search(r"\b(retirement corpus|30\s*x|30x|annual expense|monthly expense|inflation)\b", combined_points)
-        ):
-            slide["body"] = (
-                "Use annual expenses as the base, apply a 30X retirement multiplier, "
-                "and adjust the target for inflation."
-            )
-            return
         if body_points:
             slide["body"] = "; ".join(body_points[:2])
             return
@@ -21417,6 +22337,13 @@ class AIOrchestratorService:
             }
         topic_keywords = ", ".join(sorted(topic_token_candidates)[:8])
         brand_subject_terms = cls._brand_subject_focus_terms(request)
+        prompt_text = cls._coerce_text_value(getattr(request, "prompt", "") if request is not None else "").casefold()
+        promotional_requested = bool(
+            re.search(
+                r"\b(?:promote|promotion|sales|sell|signup|sign up|book a demo|download|subscribe|try|use our|product|platform)\b",
+                prompt_text,
+            )
+        )
         for slide in slides:
             if not isinstance(slide, dict):
                 continue
@@ -21430,6 +22357,16 @@ class AIOrchestratorService:
             ):
                 if key in cleaned:
                     cleaned[key] = cls._metadata_text_without_truncation_marker(cleaned.get(key), limit=limit)
+                    if cls._line_has_internal_instruction_leakage(cleaned.get(key)):
+                        cleaned[key] = ""
+                    if key in {"supporting_line", "body", "cta"} and cls._line_is_generic_carousel_filler(cleaned.get(key)):
+                        cleaned[key] = ""
+                    if (
+                        key in {"supporting_line", "body", "cta"}
+                        and not promotional_requested
+                        and cls._line_replaces_explanation_with_recommendation_or_promotion(cleaned.get(key), request=request)
+                    ):
+                        cleaned[key] = ""
                     if key in {"supporting_line", "body"} and (
                         cls._looks_like_incomplete_metadata_text(cleaned.get(key))
                         or cls._looks_like_low_quality_web_snippet(cleaned.get(key))
@@ -21476,6 +22413,13 @@ class AIOrchestratorService:
                         continue
                     if cls._looks_like_low_quality_web_snippet(item_text) or cls._looks_like_incomplete_metadata_text(item_text):
                         continue
+                    if cls._line_has_internal_instruction_leakage(item_text) or cls._line_is_generic_carousel_filler(item_text):
+                        continue
+                    if (
+                        not promotional_requested
+                        and cls._line_replaces_explanation_with_recommendation_or_promotion(item_text, request=request)
+                    ):
+                        continue
                     if cls._carousel_line_conflicts_with_headline(item_text, cleaned.get("headline")):
                         continue
                     is_claim_evidence_line = key == "proof_points" and ":" in item_text
@@ -21509,6 +22453,18 @@ class AIOrchestratorService:
                     or cls._looks_like_low_quality_web_snippet(evidence)
                     or cls._looks_like_incomplete_metadata_text(claim)
                     or cls._looks_like_incomplete_metadata_text(evidence)
+                    or cls._line_has_internal_instruction_leakage(claim)
+                    or cls._line_has_internal_instruction_leakage(evidence)
+                    or cls._line_is_generic_carousel_filler(claim)
+                    or cls._line_is_generic_carousel_filler(evidence)
+                ):
+                    continue
+                if (
+                    not promotional_requested
+                    and (
+                        cls._line_replaces_explanation_with_recommendation_or_promotion(claim, request=request)
+                        or cls._line_replaces_explanation_with_recommendation_or_promotion(evidence, request=request)
+                    )
                 ):
                     continue
                 if claim and evidence:

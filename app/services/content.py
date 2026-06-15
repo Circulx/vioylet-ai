@@ -7685,18 +7685,19 @@ class ContentService:
                 visual_identity = payload["visual_identity"]
                 break
         placement = visual_identity.get("logo_placement") if isinstance(visual_identity.get("logo_placement"), dict) else {}
+        raw_default_position = cls._normalize_logo_position_option(
+            placement.get("default_position")
+            or placement.get("preferred_position")
+            or placement.get("logo_position")
+            or visual_identity.get("logo_position")
+        )
         allowed: list[str] = []
         for raw_position in placement.get("allowed_positions") or placement.get("positions") or []:
             normalized = cls._normalize_logo_position_option(raw_position)
             if normalized and normalized not in allowed:
                 allowed.append(normalized)
         has_explicit_allowed_positions = bool(allowed)
-        default_position = cls._normalize_logo_position_option(
-            placement.get("default_position")
-            or placement.get("preferred_position")
-            or placement.get("logo_position")
-            or visual_identity.get("logo_position")
-        )
+        default_position = raw_default_position
         if default_position and allowed and default_position not in allowed:
             default_position = ""
         if not default_position and allowed:
@@ -7704,8 +7705,13 @@ class ContentService:
         return {
             "allowed_positions": allowed,
             "default_position": default_position,
+            "default_position_explicit": bool(raw_default_position),
             "explicit": has_explicit_allowed_positions,
         }
+
+    @staticmethod
+    def _top_logo_positions() -> set[str]:
+        return {"top-right", "top-left", "top-center"}
 
     @classmethod
     def _candidate_logo_anchors(
@@ -7717,6 +7723,10 @@ class ContentService:
     ) -> list[tuple[str, str]]:
         policy = cls._brand_logo_placement_policy_from_payloads(content, explainability)
         default_position = cls._normalize_logo_position_option(policy.get("default_position"))
+        if default_position in cls._top_logo_positions() and policy.get("default_position_explicit"):
+            default_anchor = cls._logo_anchor_from_position(default_position)
+            if default_anchor:
+                return [default_anchor]
         preferred_position = cls._normalize_logo_position_option(preferred_hint)
         allowed_positions = [
             cls._normalize_logo_position_option(position)
@@ -7763,6 +7773,26 @@ class ContentService:
         return (vertical, horizontal)
 
     @staticmethod
+    def _logo_size_scale() -> float:
+        return 1.2
+
+    @staticmethod
+    def _scaled_logo_dimension(value: int | float) -> int:
+        return max(int(round(float(value) * ContentService._logo_size_scale())), 1)
+
+    @staticmethod
+    def _logo_horizontal_margin_px(canvas_width: int) -> int:
+        return min(20, max(int(canvas_width) - 1, 0))
+
+    @staticmethod
+    def _logo_top_margin_px(canvas_height: int) -> int:
+        return min(max(int(round(max(int(canvas_height), 1) * 0.035)), 20), max(int(canvas_height) - 1, 0))
+
+    @staticmethod
+    def _logo_bottom_margin_px(canvas_height: int) -> int:
+        return min(20, max(int(canvas_height) - 1, 0))
+
+    @staticmethod
     def _logo_box_profile_for_format(
         *,
         canvas_width: int,
@@ -7782,9 +7812,12 @@ class ContentService:
                 width = max(int(canvas_width * 0.13), 128)
                 height = max(int(canvas_height * 0.058), 40)
             else:
-                width = max(int(canvas_width * 0.145), 132)
-                height = max(int(canvas_height * 0.058), 42)
-        return (min(width, canvas_width), min(height, canvas_height))
+                width = max(int(canvas_width * 0.17), 160)
+                height = max(int(canvas_height * 0.075), 50)
+        return (
+            min(ContentService._scaled_logo_dimension(width), canvas_width),
+            min(ContentService._scaled_logo_dimension(height), canvas_height),
+        )
 
     @classmethod
     def _cap_logo_box_to_profile(
@@ -7814,8 +7847,9 @@ class ContentService:
         reference_box: tuple[int, int, int, int] | None = None,
     ) -> tuple[int, int, int, int]:
         vertical, horizontal = anchor or ("top", "right")
-        margin_x = min(20, max(canvas_width - 1, 0))
-        margin_y = min(20, max(canvas_height - 1, 0))
+        margin_x = cls._logo_horizontal_margin_px(canvas_width)
+        margin_top = cls._logo_top_margin_px(canvas_height)
+        margin_bottom = cls._logo_bottom_margin_px(canvas_height)
         width, height = cls._logo_box_profile_for_format(
             canvas_width=canvas_width,
             canvas_height=canvas_height,
@@ -7847,11 +7881,11 @@ class ContentService:
         else:
             x = max(canvas_width - width - margin_x, 0)
         if vertical == "bottom":
-            y = max(canvas_height - height - margin_y, 0)
+            y = max(canvas_height - height - margin_bottom, 0)
         elif vertical == "middle":
             y = max((canvas_height - height) // 2, 0)
         else:
-            y = margin_y
+            y = margin_top
         width = min(width, max(canvas_width - x, 1))
         height = min(height, max(canvas_height - y, 1))
         return (x, y, width, height)
@@ -7866,21 +7900,19 @@ class ContentService:
     ) -> tuple[int, int, int, int]:
         x, y, width, height = box
         vertical, horizontal = anchor
+        margin_x = ContentService._logo_horizontal_margin_px(canvas_width)
+        margin_top = ContentService._logo_top_margin_px(canvas_height)
+        margin_bottom = ContentService._logo_bottom_margin_px(canvas_height)
         if horizontal == "left":
-            x = min(20, max(canvas_width - width, 0))
+            x = min(margin_x, max(canvas_width - width, 0))
         elif horizontal == "right":
-            right_margin = (
-                max(20, int(canvas_width * 0.06))
-                if vertical == "top" or width >= int(canvas_width * 0.19)
-                else 20
-            )
-            x = max(canvas_width - width - right_margin, 0)
+            x = max(canvas_width - width - margin_x, 0)
         elif horizontal == "center":
             x = max((canvas_width - width) // 2, 0)
         if vertical == "top":
-            y = min(20, max(canvas_height - height, 0))
+            y = min(margin_top, max(canvas_height - height, 0))
         elif vertical == "bottom":
-            y = max(canvas_height - height - 20, 0)
+            y = max(canvas_height - height - margin_bottom, 0)
         elif vertical == "middle":
             y = max((canvas_height - height) // 2, 0)
         width = min(width, max(canvas_width - x, 1))
@@ -8119,8 +8151,71 @@ class ContentService:
         )
 
     @staticmethod
+    def _footer_strip_quietness_report(
+        image: Image.Image,
+        strip_box: tuple[int, int, int, int],
+    ) -> dict[str, object]:
+        x, y, width, height = strip_box
+        crop = image.crop((x, y, min(x + width, image.width), min(y + height, image.height))).convert("RGB")
+        if crop.width <= 0 or crop.height <= 0:
+            return {"quiet": False, "reason": "empty_strip", "score": 1.0}
+        sample = crop.resize((max(min(crop.width, 64), 1), max(min(crop.height, 32), 1)), Image.Resampling.BILINEAR)
+        sample_pixels = sample.load()
+        pixels = [
+            sample_pixels[column, row]
+            for row in range(sample.height)
+            for column in range(sample.width)
+        ]
+        if not pixels:
+            return {"quiet": False, "reason": "empty_pixels", "score": 1.0}
+
+        pixel_count = len(pixels)
+        avg_red = sum(pixel[0] for pixel in pixels) / pixel_count
+        avg_green = sum(pixel[1] for pixel in pixels) / pixel_count
+        avg_blue = sum(pixel[2] for pixel in pixels) / pixel_count
+        luminances = [(0.2126 * red) + (0.7152 * green) + (0.0722 * blue) for red, green, blue in pixels]
+        avg_luminance = sum(luminances) / pixel_count
+        luminance_stdev = (
+            sum((value - avg_luminance) ** 2 for value in luminances) / pixel_count
+        ) ** 0.5
+
+        high_delta_count = 0
+        for red, green, blue in pixels:
+            delta = abs(red - avg_red) + abs(green - avg_green) + abs(blue - avg_blue)
+            if delta > 72:
+                high_delta_count += 1
+        high_delta_ratio = high_delta_count / pixel_count
+
+        edge_count = 0
+        edge_total = 0
+        for row in range(sample.height):
+            for column in range(sample.width):
+                red, green, blue = pixels[row * sample.width + column]
+                if column + 1 < sample.width:
+                    next_red, next_green, next_blue = pixels[row * sample.width + column + 1]
+                    if abs(red - next_red) + abs(green - next_green) + abs(blue - next_blue) > 56:
+                        edge_count += 1
+                    edge_total += 1
+                if row + 1 < sample.height:
+                    next_red, next_green, next_blue = pixels[(row + 1) * sample.width + column]
+                    if abs(red - next_red) + abs(green - next_green) + abs(blue - next_blue) > 56:
+                        edge_count += 1
+                    edge_total += 1
+        edge_ratio = edge_count / max(edge_total, 1)
+        score = (high_delta_ratio * 3.0) + (edge_ratio * 4.0) + min(luminance_stdev / 64.0, 1.0)
+        quiet = bool(high_delta_ratio <= 0.18 and edge_ratio <= 0.14 and luminance_stdev <= 42.0)
+        return {
+            "quiet": quiet,
+            "score": round(score, 4),
+            "high_delta_ratio": round(high_delta_ratio, 4),
+            "edge_ratio": round(edge_ratio, 4),
+            "luminance_stdev": round(luminance_stdev, 4),
+            "sample_size": {"width": sample.width, "height": sample.height},
+        }
+
+    @staticmethod
     def _logo_scale_candidates() -> list[float]:
-        return [1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.45, 0.4, 0.35, 0.3]
+        return [1.0]
 
     @classmethod
     def _resolve_logo_collision_guard(
@@ -8147,12 +8242,17 @@ class ContentService:
             preferred_hint=preferred_hint or cls._logo_anchor_to_position(initial_anchor),
         )
         policy = cls._brand_logo_placement_policy_from_payloads(content, explainability)
+        default_position = cls._normalize_logo_position_option(policy.get("default_position"))
+        default_top_position_locked = bool(
+            default_position in cls._top_logo_positions()
+            and policy.get("default_position_explicit")
+        )
         allowed_anchor_keys = {
             anchor
             for position in (policy.get("allowed_positions") or [])
             if (anchor := cls._logo_anchor_from_position(str(position)))
         }
-        if allowed_anchor_keys and policy.get("explicit"):
+        if allowed_anchor_keys and policy.get("explicit") and not default_top_position_locked:
             for position in (
                 "top-right",
                 "top-left",
@@ -8230,7 +8330,8 @@ class ContentService:
                 )
                 image_score = cls._image_region_obstruction_score(base_image, safe_box)
                 preference_penalty = 0.0 if anchor == preferred_anchor else 0.35
-                size_penalty = (1.0 - scale) * 0.5
+                shrink_applied = False
+                size_penalty = 0.0
                 policy_override = bool(
                     allowed_anchor_keys
                     and policy.get("explicit")
@@ -8249,9 +8350,12 @@ class ContentService:
                     "layout_score": layout_score,
                     "image_score": image_score,
                     "scale": scale,
-                    "anchor": anchor_label,
-                    "policy_override": policy_override,
-                    "box": candidate_box,
+                    "shrink_applied": shrink_applied,
+                    "selection_strategy": "fixed_calculated_size",
+                "anchor": anchor_label,
+                "policy_override": policy_override,
+                "default_top_position_locked": default_top_position_locked,
+                "box": candidate_box,
                     "footprint": footprint,
                     "safe_box": safe_box,
                     "contained": contained,
@@ -8278,8 +8382,11 @@ class ContentService:
                 "layout_score": 0.0,
                 "image_score": 0.0,
                 "scale": 1.0,
+                "shrink_applied": False,
+                "selection_strategy": "fixed_calculated_size",
                 "anchor": anchor_label,
                 "policy_override": False,
+                "default_top_position_locked": default_top_position_locked,
                 "box": logo_box,
                 "footprint": (offset_x, offset_y, contained.width, contained.height),
                 "safe_box": (offset_x, offset_y, contained.width, contained.height),
@@ -9592,12 +9699,22 @@ class ContentService:
         )
         strip_box = footer_safe_area.get("footer_strip_box") if isinstance(footer_safe_area, dict) else {}
         text_box = footer_safe_area.get("footer_text_box") if isinstance(footer_safe_area, dict) else {}
-        content_safe_area = footer_safe_area.get("content_safe_area") if isinstance(footer_safe_area, dict) else {}
         clear_strip_top = int(strip_box.get("y") or height) if isinstance(strip_box, dict) else height
         clear_strip_height = int(strip_box.get("height") or 0) if isinstance(strip_box, dict) else 0
         text_strip_top = int(text_box.get("y") or clear_strip_top) if isinstance(text_box, dict) else clear_strip_top
         text_strip_height = int(text_box.get("height") or clear_strip_height) if isinstance(text_box, dict) else clear_strip_height
-        content_height = int(content_safe_area.get("height") or clear_strip_top) if isinstance(content_safe_area, dict) else clear_strip_top
+        footer_strip_box = (0, clear_strip_top, width, clear_strip_height)
+        quietness_report = self._footer_strip_quietness_report(base, footer_strip_box)
+        format_name = str((studio_panel or {}).get("format") or "").strip().lower()
+        if format_name in {"static", "infographic"} and not bool(quietness_report.get("quiet")):
+            logger.info(
+                "content.ai_final_render.footer_overlay_skipped_busy_strip content_version_id=%s format=%s score=%s",
+                content.id,
+                format_name,
+                quietness_report.get("score"),
+            )
+            return None
+
         sample_y = min(max(text_strip_top + max(text_strip_height // 2, 0), 0), height - 1)
         sample_points = [base.getpixel((x, sample_y))[:3] for x in (int(width * 0.12), int(width * 0.5), int(width * 0.88))]
         avg_luma = sum((0.2126 * r + 0.7152 * g + 0.0722 * b) for r, g, b in sample_points) / max(len(sample_points), 1)
@@ -9607,13 +9724,6 @@ class ContentService:
         else:
             strip_fill = (0, 57, 117, 232)
             text_fill = (255, 255, 255, 255)
-
-        if 0 < content_height < height:
-            resampling = getattr(getattr(Image, "Resampling", Image), "LANCZOS", Image.BICUBIC)
-            content_area = base.resize((width, content_height), resampling)
-            reserved_canvas = Image.new("RGBA", base.size, strip_fill)
-            reserved_canvas.paste(content_area, (0, 0))
-            base = reserved_canvas
 
         overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay)
@@ -9647,7 +9757,10 @@ class ContentService:
             "generation_stage": "final_render",
             "legal_footer_composited_by_service": True,
             "legal_footer_overlay_strategy": "exact_footer_strip",
-            "legal_footer_reserved_before_composite": True,
+            "legal_footer_reserved_before_composite": False,
+            "legal_footer_overlay_mode": "overlay_only",
+            "legal_footer_source_image_resized": False,
+            "legal_footer_strip_quietness": quietness_report,
             "legal_footer_safe_area": {
                 key: value
                 for key, value in footer_safe_area.items()
@@ -9657,10 +9770,10 @@ class ContentService:
             "legal_footer_text_length": len(footer_text),
             "legal_footer_line_count": len(chosen_lines),
             "legal_footer_strip_box": {
-                "x": 0,
-                "y": clear_strip_top,
-                "width": width,
-                "height": clear_strip_height,
+                "x": footer_strip_box[0],
+                "y": footer_strip_box[1],
+                "width": footer_strip_box[2],
+                "height": footer_strip_box[3],
             },
             "legal_footer_text_box": {
                 "x": horizontal_padding,
@@ -9848,8 +9961,21 @@ class ContentService:
                     "layout_score": round(float(collision_guard.get("layout_score", 0.0)), 4),
                     "image_score": round(float(collision_guard.get("image_score", 0.0)), 4),
                     "scale": collision_guard.get("scale"),
+                    "shrink_applied": bool(collision_guard.get("shrink_applied")),
+                    "selection_strategy": collision_guard.get("selection_strategy"),
                     "anchor": collision_guard.get("anchor"),
                     "policy_override": bool(collision_guard.get("policy_override")),
+                    "default_top_position_locked": bool(collision_guard.get("default_top_position_locked")),
+                    "target_box": {
+                        "x": int((collision_guard.get("box") or (0, 0, 0, 0))[0]),
+                        "y": int((collision_guard.get("box") or (0, 0, 0, 0))[1]),
+                        "width": int((collision_guard.get("box") or (0, 0, 0, 0))[2]),
+                        "height": int((collision_guard.get("box") or (0, 0, 0, 0))[3]),
+                    },
+                    "visible_logo_size": {
+                        "width": int(getattr(contained, "width", 0)),
+                        "height": int(getattr(contained, "height", 0)),
+                    },
                     "footprint": {
                         "x": int((collision_guard.get("footprint") or (0, 0, 0, 0))[0]),
                         "y": int((collision_guard.get("footprint") or (0, 0, 0, 0))[1]),

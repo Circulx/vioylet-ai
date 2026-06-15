@@ -1213,7 +1213,7 @@ async def test_renderer_scene_graph_repositions_logo_away_from_text_bounds() -> 
     root.rmdir()
 
 
-def test_renderer_scene_graph_anchor_places_logo_zone_near_frame_edge() -> None:
+def test_renderer_scene_graph_anchor_places_logo_zone_with_top_gap() -> None:
     element = SceneGraphElement(
         element_id="logo",
         element_type="logo",
@@ -1229,10 +1229,10 @@ def test_renderer_scene_graph_anchor_places_logo_zone_near_frame_edge() -> None:
 
     box = RendererService._scene_graph_box(element, 1080, 1080)
 
-    assert box == (877, 20, 1060, 101)
+    assert box == (844, 38, 1060, 124)
 
 
-def test_renderer_scene_graph_explicit_logo_box_snaps_to_20px_edge() -> None:
+def test_renderer_scene_graph_explicit_logo_box_snaps_to_dynamic_top_gap() -> None:
     element = SceneGraphElement(
         element_id="logo",
         element_type="logo",
@@ -1250,7 +1250,7 @@ def test_renderer_scene_graph_explicit_logo_box_snaps_to_20px_edge() -> None:
 
     box = RendererService._scene_graph_box(element, 1024, 1536)
 
-    assert box == (20, 20, 194, 135)
+    assert box == (20, 54, 225, 177)
 
 
 def test_renderer_logo_offset_in_zone_aligns_to_bottom_edge() -> None:
@@ -1266,6 +1266,21 @@ def test_renderer_logo_offset_in_zone_aligns_to_bottom_edge() -> None:
     )
 
     assert offset == (880, 960)
+
+
+def test_renderer_logo_offset_in_zone_keeps_top_logo_below_top_gap() -> None:
+    offset = RendererService._logo_offset_in_zone(
+        canvas_width=1080,
+        canvas_height=1080,
+        zone_x=800,
+        zone_y=0,
+        zone_width=220,
+        zone_height=100,
+        logo_width=180,
+        logo_height=50,
+    )
+
+    assert offset == (840, 38)
 
 
 def test_renderer_trim_logo_margins_crops_opaque_logo_canvas_to_visible_mark() -> None:

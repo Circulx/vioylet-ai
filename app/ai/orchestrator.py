@@ -2630,6 +2630,8 @@ class AIOrchestratorService:
         styles = scene_graph_payload.get("styles") if isinstance(scene_graph_payload.get("styles"), dict) else {}
         validation_hints = scene_graph_payload.get("validation_hints") if isinstance(scene_graph_payload.get("validation_hints"), dict) else {}
         sample_logo_position = cls._sample_blueprint_logo_position(metadata.get("sample_page_blueprint"))
+        if default_position in {"top-right", "top-left", "top-center"}:
+            return default_position
         for candidate in (
             sample_logo_position,
             metadata.get("logo_position"),
@@ -2656,6 +2658,27 @@ class AIOrchestratorService:
     def _logo_reserved_area_label(cls, hint: str | None) -> str:
         normalized = cls._normalize_logo_position_option(hint)
         return normalized or "reserved corner-safe"
+
+    @staticmethod
+    def _logo_size_scale() -> float:
+        return 1.2
+
+    @staticmethod
+    def _scaled_logo_ratio(value: float) -> float:
+        return max(float(value) * AIOrchestratorService._logo_size_scale(), 0.0)
+
+    @staticmethod
+    def _logo_horizontal_margin_ratio(canvas_width: int, width: float) -> float:
+        return min(20 / max(float(canvas_width), 1.0), max(1.0 - width, 0.0))
+
+    @staticmethod
+    def _logo_top_margin_ratio(canvas_height: int, height: float) -> float:
+        dynamic_margin = max(20 / max(float(canvas_height), 1.0), 0.035)
+        return min(dynamic_margin, max(1.0 - height, 0.0))
+
+    @staticmethod
+    def _logo_bottom_margin_ratio(canvas_height: int, height: float) -> float:
+        return min(20 / max(float(canvas_height), 1.0), max(1.0 - height, 0.0))
 
     @classmethod
     def _default_logo_safe_zone_geometry(
@@ -2699,11 +2722,11 @@ class AIOrchestratorService:
         else:
             x = max(1.0 - width - margin_x, 0.0)
         if vertical == "bottom":
-            y = max(1.0 - height - margin_y, 0.0)
+            y = max(1.0 - height - margin_bottom, 0.0)
         elif vertical == "middle":
             y = max((1.0 - height) / 2.0, 0.0)
         else:
-            y = margin_y
+            y = margin_top
         return (x, y, width, height)
 
     @classmethod
@@ -2719,8 +2742,9 @@ class AIOrchestratorService:
         size = size if isinstance(size, dict) else {}
         canvas_width = max(int(size.get("width") or 1080), 1)
         canvas_height = max(int(size.get("height") or 1080), 1)
-        margin_x = min(20 / canvas_width, max(1.0 - width, 0.0))
-        margin_y = min(20 / canvas_height, max(1.0 - height, 0.0))
+        margin_x = cls._logo_horizontal_margin_ratio(canvas_width, width)
+        margin_top = cls._logo_top_margin_ratio(canvas_height, height)
+        margin_bottom = cls._logo_bottom_margin_ratio(canvas_height, height)
         vertical, horizontal = anchor
         if horizontal == "left":
             x = margin_x
@@ -2729,9 +2753,9 @@ class AIOrchestratorService:
         elif horizontal == "center":
             x = max((1.0 - width) / 2.0, 0.0)
         if vertical == "top":
-            y = margin_y
+            y = margin_top
         elif vertical == "bottom":
-            y = max(1.0 - height - margin_y, 0.0)
+            y = max(1.0 - height - margin_bottom, 0.0)
         elif vertical == "middle":
             y = max((1.0 - height) / 2.0, 0.0)
         return (x, y, width, height)
@@ -2756,12 +2780,12 @@ class AIOrchestratorService:
         height_px = max(int(size.get("height") or 1080), 1)
         aspect_ratio = width_px / max(height_px, 1)
         if format_name == "carousel":
-            return (0.2, 0.085)
+            return (AIOrchestratorService._scaled_logo_ratio(0.2), AIOrchestratorService._scaled_logo_ratio(0.085))
         if format_name == "infographic":
-            return (0.19, 0.08)
+            return (AIOrchestratorService._scaled_logo_ratio(0.19), AIOrchestratorService._scaled_logo_ratio(0.08))
         if aspect_ratio >= 1.3:
-            return (0.15, 0.075)
-        return (0.17, 0.075)
+            return (AIOrchestratorService._scaled_logo_ratio(0.15), AIOrchestratorService._scaled_logo_ratio(0.075))
+        return (AIOrchestratorService._scaled_logo_ratio(0.17), AIOrchestratorService._scaled_logo_ratio(0.075))
 
     @classmethod
     def _reference_logo_safe_zone_geometry(
@@ -2914,7 +2938,9 @@ class AIOrchestratorService:
         normalized_brand_name = cls._normalize_metadata_text(brand_name, limit=80)
         brand_label = normalized_brand_name or "the brand name"
         return [
+            "STRICT BRAND-ASSET NON-GENERATION CONTRACT: Never create, imitate, stylize, reconstruct, approximate, trace, draw, typeset, watermark, or decorate with brand identity artwork. Leave every reserved brand-asset area blank and clean; the backend will place the exact stored brand asset afterward.",
             f"Brand context only: {brand_label}. Use this for palette, tone, and approved copy context only, never as a brand mark, masthead, signature, watermark, standalone brand mark, or top-corner wordmark.",
+            "ZERO BRAND-ASSET RULE - no exceptions: do not generate any brand identity asset, fake identity mark, placeholder mark, mark-shaped decoration, or brand-name text anywhere in the AI base creative. The backend overlay is the only allowed source for brand asset placement.",
             "BRAND MARK RULE - no exceptions: the AI base creative must contain zero brand marks, wordmarks, brand-name signatures, monograms, watermarks, brand-mark-like shapes, symbol clusters, initials, mascot marks, or brand marks anywhere in the image.",
             "Do not render, invent, stylize, trace, emboss, blur, shadow, crop, duplicate, partially duplicate, fade, ghost, hint at, or reserve a visible placeholder for any brand mark or wordmark. The exact stored brand mark is composited afterward as a separate asset.",
             f"Never write or paint {brand_label} in the corner-safe area. If approved legal/footer copy contains the brand name, it may appear only inside the legal/footer text region, never as a brand mark, header signature, watermark, or decorative brand lockup.",
@@ -2997,6 +3023,15 @@ class AIOrchestratorService:
         height_pct = max(int(round(height * 100)), 5)
         left_pct = max(int(round(x * 100)), 0)
         top_pct = max(int(round(y * 100)), 0)
+        size = (request.studio_panel or {}).get("size")
+        size = size if isinstance(size, dict) else {}
+        canvas = getattr(scene_graph, "canvas", None)
+        canvas_width = max(int(getattr(canvas, "width", None) or size.get("width") or 1080), 1)
+        canvas_height = max(int(getattr(canvas, "height", None) or size.get("height") or 1080), 1)
+        left_px = max(int(round(x * canvas_width)), 0)
+        top_px = max(int(round(y * canvas_height)), 0)
+        width_px = max(int(round(width * canvas_width)), 1)
+        height_px = max(int(round(height * canvas_height)), 1)
         bottom_limit_pct = max(int(round(min(y + height + 0.04, 1.0) * 100)), 0)
         same_band_rule = ""
         if horizontal_anchor == "right":
@@ -3013,6 +3048,8 @@ class AIOrchestratorService:
             )
         return (
             f"Reserve a clean empty safe zone in the {anchor_phrase} of the canvas, roughly {width_pct}% of the width and {height_pct}% of the height. "
+            "This is the backend-calculated brand-asset reservation; keep this exact box blank because the backend places the stored brand asset there after image generation. "
+            f"Initial backend brand-asset size analysis: before composing the image, reserve the final placement footprint as an empty box at about {left_px}px from the left and {top_px}px from the top, {width_px}px wide x {height_px}px tall on the target canvas. "
             f"Treat the safe rectangle as starting around {left_pct}% from the left and {top_pct}% from the top; no readable text may overlap that rectangle or its immediate padding. "
             "Leave that area visually calm and completely empty with no text, icons, faces, charts, decorative marks, or high-contrast detail. "
             "Do not mark the zone with a visible badge, panel, tile, chip, colored patch, box, plate, or placeholder shape. "
@@ -3765,7 +3802,9 @@ class AIOrchestratorService:
         markers: set[str] = set()
         patterns = (
             r"\b\d{1,2}\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{4}\b",
+            r"\b(?:19|20)\d{2}\b",
             r"\b\d+(?:\.\d+)?\s?%",
+            r"\b(?:top|rank(?:ed)?|#)\s?\d+\b",
             r"\bus\$\s?\d+(?:\.\d+)?(?:\s?(?:billion|million|crore|lakh|trillion))?\b",
             r"\b(?:usd|nzd|nz\$|inr|rs\.?|â‚¹|\$)\s?\d+(?:\.\d+)?\s?[bm]\b",
             r"\b\d+(?:\.\d+)?\s?[bm]\b",
@@ -5155,6 +5194,52 @@ class AIOrchestratorService:
         return (
             "Research discipline: prefer source-backed specificity when available, and never invent unsupported "
             "numbers, rankings, timelines, or market claims."
+        )
+
+    @classmethod
+    def _image_generation_anti_hallucination_prompt_section(
+        cls,
+        *,
+        request: AIOrchestrationRequest,
+        compiled_context: dict[str, Any] | None = None,
+    ) -> str:
+        context = dict(compiled_context or {})
+        source_texts: list[Any] = [getattr(request, "prompt", "")]
+        for source in (
+            getattr(request, "research_editorial_brief", None),
+            getattr(request, "live_research", None),
+            context.get("research_editorial_brief"),
+            context.get("live_research"),
+        ):
+            if not isinstance(source, dict):
+                continue
+            fact_model = source.get("fact_model") if isinstance(source.get("fact_model"), dict) else source
+            for fact in fact_model.get("verified_facts") or []:
+                if isinstance(fact, dict):
+                    source_texts.extend([fact.get("label"), fact.get("value"), fact.get("detail")])
+                else:
+                    source_texts.append(fact)
+        supported_markers: set[str] = set()
+        for text in source_texts:
+            for marker in cls._exact_claim_markers(text):
+                supported_markers.update(cls._exact_claim_marker_aliases(marker))
+        supported_marker_line = (
+            "Source-backed exact values allowed in visible facts/data: "
+            + ", ".join(sorted(supported_markers)[:8])
+            + ". Add no other numbers, dates, ranks, currency, percentages, or chart values."
+            if supported_markers
+            else (
+                "No source-backed exact values are available for visible facts/data; keep data-like visuals qualitative "
+                "and do not render numeric values, dates, rankings, percentages, currency amounts, axes, or chart labels."
+            )
+        )
+        return (
+            "Anti-hallucination guard: visible facts, data, objects, documents, UI, products, official marks, source labels, badges, maps, "
+            "and charts must be directly supported by the user prompt, verified research, retrieved brand knowledge, references, or approved layout metadata. "
+            "Approved copy guides theme and wording only; do not invent fake stats, dashboards, sources, certifications, brand marks, official symbols, "
+            "product screens, unrelated industries, pseudo text, or adjacent claims. "
+            "Unsupported specifics must become visual absence, neutral placeholders, or generic category-level shapes, not invented detail; do not create named organizations, countries, documents, app screens, people, awards, certificates, source mastheads, maps, UI controls, product labels, or identity marks unless explicitly supported. "
+            + supported_marker_line
         )
 
     @staticmethod
@@ -9497,7 +9582,7 @@ class AIOrchestratorService:
         canvas_summary = f"{width}x{height} {aspect_label}" if width and height else f"{aspect_label} canvas"
 
         prompt_text = getattr(request, "prompt", "") if request is not None else ""
-        legal_footer = cls._normalize_metadata_text(legal_footer_text, limit=180)
+        legal_footer = cls._normalize_metadata_text(legal_footer_text, limit=420)
         disclaimer = cls._normalize_metadata_text(disclaimer_guidance, limit=180)
         brief = getattr(request, "research_editorial_brief", {}) if request is not None else {}
         brief = brief if isinstance(brief, dict) else {}
@@ -9517,7 +9602,8 @@ class AIOrchestratorService:
             else "none"
         )
         footer_policy = (
-            f"reserve footer/disclaimer safe area before content and CTA using {footer_source}; keep it blank/quiet, never overlay content"
+            f"reserve footer/disclaimer safe area before content and CTA using {footer_source}; "
+            "leave exact bottom strip completely blank: no text/icons/objects/charts/cards/shadows/patterns/details"
             if footer_requested
             else "no footer/disclaimer safe area requested"
         )
@@ -9546,6 +9632,18 @@ class AIOrchestratorService:
                 f"{footer_policy}; actual footer_safe_area reserves {footer_reserved_height}px "
                 f"({footer_safe_area.get('reserved_ratio')}) and leaves {content_canvas_height}px content-safe height"
             )
+        format_key = str(format_name or "").strip().casefold()
+        if footer_requested and format_key == "infographic":
+            footer_policy = " ".join(
+                [
+                    footer_policy,
+                    cls._infographic_footer_safe_layout_contract(
+                        format_name=format_key,
+                        footer_requested=True,
+                        footer_safe_area=footer_safe_area,
+                    ),
+                ]
+            ).strip()
 
         cta_text = cls._normalize_metadata_text(
             getattr(payload, "cta", "") if payload is not None else slide_payload.get("cta") or meta.get("cta"),
@@ -9643,6 +9741,9 @@ class AIOrchestratorService:
             content_safe_capacity = int((raw_capacity * content_safe_ratio) + 0.5) if footer_requested else raw_capacity
             visible_capacity = max(1, min(content_safe_capacity, raw_capacity, 8))
             capacity_source = "deduped approved item count after reserving brand header, CTA, and footer/disclaimer safe areas"
+        if footer_requested and format_key == "infographic" and visible_capacity > 3:
+            visible_capacity = 3
+            capacity_source = f"{capacity_source} with infographic footer-safe cap"
         visible_item_pairs = deduped_items[:visible_capacity]
         visible_items = [text for _, text in visible_item_pairs]
         overflow_items = [text for _, text in deduped_items[visible_capacity:]]
@@ -9690,11 +9791,26 @@ class AIOrchestratorService:
                 geometry=cls._logo_safe_zone_geometry(scene_graph),
                 hint=resolved_logo_hint,
             )
-            _x, _y, logo_width, logo_height = logo_geometry
+            logo_x, logo_y, logo_width, logo_height = logo_geometry
+            logo_left_pct = max(int(round(logo_x * 100)), 0)
+            logo_top_pct = max(int(round(logo_y * 100)), 0)
+            logo_width_pct = max(int(round(logo_width * 100)), 1)
+            logo_height_pct = max(int(round(logo_height * 100)), 1)
+            logo_left_px = max(int(round(logo_x * max(width, 1))), 0) if width else 0
+            logo_top_px = max(int(round(logo_y * max(height, 1))), 0) if height else 0
+            logo_width_px = max(int(round(logo_width * max(width, 1))), 1) if width else 0
+            logo_height_px = max(int(round(logo_height * max(height, 1))), 1) if height else 0
+            footprint_detail = (
+                f"initial footprint starts around {logo_left_pct}% left/{logo_top_pct}% top "
+                f"({logo_left_px}px/{logo_top_px}px) and measures {logo_width_pct}% x {logo_height_pct}% "
+                f"({logo_width_px}px wide x {logo_height_px}px tall); "
+                if width and height
+                else f"initial footprint starts around {logo_left_pct}% left/{logo_top_pct}% top and measures {logo_width_pct}% x {logo_height_pct}%; "
+            )
             logo_policy = (
                 f"brand header slot=required readable reserved slot at {cls._logo_reserved_area_label(resolved_logo_hint)} "
-                f"using dynamic canvas/header geometry ({max(int(round(logo_width * 100)), 1)}% width x {max(int(round(logo_height * 100)), 1)}% height); "
-                "keep the AI image quiet there so the exact stored brand asset can be composited, and keep placement consistent across carousel slides unless the sample blueprint overrides it"
+                f"using pre-generation backend brand-asset size analysis; {footprint_detail}"
+                "reserve this exact blank space before composing the AI image so the exact stored brand asset can be composited, and keep placement consistent across carousel slides unless the sample blueprint overrides it"
             )
 
         prompt_metadata = {
@@ -9831,7 +9947,7 @@ class AIOrchestratorService:
         canvas_summary = f"{width}x{height} {aspect_label}" if width and height else f"{aspect_label} canvas"
 
         prompt_text = getattr(request, "prompt", "") if request is not None else ""
-        legal_footer = cls._normalize_metadata_text(legal_footer_text, limit=180)
+        legal_footer = cls._normalize_metadata_text(legal_footer_text, limit=420)
         disclaimer = cls._normalize_metadata_text(disclaimer_guidance, limit=180)
         brief = getattr(request, "research_editorial_brief", {}) if request is not None else {}
         brief = brief if isinstance(brief, dict) else {}
@@ -9857,7 +9973,8 @@ class AIOrchestratorService:
             else "none"
         )
         footer_policy = (
-            f"reserve footer/disclaimer safe area before content and CTA using {footer_source}; keep it blank/quiet, never overlay content"
+            f"reserve footer/disclaimer safe area before content and CTA using {footer_source}; "
+            "leave exact bottom strip completely blank: no text/icons/objects/charts/cards/shadows/patterns/details"
             if footer_requested
             else "no footer/disclaimer safe area requested"
         )
@@ -9970,7 +10087,7 @@ class AIOrchestratorService:
         brand_header_policy = ""
         if budget:
             canvas_summary = cls._normalize_metadata_text(budget.get("canvas_summary"), limit=80) or canvas_summary
-            footer_policy = cls._normalize_metadata_text(budget.get("footer_policy"), limit=220) or footer_policy
+            footer_policy = cls._normalize_metadata_text(budget.get("footer_policy"), limit=720) or footer_policy
             cta_policy = cls._normalize_metadata_text(budget.get("cta_policy"), limit=220) or cta_policy
             visible_capacity = int(budget.get("visible_capacity") or visible_capacity)
             visible_items = list(budget.get("visible_items") or [])
@@ -9978,7 +10095,7 @@ class AIOrchestratorService:
             capacity_source = cls._normalize_metadata_text(budget.get("capacity_source"), limit=180) or capacity_source
             duplicate_count = int(budget.get("duplicate_count") or 0)
             density_policy = cls._normalize_metadata_text(budget.get("density_policy"), limit=220) or density_policy
-            brand_header_policy = cls._normalize_metadata_text(budget.get("brand_header_policy"), limit=320)
+            brand_header_policy = cls._normalize_metadata_text(budget.get("brand_header_policy"), limit=520)
             item_policy = (
                 f"visible item capacity={visible_capacity} derived from {capacity_source}; "
                 f"render only {len(visible_items)} deduped approved item(s); overflow={overflow_count}; "
@@ -12333,17 +12450,39 @@ class AIOrchestratorService:
             return elements
 
         # Get canvas dimensions
-        canvas_width = canvas.get("width", 1080)
-        canvas_height = canvas.get("height", 1080)
+        try:
+            canvas_width = max(int(canvas.get("width") or 1080), 1)
+        except (TypeError, ValueError):
+            canvas_width = 1080
+        try:
+            canvas_height = max(int(canvas.get("height") or 1080), 1)
+        except (TypeError, ValueError):
+            canvas_height = 1080
 
-        # Position footer at bottom with small margin
+        footer_safe_area = calculate_footer_safe_area(
+            canvas_width=canvas_width,
+            canvas_height=canvas_height,
+            footer_text=footer_text,
+        )
+        footer_text_box = (
+            footer_safe_area.get("footer_text_box")
+            if isinstance(footer_safe_area.get("footer_text_box"), dict)
+            else {}
+        )
+
+        def normalized_box_value(value: Any, scale: int) -> float:
+            try:
+                return round(max(float(value or 0), 0.0) / max(float(scale), 1.0), 4)
+            except (TypeError, ValueError):
+                return 0.0
+
         footer_geometry = {
-            "x": 0.02,  # 2% margin from left
-            "y": 0.96,  # 96% down from top (4% from bottom)
-            "width": 0.96,  # 96% width
-            "height": 0.03,  # 3% height
+            "x": normalized_box_value(footer_text_box.get("x"), canvas_width),
+            "y": normalized_box_value(footer_text_box.get("y"), canvas_height),
+            "width": normalized_box_value(footer_text_box.get("width"), canvas_width),
+            "height": normalized_box_value(footer_text_box.get("height"), canvas_height),
             "units": "normalized",
-            "anchor": "bottom_left",
+            "anchor": "top_left",
         }
 
         # Get styling from disclaimer
@@ -12368,6 +12507,12 @@ class AIOrchestratorService:
             "validation_hints": {
                 "legal_compliance": True,
                 "required": True,
+                "footer_layout_source": "dynamic_footer_safe_area",
+                "footer_safe_area": {
+                    key: value
+                    for key, value in footer_safe_area.items()
+                    if not str(key).startswith("_")
+                },
             },
         }
 
@@ -21013,6 +21158,21 @@ class AIOrchestratorService:
                     headline,
                     limit=8,
                 )
+                section_text_for_facts = " ".join(
+                    [
+                        headline,
+                        cls._coerce_text_value(section.get("body")),
+                        *proof_points,
+                        *body_points,
+                        *stat_highlights,
+                        *cls._claim_evidence_pair_lines(claim_pairs, limit=2),
+                    ]
+                )
+                unsupported_section_markers = cls._unsupported_exact_claim_markers(
+                    section_text_for_facts,
+                    request=request,
+                    compiled_context=compiled_context,
+                )
                 if role == "evidence":
                     evidence_sections += 1
                 if headline and headline.casefold() in seen_section_heads and role not in {"overview", "takeaway"}:
@@ -21032,6 +21192,19 @@ class AIOrchestratorService:
                         cls._clean_content_semantic_issue(
                             code="infographic_missing_evidence",
                             message=f"Section {index} lacks a distinct proof or claim/evidence anchor.",
+                            targeted_fields=["body", "metadata"],
+                            slide_indexes=[index],
+                            slide_targets=[role],
+                        )
+                    )
+                if unsupported_section_markers:
+                    issues.append(
+                        cls._clean_content_semantic_issue(
+                            code="infographic_section_unsupported_exact_claim",
+                            message=(
+                                f"Section {index} includes exact claims not backed by verified facts or the user prompt: "
+                                + ", ".join(sorted(unsupported_section_markers)[:3])
+                            ),
                             targeted_fields=["body", "metadata"],
                             slide_indexes=[index],
                             slide_targets=[role],
@@ -21167,6 +21340,17 @@ class AIOrchestratorService:
                     cls._clean_content_semantic_issue(
                         code="static_missing_support",
                         message="The static creative still needs a concrete proof or claim/evidence support line.",
+                        targeted_fields=["body", "metadata"],
+                    )
+                )
+            if unsupported_static_markers:
+                issues.append(
+                    cls._clean_content_semantic_issue(
+                        code="static_unsupported_exact_claim",
+                        message=(
+                            "The static creative includes exact claims not backed by verified facts or the user prompt: "
+                            + ", ".join(sorted(unsupported_static_markers)[:3])
+                        ),
                         targeted_fields=["body", "metadata"],
                     )
                 )
@@ -24671,6 +24855,8 @@ class AIOrchestratorService:
     def _disclaimer_overlay_guidance(request: AIOrchestrationRequest) -> str:
         request_brief = getattr(request, "research_editorial_brief", None)
         brief = request_brief if isinstance(request_brief, dict) else {}
+        request_brief = getattr(request, "research_editorial_brief", None)
+        brief = request_brief if isinstance(request_brief, dict) else {}
         requested = bool(brief.get("disclaimer_requested"))
         if not requested:
             prompt_lower = str(getattr(request, "prompt", "") or "").casefold()
@@ -24687,8 +24873,9 @@ class AIOrchestratorService:
         ) or "subtle"
         if placement == "bottom_footer":
             return (
-                "Reserve a thin quiet strip at the bottom for a small legal disclaimer overlay. "
-                f"Keep this bottom zone clean, high-contrast, and free of CTA buttons, icons, or decorative clutter. Disclaimer style: {style}."
+                "Reserve the bottom footer-safe strip for a small legal disclaimer overlay. "
+                "Leave that bottom strip completely blank: no text, icons, objects, charts, cards, shadows, patterns, or important visual details. "
+                f"Keep it clean and high-contrast for the backend footer. Disclaimer style: {style}."
             )
         return (
             f"Reserve a small compliant disclaimer zone in the requested placement ({placement}). "
@@ -24749,9 +24936,24 @@ class AIOrchestratorService:
             "Do not render any readable words, letters, numbers, bullets, labels, captions, CTA text, legal text, sample text, or pseudo-text anywhere in the AI image.",
             f"Copy surface plan, with exact words intentionally withheld from image generation: {semantic_summary}.",
             "Design clean empty text-safe regions that visibly belong to the layout: quiet panels, soft cards, divider rules, accent tabs, callout shells, and calm negative space.",
+            AIOrchestratorService._brand_color_text_overlay_preparation_contract(),
             cta_guidance,
             "The backend will place the exact approved headline, body, proof, CTA, legal copy, and logo after image generation, so preserve stable contrast, alignment, and clean surfaces in every reserved text zone.",
         ]
+
+    @staticmethod
+    def _brand_color_text_overlay_preparation_contract() -> str:
+        return (
+            "Brand-color text overlay preparation rule: reserve high-contrast blank surfaces suitable for backend-rendered headline keywords and key phrases in approved brand primary/accent colors. "
+            "Do not render, color, highlight, outline, shadow, or invent any readable words, letters, numbers, labels, keyword chips, underlines, or pseudo-text yourself; only prepare the empty surfaces."
+        )
+
+    @staticmethod
+    def _brand_color_final_text_emphasis_contract() -> str:
+        return (
+            "Brand-color approved-copy emphasis rule: use approved brand primary/accent colors only to emphasize important words already present in the exact approved headline, proof, or CTA copy below. "
+            "Do not add, recolor, highlight, underline, outline, shadow, or invent any extra words, numbers, labels, keyword chips, badges, or pseudo-text."
+        )
 
     @classmethod
     def _should_use_backend_text_overlay_for_ai_final_render(
@@ -24812,6 +25014,7 @@ class AIOrchestratorService:
             "FINAL TEXT RENDER CONTRACT: render the finished slide with the exact approved readable copy inside the intended text regions.",
             "Do not add any extra readable words, repeated shadow headlines, watermark text, background typography, pseudo-text, lorem ipsum, sample labels, random numbers, or stray glyphs anywhere else in the image.",
             "Keep all readable text confined to the reserved text-safe zones with clean hierarchy, stable alignment, strong contrast, and correct spelling.",
+            AIOrchestratorService._brand_color_final_text_emphasis_contract(),
         ]
         if normalized_footer:
             guidance.append(
@@ -25044,6 +25247,29 @@ class AIOrchestratorService:
             getattr(request, "prompt", ""),
             text_payload=text_payload,
         )
+        legal_footer_text = (
+            AIOrchestratorService._scene_graph_legal_footer_text(scene_graph)
+            or AIOrchestratorService._brand_legal_footer_text_for_format(request)
+        )
+        bottom_footer_requested = AIOrchestratorService._bottom_footer_overlay_requested(
+            request,
+            legal_footer_text=legal_footer_text,
+        )
+        canvas = getattr(scene_graph, "canvas", None)
+        footer_safe_area = (
+            calculate_footer_safe_area(
+                canvas_width=int(getattr(canvas, "width", 0) or 1),
+                canvas_height=int(getattr(canvas, "height", 0) or 1),
+                footer_text=legal_footer_text,
+            )
+            if bottom_footer_requested
+            else {}
+        )
+        infographic_footer_layout_contract = AIOrchestratorService._infographic_footer_safe_layout_contract(
+            format_name=format_name,
+            footer_requested=bottom_footer_requested,
+            footer_safe_area=footer_safe_area,
+        )
         canvas_fit_guidance = AIOrchestratorService._canvas_fit_guidance(request.studio_panel)
         generation_to_export_fit_guidance = AIOrchestratorService._generation_to_export_fit_guidance(request.studio_panel)
         supporting_visual_system = AIOrchestratorService._normalized_supporting_visual_system(creative_decision.asset_strategy or {})
@@ -25112,7 +25338,7 @@ class AIOrchestratorService:
             ),
             "infographic": (
                 "Treat this as a genuine infographic, not a plain headline poster. Build a modular visual explainer "
-                "with 3-4 clearly separated sections and strong vertical pacing. Only use chart, icon, or diagram callouts "
+                f"with {'up to 3' if infographic_footer_layout_contract else '3-4'} clearly separated sections and strong vertical pacing. Only use chart, icon, or diagram callouts "
                 "when the supplied content clearly requires them. Do not default to stock growth arrows, rising bars, or generic finance stickers."
             ),
         }.get(format_name, default_format_guidance)
@@ -25140,6 +25366,7 @@ class AIOrchestratorService:
             for_carousel=format_name == "carousel",
             for_static_infographic_ad=llm_led_static_infographic,
         )
+        ad_post_visual_quality_contract = AIOrchestratorService._ad_post_visual_quality_contract(format_name)
         multimodal_balance_contract = AIOrchestratorService._multimodal_balance_contract(
             format_name=format_name,
             supporting_line=AIOrchestratorService._normalize_metadata_text(metadata.get("supporting_line") or text_payload.body, limit=220),
@@ -25210,6 +25437,10 @@ class AIOrchestratorService:
         disclaimer_overlay_guidance = AIOrchestratorService._disclaimer_overlay_guidance(request)
         content_format_guide_section = AIOrchestratorService._content_format_guide_prompt_section(request)
         live_research_facts_section = AIOrchestratorService._live_research_verified_facts_prompt_section(request)
+        anti_hallucination_section = AIOrchestratorService._image_generation_anti_hallucination_prompt_section(
+            request=request,
+            compiled_context=compiled_context,
+        )
         retry_instruction = AIOrchestratorService._normalize_metadata_text(retry_note, limit=260)
         proof_points_limit = max(3, data_list_module_count or 3)
         llm_led_current_prompt_instruction = (
@@ -25408,6 +25639,7 @@ class AIOrchestratorService:
             ),
             logo_surface_guidance,
             disclaimer_overlay_guidance,
+            infographic_footer_layout_contract,
             f"Platform: {platform}.",
             f"Format: {format_name}.",
             f"Output type: {file_type}.",
@@ -25461,6 +25693,7 @@ class AIOrchestratorService:
             ),
             research_quality_section,
             *consultant_contract,
+            ad_post_visual_quality_contract,
             *multimodal_balance_contract,
             *reference_family_contract,
             reference_adaptation_profile_section,
@@ -28702,6 +28935,7 @@ class AIOrchestratorService:
             limit=80,
         )
         platform = str(request.studio_panel.get("platform_preset") or "social")
+        format_name = str(request.studio_panel.get("format") or "carousel").strip().lower()
         file_type = str(request.studio_panel.get("file_type") or "png").upper()
         canvas_fit_guidance = AIOrchestratorService._canvas_fit_guidance(request.studio_panel)
         reference_summary = AIOrchestratorService._compact_reference_assets(reference_images or [])
@@ -28783,6 +29017,11 @@ class AIOrchestratorService:
                 creative_decision=creative_decision,
             )
         )
+        logo_non_generation_contract = AIOrchestratorService._logo_non_generation_contract(
+            brand_name=brand_name,
+            reserved_logo_area=reserved_logo_area,
+        )
+        text_containment_contract = AIOrchestratorService._image_text_containment_contract(format_name=format_name)
         slide_index = int(slide.get("slide_index") or 1)
         slide_count = int(slide.get("slide_count") or 1)
         story_role = AIOrchestratorService._normalize_metadata_text(
@@ -28840,6 +29079,10 @@ class AIOrchestratorService:
         research_quality_section = AIOrchestratorService._research_editorial_prompt_section(
             request,
             compiled_context,
+        )
+        anti_hallucination_section = AIOrchestratorService._image_generation_anti_hallucination_prompt_section(
+            request=request,
+            compiled_context=compiled_context,
         )
         consultant_contract = AIOrchestratorService._consultant_quality_contract(
             for_visual_only=True,
@@ -29744,6 +29987,7 @@ class AIOrchestratorService:
                 else "Render only the approved readable copy once. Do not add duplicate shadow headlines, floating labels, pseudo-text, decorative lettering, or any extra wording outside the approved text-safe regions."
             ),
             "CRITICAL TEXT WRAPPING RULE: You must aggressively wrap the headline and body text so they stay strictly inside their designated coordinate zones. Never let any letters or words stretch into the 'empty space' corner. Keep the 'empty space' 100% blank and free of text so the backend overlay does not clash with your lettering.",
+            anti_hallucination_section,
             AIOrchestratorService._normalize_metadata_text(retry_note, limit=220),
         ]
         optional_prefixes = (
@@ -30168,6 +30412,10 @@ class AIOrchestratorService:
             if stripped_prompt_keywords and resolved_copy_keywords and stripped_prompt_keywords & resolved_copy_keywords
             else (message_theme or resolved_copy_theme or stripped_prompt_theme)
         )
+        brand_name = AIOrchestratorService._normalize_metadata_text(
+            request.resolved_brand_context.get("brand_name") or "",
+            limit=80,
+        )
         logo_position_hint = AIOrchestratorService._effective_logo_position_hint(
             request=request,
             creative_decision=creative_decision,
@@ -30184,6 +30432,13 @@ class AIOrchestratorService:
                 creative_decision=creative_decision,
             )
         )
+        logo_non_generation_contract = AIOrchestratorService._logo_non_generation_contract(
+            brand_name=brand_name,
+            reserved_logo_area=reserved_logo_area,
+        )
+        text_containment_contract = AIOrchestratorService._image_text_containment_contract(format_name=format_name)
+        legal_footer_text = AIOrchestratorService._brand_legal_footer_text_for_format(request)
+        disclaimer_overlay_guidance = AIOrchestratorService._disclaimer_overlay_guidance(request)
         layout_content_budget = AIOrchestratorService._dynamic_layout_content_budget(
             request=request,
             format_name=format_name,
@@ -30191,8 +30446,8 @@ class AIOrchestratorService:
             metadata=metadata,
             sample_page_blueprint=active_sample_page_blueprint,
             scene_graph=None,
-            legal_footer_text="",
-            disclaimer_guidance=AIOrchestratorService._disclaimer_overlay_guidance(request),
+            legal_footer_text=legal_footer_text,
+            disclaimer_guidance=disclaimer_overlay_guidance,
             logo_position_hint=logo_position_hint,
         )
         prompt_text_payload = AIOrchestratorService._prompt_visible_text_payload_from_layout_budget(
@@ -30228,11 +30483,16 @@ class AIOrchestratorService:
             request,
             compiled_context,
         )
+        anti_hallucination_section = AIOrchestratorService._image_generation_anti_hallucination_prompt_section(
+            request=request,
+            compiled_context=compiled_context,
+        )
         consultant_contract = AIOrchestratorService._consultant_quality_contract(
             for_visual_only=True,
             for_carousel=format_name == "carousel",
             for_static_infographic_ad=llm_led_static_infographic,
         )
+        ad_post_visual_quality_contract = AIOrchestratorService._ad_post_visual_quality_contract(format_name)
         multimodal_balance_contract = AIOrchestratorService._multimodal_balance_contract(
             format_name=format_name,
             supporting_line=AIOrchestratorService._normalize_metadata_text(prompt_metadata.get("supporting_line") or prompt_text_payload.body, limit=220),
@@ -30322,8 +30582,8 @@ class AIOrchestratorService:
             reference_assets=reference_asset_list,
             asset_catalog=asset_catalog,
             scene_graph=None,
-            legal_footer_text="",
-            disclaimer_guidance=AIOrchestratorService._disclaimer_overlay_guidance(request),
+            legal_footer_text=legal_footer_text,
+            disclaimer_guidance=disclaimer_overlay_guidance,
             layout_budget=layout_content_budget,
         )
         llm_led_visual_authority_instruction = (
@@ -30419,6 +30679,10 @@ class AIOrchestratorService:
             quality_floor_contract,
             "Visual quality bar: premium, high-end, richly detailed composition with polished craft, clean hierarchy, and brand-safe restraint.",
             f"Keep the {reserved_logo_area} area completely empty and visually clean. Do not place any icon, illustration element, text, or visual detail inside or immediately adjacent to this corner.",
+            logo_safe_zone_guidance,
+            logo_surface_guidance,
+            *logo_non_generation_contract,
+            *text_containment_contract,
             f"Theme: {theme_anchor}.",
             f"Message strategy theme: {message_theme}.",
             f"Core audience message: {audience_message}.",
@@ -30505,6 +30769,7 @@ class AIOrchestratorService:
             f"Brand palette: {palette}.",
             f"Palette role guidance: {palette_guidance}.",
             strict_palette_contract,
+            AIOrchestratorService._brand_color_text_overlay_preparation_contract(),
             f"Typography vibe: {typography}.",
             f"Layout approach: {layout_decision}.",
             f"Dominant visual system: {dominant_visual_system}.",
@@ -30518,6 +30783,7 @@ class AIOrchestratorService:
             *sequence_alignment_sections,
             research_quality_section,
             *consultant_contract,
+            ad_post_visual_quality_contract,
             *multimodal_balance_contract,
             *reference_family_contract,
             AIOrchestratorService._visual_quality_bar_for_treatment(structured_visual_metadata),

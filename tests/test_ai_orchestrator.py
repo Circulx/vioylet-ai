@@ -364,6 +364,54 @@ def test_orchestrator_exact_claim_markers_treat_currency_shorthand_as_equivalent
     assert unsupported == set()
 
 
+def test_orchestrator_exact_claim_markers_flag_bare_year_and_rank_without_source() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a LinkedIn infographic about labour law compliance.",
+        studio_panel={"platform_preset": "linkedin", "format": "infographic", "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"brand_name": "Jiraaf"},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+
+    unsupported = AIOrchestratorService._unsupported_exact_claim_markers(
+        "Labour Laws 2025: Top 3 compliance shifts for HR teams.",
+        request=request,
+        compiled_context={},
+    )
+
+    assert {"2025", "top 3"}.issubset(unsupported)
+
+
+def test_orchestrator_exact_claim_markers_allow_bare_year_and_rank_from_prompt() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a LinkedIn infographic about Labour Laws 2025 with the Top 3 compliance shifts.",
+        studio_panel={"platform_preset": "linkedin", "format": "infographic", "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"brand_name": "Jiraaf"},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+
+    unsupported = AIOrchestratorService._unsupported_exact_claim_markers(
+        "Labour Laws 2025: Top 3 compliance shifts for HR teams.",
+        request=request,
+        compiled_context={},
+    )
+
+    assert unsupported == set()
+
+
 def test_orchestrator_structures_text_payload_filters_compliance_and_boilerplate_for_render_roles() -> None:
     payload = AIOrchestratorService._structure_text_payload_for_layout(
         StructuredTextPayload(
@@ -609,7 +657,13 @@ def test_orchestrator_logo_safe_zone_guidance_prefers_top_right_hint_and_minimum
     )
 
     assert "top-right" in guidance
-    assert "20% of the width" in guidance
+    assert "24% of the width" in guidance
+    assert "4% from the top" in guidance
+    assert "backend-calculated brand-asset reservation" in guidance
+    assert "backend places the stored brand asset there after image generation" in guidance
+    assert "Initial backend brand-asset size analysis" in guidance
+    assert "reserve the final placement footprint as an empty box" in guidance
+    assert "259px wide x 110px tall" in guidance
 
 
 def test_orchestrator_logo_safe_zone_guidance_respects_viable_synthesized_logo_geometry() -> None:
@@ -655,7 +709,10 @@ def test_orchestrator_logo_safe_zone_guidance_respects_viable_synthesized_logo_g
     guidance = AIOrchestratorService._logo_safe_zone_guidance(request, scene_graph, hint="Top-right")
 
     assert "top-right" in guidance
-    assert "17% of the width" in guidance
+    assert "19% of the width" in guidance
+    assert "4% from the top" in guidance
+    assert "Initial backend brand-asset size analysis" in guidance
+    assert "205px wide x 92px tall" in guidance
 
 
 def test_orchestrator_build_carousel_slide_render_prompt_uses_slide_or_planning_logo_hint() -> None:
@@ -711,12 +768,16 @@ def test_orchestrator_build_carousel_slide_render_prompt_uses_slide_or_planning_
     )
 
     assert "top-right" in prompt
-    assert "Do not typeset the brand name as a top-corner signature" in prompt
     assert "Brand context only: Jiraaf" in prompt
-    assert "must contain zero logos, wordmarks, brand-name signatures" in prompt
-    assert "Never write or paint Jiraaf in the logo-safe corner" in prompt
+    assert "STRICT BRAND-ASSET NON-GENERATION CONTRACT" in prompt
+    assert "trace, draw, typeset" in prompt
+    assert "backend will place the exact stored brand asset afterward" in prompt
+    assert "ZERO BRAND-ASSET RULE - no exceptions" in prompt
+    assert "backend overlay is the only allowed source for brand asset placement" in prompt
+    assert "TEXT CONTAINMENT RULE" in prompt
+    assert "Do not crop, truncate, cut off" in prompt
+    assert "STATIC/INFOGRAPHIC TEXT NO-TRUNCATION RULE" not in prompt
     assert "must remain pure background reservation only" in prompt
-    assert "no ghosted wordmark" in prompt
     assert "Canvas fit: design for the requested 1080x1080 square output ratio" in prompt
     assert "do not let bottom buttons, bullets, or lower text touch or cross the crop boundary" in prompt
 
@@ -742,7 +803,15 @@ def test_orchestrator_build_carousel_slide_render_prompt_prefers_brand_logo_poli
             "guardrails": {},
             "visual_identity": {
                 "logo_placement": {
-                    "allowed_positions": ["top-right"],
+                    "allowed_positions": [
+                        "top-right",
+                        "top-left",
+                        "bottom-right",
+                        "bottom-left",
+                        "top-center",
+                        "bottom-center",
+                        "center",
+                    ],
                     "default_position": "top-right",
                 }
             },
@@ -2323,6 +2392,8 @@ def test_orchestrator_build_image_prompt_pushes_premium_visual_quality() -> None
         {
             "headline": "Book Flights Smarter",
             "body": "Use flexible dates and fare alerts to catch price drops.",
+            "cta": "",
+            "hashtags": [],
             "metadata": {
                 "visual_direction": "Travel confidence with editorial movement",
                 "design_style": "premium travel social poster",
@@ -2333,7 +2404,20 @@ def test_orchestrator_build_image_prompt_pushes_premium_visual_quality() -> None
 
     prompt = AIOrchestratorService.build_image_prompt(request, text_payload)
 
-    assert "premium, high-end, richly detailed" in prompt
+    assert "visually attractive, premium, scroll-stopping" in prompt
+    assert "Ad-post visual quality rule:" in prompt
+    assert "campaign-ready social ad creative" in prompt
+    assert "Paid-social attractiveness standard:" in prompt
+    assert "clear emotional hook" in prompt
+    assert "foreground/midground/background layering" in prompt
+    assert "tactile dimensional hero objects or visual metaphors tied to the topic" in prompt
+    assert "Avoid plain educational-poster composition" in prompt
+    assert "topic-relevant dimensional/3D hero treatment when brand/reference evidence allows it" in prompt
+    assert "Brand-color text overlay preparation rule:" in prompt
+    assert "backend-rendered headline keywords and key phrases in approved brand primary/accent colors" in prompt
+    assert "Do not render, color, highlight, outline, shadow, or invent any readable words" in prompt
+    assert "do not invent unsupported facts, numbers, labels, UI" in prompt
+    assert "readable text just to make the ad feel more exciting" in prompt
     assert "research discipline" in prompt.lower()
     assert "brand and asset discipline" in prompt.lower()
     assert "simple, scroll-stopping social ad composition" in prompt
@@ -2504,6 +2588,15 @@ def test_build_image_prompt_dynamic_direction_uses_brand_assets_when_available()
     prompt = AIOrchestratorService.build_image_prompt(request=request, text_payload=payload)
     direction = _dynamic_visual_art_direction_from_prompt(prompt)
 
+    assert "STRICT BRAND-ASSET NON-GENERATION CONTRACT" in prompt
+    assert "trace, draw, typeset" in prompt
+    assert "backend will place the exact stored brand asset afterward" in prompt
+    assert "ZERO BRAND-ASSET RULE - no exceptions" in prompt
+    assert "backend overlay is the only allowed source for brand asset placement" in prompt
+    assert "TEXT CONTAINMENT RULE" in prompt
+    assert "Do not crop, truncate, cut off" in prompt
+    assert "STATIC/INFOGRAPHIC TEXT NO-TRUNCATION RULE" in prompt
+    assert "fully readable end-to-end" in prompt
     assert "Dimensional planning-card system" in direction
     assert "brand cues=" in direction
 
@@ -2609,7 +2702,12 @@ def test_carousel_render_prompt_reserves_footer_cta_safe_area_and_caps_rows_dyna
 
     assert "brand header slot=required readable reserved slot" in guard
     assert "safe areas=reserve footer/disclaimer safe area before content and CTA" in guard
+    assert "using pre-generation backend brand-asset size analysis" in guard
+    assert "initial footprint starts around" in guard
+    assert "reserve this exact blank space before composing the AI image" in guard
     assert "actual footer_safe_area reserves" in guard
+    assert "leave exact bottom strip completely blank" in guard
+    assert "no text/icons/objects/charts/cards/shadows/patterns/details" in guard
     assert "CTA policy=no approved CTA slot" in guard
     assert "visible item capacity=3 derived from sample_page_blueprint module_counts.horizontal_band_count after reserving brand header and footer/disclaimer safe areas" in guard
     assert "overflow=2" in guard
@@ -2623,7 +2721,7 @@ def test_layout_budget_uses_actual_footer_safe_area_to_reduce_dense_rows() -> No
         brand_space_id=uuid4(),
         user_id=uuid4(),
         prompt="Create a carousel slide with a dense list and a long required compliance footer.",
-        studio_panel={"platform_preset": "linkedin", "format": "carousel", "file_type": "png", "size": {"width": 720, "height": 900}},
+        studio_panel={"platform_preset": "linkedin", "format": "carousel", "file_type": "png", "size": {"width": 360, "height": 900}},
         conversation_context={},
         session_memory={},
         resolved_brand_context={"visual_identity": {"brand_color_palette": {"primary": "#123456"}}},
@@ -2658,18 +2756,23 @@ def test_layout_budget_uses_actual_footer_safe_area_to_reduce_dense_rows() -> No
     }
     scene_graph = GenerationSceneGraph.model_validate(
         {
-            "canvas": {"width": 720, "height": 900, "platform": "linkedin", "file_type": "png"},
+            "canvas": {"width": 360, "height": 900, "platform": "linkedin", "file_type": "png"},
             "elements": [
                 {
                     "element_id": "legal_footer",
                     "element_type": "text",
                     "role": "legal",
                     "geometry": {"x": 0.05, "y": 0.9, "width": 0.9, "height": 0.08},
-                    "text": (
-                        "Long compliance disclosure explaining eligibility, risk, limitations, educational scope, "
-                        "and the need to review source documents before acting on any financial example. "
-                        "This additional disclosure language is included so the footer wraps into more lines, "
-                        "uses a larger measured safe area, and reduces the prompt-visible content budget dynamically."
+                    "text": " ".join(
+                        [
+                            "Eligibility applies.",
+                            "Risk limits apply.",
+                            "Review offer documents.",
+                            "Educational information only.",
+                            "No guaranteed outcome.",
+                            "Product terms apply.",
+                        ]
+                        * 8
                     ),
                 }
             ],
@@ -2688,7 +2791,132 @@ def test_layout_budget_uses_actual_footer_safe_area_to_reduce_dense_rows() -> No
     capacity = int(guard.split("visible item capacity=", 1)[1].split(" ", 1)[0])
 
     assert "actual footer_safe_area reserves" in guard
+    assert "leave exact bottom strip completely blank" in guard
     assert capacity < 8
+
+
+def test_build_image_prompt_infographic_reserves_brand_legal_footer_space() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create an infographic explaining fixed income planning.",
+        studio_panel={"platform_preset": "linkedin", "format": "infographic", "file_type": "png", "size": {"width": 1080, "height": 1350}},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={
+            "brand_assets": {
+                "legal_disclaimers": [
+                    {
+                        "text_template": "Investments are subject to market risk. Review all offer documents before investing.",
+                        "applies_to_formats": ["infographic"],
+                    }
+                ],
+            },
+            "visual_identity": {"brand_color_palette": {"primary": "#123456"}},
+        },
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        reference_assets=[],
+        layout_decision={"mode": "synthesized_layout"},
+    )
+    payload = StructuredTextPayload(
+        headline="Plan your fixed income allocation",
+        body="Show a simple planning flow with clear modules.",
+        cta="",
+        hashtags=[],
+        metadata={
+            "proof_points": [
+                "Map liquidity needs",
+                "Review risk appetite",
+                "Compare tenure options",
+                "Keep documents ready",
+                "Track maturity dates",
+            ],
+            "visual_direction": "Premium modular infographic with planning cards.",
+        },
+    )
+
+    prompt = AIOrchestratorService.build_image_prompt(request=request, text_payload=payload)
+    guard = _layout_quality_guard_from_prompt(prompt)
+    capacity = int(guard.split("visible item capacity=", 1)[1].split(" ", 1)[0])
+
+    assert "safe areas=reserve footer/disclaimer safe area before content and CTA" in guard
+    assert "actual footer_safe_area reserves" in guard
+    assert "Infographic footer-safe layout contract" in guard
+    assert "INFOGRAPHIC FOOTER BLANK-SPACE RULE" in guard
+    assert "leave calculated footer strip blank for backend footer" in guard
+    assert "forbidden content zone" in guard
+    assert "Use at most 3 compact content sections/modules" in guard
+    assert "Leave the bottom strip plain background only" in guard
+    assert "STATIC/INFOGRAPHIC TEXT NO-TRUNCATION RULE" in prompt
+    assert "chart labels, CTA text, or footer/legal text" in prompt
+    assert capacity <= 3
+
+
+def test_injected_legal_footer_uses_dynamic_safe_area_geometry() -> None:
+    def injected_footer(text: str) -> dict:
+        request = AIOrchestrationRequest(
+            tenant_id=uuid4(),
+            brand_space_id=uuid4(),
+            user_id=uuid4(),
+            prompt="Create a static post with a required disclaimer.",
+            studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png", "size": {"width": 720, "height": 900}},
+            conversation_context={},
+            session_memory={},
+            resolved_brand_context={
+                "brand_assets": {
+                    "legal_disclaimers": [
+                        {
+                            "text_template": text,
+                            "applies_to_formats": ["static"],
+                        }
+                    ],
+                },
+                "visual_identity": {"brand_color_palette": {"primary": "#123456"}},
+            },
+            persona_context={},
+            objective_context={},
+            retrieved_knowledge={},
+            research_editorial_brief={"disclaimer_requested": True, "disclaimer_placement": "bottom_footer"},
+            reference_assets=[],
+            layout_decision={"mode": "synthesized_layout"},
+        )
+        elements = AIOrchestratorService._inject_legal_disclaimers(
+            elements=[],
+            request=request,
+            canvas={"width": 720, "height": 900},
+        )
+        assert len(elements) == 1
+        return elements[0]
+
+    short_footer = injected_footer("Capital is subject to market risk.")
+    long_footer = injected_footer(
+        " ".join(
+            [
+                "Capital is subject to market risk, eligibility checks, document review, and product-specific terms.",
+                "This is educational information and should not be treated as a guaranteed return or final recommendation.",
+            ]
+            * 5
+        )
+    )
+
+    short_geometry = short_footer["geometry"]
+    long_geometry = long_footer["geometry"]
+    short_safe_area = short_footer["validation_hints"]["footer_safe_area"]
+    short_text_box = short_safe_area["footer_text_box"]
+
+    assert short_footer["validation_hints"]["footer_layout_source"] == "dynamic_footer_safe_area"
+    assert short_geometry["x"] == pytest.approx(short_text_box["x"] / 720, abs=0.0001)
+    assert short_geometry["y"] == pytest.approx(short_text_box["y"] / 900, abs=0.0001)
+    assert short_geometry["width"] == pytest.approx(short_text_box["width"] / 720, abs=0.0001)
+    assert short_geometry["height"] == pytest.approx(short_text_box["height"] / 900, abs=0.0001)
+    assert short_geometry["height"] > 0.03
+    assert short_geometry["y"] < 0.96
+    assert long_geometry["height"] > short_geometry["height"]
+    assert long_geometry["y"] < short_geometry["y"]
+    assert long_footer["validation_hints"]["footer_safe_area"]["footer_line_count"] > short_safe_area["footer_line_count"]
 
 
 def test_build_image_prompt_layout_guard_flags_density_and_official_symbol_without_asset() -> None:
@@ -3246,13 +3474,16 @@ def test_orchestrator_build_final_render_prompt_reserves_logo_zone_and_forbids_g
 
     assert "top-right" in prompt
     assert "Brand context only: Jiraaf" in prompt
-    assert "must contain zero logos, wordmarks, brand-name signatures" in prompt
-    assert "exact stored brand logo is composited afterward as a separate asset" in prompt
-    assert "never as a logo, masthead, signature, watermark, standalone brand mark, or top-corner wordmark" in prompt
-    assert "Never write or paint Jiraaf in the logo-safe corner" in prompt
+    assert "STRICT BRAND-ASSET NON-GENERATION CONTRACT" in prompt
+    assert "trace, draw, typeset" in prompt
+    assert "backend will place the exact stored brand asset afterward" in prompt
+    assert "ZERO BRAND-ASSET RULE - no exceptions" in prompt
+    assert "backend overlay is the only allowed source for brand asset placement" in prompt
+    assert "TEXT CONTAINMENT RULE" in prompt
+    assert "Do not crop, truncate, cut off" in prompt
+    assert "STATIC/INFOGRAPHIC TEXT NO-TRUNCATION RULE" in prompt
+    assert "fully readable end-to-end" in prompt
     assert "must remain pure background reservation only" in prompt
-    assert "no ghosted wordmark" in prompt
-    assert "transparent edges" in prompt
 
 
 def test_build_final_render_prompt_includes_guide_and_live_research_guidance() -> None:
@@ -8433,6 +8664,67 @@ def test_build_final_render_prompt_emphasizes_infographic_structure() -> None:
     assert "module-first infographic surface" not in lowered
     assert "infographic section plan to preserve" not in lowered
     assert "scene-graph geometry contract json" not in lowered
+
+
+def test_build_final_render_prompt_infographic_keeps_legal_footer_zone_blank() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create an Instagram infographic about fixed income planning.",
+        studio_panel={"platform_preset": "instagram", "format": "infographic", "file_type": "png", "size": {"width": 1080, "height": 1350}},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"brand_name": "Jiraaf", "visual_identity": {}, "guardrails": {}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+    text_payload = StructuredTextPayload(
+        headline="Plan your fixed income allocation",
+        body="Show a simple planning flow with clear modules.",
+        cta="",
+        hashtags=[],
+        metadata={
+            "proof_points": ["Map liquidity needs", "Review risk appetite", "Compare tenure options"],
+            "infographic_section_specs": [
+                {"section_role": "overview", "headline": "Start with needs", "proof_points": ["Map liquidity needs"]},
+                {"section_role": "evidence", "headline": "Review risk", "proof_points": ["Review risk appetite"]},
+                {"section_role": "takeaway", "headline": "Choose tenure", "proof_points": ["Compare tenure options"]},
+            ],
+        },
+    )
+    scene_graph = GenerationSceneGraph.model_validate(
+        {
+            "canvas": {"width": 1080, "height": 1350, "platform": "instagram"},
+            "elements": [
+                {
+                    "element_id": "legal_footer",
+                    "element_type": "text",
+                    "role": "legal",
+                    "geometry": {"x": 0.05, "y": 0.93, "width": 0.9, "height": 0.05},
+                    "text": "Investments are subject to market risk. Review all offer documents before investing.",
+                }
+            ],
+        }
+    )
+
+    prompt = AIOrchestratorService.build_final_render_prompt(
+        request=request,
+        text_payload=text_payload,
+        creative_decision=CreativeDecisionPayload(layout_mode="synthesized_layout", confidence=0.8),
+        scene_graph=scene_graph,
+    )
+
+    assert "with up to 3 clearly separated sections" in prompt
+    assert "Infographic footer-safe layout contract" in prompt
+    assert "INFOGRAPHIC FOOTER BLANK-SPACE RULE" in prompt
+    assert "leave calculated footer strip blank for backend footer" in prompt
+    assert "forbidden content zone" in prompt
+    assert "Use at most 3 compact content sections/modules" in prompt
+    assert "Leave the bottom strip plain background only" in prompt
+    assert "STATIC/INFOGRAPHIC TEXT NO-TRUNCATION RULE" in prompt
+    assert "chart labels, CTA text, or footer/legal text" in prompt
 
 
 def test_build_final_render_prompt_renders_main_text_for_static_and_defers_only_logo_footer() -> None:
@@ -14646,14 +14938,111 @@ def test_build_final_render_prompt_requests_finished_static_copy_and_backend_log
     assert "FINAL TEXT RENDER CONTRACT" in prompt
     assert "Main content render authority:" in prompt
     assert "TEXT OVERLAY CONTRACT" not in prompt
+    assert "Brand-color approved-copy emphasis rule:" in prompt
+    assert "approved brand primary/accent colors only to emphasize important words already present" in prompt
+    assert "Do not add, recolor, highlight, underline, outline, shadow, or invent any extra words" in prompt
     assert "Backend overlay collision guard:" not in prompt
     assert "CRITICAL TEXT WRAPPING RULE" in prompt
     assert "never clip, crop, truncate, fade out, hide, or continue text past a card/panel/canvas edge" in prompt
     assert "shorten/wrap the copy, reduce module count, or simplify visuals before allowing cut-off text" in prompt
     assert "Use this headline verbatim" in prompt
+    assert "Ad-post visual quality rule:" in prompt
+    assert "campaign-ready social ad creative" in prompt
+    assert "Paid-social attractiveness standard:" in prompt
+    assert "clear emotional hook" in prompt
+    assert "foreground/midground/background layering" in prompt
+    assert "tactile dimensional hero objects or visual metaphors tied to the topic" in prompt
+    assert "topic-relevant dimensional/3D hero treatment when brand/reference evidence allows it" in prompt
     assert "Make the supporting visual explain the exact topic and benefit" in prompt
     assert "Do not default to a standalone business portrait" in prompt
     assert "Respect the reference/template layout" in prompt
+
+
+def test_build_final_render_prompt_includes_anti_hallucination_guard_with_source_values() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a LinkedIn infographic about Labour Laws 2025 with the Top 3 compliance shifts.",
+        studio_panel={"platform_preset": "linkedin", "format": "infographic", "file_type": "png"},
+        resolved_brand_context={"brand_name": "Jiraaf", "visual_identity": {}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        reference_assets=[],
+        layout_decision={},
+    )
+    text = StructuredTextPayload(
+        headline="Labour Laws 2025",
+        body="Top 3 compliance shifts for HR teams.",
+        cta="Read more",
+        hashtags=[],
+        metadata={},
+    )
+    scene_graph = GenerationSceneGraph.model_validate(
+        {
+            "canvas": {"width": 1080, "height": 1080, "platform": "linkedin", "file_type": "png"},
+            "elements": [],
+            "styles": {},
+        }
+    )
+
+    prompt = AIOrchestratorService.build_final_render_prompt(
+        request,
+        text,
+        CreativeDecisionPayload(layout_mode="synthesized_layout", asset_strategy={"use_generated_image": True}),
+        scene_graph,
+    )
+
+    assert "Anti-hallucination guard:" in prompt
+    assert "Source-backed exact values allowed in visible facts/data:" in prompt
+    assert "Unsupported specifics must become visual absence" in prompt
+    assert "do not create named organizations, countries, documents, app screens, people" in prompt
+    assert "2025" in prompt
+    assert "top 3" in prompt
+    assert "Add no other numbers, dates, ranks, currency, percentages, or chart values." in prompt
+
+
+def test_build_carousel_slide_render_prompt_includes_anti_hallucination_guard() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a LinkedIn carousel about compliance updates.",
+        studio_panel={"platform_preset": "linkedin", "format": "carousel", "file_type": "png"},
+        resolved_brand_context={"brand_name": "Jiraaf", "visual_identity": {}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        reference_assets=[],
+        layout_decision={},
+    )
+    prompt = AIOrchestratorService.build_carousel_slide_render_prompt(
+        request=request,
+        creative_decision=CreativeDecisionPayload(layout_mode="synthesized_layout", asset_strategy={"use_generated_image": True}),
+        message_strategy=None,
+        slide={
+            "slide_index": 1,
+            "slide_count": 3,
+            "role": "hook",
+            "headline": "Compliance updates without guesswork",
+            "supporting_line": "Use a clear workflow visual.",
+            "proof_points": ["Policy review", "Payroll review", "Recordkeeping review"],
+            "visual_focus": "Premium workflow modules.",
+        },
+        scene_graph=GenerationSceneGraph.model_validate(
+            {
+                "canvas": {"width": 1080, "height": 1350, "platform": "linkedin", "file_type": "png"},
+                "elements": [],
+                "styles": {},
+            }
+        ),
+    )
+
+    assert "Anti-hallucination guard:" in prompt
+    assert "Unsupported specifics must become visual absence" in prompt
+    assert "identity marks unless explicitly supported" in prompt
+    assert "No source-backed exact values are available for visible facts/data" in prompt
 
 
 def test_build_final_render_prompt_strips_blocked_compliance_phrases() -> None:
@@ -14749,6 +15138,44 @@ def test_build_image_prompt_strips_blocked_compliance_phrases_from_dynamic_copy(
     assert "risk-free" not in lowered
     assert "transparent platform" not in lowered
     assert "transparent fixed-income insights" in lowered
+
+
+def test_build_image_prompt_includes_anti_hallucination_guard_without_source_values() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a LinkedIn static post about labour law compliance updates.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"brand_name": "Jiraaf", "visual_identity": {}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        reference_assets=[],
+        layout_decision={},
+    )
+    text_payload = StructuredTextPayload(
+        headline="Compliance updates for HR teams",
+        body="Show a structured planning visual without fake numbers.",
+        cta="Read more",
+        hashtags=[],
+        metadata={"visual_direction": "Premium policy workflow modules."},
+    )
+
+    prompt = AIOrchestratorService.build_image_prompt(
+        request=request,
+        text_payload=text_payload,
+        creative_decision=CreativeDecisionPayload(asset_strategy={"use_generated_image": True}),
+    )
+
+    assert "Anti-hallucination guard:" in prompt
+    assert "Approved copy guides theme and wording only" in prompt
+    assert "Unsupported specifics must become visual absence" in prompt
+    assert "do not create named organizations, countries, documents, app screens, people" in prompt
+    assert "No source-backed exact values are available for visible facts/data" in prompt
+    assert "do not render numeric values, dates, rankings, percentages, currency amounts, axes, or chart labels" in prompt
 
 
 def test_non_retryable_image_error_detection_matches_provider_option_failures() -> None:
@@ -20402,6 +20829,43 @@ def test_orchestrator_content_semantic_validator_flags_static_top_n_ranking_with
     assert "static_unsupported_exact_claim" in issue_codes
 
 
+def test_orchestrator_content_semantic_validator_flags_static_unsupported_exact_claim() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a static LinkedIn post about labour law compliance updates.",
+        studio_panel={"platform_preset": "linkedin", "format": "static", "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"brand_name": "Jiraaf"},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+    payload = StructuredTextPayload(
+        headline="Labour Laws 2025 compliance shifts",
+        body="Top 3 actions for HR teams to review.",
+        cta="Read more",
+        hashtags=["#Compliance"],
+        metadata={
+            "supporting_line": "Top 3 actions for HR teams.",
+            "proof_points": ["Top 3 compliance actions"],
+            "static_panel_spec": {
+                "panel_goal": "education",
+                "dominant_message": "Labour Laws 2025 compliance shifts",
+                "supporting_lines": ["Top 3 actions for HR teams."],
+                "visual_focus": "Premium 3D compliance document modules.",
+            },
+        },
+    )
+
+    report = AIOrchestratorService._validate_content_semantics(request=request, text_payload=payload)
+    issue_codes = {issue["code"] for issue in report["issues"]}
+
+    assert "static_unsupported_exact_claim" in issue_codes
+
+
 def test_orchestrator_preflight_sanitizes_unverified_static_ranking_values_before_blocking() -> None:
     request = AIOrchestrationRequest(
         tenant_id=uuid4(),
@@ -20508,6 +20972,51 @@ def test_orchestrator_preflight_sanitizes_unverified_infographic_values_before_b
     assert "infographic_unsupported_exact_claim" not in issue_codes
     assert "infographic_unsupported_numeric_data_visual" not in issue_codes
     assert AIOrchestratorService._unresolved_data_surface_issue_codes(report) == set()
+
+
+def test_orchestrator_content_semantic_validator_flags_infographic_unsupported_exact_claim() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create an infographic about labour law compliance updates.",
+        studio_panel={"platform_preset": "linkedin", "format": "infographic", "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"brand_name": "Jiraaf"},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+    payload = StructuredTextPayload(
+        headline="Labour law compliance update",
+        body="A structured HR compliance explainer.",
+        cta="Read more",
+        hashtags=["#Compliance"],
+        metadata={
+            "infographic_section_specs": [
+                {
+                    "section_role": "overview",
+                    "headline": "Labour Laws 2025",
+                    "body": "A compliance update for HR teams.",
+                    "proof_points": ["Top 3 compliance actions"],
+                    "visual_focus": "3D policy document stack.",
+                },
+                {
+                    "section_role": "evidence",
+                    "headline": "What teams should review",
+                    "body": "Policy, payroll, leave, and recordkeeping workflows.",
+                    "proof_points": ["Review policy, payroll, leave, and recordkeeping workflows."],
+                    "visual_focus": "3D checklist modules.",
+                },
+            ],
+        },
+    )
+
+    report = AIOrchestratorService._validate_content_semantics(request=request, text_payload=payload)
+    issue_codes = {issue["code"] for issue in report["issues"]}
+
+    assert "infographic_section_unsupported_exact_claim" in issue_codes
 
 
 def test_orchestrator_does_not_treat_unverified_static_ranking_values_as_generation_failure() -> None:

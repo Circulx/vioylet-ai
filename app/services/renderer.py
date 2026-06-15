@@ -2602,7 +2602,8 @@ class RendererService:
         else:
             offset_x = zone_x + max((zone_width - logo_width) // 2, 0)
         if vertical == "top":
-            offset_y = zone_y
+            top_margin = RendererService._logo_top_margin_px(canvas_height)
+            offset_y = min(max(zone_y, top_margin), zone_y + max(zone_height - logo_height, 0))
         elif vertical == "bottom":
             offset_y = zone_y + max(zone_height - logo_height, 0)
         else:
@@ -2729,6 +2730,26 @@ class RendererService:
         return cleaned
 
     @staticmethod
+    def _logo_size_scale() -> float:
+        return 1.2
+
+    @staticmethod
+    def _scaled_logo_dimension(value: int | float) -> int:
+        return max(int(round(float(value) * RendererService._logo_size_scale())), 1)
+
+    @staticmethod
+    def _logo_horizontal_margin_px(canvas_width: int) -> int:
+        return min(20, max(int(canvas_width) - 1, 0))
+
+    @staticmethod
+    def _logo_top_margin_px(canvas_height: int) -> int:
+        return min(max(int(round(max(int(canvas_height), 1) * 0.035)), 20), max(int(canvas_height) - 1, 0))
+
+    @staticmethod
+    def _logo_bottom_margin_px(canvas_height: int) -> int:
+        return min(20, max(int(canvas_height) - 1, 0))
+
+    @staticmethod
     def _logo_box_profile_for_canvas(width: int, height: int) -> tuple[int, int]:
         aspect_ratio = width / max(height, 1)
         if aspect_ratio >= 1.3:
@@ -2737,7 +2758,10 @@ class RendererService:
         else:
             logo_width = max(int(width * 0.17), 160)
             logo_height = max(int(height * 0.075), 50)
-        return (min(logo_width, width), min(logo_height, height))
+        return (
+            min(RendererService._scaled_logo_dimension(logo_width), width),
+            min(RendererService._scaled_logo_dimension(logo_height), height),
+        )
 
     @staticmethod
     def _scene_graph_box(element: SceneGraphElement, width: int, height: int) -> tuple[int, int, int, int] | None:
@@ -2765,16 +2789,16 @@ class RendererService:
         if geometry.anchor and (geometry.x is None or geometry.y is None):
             if geometry.x is None:
                 if "left" in geometry.anchor:
-                    resolved_x = min(20, max(width - resolved_width, 0))
+                    resolved_x = min(RendererService._logo_horizontal_margin_px(width), max(width - resolved_width, 0))
                 elif "right" in geometry.anchor:
-                    resolved_x = max(width - resolved_width - 20, 0)
+                    resolved_x = max(width - resolved_width - RendererService._logo_horizontal_margin_px(width), 0)
                 else:
                     resolved_x = max((width - resolved_width) // 2, 0)
             if geometry.y is None:
                 if "top" in geometry.anchor:
-                    resolved_y = min(20, max(height - resolved_height, 0))
+                    resolved_y = min(RendererService._logo_top_margin_px(height), max(height - resolved_height, 0))
                 elif "bottom" in geometry.anchor:
-                    resolved_y = max(height - resolved_height - 20, 0)
+                    resolved_y = max(height - resolved_height - RendererService._logo_bottom_margin_px(height), 0)
                 else:
                     resolved_y = max((height - resolved_height) // 2, 0)
         if role == "logo":
@@ -2786,15 +2810,15 @@ class RendererService:
                 horizontal = "left" if center_x <= width * 0.34 else ("right" if center_x >= width * 0.66 else "center")
                 anchor = f"{vertical}-{horizontal}"
             if "left" in anchor:
-                resolved_x = min(20, max(width - resolved_width, 0))
+                resolved_x = min(RendererService._logo_horizontal_margin_px(width), max(width - resolved_width, 0))
             elif "right" in anchor:
-                resolved_x = max(width - resolved_width - 20, 0)
+                resolved_x = max(width - resolved_width - RendererService._logo_horizontal_margin_px(width), 0)
             elif "center" in anchor:
                 resolved_x = max((width - resolved_width) // 2, 0)
             if "top" in anchor:
-                resolved_y = min(20, max(height - resolved_height, 0))
+                resolved_y = min(RendererService._logo_top_margin_px(height), max(height - resolved_height, 0))
             elif "bottom" in anchor:
-                resolved_y = max(height - resolved_height - 20, 0)
+                resolved_y = max(height - resolved_height - RendererService._logo_bottom_margin_px(height), 0)
             elif "middle" in anchor or anchor == "center":
                 resolved_y = max((height - resolved_height) // 2, 0)
         return (

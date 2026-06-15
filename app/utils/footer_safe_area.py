@@ -71,7 +71,7 @@ def calculate_footer_safe_area(
     draw = ImageDraw.Draw(scratch)
 
     minimum_text_strip_height = max(int(height * 0.052), 56)
-    minimum_clear_strip_height = max(minimum_text_strip_height, int(height * 0.085))
+    minimum_clear_strip_height = max(minimum_text_strip_height, int(height * (0.085 * 0.70)))
     horizontal_padding = max(int(width * 0.04), 28)
     max_text_width = max(width - horizontal_padding * 2, 10)
     font_size = max(int(height * 0.0095), 11)

@@ -3331,6 +3331,12 @@ def test_build_ai_logo_fallback_asset_clears_reserved_logo_zone_for_transparent_
 
     assert payload is not None
     assert payload["metadata"]["logo_clearance_zone_applied"] is True
+    collision_guard = payload["metadata"]["logo_collision_guard"]
+    assert collision_guard["selection_strategy"] == "fixed_calculated_size"
+    assert collision_guard["shrink_applied"] is False
+    assert collision_guard["scale"] == 1.0
+    assert collision_guard["visible_logo_size"]["width"] > 0
+    assert collision_guard["target_box"]["width"] >= collision_guard["visible_logo_size"]["width"]
     assert "image" in captured
     left_sample = captured["image"].getpixel((790, 52))[:3]
     right_sample = captured["image"].getpixel((970, 52))[:3]
@@ -3421,14 +3427,17 @@ def test_build_ai_footer_fallback_asset_stamps_exact_legal_footer() -> None:
                     ]
                 }
             },
-            studio_panel={"format": "carousel", "platform_preset": "linkedin", "file_type": "png"},
+            studio_panel={"format": "static", "platform_preset": "linkedin", "file_type": "png"},
         )
     finally:
         content_module.open_image_asset = original_open_image_asset
 
     assert payload is not None
     assert payload["metadata"]["legal_footer_composited_by_service"] is True
-    assert payload["metadata"]["legal_footer_reserved_before_composite"] is True
+    assert payload["metadata"]["legal_footer_reserved_before_composite"] is False
+    assert payload["metadata"]["legal_footer_overlay_mode"] == "overlay_only"
+    assert payload["metadata"]["legal_footer_source_image_resized"] is False
+    assert payload["metadata"]["legal_footer_strip_quietness"]["quiet"] is True
     assert payload["metadata"]["legal_footer_safe_area"]["reserved_height"] == payload["metadata"]["legal_footer_strip_box"]["height"]
     assert payload["metadata"]["legal_footer_text_length"] == len(footer_text)
     assert "image" in captured
@@ -3436,6 +3445,17 @@ def test_build_ai_footer_fallback_asset_stamps_exact_legal_footer() -> None:
 
 
 def test_footer_safe_area_height_is_derived_from_wrapped_text_and_canvas() -> None:
+    long_footer_text = " ".join(
+        [
+            "This compliance note is intentionally longer so it wraps across several lines, "
+            "requires more vertical room, and produces a larger reserved footer-safe area "
+            "without relying on a fixed footer height. "
+            "It includes additional dynamically wrapped language about educational scope, "
+            "risk limitations, source review, eligibility, and user responsibility so the "
+            "footer-safe area grows from measured text instead of a static strip."
+        ]
+        * 3
+    )
     short = calculate_footer_safe_area(
         canvas_width=1080,
         canvas_height=1350,
@@ -3444,35 +3464,23 @@ def test_footer_safe_area_height_is_derived_from_wrapped_text_and_canvas() -> No
     long = calculate_footer_safe_area(
         canvas_width=540,
         canvas_height=1350,
-        footer_text=(
-            "This compliance note is intentionally longer so it wraps across several lines, "
-            "requires more vertical room, and produces a larger reserved footer-safe area "
-            "without relying on a fixed footer height. "
-            "It includes additional dynamically wrapped language about educational scope, "
-            "risk limitations, source review, eligibility, and user responsibility so the "
-            "footer-safe area grows from measured text instead of a static strip."
-        ),
+        footer_text=long_footer_text,
     )
     narrow = calculate_footer_safe_area(
         canvas_width=360,
         canvas_height=1350,
-        footer_text=(
-            "This compliance note is intentionally longer so it wraps across several lines, "
-            "requires more vertical room, and produces a larger reserved footer-safe area "
-            "without relying on a fixed footer height. "
-            "It includes additional dynamically wrapped language about educational scope, "
-            "risk limitations, source review, eligibility, and user responsibility so the "
-            "footer-safe area grows from measured text instead of a static strip."
-        ),
+        footer_text=long_footer_text,
     )
 
     assert short["enabled"] is True
+    assert short["reserved_height"] < int(1350 * 0.085)
+    assert short["reserved_ratio"] <= 0.061
     assert long["reserved_height"] > short["reserved_height"]
     assert narrow["footer_line_count"] >= long["footer_line_count"]
     assert narrow["content_safe_area"]["height"] == narrow["content_canvas_height"]
 
 
-def test_build_ai_footer_fallback_asset_reserves_content_canvas_before_footer() -> None:
+def test_build_ai_footer_fallback_asset_overlays_footer_without_resizing_source_image() -> None:
     service = ContentService(session=None)  # type: ignore[arg-type]
     tenant_id = uuid4()
     brand_space_id = uuid4()
@@ -3567,8 +3575,106 @@ def test_build_ai_footer_fallback_asset_reserves_content_canvas_before_footer() 
     safe_area = payload["metadata"]["legal_footer_safe_area"]
     content_height = int(safe_area["content_canvas_height"])
     assert content_height < 1000
-    assert captured["image"].getpixel((400, max(content_height - 2, 0)))[0] > 150
-    assert captured["image"].getpixel((400, content_height + 2))[0] != 220
+    assert payload["metadata"]["legal_footer_reserved_before_composite"] is False
+    assert payload["metadata"]["legal_footer_overlay_mode"] == "overlay_only"
+    assert payload["metadata"]["legal_footer_source_image_resized"] is False
+    assert captured["image"].size == base.size
+    assert captured["image"].getpixel((400, max(content_height - 2, 0))) == base.getpixel((400, max(content_height - 2, 0)))
+    assert captured["image"].getpixel((400, min(content_height + 2, 999))) != base.getpixel((400, min(content_height + 2, 999)))
+
+
+def test_build_ai_footer_fallback_asset_skips_static_overlay_when_footer_strip_is_busy() -> None:
+    service = ContentService(session=None)  # type: ignore[arg-type]
+    tenant_id = uuid4()
+    brand_space_id = uuid4()
+    final_render_path = f"{tenant_id}/{brand_space_id}/generated/final-render.png"
+    base = Image.new("RGBA", (800, 1000), (245, 250, 255, 255))
+    draw = ImageDraw.Draw(base)
+    for index, y in enumerate(range(920, 990, 9)):
+        fill = (25, 25, 25, 255) if index % 2 == 0 else (245, 164, 24, 255)
+        draw.rectangle((60, y, 740, y + 4), fill=fill)
+    footer_text = "Compliance note that should only be overlaid when the reserved footer strip is quiet."
+    content = ContentVersion(
+        id=uuid4(),
+        tenant_id=tenant_id,
+        brand_space_id=brand_space_id,
+        session_id=uuid4(),
+        created_by=uuid4(),
+        prompt="Create a static post",
+        studio_panel={"format": "static", "platform_preset": "linkedin", "file_type": "png"},
+        generated_payload={},
+        blueprint_payload={},
+        explainability_metadata={},
+    )
+    asset = GeneratedAsset(
+        id=uuid4(),
+        tenant_id=tenant_id,
+        brand_space_id=brand_space_id,
+        content_version_id=uuid4(),
+        asset_role="render_preview",
+        mime_type="image/png",
+        storage_path=final_render_path,
+        width=800,
+        height=1000,
+        metadata_json={"render_source": "ai", "generation_stage": "final_render"},
+    )
+
+    class _Storage:
+        def exists(self, storage_path: str) -> bool:
+            return storage_path == final_render_path
+
+        def absolute_path(self, storage_path: str) -> str:
+            return storage_path
+
+    @contextmanager
+    def _open_image_asset(path: str):
+        if path == final_render_path:
+            yield base.copy()
+            return
+        raise OSError(path)
+
+    captured: dict[str, Image.Image] = {}
+
+    def _store_image(**kwargs):  # type: ignore[no-untyped-def]
+        captured["image"] = kwargs["image"].copy()
+        return {
+            "asset_id": str(uuid4()),
+            "mime_type": "image/png",
+            "storage_path": "generated/exact-footer.png",
+            "width": 800,
+            "height": 1000,
+        }
+
+    service.storage = _Storage()
+    service._store_ai_final_render_image = _store_image  # type: ignore[method-assign]
+
+    import app.services.content as content_module
+
+    original_open_image_asset = content_module.open_image_asset
+    content_module.open_image_asset = _open_image_asset
+
+    try:
+        payload = service._build_ai_footer_fallback_asset(
+            content=content,
+            asset=asset,
+            explainability={
+                "scene_graph": {
+                    "elements": [
+                        {
+                            "element_id": "legal_footer",
+                            "role": "legal",
+                            "text": footer_text,
+                        }
+                    ]
+                }
+            },
+            studio_panel={"format": "static", "platform_preset": "linkedin", "file_type": "png"},
+        )
+    finally:
+        content_module.open_image_asset = original_open_image_asset
+
+    assert payload is None
+    assert captured == {}
 
 
 def test_strip_logo_background_if_safe_removes_dark_matte_edges() -> None:
@@ -3767,10 +3873,11 @@ def test_resolve_ai_logo_box_prefers_top_right_hint_and_minimum_size() -> None:
         asset=asset,
     )
 
-    assert box[0] >= 840
+    assert box[0] >= 780
+    assert box[1] >= 36
     assert box[1] <= 60
-    assert box[2] >= 200
-    assert box[3] >= 90
+    assert box[2] >= 258
+    assert box[3] >= 108
 
 
 def test_static_infographic_logo_profiles_are_less_dominant_than_carousel() -> None:
@@ -3831,7 +3938,7 @@ def test_trim_transparent_logo_margins_crops_opaque_logo_canvas_to_visible_mark(
     assert trimmed.getchannel("A").getbbox() == (0, 0, 1001, 292)
 
 
-def test_logo_collision_guard_shrinks_top_logo_above_title_band() -> None:
+def test_logo_collision_guard_moves_before_shrinking_near_title_band() -> None:
     base = Image.new("RGBA", (1024, 1536), (255, 255, 255, 255))
     draw = ImageDraw.Draw(base)
     draw.rectangle((76, 61, 924, 258), fill=(0, 57, 117, 255))
@@ -3876,10 +3983,11 @@ def test_logo_collision_guard_shrinks_top_logo_above_title_band() -> None:
 
     safe_box = result["safe_box"]
     footprint = result["footprint"]
-    assert result["anchor"] == "top-right"
-    assert result["scale"] < 1.0
-    assert footprint[1] + footprint[3] <= 61
-    assert safe_box[1] + safe_box[3] <= 61
+    assert result["anchor"] != "top-right"
+    assert result["scale"] == 1.0
+    assert result["shrink_applied"] is False
+    assert ContentService._rect_overlap_area(safe_box, (76, 61, 848, 197)) == 0
+    assert footprint[2] > 0
 
 
 def test_logo_collision_guard_can_switch_to_clear_allowed_position() -> None:
@@ -3917,6 +4025,8 @@ def test_logo_collision_guard_can_switch_to_clear_allowed_position() -> None:
     )
 
     assert result["anchor"] != "top-right"
+    assert result["scale"] == 1.0
+    assert result["shrink_applied"] is False
     assert result["image_score"] < 0.1
 
 
@@ -3961,7 +4071,7 @@ def test_logo_collision_guard_avoids_near_top_title_bar_contact() -> None:
     assert ContentService._rect_overlap_area(result["safe_box"], title_bar) == 0
 
 
-def test_logo_collision_guard_can_override_allowed_position_for_hard_collision() -> None:
+def test_logo_collision_guard_keeps_explicit_top_default_when_all_positions_are_allowed() -> None:
     base = Image.new("RGBA", (1024, 1024), (255, 255, 255, 255))
     draw = ImageDraw.Draw(base)
     draw.rectangle((760, 0, 1024, 160), fill=(0, 57, 117, 255))
@@ -3980,7 +4090,15 @@ def test_logo_collision_guard_can_override_allowed_position_for_hard_collision()
             "brand_context_snapshot": {
                 "visual_identity": {
                     "logo_placement": {
-                        "allowed_positions": ["top-right"],
+                        "allowed_positions": [
+                            "top-right",
+                            "top-left",
+                            "bottom-right",
+                            "bottom-left",
+                            "top-center",
+                            "bottom-center",
+                            "center",
+                        ],
                         "default_position": "top-right",
                     }
                 }
@@ -4004,9 +4122,9 @@ def test_logo_collision_guard_can_override_allowed_position_for_hard_collision()
         preferred_hint="top-right",
     )
 
-    assert result["policy_override"] is True
-    assert result["anchor"] != "top-right"
-    assert result["image_score"] < 0.1
+    assert result["anchor"] == "top-right"
+    assert result["policy_override"] is False
+    assert result["default_top_position_locked"] is True
 
 
 def test_logo_collision_guard_reserves_legal_footer_band() -> None:
@@ -4057,7 +4175,7 @@ def test_logo_collision_guard_reserves_legal_footer_band() -> None:
     assert ContentService._rect_overlap_area(result["safe_box"], footer_band) == 0
 
 
-def test_normalize_ai_logo_box_snaps_viable_template_box_to_20px_edge() -> None:
+def test_normalize_ai_logo_box_snaps_viable_template_box_to_dynamic_top_gap() -> None:
     content = ContentVersion(
         tenant_id=uuid4(),
         brand_space_id=uuid4(),
@@ -4080,12 +4198,7 @@ def test_normalize_ai_logo_box_snaps_viable_template_box_to_20px_edge() -> None:
         explainability={},
     )
 
-    expected_width, expected_height = ContentService._logo_box_profile_for_format(
-        canvas_width=1024,
-        canvas_height=1536,
-        format_name="static",
-    )
-    assert box == (20, 20, expected_width, expected_height)
+    assert box == (20, 54, 209, 92)
 
 
 def test_resolve_ai_logo_box_uses_reference_creative_logo_ratio_for_top_right() -> None:
@@ -4129,10 +4242,10 @@ def test_resolve_ai_logo_box_uses_reference_creative_logo_ratio_for_top_right() 
         asset=asset,
     )
 
-    assert box[2] >= 140
-    assert box[3] >= 150
+    assert box[2] >= 190
+    assert box[3] >= 130
     assert box[0] >= 730
-    assert box[1] <= 40
+    assert 45 <= box[1] <= 55
 
 
 def test_expanded_logo_clearance_box_is_more_aggressive_for_carousel_top_right() -> None:
@@ -4277,10 +4390,7 @@ def test_resolve_ai_logo_box_uses_blueprint_logo_zone_id_when_role_is_missing() 
         asset=asset,
     )
 
-    assert box[0] == 800
-    assert box[1] == 20
-    assert box[2] == 216
-    assert box[3] == 91
+    assert box == (840, 38, 220, 97)
 
 
 def test_resolve_ai_logo_box_uses_synthesized_blueprint_logo_zone_when_it_is_viable() -> None:
@@ -4328,12 +4438,7 @@ def test_resolve_ai_logo_box_uses_synthesized_blueprint_logo_zone_when_it_is_via
         asset=asset,
     )
 
-    profile_width, profile_height = ContentService._logo_box_profile_for_format(
-        canvas_width=1080,
-        canvas_height=1080,
-        format_name="static",
-    )
-    assert box == (20, 20, min(160, profile_width), min(60, profile_height))
+    assert box == (20, 38, 220, 97)
 
 
 def test_resolve_ai_logo_box_prefers_finalized_scene_graph_logo_over_stale_blueprint_zone() -> None:
@@ -4984,19 +5089,12 @@ def test_build_ai_logo_fallback_asset_prefers_light_logo_variant_on_dark_backgro
 
     assert payload is not None
     assert payload["metadata"]["logo_asset_path"] == light_logo_path
+    footprint = payload["metadata"]["logo_collision_guard"]["footprint"]
+    sample_x = footprint["x"] + max(footprint["width"] // 2, 0)
+    sample_y = footprint["y"] + max(footprint["height"] // 2, 0)
     composited_output = root / payload["storage_path"]
     with Image.open(composited_output) as rendered:
-        region_left = int(rendered.width * 0.72)
-        region_top = 20
-        region_right = rendered.width - 20
-        region_bottom = int(rendered.height * 0.18)
-        assert any(
-            rendered.getpixel((x, y))[0] >= 220
-            and rendered.getpixel((x, y))[1] >= 220
-            and rendered.getpixel((x, y))[2] >= 220
-            for x in range(region_left, region_right)
-            for y in range(region_top, region_bottom)
-        )
+        assert rendered.getpixel((sample_x, sample_y))[0] >= 220
 
     if root.exists():
         for child in sorted(root.rglob("*"), reverse=True):
@@ -5085,21 +5183,19 @@ def test_build_ai_logo_fallback_asset_clears_reserved_logo_zone_before_overlay()
 
     assert payload is not None
     assert payload["metadata"]["logo_clearance_zone_applied"] is True
+    collision_guard = payload["metadata"]["logo_collision_guard"]
+    assert collision_guard["selection_strategy"] == "fixed_calculated_size"
+    assert collision_guard["scale"] == 1.0
+    assert collision_guard["shrink_applied"] is False
+    footprint = collision_guard["footprint"]
+    sample_x = footprint["x"] + max(footprint["width"] // 2, 0)
+    sample_y = footprint["y"] + max(footprint["height"] // 2, 0)
     composited_output = root / payload["storage_path"]
     with Image.open(composited_output) as rendered:
-        cleared_red, cleared_green, cleared_blue, _ = rendered.getpixel((1050, 70))
-        region_left = int(rendered.width * 0.72)
-        region_top = 20
-        region_right = rendered.width - 20
-        region_bottom = int(rendered.height * 0.18)
-        assert min(cleared_red, cleared_green, cleared_blue) >= 190
-        assert any(
-            rendered.getpixel((x, y))[0] >= 220
-            and rendered.getpixel((x, y))[1] >= 120
-            and rendered.getpixel((x, y))[2] <= 80
-            for x in range(region_left, region_right)
-            for y in range(region_top, region_bottom)
-        )
+        logo_red, logo_green, logo_blue, _ = rendered.getpixel((sample_x, sample_y))
+    assert logo_red >= 220
+    assert logo_green >= 120
+    assert logo_blue <= 80
 
     if root.exists():
         for child in sorted(root.rglob("*"), reverse=True):

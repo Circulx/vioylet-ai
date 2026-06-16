@@ -21604,7 +21604,19 @@ class AIOrchestratorService:
     @classmethod
     def _request_uses_pinned_template(cls, request: AIOrchestrationRequest) -> bool:
         studio_panel = request.studio_panel if isinstance(request.studio_panel, dict) else {}
-        return bool(str(studio_panel.get("pinned_template_id") or "").strip())
+        if str(studio_panel.get("pinned_template_id") or "").strip():
+            return True
+        layout_decision = request.layout_decision if isinstance(request.layout_decision, dict) else {}
+        if layout_decision.get("primary_adaptation_matches_selected_template") is True:
+            return bool(
+                str(
+                    layout_decision.get("template_id")
+                    or layout_decision.get("selected_template_id")
+                    or layout_decision.get("primary_adaptation_template_id")
+                    or ""
+                ).strip()
+            )
+        return False
 
     @classmethod
     def _request_uses_auto_template_selection(cls, request: AIOrchestrationRequest) -> bool:

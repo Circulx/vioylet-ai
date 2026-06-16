@@ -100,6 +100,60 @@ def test_orchestrator_selects_strategy_from_request_template_signals() -> None:
     assert AIOrchestratorService._select_generation_strategy_for_request(request) == GenerationStrategy.TEMPLATE_ADAPTANCE
 
 
+def test_orchestrator_treats_selected_carousel_template_as_pinned() -> None:
+    template_id = uuid4()
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a carousel",
+        studio_panel={
+            "format": "carousel",
+            "platform_preset": "linkedin",
+            "file_type": "pdf",
+        },
+        resolved_brand_context={},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        reference_assets=[{"asset_role": "reference_creative"}],
+        layout_decision={
+            "template_id": str(template_id),
+            "primary_adaptation_template_id": str(template_id),
+            "primary_adaptation_matches_selected_template": True,
+        },
+    )
+
+    assert AIOrchestratorService._select_generation_strategy_for_request(request) == GenerationStrategy.TEMPLATE_ADAPTANCE
+
+
+def test_orchestrator_keeps_auto_carousel_template_on_content_intelligence() -> None:
+    template_id = uuid4()
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a carousel",
+        studio_panel={
+            "format": "carousel",
+            "platform_preset": "linkedin",
+            "file_type": "pdf",
+        },
+        resolved_brand_context={},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        reference_assets=[{"asset_role": "reference_creative"}],
+        layout_decision={
+            "template_id": str(template_id),
+            "primary_adaptation_template_id": str(template_id),
+            "primary_adaptation_matches_selected_template": False,
+        },
+    )
+
+    assert AIOrchestratorService._select_generation_strategy_for_request(request) == GenerationStrategy.CONTENT_INTELLIGENCE
+
+
 def test_orchestrator_uses_fallback_when_hashtags_invalid() -> None:
     fallback = {
         "headline": "Fallback headline",

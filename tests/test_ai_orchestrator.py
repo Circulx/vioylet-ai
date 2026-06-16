@@ -10,7 +10,7 @@ import pytest
 from PIL import Image, ImageDraw
 
 from app.ai.contracts import AIOrchestrationRequest, CreativeDecisionPayload, GenerationSceneGraph, MessageStrategyPayload, SceneGraphValidationIssue, SceneGraphValidationReport, StructuredTextPayload
-from app.ai.orchestrator import AIOrchestratorService
+from app.ai.orchestrator import AIOrchestratorService, GenerationStrategy, select_generation_engine
 from app.core.config import get_settings
 from app.core.exceptions import GenerationFailureError, LifecycleError
 from app.services.generation_trace import GenerationTraceService
@@ -47,6 +47,57 @@ def test_orchestrator_normalizes_hashtag_string_to_list() -> None:
         "#TrustInTech",
         "#InvestmentConfidence",
     ]
+
+
+@pytest.mark.parametrize(
+    ("format_type", "pin", "auto", "has_sample_creative", "has_template", "expected"),
+    [
+        ("carousel", False, False, False, False, GenerationStrategy.WITHOUT_REFERENCE),
+        ("static", False, True, True, True, GenerationStrategy.DEV1_HARI),
+        ("infographic", False, True, True, True, GenerationStrategy.DEV1_HARI),
+        ("carousel", True, False, True, True, GenerationStrategy.TEMPLATE_ADAPTANCE),
+        ("carousel", False, True, True, True, GenerationStrategy.CONTENT_INTELLIGENCE),
+        ("poster", False, False, True, True, GenerationStrategy.MAIN_AI),
+    ],
+)
+def test_select_generation_engine_routes_expected_strategy(
+    format_type: str,
+    pin: bool,
+    auto: bool,
+    has_sample_creative: bool,
+    has_template: bool,
+    expected: GenerationStrategy,
+) -> None:
+    assert select_generation_engine(
+        format_type,
+        pin,
+        auto,
+        has_sample_creative,
+        has_template,
+    ) == expected
+
+
+def test_orchestrator_selects_strategy_from_request_template_signals() -> None:
+    template_id = uuid4()
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a carousel",
+        studio_panel={
+            "format": "carousel",
+            "platform_preset": "linkedin",
+            "file_type": "pdf",
+            "pinned_template_id": str(template_id),
+        },
+        resolved_brand_context={},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        reference_assets=[{"asset_role": "reference_creative"}],
+    )
+
+    assert AIOrchestratorService._select_generation_strategy_for_request(request) == GenerationStrategy.TEMPLATE_ADAPTANCE
 
 
 def test_orchestrator_uses_fallback_when_hashtags_invalid() -> None:

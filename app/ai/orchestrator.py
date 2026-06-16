@@ -5,6 +5,7 @@ import base64
 import json
 import re
 from copy import deepcopy
+from enum import Enum
 from io import BytesIO
 from time import perf_counter
 from typing import Any
@@ -48,6 +49,42 @@ from app.services.research_editorial_planning import ResearchEditorialPlanningSe
 from app.utils.palette_roles import derive_palette_roles, hex_to_rgb, is_soft_neutral_color, normalize_hex
 
 logger = logging.getLogger(__name__)
+
+
+class GenerationStrategy(Enum):
+    MAIN_AI = "main_ai"
+    DEV1_HARI = "dev1_hari"
+    TEMPLATE_ADAPTANCE = "template_adaptance"
+    CONTENT_INTELLIGENCE = "content_intelligence"
+    WITHOUT_REFERENCE = "without_reference"
+
+
+def select_generation_engine(
+    format_type: Any,
+    pin: Any,
+    auto: Any,
+    has_sample_creative: Any,
+    has_template: Any,
+) -> GenerationStrategy:
+    normalized_format = str(format_type or "").strip().casefold()
+    is_pinned = bool(pin)
+    is_auto = bool(auto)
+    sample_available = bool(has_sample_creative)
+    template_available = bool(has_template)
+
+    if not sample_available and not template_available:
+        return GenerationStrategy.WITHOUT_REFERENCE
+
+    if normalized_format in {"static", "infographic"}:
+        return GenerationStrategy.DEV1_HARI
+
+    if normalized_format == "carousel":
+        if is_pinned:
+            return GenerationStrategy.TEMPLATE_ADAPTANCE
+        if is_auto and not is_pinned:
+            return GenerationStrategy.CONTENT_INTELLIGENCE
+
+    return GenerationStrategy.MAIN_AI
 
 
 class AIOrchestratorService:
@@ -21504,7 +21541,125 @@ class AIOrchestratorService:
             )
         return text_payload, report, attempts
 
+    @classmethod
+    def _request_has_sample_creative(cls, request: AIOrchestrationRequest) -> bool:
+        reference_sources = [
+            *(request.reference_assets or []),
+            *(request.asset_catalog or []),
+        ]
+        sample_markers = {
+            "reference_creative",
+            "reference_sample",
+            "uploaded_sample",
+            "sample_authority",
+            "sample_blueprint",
+            "template_preview",
+        }
+        for asset in reference_sources:
+            if not isinstance(asset, dict):
+                continue
+            tags = asset.get("tags") if isinstance(asset.get("tags"), list) else []
+            marker_values = [
+                asset.get("asset_role"),
+                asset.get("role"),
+                asset.get("kind"),
+                asset.get("origin_category"),
+                asset.get("source_type"),
+                asset.get("sample_usage"),
+                *tags,
+            ]
+            metadata = asset.get("metadata") if isinstance(asset.get("metadata"), dict) else {}
+            normalized_markers = {
+                str(value or "").strip().casefold()
+                for value in [*marker_values, metadata.get("asset_role"), metadata.get("origin_category")]
+                if str(value or "").strip()
+            }
+            if normalized_markers.intersection(sample_markers):
+                return True
+            if any(marker in value for marker in sample_markers for value in normalized_markers):
+                return True
+            if isinstance(asset.get("sample_page_blueprint"), dict) and asset.get("sample_page_blueprint"):
+                return True
+        template_context = request.template_context if isinstance(request.template_context, dict) else {}
+        sequence_pack = template_context.get("sequence_pack") if isinstance(template_context.get("sequence_pack"), dict) else {}
+        return any(isinstance(slide, dict) and slide for slide in sequence_pack.get("slides", []) or [])
+
+    @classmethod
+    def _request_has_template(cls, request: AIOrchestrationRequest) -> bool:
+        studio_panel = request.studio_panel if isinstance(request.studio_panel, dict) else {}
+        layout_decision = request.layout_decision if isinstance(request.layout_decision, dict) else {}
+        template_context = request.template_context if isinstance(request.template_context, dict) else {}
+        sequence_pack = template_context.get("sequence_pack") if isinstance(template_context.get("sequence_pack"), dict) else {}
+        candidate_ids = [
+            studio_panel.get("pinned_template_id"),
+            layout_decision.get("template_id"),
+            layout_decision.get("selected_template_id"),
+            layout_decision.get("primary_adaptation_template_id"),
+            sequence_pack.get("selected_template_id"),
+        ]
+        if any(str(value or "").strip() for value in candidate_ids):
+            return True
+        return bool(request.template_candidates)
+
+    @classmethod
+    def _request_uses_pinned_template(cls, request: AIOrchestrationRequest) -> bool:
+        studio_panel = request.studio_panel if isinstance(request.studio_panel, dict) else {}
+        return bool(str(studio_panel.get("pinned_template_id") or "").strip())
+
+    @classmethod
+    def _request_uses_auto_template_selection(cls, request: AIOrchestrationRequest) -> bool:
+        if cls._request_uses_pinned_template(request):
+            return False
+        return cls._request_has_template(request)
+
+    @classmethod
+    def _select_generation_strategy_for_request(cls, request: AIOrchestrationRequest) -> GenerationStrategy:
+        studio_panel = request.studio_panel if isinstance(request.studio_panel, dict) else {}
+        return select_generation_engine(
+            studio_panel.get("format"),
+            cls._request_uses_pinned_template(request),
+            cls._request_uses_auto_template_selection(request),
+            cls._request_has_sample_creative(request),
+            cls._request_has_template(request),
+        )
+
     def generate(self, request: AIOrchestrationRequest) -> AIOrchestrationResponse:
+        strategy = self._select_generation_strategy_for_request(request)
+        self._trace_payload(
+            request.generation_trace_id,
+            self.trace,
+            "generation_strategy_router",
+            {
+                "strategy": strategy.value,
+                "format": (request.studio_panel or {}).get("format") if isinstance(request.studio_panel, dict) else None,
+                "pin": self._request_uses_pinned_template(request),
+                "auto": self._request_uses_auto_template_selection(request),
+                "has_sample_creative": self._request_has_sample_creative(request),
+                "has_template": self._request_has_template(request),
+            },
+        )
+        return self._dispatch_generation_strategy(strategy, request)
+
+    def _dispatch_generation_strategy(
+        self,
+        strategy: GenerationStrategy,
+        request: AIOrchestrationRequest,
+    ) -> AIOrchestrationResponse:
+        if strategy == GenerationStrategy.DEV1_HARI:
+            # TODO: integrate dev1-hari static logic
+            return self._generate_main_ai(request)
+        if strategy == GenerationStrategy.TEMPLATE_ADAPTANCE:
+            # TODO: integrate template-adaptance carousel
+            return self._generate_main_ai(request)
+        if strategy == GenerationStrategy.CONTENT_INTELLIGENCE:
+            # TODO: integrate content-intelligence carousel
+            return self._generate_main_ai(request)
+        if strategy == GenerationStrategy.WITHOUT_REFERENCE:
+            # TODO: integrate without-reference fallback
+            return self._generate_main_ai(request)
+        return self._generate_main_ai(request)
+
+    def _generate_main_ai(self, request: AIOrchestrationRequest) -> AIOrchestrationResponse:
         started_at = perf_counter()
         latency_ms: dict[str, float] = {}
         trace_id = request.generation_trace_id

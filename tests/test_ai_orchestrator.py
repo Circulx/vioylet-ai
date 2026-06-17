@@ -326,6 +326,171 @@ def test_pinned_carousel_does_not_use_content_intelligence_enrichment(monkeypatc
     assert captured["request"].content_plan == {"format_family": "carousel"}
 
 
+def test_content_intelligence_slide_specs_gain_story_and_visual_contracts() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create an auto carousel about liquidity risk.",
+        studio_panel={"format": "carousel", "platform_preset": "linkedin", "file_type": "pdf"},
+        resolved_brand_context={},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        reference_assets=[{"asset_role": "reference_creative"}],
+        content_plan={
+            "format_family": "carousel",
+            "_content_intelligence_enabled": True,
+            "carousel_slide_contracts": [
+                {
+                    "role": "hook",
+                    "purpose": "Open with liquidity risk as the overlooked issue.",
+                    "section_focus": "liquidity risk",
+                    "representation_hint": "hero_metaphor",
+                },
+                {
+                    "role": "structure",
+                    "purpose": "Explain how lock-ins change exit flexibility.",
+                    "section_focus": "lock-in mechanics",
+                    "representation_hint": "process_path",
+                },
+                {
+                    "role": "takeaway",
+                    "purpose": "Close with a decision lens.",
+                    "section_focus": "decision lens",
+                    "representation_hint": "closing_question",
+                },
+            ],
+        },
+    )
+    payload = StructuredTextPayload(
+        headline="Liquidity Risk",
+        body="Understand lock-ins before investing. Exit flexibility changes the decision.",
+        cta="Compare carefully",
+        hashtags=[],
+        metadata={
+            "carousel_slide_specs": [
+                {"role": "hook", "headline": "Liquidity Risk", "supporting_line": "The overlooked issue.", "cta": ""},
+                {"role": "detail", "headline": "Lock-ins Matter", "supporting_line": "They change exit flexibility.", "cta": ""},
+                {"role": "closing", "headline": "Decision Lens", "supporting_line": "Compare carefully.", "cta": "Compare carefully"},
+            ]
+        },
+    )
+
+    slides = AIOrchestratorService._build_carousel_slide_specs(payload, request=request)
+
+    first_metadata = slides[0]["metadata"]
+    second_metadata = slides[1]["metadata"]
+    assert first_metadata["content_intelligence_enabled"] is True
+    assert first_metadata["carousel_story_contract"]["role"] == "hook"
+    assert first_metadata["representation_hint"] == "hero_metaphor"
+    assert first_metadata["representation_plan"]["selected_representation"] == "hero_metaphor"
+    assert first_metadata["visual_execution_contract"]["selected_representation"] == "hero_metaphor"
+    assert first_metadata["render_execution_contract"]["visual_modules"]["representation"] == "hero_metaphor"
+    assert first_metadata["sequence_label_contract"]["expected_number"] == 1
+    assert first_metadata["story_pacing_resolution"]["evidence_counts"]["planner_contract_slide_count"] == 3
+    assert "sequence_coherence_report" in first_metadata
+    assert second_metadata["representation_hint"] == "process_path"
+
+
+def test_pinned_carousel_slide_specs_ignore_content_intelligence_contracts() -> None:
+    template_id = uuid4()
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a pinned carousel about liquidity risk.",
+        studio_panel={
+            "format": "carousel",
+            "platform_preset": "linkedin",
+            "file_type": "pdf",
+            "pinned_template_id": str(template_id),
+        },
+        resolved_brand_context={},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        reference_assets=[{"asset_role": "reference_creative"}],
+        content_plan={
+            "format_family": "carousel",
+            "carousel_slide_contracts": [
+                {"role": "hook", "purpose": "Should not attach.", "representation_hint": "hero_metaphor"}
+            ],
+        },
+    )
+    payload = StructuredTextPayload(
+        headline="Liquidity Risk",
+        body="Understand lock-ins before investing.",
+        cta="Compare carefully",
+        hashtags=[],
+        metadata={
+            "carousel_slide_specs": [
+                {"role": "hook", "headline": "Liquidity Risk", "supporting_line": "The overlooked issue.", "cta": ""},
+                {"role": "detail", "headline": "Lock-ins Matter", "supporting_line": "They change exit flexibility.", "cta": ""},
+                {"role": "closing", "headline": "Decision Lens", "supporting_line": "Compare carefully.", "cta": "Compare carefully"},
+            ]
+        },
+    )
+
+    slides = AIOrchestratorService._build_carousel_slide_specs(payload, request=request)
+
+    metadata = slides[0]["metadata"]
+    assert "content_intelligence_enabled" not in metadata
+    assert "carousel_story_contract" not in metadata
+    assert "representation_plan" not in metadata
+    assert "visual_execution_contract" not in metadata
+    assert "render_execution_contract" not in metadata
+
+
+def test_static_and_infographic_dispatch_do_not_enable_content_intelligence(monkeypatch) -> None:
+    template_id = uuid4()
+    captured: list[AIOrchestrationRequest] = []
+
+    def fake_generate_main_ai(self: AIOrchestratorService, request: AIOrchestrationRequest):  # type: ignore[no-untyped-def]
+        captured.append(request)
+        return None
+
+    monkeypatch.setattr(AIOrchestratorService, "_generate_main_ai", fake_generate_main_ai)
+    service = AIOrchestratorService()
+    base = {
+        "tenant_id": uuid4(),
+        "brand_space_id": uuid4(),
+        "user_id": uuid4(),
+        "prompt": "Create a visual.",
+        "resolved_brand_context": {},
+        "persona_context": {},
+        "objective_context": {},
+        "retrieved_knowledge": {},
+        "reference_assets": [{"asset_role": "reference_creative"}],
+        "layout_decision": {
+            "template_id": str(template_id),
+            "primary_adaptation_template_id": str(template_id),
+            "primary_adaptation_matches_selected_template": False,
+        },
+        "content_plan": {
+            "semantic_carousel_plan": {"family": "macro_analysis"},
+            "carousel_slide_contracts": [{"role": "hook"}],
+        },
+    }
+
+    static_request = AIOrchestrationRequest(
+        **base,
+        studio_panel={"format": "static", "platform_preset": "linkedin", "file_type": "png"},
+    )
+    infographic_request = AIOrchestrationRequest(
+        **base,
+        studio_panel={"format": "infographic", "platform_preset": "linkedin", "file_type": "png"},
+    )
+
+    assert service._dispatch_generation_strategy(GenerationStrategy.DEV1_HARI, static_request) is None
+    assert service._dispatch_generation_strategy(GenerationStrategy.DEV1_HARI, infographic_request) is None
+
+    assert captured[0].content_plan == static_request.content_plan
+    assert captured[1].content_plan == infographic_request.content_plan
+    assert "_content_intelligence_enabled" not in captured[0].content_plan
+    assert "_content_intelligence_enabled" not in captured[1].content_plan
+
+
 def test_orchestrator_uses_fallback_when_hashtags_invalid() -> None:
     fallback = {
         "headline": "Fallback headline",

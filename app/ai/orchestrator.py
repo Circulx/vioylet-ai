@@ -21722,6 +21722,7 @@ class AIOrchestratorService:
                 content_plan[key] = value
         for key, value in enriched_plan.items():
             content_plan.setdefault(key, value)
+        content_plan["_content_intelligence_enabled"] = True
         return self._generate_main_ai(request.model_copy(update={"content_plan": content_plan}))
 
     def _generate_main_ai(self, request: AIOrchestrationRequest) -> AIOrchestrationResponse:
@@ -28776,14 +28777,482 @@ class AIOrchestratorService:
         return slides
 
     @classmethod
+    def _carousel_semantic_slide_contracts(
+        cls,
+        *,
+        compiled_context: dict[str, Any] | None,
+        request: AIOrchestrationRequest | None = None,
+        slide_count: int = 0,
+    ) -> list[dict[str, Any]]:
+        content_plan = (
+            compiled_context.get("content_plan")
+            if isinstance(compiled_context, dict) and isinstance(compiled_context.get("content_plan"), dict)
+            else request.content_plan
+            if request is not None and isinstance(request.content_plan, dict)
+            else {}
+        )
+        research_brief = (
+            compiled_context.get("research_editorial_brief")
+            if isinstance(compiled_context, dict) and isinstance(compiled_context.get("research_editorial_brief"), dict)
+            else request.research_editorial_brief
+            if request is not None and isinstance(request.research_editorial_brief, dict)
+            else {}
+        )
+        raw_contracts = content_plan.get("carousel_slide_contracts") if isinstance(content_plan, dict) else []
+        if not raw_contracts:
+            semantic_plan = research_brief.get("semantic_carousel_plan") if isinstance(research_brief, dict) and isinstance(research_brief.get("semantic_carousel_plan"), dict) else {}
+            raw_contracts = semantic_plan.get("story_map") if isinstance(semantic_plan.get("story_map"), list) else []
+        contracts: list[dict[str, Any]] = []
+        for item in (raw_contracts or [])[: max(slide_count or 0, 12)]:
+            if not isinstance(item, dict):
+                continue
+            contract = {
+                "slide_number": len(contracts) + 1,
+                "role": cls._normalize_metadata_text(item.get("role") or item.get("story_role"), limit=48),
+                "purpose": cls._normalize_metadata_text(item.get("purpose") or item.get("headline_intent"), limit=220),
+                "notes": cls._normalize_metadata_text(item.get("notes"), limit=180),
+                "section_focus": cls._normalize_metadata_text(item.get("section_focus"), limit=140),
+                "representation_hint": cls._normalize_metadata_text(
+                    item.get("representation_hint") or item.get("representation_intent"),
+                    limit=48,
+                ).casefold().replace(" ", "_"),
+            }
+            if any(value for key, value in contract.items() if key != "slide_number"):
+                contracts.append(contract)
+        return contracts[:slide_count] if slide_count and contracts else contracts
+
+    @classmethod
+    def _carousel_required_concepts_from_contract(cls, contract: dict[str, Any]) -> list[str]:
+        concepts: list[str] = []
+        for value in (contract.get("section_focus"), contract.get("purpose"), contract.get("notes")):
+            text = cls._normalize_metadata_text(value, limit=140)
+            if text and not cls._looks_like_carousel_instruction_text(text):
+                concepts.append(text)
+        return cls._dedupe_metadata_collection(concepts, blocked_texts=[], limit=6)
+
+    @classmethod
+    def _slide_preserved_required_concepts(
+        cls,
+        slide: dict[str, Any],
+        required_concepts: list[str],
+    ) -> tuple[list[str], list[str]]:
+        visible_text = " ".join(
+            [
+                cls._normalize_metadata_text(slide.get("headline"), limit=140),
+                cls._normalize_metadata_text(slide.get("supporting_line"), limit=220),
+                cls._normalize_metadata_text(slide.get("body"), limit=320),
+                *cls._normalize_metadata_list(slide.get("body_points"), limit=8),
+                *cls._normalize_metadata_list(slide.get("proof_points"), limit=8),
+                *cls._normalize_metadata_list(slide.get("stat_highlights"), limit=6),
+            ]
+        )
+        preserved: list[str] = []
+        dropped: list[str] = []
+        for concept in required_concepts:
+            if cls._carousel_texts_semantically_overlap(visible_text, concept):
+                preserved.append(concept)
+            else:
+                dropped.append(concept)
+        return preserved, dropped
+
+    @classmethod
+    def _attach_carousel_story_contracts(
+        cls,
+        slides: list[dict[str, Any]],
+        *,
+        story_contracts: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if not story_contracts:
+            return [dict(slide) for slide in slides if isinstance(slide, dict)]
+        attached: list[dict[str, Any]] = []
+        for index, slide in enumerate(slides, start=1):
+            if not isinstance(slide, dict):
+                continue
+            slide_copy = dict(slide)
+            metadata = dict(slide_copy.get("metadata") if isinstance(slide_copy.get("metadata"), dict) else {})
+            contract = story_contracts[index - 1] if index - 1 < len(story_contracts) else {}
+            if contract:
+                role = cls._normalize_metadata_text(contract.get("role"), limit=48)
+                representation_hint = cls._normalize_metadata_text(contract.get("representation_hint"), limit=48)
+                required_concepts = cls._carousel_required_concepts_from_contract(contract)
+                preserved, dropped = cls._slide_preserved_required_concepts(slide_copy, required_concepts)
+                if role:
+                    metadata["story_role"] = metadata.get("story_role") or role
+                    metadata["planner_story_role"] = role
+                if representation_hint:
+                    metadata["representation_hint"] = metadata.get("representation_hint") or representation_hint
+                    metadata["planner_representation_hint"] = representation_hint
+                    metadata["semantic_representation_authority"] = True
+                metadata["carousel_story_contract"] = contract
+                metadata["source_planner_slide_id"] = f"planner_slide_{index}"
+                metadata["required_concepts"] = required_concepts
+                metadata["preserved_required_concepts"] = preserved
+                metadata["dropped_required_concepts"] = dropped
+                metadata["semantic_lineage"] = {
+                    "source_planner_slide_id": metadata["source_planner_slide_id"],
+                    "preserved_required_concepts": preserved,
+                    "dropped_required_concepts": dropped,
+                    "semantic_delta_reason": "no_required_concept_loss" if not dropped else "required_concepts_missing_from_visible_copy",
+                }
+            slide_copy["metadata"] = metadata
+            attached.append(slide_copy)
+        return attached
+
+    @classmethod
+    def _repair_carousel_story_contract_concept_gaps(cls, slides: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        repaired: list[dict[str, Any]] = []
+        for slide in slides:
+            if not isinstance(slide, dict):
+                continue
+            slide_copy = dict(slide)
+            metadata = dict(slide_copy.get("metadata") if isinstance(slide_copy.get("metadata"), dict) else {})
+            dropped = cls._normalize_metadata_list(metadata.get("dropped_required_concepts"), limit=6)
+            if dropped:
+                body_points = cls._normalize_metadata_list(slide_copy.get("body_points"), limit=8)
+                added: list[str] = []
+                for concept in dropped:
+                    if any(cls._carousel_texts_semantically_overlap(concept, existing) for existing in body_points):
+                        continue
+                    body_points.append(concept)
+                    added.append(concept)
+                    if len(body_points) >= 8:
+                        break
+                if added:
+                    slide_copy["body_points"] = body_points
+                    metadata["content_intelligence_repair_applied"] = True
+                    metadata["content_intelligence_repair_added_concepts"] = added
+            slide_copy["metadata"] = metadata
+            repaired.append(slide_copy)
+        return repaired
+
+    @classmethod
+    def _restore_planner_intent_in_carousel_slides(cls, slides: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        restored: list[dict[str, Any]] = []
+        for slide in slides:
+            if not isinstance(slide, dict):
+                continue
+            slide_copy = dict(slide)
+            metadata = dict(slide_copy.get("metadata") if isinstance(slide_copy.get("metadata"), dict) else {})
+            contract = metadata.get("carousel_story_contract") if isinstance(metadata.get("carousel_story_contract"), dict) else {}
+            purpose = cls._normalize_metadata_text(contract.get("purpose"), limit=180)
+            if purpose and not cls._normalize_metadata_text(slide_copy.get("supporting_line"), limit=220):
+                slide_copy["supporting_line"] = purpose
+                metadata["planner_intent_restored_fields"] = ["supporting_line"]
+            slide_copy["metadata"] = metadata
+            restored.append(slide_copy)
+        return restored
+
+    @classmethod
+    def _carousel_story_pacing_resolution(
+        cls,
+        *,
+        story_contracts: list[dict[str, Any]],
+        prompt_requested_slide_count: int | None,
+        preferred_slide_count: int | None,
+        initial_target_slide_count: int,
+        structured_slide_count: int,
+        outline_slide_count: int,
+        sequence_pack_slide_count: int,
+    ) -> dict[str, Any]:
+        contract_slide_count = len([item for item in story_contracts if isinstance(item, dict)])
+        required_slide_count = max(
+            contract_slide_count,
+            int(prompt_requested_slide_count or 0),
+            int(outline_slide_count or 0),
+            int(structured_slide_count or 0),
+        )
+        return {
+            "required_slide_count": required_slide_count,
+            "selected_slide_count": max(int(initial_target_slide_count or 0), required_slide_count or 0),
+            "compression_allowed": not bool(preferred_slide_count and required_slide_count and int(preferred_slide_count) < required_slide_count),
+            "evidence_counts": {
+                "planner_contract_slide_count": contract_slide_count,
+                "prompt_requested_slide_count": int(prompt_requested_slide_count or 0),
+                "preferred_slide_count": int(preferred_slide_count or 0),
+                "initial_target_slide_count": int(initial_target_slide_count or 0),
+                "structured_slide_count": int(structured_slide_count or 0),
+                "outline_slide_count": int(outline_slide_count or 0),
+                "sequence_pack_slide_count": int(sequence_pack_slide_count or 0),
+            },
+        }
+
+    @classmethod
+    def _apply_carousel_sequence_label_contracts(cls, slides: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        repaired: list[dict[str, Any]] = []
+        slide_count = len([slide for slide in slides if isinstance(slide, dict)])
+        for index, slide in enumerate(slides, start=1):
+            if not isinstance(slide, dict):
+                continue
+            slide_copy = dict(slide)
+            metadata = dict(slide_copy.get("metadata") if isinstance(slide_copy.get("metadata"), dict) else {})
+            metadata["sequence_label_contract"] = {
+                "contract_version": "1.0",
+                "status": "pass",
+                "slide_index": index,
+                "slide_count": slide_count,
+                "expected_number": index,
+                "render_sequence_label": True,
+                "expected_visible_label": f"{index}",
+                "source": "content_intelligence_sequence",
+            }
+            slide_copy["metadata"] = metadata
+            repaired.append(slide_copy)
+        return repaired
+
+    @classmethod
+    def _carousel_sequence_coherence_report(cls, slides: list[dict[str, Any]]) -> dict[str, Any]:
+        roles: list[str] = []
+        repeated: list[str] = []
+        for slide in slides:
+            if not isinstance(slide, dict):
+                continue
+            metadata = slide.get("metadata") if isinstance(slide.get("metadata"), dict) else {}
+            role = cls._carousel_story_role_token(metadata.get("story_role") or slide.get("role"))
+            if role in roles and role not in {"detail", "list_item", "comparison_item", "feature_cluster"}:
+                repeated.append(role)
+            roles.append(role)
+        issues = []
+        if roles and roles[0] not in {"hook", "cover", "opening", "title", "problem_frame"}:
+            issues.append("missing_opening_role")
+        if roles and roles[-1] not in {"takeaway", "close", "closing", "cta", "final", "value_close"}:
+            issues.append("missing_closing_role")
+        if repeated:
+            issues.append("repeated_story_roles")
+        return {"status": "pass" if not issues else "needs_attention", "slide_count": len(roles), "roles": roles, "issues": issues, "repeated_roles": repeated[:6]}
+
+    @classmethod
+    def _carousel_slide_representation_plan(
+        cls,
+        slide: dict[str, Any],
+        *,
+        request: AIOrchestrationRequest | None = None,
+    ) -> dict[str, Any]:
+        metadata = slide.get("metadata") if isinstance(slide.get("metadata"), dict) else {}
+        local_text = " ".join(
+            [
+                cls._normalize_metadata_text(slide.get("headline"), limit=140),
+                cls._normalize_metadata_text(slide.get("supporting_line"), limit=220),
+                cls._normalize_metadata_text(slide.get("body"), limit=320),
+                cls._normalize_metadata_text(slide.get("visual_focus"), limit=320),
+                *cls._normalize_metadata_list(slide.get("body_points"), limit=8),
+                *cls._normalize_metadata_list(slide.get("proof_points"), limit=8),
+                *cls._normalize_metadata_list(slide.get("stat_highlights"), limit=6),
+            ]
+        ).casefold()
+        story_role = cls._carousel_story_role_token(metadata.get("story_role") or slide.get("role"))
+        representation_hint = cls._normalize_metadata_text(metadata.get("representation_hint"), limit=48).casefold().replace(" ", "_")
+        representation = representation_hint or "editorial_explainer"
+        evidence: list[str] = []
+        if representation_hint:
+            evidence.append("semantic representation hint")
+        elif story_role in {"hook", "cover", "opening", "title", "problem_frame"}:
+            representation = "hero_metaphor"
+            evidence.append("opening hook")
+        elif re.search(r"\b(process|workflow|steps?|sequence|path|mechanism|how it works)\b", local_text):
+            representation = "process_path"
+            evidence.append("process signal")
+        elif re.search(r"\b(table|matrix|rows?|columns?|scenario)\b", local_text):
+            representation = "table"
+            evidence.append("table signal")
+        elif cls._data_visualization_requested(local_text):
+            representation = "chart"
+            evidence.append("data/chart signal")
+        elif re.search(r"\b(compare|comparison|versus|vs\.?|option|trade[- ]off)\b", local_text):
+            representation = "comparison_grid"
+            evidence.append("comparison signal")
+        elif story_role in {"takeaway", "close", "closing", "cta", "final", "value_close"}:
+            representation = "closing_question"
+            evidence.append("closing beat")
+        return {
+            "slide_index": int(slide.get("slide_index") or 0),
+            "story_role": story_role,
+            "requested_representation": representation,
+            "selected_representation": representation,
+            "status": "pass",
+            "sample_capability_blocked": False,
+            "evidence": evidence[:5],
+            "representation_decision": {
+                "requested_representation": representation,
+                "semantic_best_representation": representation,
+                "selected_representation": representation,
+                "semantic_loss_score": 0.0,
+                "fallback_required": False,
+            },
+        }
+
+    @classmethod
+    def _representation_hint_matches_visual_focus(cls, representation_hint: Any, visual_focus: Any) -> bool:
+        hint = cls._normalize_metadata_text(representation_hint, limit=48).casefold().replace(" ", "_")
+        focus = cls._normalize_metadata_text(visual_focus, limit=320).casefold()
+        if not hint or not focus:
+            return False
+        aliases = {
+            "process_path": ("process", "path", "workflow", "steps", "mechanism"),
+            "hero_metaphor": ("hero", "metaphor", "symbol", "dominant"),
+            "comparison_grid": ("comparison", "grid", "versus", "options"),
+            "closing_question": ("question", "closing", "cta", "decision"),
+            "product_decision_surface": ("dashboard", "surface", "decision", "interface"),
+            "icon_row": ("icon", "row", "modules"),
+        }
+        return hint.replace("_", " ") in focus or any(token in focus for token in aliases.get(hint, ()))
+
+    @classmethod
+    def _carousel_visual_systems_for_representation(cls, representation: str, *, story_role: str = "") -> list[str]:
+        selected = cls._normalize_metadata_text(representation, limit=64).casefold() or "editorial_explainer"
+        systems_by_representation = {
+            "hero_metaphor": ["dominant hero object", "headline-safe negative space"],
+            "process_path": ["step path", "connector modules", "sequence markers"],
+            "table": ["table surface", "row hierarchy", "data-safe cells"],
+            "chart": ["chart surface", "axis-safe data region", "callout labels"],
+            "comparison_grid": ["comparison cards", "parallel columns", "decision lens"],
+            "closing_question": ["decision-support close", "restrained CTA-safe region"],
+            "product_decision_surface": ["dashboard surface", "metric modules", "decision cards"],
+            "icon_row": ["icon row", "modular evidence cells"],
+            "editorial_explainer": ["editorial hero region", "evidence callout modules"],
+        }
+        systems = list(systems_by_representation.get(selected, systems_by_representation["editorial_explainer"]))
+        if story_role in {"hook", "cover", "opening", "title", "problem_frame"} and "headline-safe negative space" not in systems:
+            systems.append("headline-safe negative space")
+        return systems[:5]
+
+    @classmethod
+    def _carousel_slide_visual_execution_contract(
+        cls,
+        slide: dict[str, Any],
+        *,
+        request: AIOrchestrationRequest | None = None,
+    ) -> dict[str, Any]:
+        metadata = slide.get("metadata") if isinstance(slide.get("metadata"), dict) else {}
+        representation_plan = metadata.get("representation_plan") if isinstance(metadata.get("representation_plan"), dict) else cls._carousel_slide_representation_plan(slide, request=request)
+        story_role = cls._carousel_story_role_token(metadata.get("story_role") or slide.get("role"))
+        selected_representation = cls._normalize_metadata_text(representation_plan.get("selected_representation") or representation_plan.get("requested_representation"), limit=64).casefold() or "editorial_explainer"
+        slide_index = int(slide.get("slide_index") or 0)
+        slide_count = int(slide.get("slide_count") or 0)
+        sequence_position = "opening" if slide_index <= 1 else "closing" if slide_count and slide_index >= slide_count else "middle"
+        minimum_visual_modules = 1 if sequence_position == "opening" else 2
+        if selected_representation in {"table", "formula", "chart", "comparison_grid", "process_path", "icon_row", "product_decision_surface"}:
+            minimum_visual_modules = max(minimum_visual_modules, 3 if sequence_position == "middle" else 2)
+        return {
+            "slide_index": slide_index,
+            "story_role": story_role,
+            "sequence_position": sequence_position,
+            "selected_representation": selected_representation,
+            "minimum_visual_modules": minimum_visual_modules,
+            "module_density_target": "premium_multi_module_3_to_5_surfaces" if minimum_visual_modules >= 3 else "balanced_editorial_surfaces",
+            "surface_treatment": "structured_surface_priority" if minimum_visual_modules >= 2 else "hero_or_editorial_priority",
+            "preferred_visual_systems": cls._carousel_visual_systems_for_representation(selected_representation, story_role=story_role),
+            "anti_flat_layout_guard": f"Do not flatten this slide into a generic poster; render at least {minimum_visual_modules} structured visual module(s).",
+        }
+
+    @classmethod
+    def _attach_carousel_visual_execution_contracts(cls, slides: list[dict[str, Any]], *, request: AIOrchestrationRequest | None = None) -> list[dict[str, Any]]:
+        attached: list[dict[str, Any]] = []
+        for slide in slides:
+            if not isinstance(slide, dict):
+                continue
+            copied = dict(slide)
+            metadata = dict(copied.get("metadata") if isinstance(copied.get("metadata"), dict) else {})
+            representation_plan = cls._carousel_slide_representation_plan(copied, request=request)
+            metadata["representation_plan"] = representation_plan
+            if isinstance(representation_plan.get("representation_decision"), dict):
+                metadata["representation_decision"] = representation_plan["representation_decision"]
+            metadata["visual_execution_contract"] = cls._carousel_slide_visual_execution_contract({**copied, "metadata": metadata}, request=request)
+            copied["metadata"] = metadata
+            attached.append(copied)
+        return attached
+
+    @classmethod
+    def _carousel_render_execution_contract(cls, slide: dict[str, Any]) -> dict[str, Any]:
+        metadata = slide.get("metadata") if isinstance(slide.get("metadata"), dict) else {}
+        visible_copy = {
+            key: value
+            for key, value in {
+                "headline": cls._normalize_metadata_text(slide.get("headline"), limit=140),
+                "supporting_line": cls._normalize_metadata_text(slide.get("supporting_line"), limit=220),
+                "body": cls._normalize_metadata_text(slide.get("body"), limit=320),
+                "body_points": cls._normalize_metadata_list(slide.get("body_points"), limit=8),
+                "proof_points": cls._normalize_metadata_list(slide.get("proof_points"), limit=8),
+                "stat_highlights": cls._normalize_metadata_list(slide.get("stat_highlights"), limit=6),
+                "cta": cls._normalize_metadata_text(slide.get("cta"), limit=90),
+            }.items()
+            if value
+        }
+        representation_decision = metadata.get("representation_decision") if isinstance(metadata.get("representation_decision"), dict) else {}
+        return {
+            "contract_version": "1.0",
+            "canvas": {"slide_index": int(slide.get("slide_index") or 0), "slide_count": int(slide.get("slide_count") or 0)},
+            "visible_copy": visible_copy,
+            "copy_hierarchy": [key for key in ("headline", "supporting_line", "body", "body_points", "proof_points", "stat_highlights", "cta") if visible_copy.get(key)],
+            "visual_modules": {
+                "representation": representation_decision.get("selected_representation") or metadata.get("representation_hint") or "",
+                "semantic_best_representation": representation_decision.get("semantic_best_representation") or "",
+                "semantic_loss_score": representation_decision.get("semantic_loss_score"),
+            },
+            "sequence_label": metadata.get("sequence_label_contract") if isinstance(metadata.get("sequence_label_contract"), dict) else {},
+            "negative_constraints": [
+                "do not render internal strategy/planner/reference notes as visible copy",
+                "do not invent extra readable copy beyond visible_copy",
+                "do not duplicate approved readable text",
+            ],
+        }
+
+    @classmethod
+    def _attach_carousel_render_execution_contracts(cls, slides: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        attached: list[dict[str, Any]] = []
+        for slide in slides:
+            if not isinstance(slide, dict):
+                continue
+            slide_copy = dict(slide)
+            metadata = dict(slide_copy.get("metadata") if isinstance(slide_copy.get("metadata"), dict) else {})
+            metadata["render_execution_contract"] = cls._carousel_render_execution_contract(slide_copy)
+            slide_copy["metadata"] = metadata
+            attached.append(slide_copy)
+        return attached
+
+    @classmethod
+    def _apply_content_intelligence_carousel_contracts(
+        cls,
+        slides: list[dict[str, Any]],
+        *,
+        request: AIOrchestrationRequest | None,
+        story_contracts: list[dict[str, Any]],
+        pacing_resolution: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        contracted = cls._attach_carousel_story_contracts(slides, story_contracts=story_contracts)
+        contracted = cls._repair_carousel_story_contract_concept_gaps(contracted)
+        contracted = cls._restore_planner_intent_in_carousel_slides(contracted)
+        contracted = cls._apply_carousel_sequence_label_contracts(contracted)
+        contracted = cls._attach_carousel_visual_execution_contracts(contracted, request=request)
+        contracted = cls._attach_carousel_render_execution_contracts(contracted)
+        coherence_report = cls._carousel_sequence_coherence_report(contracted)
+        attached: list[dict[str, Any]] = []
+        for index, slide in enumerate(contracted, start=1):
+            slide_copy = dict(slide)
+            metadata = dict(slide_copy.get("metadata") if isinstance(slide_copy.get("metadata"), dict) else {})
+            metadata["content_intelligence_enabled"] = True
+            metadata["story_pacing_resolution"] = pacing_resolution
+            metadata["sequence_coherence_report"] = coherence_report if index == 1 else {"status": coherence_report.get("status"), "slide_count": coherence_report.get("slide_count"), "issues": coherence_report.get("issues", [])}
+            slide_copy["metadata"] = metadata
+            attached.append(slide_copy)
+        return attached
+
+    @classmethod
     def _build_carousel_slide_specs(
         cls,
         text_payload: StructuredTextPayload,
         *,
         request: AIOrchestrationRequest | None = None,
         creative_decision: CreativeDecisionPayload | None = None,
+        enable_content_intelligence: bool = False,
     ) -> list[dict[str, Any]]:
         metadata = text_payload.metadata or {}
+        if (
+            not enable_content_intelligence
+            and request is not None
+            and isinstance(request.content_plan, dict)
+            and request.content_plan.get("_content_intelligence_enabled") is True
+        ):
+            enable_content_intelligence = True
         headline = cls._normalize_metadata_text(text_payload.headline, limit=180)
         body_sentences = cls._sentences(text_payload.body)
         proof_point_limit = max(
@@ -29043,6 +29512,31 @@ class AIOrchestratorService:
                 **slide_metadata,
                 "carousel_archetype": slide_metadata.get("carousel_archetype") or carousel_archetype,
             }
+        if enable_content_intelligence:
+            compiled_context = {
+                "content_plan": request.content_plan if request is not None and isinstance(request.content_plan, dict) else {},
+                "research_editorial_brief": request.research_editorial_brief if request is not None and isinstance(request.research_editorial_brief, dict) else {},
+            }
+            story_contracts = cls._carousel_semantic_slide_contracts(
+                compiled_context=compiled_context,
+                request=request,
+                slide_count=len(normalized_slides),
+            )
+            pacing_resolution = cls._carousel_story_pacing_resolution(
+                story_contracts=story_contracts,
+                prompt_requested_slide_count=prompt_requested_slide_count,
+                preferred_slide_count=preferred_editorial_slide_count,
+                initial_target_slide_count=target_slide_count,
+                structured_slide_count=structured_slide_count,
+                outline_slide_count=outline_slide_count,
+                sequence_pack_slide_count=sequence_pack_slide_count,
+            )
+            normalized_slides = cls._apply_content_intelligence_carousel_contracts(
+                normalized_slides,
+                request=request,
+                story_contracts=story_contracts,
+                pacing_resolution=pacing_resolution,
+            )
         return normalized_slides
 
     @staticmethod

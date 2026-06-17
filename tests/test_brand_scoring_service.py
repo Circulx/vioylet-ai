@@ -46,7 +46,14 @@ def test_brand_scoring_service_builds_deterministic_scorecard() -> None:
         output_assets=[{"storage_path": "tenant/brand/generated/output.png", "mime_type": "image/png", "asset_kind": "image"}],
     )
 
-    assert set(scorecard.keys()) == {"overall_score", "score_breakdown", "weighting", "summary", "developer_explanation"}
+    assert set(scorecard.keys()) == {
+        "overall_score",
+        "score_breakdown",
+        "weighting",
+        "summary",
+        "score_explanations",
+        "developer_explanation",
+    }
     assert scorecard["weighting"] == {
         "on_brand": 0.4,
         "prompt_adherence": 0.35,
@@ -65,6 +72,20 @@ def test_brand_scoring_service_builds_deterministic_scorecard() -> None:
     assert "visual_checks_failed" in scorecard["developer_explanation"]["relevance"]
     assert "payload_semantic_groups" in scorecard["developer_explanation"]["prompt_adherence"]["prompt_details"]
     assert "alignment_evidence" in scorecard["developer_explanation"]["prompt_adherence"]["prompt_details"]
+    assert set(scorecard["score_explanations"].keys()) == {"prompt_adherence", "relevance"}
+    for explanation in scorecard["score_explanations"].values():
+        assert set(explanation.keys()) == {"positive", "improvement"}
+        assert explanation["positive"]
+        assert explanation["improvement"]
+        public_text = f"{explanation['positive']} {explanation['improvement']}".lower()
+        assert "formula" not in public_text
+        assert "json" not in public_text
+        assert "metadata" not in public_text
+        assert "validation" not in public_text
+    assert (
+        scorecard["score_explanations"]["prompt_adherence"]["improvement"]
+        != scorecard["score_explanations"]["relevance"]["improvement"]
+    )
 
 
 def test_brand_scoring_service_marks_render_loss_when_payload_outpaces_visible_output() -> None:

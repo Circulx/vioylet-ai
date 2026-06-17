@@ -21683,7 +21683,7 @@ class AIOrchestratorService:
             return self._generate_main_ai(request)
         if strategy == GenerationStrategy.TEMPLATE_ADAPTANCE:
             # TODO: integrate template-adaptance carousel
-            return self._generate_main_ai(request)
+            return self._generate_template_adaptance(request)
         if strategy == GenerationStrategy.CONTENT_INTELLIGENCE:
             # TODO: integrate content-intelligence carousel
             return self._generate_content_intelligence(request)
@@ -21691,6 +21691,15 @@ class AIOrchestratorService:
             # TODO: integrate without-reference fallback
             return self._generate_main_ai(request)
         return self._generate_main_ai(request)
+
+    def _generate_template_adaptance(self, request: AIOrchestrationRequest) -> AIOrchestrationResponse:
+        if not self._request_uses_template_adaptance(request):
+            return self._generate_main_ai(request)
+        content_plan = deepcopy(request.content_plan if isinstance(request.content_plan, dict) else {})
+        content_plan["_template_adaptance_enabled"] = True
+        content_plan["generation_strategy"] = GenerationStrategy.TEMPLATE_ADAPTANCE.value
+        content_plan["template_authority_mode"] = "visual_layout_only"
+        return self._generate_main_ai(request.model_copy(update={"content_plan": content_plan}))
 
     def _generate_content_intelligence(self, request: AIOrchestrationRequest) -> AIOrchestrationResponse:
         if not self._request_uses_content_intelligence(request):
@@ -21723,6 +21732,7 @@ class AIOrchestratorService:
         for key, value in enriched_plan.items():
             content_plan.setdefault(key, value)
         content_plan["_content_intelligence_enabled"] = True
+        content_plan["generation_strategy"] = GenerationStrategy.CONTENT_INTELLIGENCE.value
         return self._generate_main_ai(request.model_copy(update={"content_plan": content_plan}))
 
     def _generate_main_ai(self, request: AIOrchestrationRequest) -> AIOrchestrationResponse:

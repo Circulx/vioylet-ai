@@ -5,6 +5,7 @@ import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react"
 import axios from "axios";
 import {
   BadgePlus,
+  Info,
   Loader2,
   Megaphone,
   Paperclip,
@@ -364,19 +365,53 @@ function orderMessagesChronologically<T extends { created_at?: string; role?: st
   });
 }
 
-function ScorePill({ label, value }: { label: string; value: number }) {
+type ScoreExplanation = {
+  positive?: string;
+  improvement?: string;
+};
+
+function ScorePill({ label, value, explanation }: { label: string; value: number; explanation?: ScoreExplanation }) {
+  const [isExplanationOpen, setIsExplanationOpen] = useState(false);
   const toneClass =
     value >= 75
       ? "border-primary/18 bg-primary/10 text-primary"
       : value >= 55
         ? "border-primary/14 bg-white text-primary"
         : "border-primary/10 bg-white text-[#6C63A8]";
+  const hasExplanation = Boolean(explanation?.positive || explanation?.improvement);
   return (
     <div
-      className={`flex min-w-[118px] items-center justify-between gap-3 rounded-[16px] border px-3 py-2 shadow-[0_12px_24px_-24px_rgba(60,47,143,0.35)] ${toneClass}`}
+      className={`relative flex min-w-[118px] items-center justify-between gap-3 rounded-[16px] border px-3 py-2 shadow-[0_12px_24px_-24px_rgba(60,47,143,0.35)] ${toneClass}`}
     >
-      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">{label}</p>
+      <div className="flex min-w-0 items-center gap-1.5">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">{label}</p>
+        {hasExplanation ? (
+          <button
+            type="button"
+            className="inline-flex h-5 w-5 items-center justify-center rounded-full text-slate-400 transition hover:bg-white hover:text-primary focus:outline-none focus:ring-2 focus:ring-primary/25"
+            aria-label={`${label} score explanation`}
+            aria-expanded={isExplanationOpen}
+            onClick={() => setIsExplanationOpen((current) => !current)}
+          >
+            <Info className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
+        ) : null}
+      </div>
       <p className="text-base font-semibold text-slate-900">{Math.round(value)}</p>
+      {hasExplanation && isExplanationOpen ? (
+        <div className="absolute right-0 top-[calc(100%+8px)] z-20 w-72 rounded-[18px] border border-[#E8EBF4] bg-white p-3 text-left text-xs text-slate-600 shadow-[0_18px_42px_-26px_rgba(15,23,42,0.28)]">
+          {explanation?.positive ? (
+            <p>
+              <span className="font-semibold text-slate-800">Worked well:</span> {explanation.positive}
+            </p>
+          ) : null}
+          {explanation?.improvement ? (
+            <p className="mt-2">
+              <span className="font-semibold text-slate-800">Improve:</span> {explanation.improvement}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -391,7 +426,7 @@ function BrandScoringCard({ scoring }: { scoring: BrandScoringPayload }) {
         : "border-primary/12 bg-white text-[#6C63A8]";
 
   return (
-    <div className="mt-4 overflow-hidden rounded-[24px] border border-[#E8EBF4] bg-[#FBFBFE] px-4 py-3 shadow-[0_18px_42px_-34px_rgba(60,47,143,0.22)]">
+    <div className="mt-4 overflow-visible rounded-[24px] border border-[#E8EBF4] bg-[#FBFBFE] px-4 py-3 shadow-[0_18px_42px_-34px_rgba(60,47,143,0.22)]">
       <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -403,8 +438,16 @@ function BrandScoringCard({ scoring }: { scoring: BrandScoringPayload }) {
         </div>
         <div className="flex flex-wrap items-center gap-2 xl:justify-end">
           <ScorePill label="On-Brand" value={scoring.score_breakdown.on_brand} />
-          <ScorePill label="Prompt" value={scoring.score_breakdown.prompt_adherence} />
-          <ScorePill label="Relevance" value={scoring.score_breakdown.relevance} />
+          <ScorePill
+            label="Prompt"
+            value={scoring.score_breakdown.prompt_adherence}
+            explanation={scoring.score_explanations?.prompt_adherence}
+          />
+          <ScorePill
+            label="Relevance"
+            value={scoring.score_breakdown.relevance}
+            explanation={scoring.score_explanations?.relevance}
+          />
         </div>
       </div>
     </div>

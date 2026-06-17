@@ -162,6 +162,88 @@ def test_image_led_social_envelope_requires_brand_intelligent_creative_copy() ->
     assert "sample_page_headline" in combined
 
 
+def test_template_adaptance_prompt_treats_sample_copy_as_visual_layout_only() -> None:
+    service = PromptIntelligenceService()
+
+    envelope = service.compose_generation_envelope(
+        user_prompt="Create a LinkedIn carousel about a new trade deal.",
+        compiled_context={
+            "brand_copy_brief": {"brand_name": "Example Brand"},
+            "brand_visual_brief": {},
+            "audience_brief": {},
+            "render_constraints": {},
+            "session_brief": {},
+            "template_fit_brief": {
+                "sequence_pack": {
+                    "surface_policy": "style_reference_only",
+                    "slides": [
+                        {
+                            "slide_index": 1,
+                            "sample_page_headline": "A small deal with a bigger signal.",
+                            "sample_page_copy": "Here is what most coverage missed.",
+                        }
+                    ],
+                }
+            },
+            "reference_asset_brief": [],
+            "content_plan": {
+                "format_family": "carousel",
+                "generation_strategy": "template_adaptance",
+                "_template_adaptance_enabled": True,
+                "template_authority_mode": "visual_layout_only",
+            },
+        },
+        studio_panel={"platform_preset": "linkedin", "format": "carousel", "file_type": "png"},
+    )
+
+    combined = f"{envelope.system}\n{envelope.user}"
+
+    assert "treat it as visual/layout authority only" in combined
+    assert "Do not use sample_page_headline" in combined
+    assert "Carousel content authority must come from the user's prompt" in combined
+    assert "are editorial authority for hook grammar" not in combined
+
+
+def test_content_intelligence_prompt_preserves_sample_editorial_authority() -> None:
+    service = PromptIntelligenceService()
+
+    envelope = service.compose_generation_envelope(
+        user_prompt="Create an auto carousel about liquidity risk.",
+        compiled_context={
+            "brand_copy_brief": {"brand_name": "Example Brand"},
+            "brand_visual_brief": {},
+            "audience_brief": {},
+            "render_constraints": {},
+            "session_brief": {},
+            "template_fit_brief": {
+                "sequence_pack": {
+                    "surface_policy": "style_reference_only",
+                    "slides": [
+                        {
+                            "slide_index": 1,
+                            "sample_page_headline": "The risk nobody prices in.",
+                            "sample_page_copy": "Liquidity changes the exit.",
+                        }
+                    ],
+                }
+            },
+            "reference_asset_brief": [],
+            "content_plan": {
+                "format_family": "carousel",
+                "generation_strategy": "content_intelligence",
+                "_content_intelligence_enabled": True,
+            },
+        },
+        studio_panel={"platform_preset": "linkedin", "format": "carousel", "file_type": "png"},
+    )
+
+    combined = f"{envelope.system}\n{envelope.user}"
+
+    assert "are editorial authority for hook grammar" in combined
+    assert "sample_page_copy" in combined
+    assert "treat it as visual/layout authority only" not in combined
+
+
 def test_message_strategy_envelope_locks_style_reference_sample_story_and_non_promotional_close() -> None:
     service = PromptIntelligenceService()
 

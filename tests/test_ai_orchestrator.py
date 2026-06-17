@@ -278,6 +278,8 @@ def test_content_intelligence_route_enriches_auto_carousel_content_plan(monkeypa
     assert service._generate_content_intelligence(request) is None
 
     enriched = captured["request"].content_plan
+    assert enriched["generation_strategy"] == GenerationStrategy.CONTENT_INTELLIGENCE.value
+    assert enriched["_content_intelligence_enabled"] is True
     assert enriched["sequence_contract"] == "semantic_prompt_story_plan"
     assert enriched["preferred_slide_count"] == 5
     assert enriched["semantic_carousel_plan"]["family"] == "macro_analysis"
@@ -323,7 +325,12 @@ def test_pinned_carousel_does_not_use_content_intelligence_enrichment(monkeypatc
 
     assert service._dispatch_generation_strategy(GenerationStrategy.TEMPLATE_ADAPTANCE, request) is None
 
-    assert captured["request"].content_plan == {"format_family": "carousel"}
+    assert captured["request"].content_plan == {
+        "format_family": "carousel",
+        "_template_adaptance_enabled": True,
+        "generation_strategy": GenerationStrategy.TEMPLATE_ADAPTANCE.value,
+        "template_authority_mode": "visual_layout_only",
+    }
 
 
 def test_content_intelligence_slide_specs_gain_story_and_visual_contracts() -> None:

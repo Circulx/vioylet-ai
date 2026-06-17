@@ -496,6 +496,16 @@ export interface BrandScoringPayload {
   };
   weighting?: Record<string, number>;
   summary?: string[];
+  score_explanations?: {
+    prompt_adherence?: {
+      positive?: string;
+      improvement?: string;
+    };
+    relevance?: {
+      positive?: string;
+      improvement?: string;
+    };
+  };
   developer_explanation?: Record<string, unknown>;
 }
 

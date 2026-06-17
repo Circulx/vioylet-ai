@@ -424,6 +424,10 @@ class PromptIntelligenceService:
             "metadata_fields": [str(item).strip() for item in (plan.get("metadata_fields") or []) if str(item).strip()][:12],
             "planning_rules": [str(item).strip() for item in (plan.get("planning_rules") or []) if str(item).strip()][:8],
             "preferred_slide_count": plan.get("preferred_slide_count"),
+            "generation_strategy": str(plan.get("generation_strategy") or "").strip(),
+            "template_authority_mode": str(plan.get("template_authority_mode") or "").strip(),
+            "_template_adaptance_enabled": bool(plan.get("_template_adaptance_enabled")),
+            "_content_intelligence_enabled": bool(plan.get("_content_intelligence_enabled")),
             "sequence_contract": str(plan.get("sequence_contract") or "").strip(),
             "sequence_expectation": str(plan.get("sequence_expectation") or "").strip(),
             "native_metadata_fields": [
@@ -477,6 +481,70 @@ class PromptIntelligenceService:
             "disclaimer_requested": bool(plan.get("disclaimer_requested")),
             "disclaimer_placement": str(plan.get("disclaimer_placement") or "").strip(),
         }
+
+    @staticmethod
+    def _template_sample_authority_rule_block(content_plan: Any) -> str:
+        plan = content_plan if isinstance(content_plan, dict) else {}
+        generation_strategy = str(plan.get("generation_strategy") or "").strip().casefold()
+        template_authority_mode = str(plan.get("template_authority_mode") or "").strip().casefold()
+        template_adaptance_active = (
+            generation_strategy == "template_adaptance"
+            or bool(plan.get("_template_adaptance_enabled"))
+            or template_authority_mode == "visual_layout_only"
+        )
+        if template_adaptance_active:
+            return (
+                "When a selected sample/reference sequence is present with style_reference_only surface policy, "
+                "treat it as visual/layout authority only: use its palette, typography feel, layout rhythm, spacing, "
+                "module density, slide count, visual pacing, and broad editorial posture. Do not use "
+                "sample_page_headline, sample_page_supporting, sample_page_copy, headline_hint, sequence_summary, "
+                "template/sample wording, facts, claims, or topic order as generated content authority unless the "
+                "user explicitly asks to reuse template wording. Carousel content authority must come from the "
+                "user's prompt, research/context, and brand guardrails; the template may shape how that content is "
+                "arranged, not what the content says."
+            )
+        return (
+            "When a selected sample/reference sequence is present with style_reference_only surface policy, its "
+            "per-slide sample_page_headline, sample_page_supporting, sample_page_copy, sample_page_editorial_role, "
+            "sample_page_copy_behavior, sample_page_copy_density, sample_page_closing_grammar, headline_hint, and "
+            "sequence_summary are editorial authority for hook grammar, insight depth, content density, and closing "
+            "style. Adapt the user's topic into that editorial grammar instead of falling back to generic explanatory "
+            "headings. If the sample page copy overlaps the user's topic or research summary, treat its concrete "
+            "facts and insight hierarchy as approved content anchors. If it does not overlap, use only the rhetorical "
+            "pattern and structure, not the literal facts."
+        )
+
+    @staticmethod
+    def _template_sample_message_strategy_rule_block(content_plan: Any) -> str:
+        plan = content_plan if isinstance(content_plan, dict) else {}
+        generation_strategy = str(plan.get("generation_strategy") or "").strip().casefold()
+        template_authority_mode = str(plan.get("template_authority_mode") or "").strip().casefold()
+        template_adaptance_active = (
+            generation_strategy == "template_adaptance"
+            or bool(plan.get("_template_adaptance_enabled"))
+            or template_authority_mode == "visual_layout_only"
+        )
+        if template_adaptance_active:
+            return (
+                "When a selected sample/reference carousel is present, use it only for visual/theme/layout rhythm "
+                "and broad copy-density posture. Do not treat sample/template wording, facts, claims, topic order, "
+                "headline hints, or sequence summaries as message/content authority unless the user explicitly asks "
+                "to reuse template wording. If the sample's structure suggests curiosity, urgency, undercovered-angle, "
+                "or smart-reader framing, use that rhetorical posture only when it helps explain the user's requested "
+                "topic and does not replace required prompt details. For a style_reference_only carousel, match the "
+                "sample's slide count, visual pacing, per-slide layout jobs, and final-slide treatment while deriving "
+                "the actual slide topics, facts, and teaching sequence from the user's prompt."
+            )
+        return (
+            "When a selected sample/reference carousel provides per-slide sample_page_headline, sample_page_supporting, "
+            "sample_page_copy, headline_hint, or sequence_summary, use that as the editorial authority for hook style, "
+            "curiosity level, insight depth, and close grammar. Do not let generic brand positioning or CTA intent "
+            "override a sample that is interpretive, analytical, or macro-takeaway led. If the sample's wording uses "
+            "curiosity, urgency, undercovered-angle, or smart-reader framing, do not add those techniques to "
+            "what_must_be_avoided_in_messaging unless a hard brand guardrail explicitly forbids them. For a "
+            "style_reference_only carousel, the selected sample sequence is the story model. Match its slide count, "
+            "per-slide editorial jobs, and final-slide grammar."
+        )
 
     @staticmethod
     def _visual_plan_prompt_payload(value: Any) -> dict[str, Any]:
@@ -823,6 +891,7 @@ class PromptIntelligenceService:
         format_family_plan = self._format_family_plan_prompt_payload(compiled_context.get("format_family_plan"))
         content_plan = self._content_plan_prompt_payload(compiled_context.get("content_plan"))
         visual_plan = self._visual_plan_prompt_payload(compiled_context.get("visual_plan"))
+        template_sample_authority_rules = self._template_sample_authority_rule_block(content_plan)
         prompt_intelligence_rules = self._prompt_intelligence_rule_block()
         persona_depth_rules = self._persona_depth_rule_block()
         audience_research_rules = self._audience_research_rule_block()
@@ -867,8 +936,7 @@ class PromptIntelligenceService:
         For carousels and infographics, distribute meaning through sections instead of cramming the whole story into one line.
         For carousel outputs, metadata.carousel_slide_specs must include the real slide-by-slide explanation in slide-level body and/or body_points fields; do not rely on supporting_line alone.
         For carousel outputs, only the final slide spec may contain CTA text. Keep interior slide CTA fields empty.
-        When a selected sample/reference sequence is present with style_reference_only surface policy, its per-slide sample_page_headline, sample_page_supporting, sample_page_copy, sample_page_editorial_role, sample_page_copy_behavior, sample_page_copy_density, sample_page_closing_grammar, headline_hint, and sequence_summary are editorial authority for hook grammar, insight depth, content density, and closing style. Adapt the user's topic into that editorial grammar instead of falling back to generic explanatory headings.
-        If the sample page copy overlaps the user's topic or research summary, treat its concrete facts and insight hierarchy as approved content anchors. If it does not overlap, use only the rhetorical pattern and structure, not the literal facts.
+        {template_sample_authority_rules}
         Do not convert an editorial or macro-takeaway closing sample into a product promotion or platform CTA unless the user explicitly requests a promotion or the selected sample page itself uses that CTA/product grammar.
         Brand-intelligent writing requirement: final slide copy must sound like polished brand communication for the intended audience, not a research paper, compliance memo, or analyst brief. Use facts to create sharp creative framing; do not write source-process phrases such as "verified facts from..." as visible module copy unless the sample explicitly uses source labels.
         When the requested format or sample implies a 5-7 slide sequence, provide enough distinct teaching units to fill that story arc instead of collapsing everything into one numbered-list poster summary.
@@ -1265,6 +1333,8 @@ class PromptIntelligenceService:
         content_format_brief = self._content_format_prompt_payload(compiled_context.get("content_format_brief"))
         research_editorial_brief = self._research_editorial_prompt_payload(compiled_context.get("research_editorial_brief"))
         format_family_plan = self._format_family_plan_prompt_payload(compiled_context.get("format_family_plan"))
+        content_plan = self._content_plan_prompt_payload(compiled_context.get("content_plan"))
+        template_sample_message_strategy_rules = self._template_sample_message_strategy_rule_block(content_plan)
         prompt_intelligence_rules = self._prompt_intelligence_rule_block(
             output_targets="message framing, hook style, supporting copy direction, CTA intent, and important keywords"
         )
@@ -1305,10 +1375,10 @@ class PromptIntelligenceService:
         17. {audience_research_rules}
         18. Keep messaging audience-facing, not internal, descriptive, or process-oriented.
         19. Preserve the core idea instead of diluting it into generic brand-safe filler.
-        20. When a selected sample/reference carousel provides per-slide sample_page_headline, sample_page_supporting, sample_page_copy, headline_hint, or sequence_summary, use that as the editorial authority for hook style, curiosity level, insight depth, and close grammar. Do not let generic brand positioning or CTA intent override a sample that is interpretive, analytical, or macro-takeaway led.
-        21. If the sample's wording uses curiosity, urgency, undercovered-angle, or smart-reader framing, do not add those techniques to what_must_be_avoided_in_messaging unless a hard brand guardrail explicitly forbids them.
+        20. {template_sample_message_strategy_rules}
+        21. Keep the user's requested topic and required details as the primary message source.
         22. Keep the message strategy creative and brand-native. It should define audience tension, angle, promise, and payoff, not produce a research-paper thesis or a list of source notes.
-        23. For a style_reference_only carousel, the selected sample sequence is the story model. Match its slide count, per-slide editorial jobs, and final-slide grammar. If the selected sample closes with a macro takeaway, strategic signal, or editorial conclusion, cta_intent must not become product/platform/investment promotion unless the user explicitly requested a product CTA.
+        23. If the selected sample closes with a macro takeaway, strategic signal, or editorial conclusion, cta_intent must not become product/platform/investment promotion unless the user explicitly requested a product CTA.
         24. Convert research into an audience-facing creative angle: curiosity hook, specific mechanics, undercovered insight, and strategic payoff. Do not make the strategy sound like a source memo, literature review, or compliance note.
         Return JSON only with keys:
         - primary_campaign_theme
@@ -1328,6 +1398,7 @@ class PromptIntelligenceService:
         Research-editorial rules: {research_editorial_rules}
         Format family plan: {format_family_plan}
         Format family rules: {format_family_rules}
+        Content plan: {content_plan}
         Client quality rules: {client_quality_rules or "No client-specific quality overrides are active."}
         Mistake-style carousel rules: {mistake_carousel_rules or "No mistake-specific carousel override is active."}
         """.strip()
@@ -1396,6 +1467,7 @@ class PromptIntelligenceService:
         format_family_plan = self._format_family_plan_prompt_payload(compiled_context.get("format_family_plan"))
         content_plan = self._content_plan_prompt_payload(compiled_context.get("content_plan"))
         visual_plan = self._visual_plan_prompt_payload(compiled_context.get("visual_plan"))
+        template_sample_authority_rules = self._template_sample_authority_rule_block(content_plan)
         prompt_intelligence_rules = self._prompt_intelligence_rule_block(
             output_targets="headline, body, CTA, supporting copy, proof points, and other overlay text fields"
         )
@@ -1490,7 +1562,7 @@ class PromptIntelligenceService:
         - validation_hints
         Make the image element large and dominant, then place overlay zones for text/logo with clear spacing and brand-safe hierarchy.
         Keep copy concise and premium.
-        If template_fit_brief.sequence_pack.surface_policy is style_reference_only and its slides include sample_page_headline, sample_page_supporting, sample_page_copy, sample_page_editorial_role, sample_page_copy_behavior, sample_page_copy_density, sample_page_closing_grammar, headline_hint, or sequence_summary, use the selected sample's editorial grammar as the slide-copy authority. Match the sample's hook strength, undercovered-angle logic, insight density, and closing grammar while replacing only facts that do not belong to the user's topic.
+        {template_sample_authority_rules}
         Do not summarize the topic when the sample interprets it. Generate non-obvious, researched, audience-aware slide beats that answer why the topic matters, what most people missed, and what strategic pattern it signals when the sample uses that structure.
         Do not turn the final slide into brand/platform promotion unless the user asks for promotion or the sample final slide is itself a CTA/product surface.
         Write like a brand strategist making a premium creative: memorable headline, compact insight modules, strategic implication, and visual copy that can sit on a designed slide. Do not write like a research paper writer; avoid essay paragraphs, bibliography-like source mentions, and generic "verified facts" filler.
@@ -1639,6 +1711,7 @@ class PromptIntelligenceService:
         format_family_plan = self._format_family_plan_prompt_payload(compiled_context.get("format_family_plan"))
         content_plan = self._content_plan_prompt_payload(compiled_context.get("content_plan"))
         visual_plan = self._visual_plan_prompt_payload(compiled_context.get("visual_plan"))
+        template_sample_authority_rules = self._template_sample_authority_rule_block(content_plan)
         prompt_intelligence_rules = self._prompt_intelligence_rule_block(
             output_targets="any repaired text-bearing fields, proof points, CTA language, and messaging hierarchy"
         )
@@ -1672,7 +1745,7 @@ class PromptIntelligenceService:
         If brand fonts are unavailable, use generic typography roles instead of inventing specific font families.
         Repair icon stamp columns by converting them into cards, proof rows, or more integrated callout structures.
         Do not repair a carousel or infographic into a sparse static poster. Keep the repaired hierarchy true to the requested format.
-        When repairing a style_reference_only carousel with a selected sample/reference sequence, preserve the sample page's editorial grammar and do not introduce unrelated reusable/reference asset names, product surfaces, or promotional CTAs that are absent from the selected sample page.
+        When repairing a style_reference_only carousel with a selected sample/reference sequence, {template_sample_authority_rules}
         For style_reference_only carousel repair, the selected sample/reference sequence is the only allowed reusable visual family. Do not bind, mention, or copy asset names, storage paths, product surfaces, dashboards, or template titles from any other reference asset. If an unrelated asset seems useful, leave the element generated and describe only the sample-matched visual grammar.
         If the selected sample page does not visibly use a dashboard, chart, table, trading screen, laptop, or product UI, do not add those surfaces during repair even when the topic has financial or economic facts.
         If compiled_context.brand_visual_brief.design_system or its summary fields are present, use them to repair toward the brand's actual layout family, hierarchy, content structure, motif usage, image treatment, visual craft, composition logic, subject semantics, and logo placement instead of generic fallback structure.

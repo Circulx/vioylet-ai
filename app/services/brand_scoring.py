@@ -358,6 +358,18 @@ class BrandScoringService:
             persona_context=persona_context,
             objective_context=objective_context,
         )
+        prompt_summary = self._prompt_adherence_summary(
+            prompt_adherence,
+            prompt=prompt,
+            visual_review=visual_review,
+            studio_panel=studio_panel,
+            output_assets=output_assets,
+            generated_payload=generated_payload,
+        )
+        relevance_summary = self._relevance_summary(
+            relevance,
+            tone_feedback=tone_feedback,
+        )
         return {
             "overall_score": overall_score,
             "score_breakdown": {
@@ -372,21 +384,124 @@ class BrandScoringService:
                     visual_review=visual_review,
                     tone_feedback=tone_feedback,
                 ),
-                self._prompt_adherence_summary(
-                    prompt_adherence,
-                    prompt=prompt,
-                    visual_review=visual_review,
-                    studio_panel=studio_panel,
-                    output_assets=output_assets,
-                    generated_payload=generated_payload,
-                ),
-                self._relevance_summary(
-                    relevance,
-                    tone_feedback=tone_feedback,
-                ),
+                prompt_summary,
+                relevance_summary,
             ],
+            "score_explanations": self._public_score_explanations(
+                developer_explanation=developer_explanation,
+                prompt_summary=prompt_summary,
+                relevance_summary=relevance_summary,
+            ),
             "developer_explanation": developer_explanation,
         }
+
+    @classmethod
+    def _public_score_explanations(
+        cls,
+        *,
+        developer_explanation: dict[str, Any],
+        prompt_summary: str,
+        relevance_summary: str,
+    ) -> dict[str, dict[str, str]]:
+        prompt_explanation = cls._public_score_explanation(
+            developer_explanation.get("prompt_adherence"),
+            positive_fallback="The output keeps the main prompt direction visible.",
+            improvement_fallback=prompt_summary,
+        )
+        relevance_explanation = cls._public_score_explanation(
+            developer_explanation.get("relevance"),
+            positive_fallback="The output is generally aligned with the audience and objective.",
+            improvement_fallback=relevance_summary,
+            avoid_improvement=prompt_explanation.get("improvement"),
+        )
+        return {
+            "prompt_adherence": prompt_explanation,
+            "relevance": relevance_explanation,
+        }
+
+    @classmethod
+    def _public_score_explanation(
+        cls,
+        explanation: Any,
+        *,
+        positive_fallback: str,
+        improvement_fallback: str,
+        avoid_improvement: str | None = None,
+    ) -> dict[str, str]:
+        explanation_payload = explanation if isinstance(explanation, dict) else {}
+        positive = cls._first_public_reason(
+            explanation_payload.get("boosts"),
+            fallback=positive_fallback,
+        )
+        improvement_candidates = [
+            cls._first_public_reason(explanation_payload.get("penalties"), fallback=""),
+            cls._first_visual_failure_reason(explanation_payload.get("visual_checks_failed")),
+            cls._first_visual_failure_reason(cls._dict_value(explanation_payload.get("prompt_details")).get("visual_checks_failed")),
+            cls._first_visual_failure_reason(cls._dict_value(explanation_payload.get("quality_dimensions")).get("failed_dimensions")),
+            improvement_fallback,
+        ]
+        improvement = ""
+        for candidate in improvement_candidates:
+            text = cls._clean_public_reason(candidate)
+            if not text:
+                continue
+            if avoid_improvement and text.casefold() == avoid_improvement.casefold():
+                continue
+            improvement = text
+            break
+        if not improvement:
+            improvement = cls._clean_public_reason(improvement_fallback) or "More specific execution would improve this score."
+        return {
+            "positive": positive,
+            "improvement": improvement,
+        }
+
+    @classmethod
+    def _first_public_reason(cls, items: Any, *, fallback: str) -> str:
+        if isinstance(items, list):
+            for item in items:
+                reason = cls._clean_public_reason((item or {}).get("reason") if isinstance(item, dict) else item)
+                if reason:
+                    return reason
+        return cls._clean_public_reason(fallback) or fallback
+
+    @classmethod
+    def _first_visual_failure_reason(cls, items: Any) -> str:
+        if isinstance(items, list):
+            for item in items:
+                reason = cls._clean_public_reason((item or {}).get("reason") if isinstance(item, dict) else item)
+                if reason:
+                    return reason
+        return ""
+
+    @staticmethod
+    def _dict_value(value: Any) -> dict[str, Any]:
+        return value if isinstance(value, dict) else {}
+
+    @staticmethod
+    def _clean_public_reason(value: Any) -> str:
+        text = " ".join(str(value or "").strip().split())
+        if not text:
+            return ""
+        blocked_tokens = (
+            "{",
+            "}",
+            "[",
+            "]",
+            "formula",
+            "metadata",
+            "validation",
+            "developer",
+            "llm",
+            "json",
+            "rule",
+            "threshold",
+            "guardrail",
+        )
+        lowered = text.casefold()
+        if any(token in lowered for token in blocked_tokens):
+            return ""
+        return text[:220].rstrip()
 
     def save_scorecard(
         self,

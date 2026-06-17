@@ -370,6 +370,200 @@ type ScoreExplanation = {
   improvement?: string;
 };
 
+type ScoreKey = "on_brand" | "prompt_adherence" | "relevance";
+
+const scoreSummaryIndex: Record<ScoreKey, number> = {
+  on_brand: 0,
+  prompt_adherence: 1,
+  relevance: 2,
+};
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function sentenceCase(text: string) {
+  return text ? `${text.charAt(0).toUpperCase()}${text.slice(1)}` : text;
+}
+
+function contrastSplit(text: string, purpose: "positive" | "improvement" | "neutral") {
+  const patterns = [
+    /\bhowever,\s*/i,
+    /\bhowever\s+/i,
+    /\bbut\s+/i,
+  ];
+  for (const pattern of patterns) {
+    const match = pattern.exec(text);
+    if (!match || match.index <= 0) {
+      continue;
+    }
+    const positive = text.slice(0, match.index).replace(/[,\s]+$/, "").trim();
+    const improvement = text.slice(match.index + match[0].length).replace(/^[,\s]+/, "").trim();
+    if (purpose === "positive" && positive) {
+      return positive.endsWith(".") ? positive : `${positive}.`;
+    }
+    if (purpose === "improvement" && improvement) {
+      return sentenceCase(improvement.endsWith(".") ? improvement : `${improvement}.`);
+    }
+  }
+  return text;
+}
+
+function cleanScoreExplanationText(value: unknown, purpose: "positive" | "improvement" | "neutral" = "neutral") {
+  const text = contrastSplit(String(value || "").replace(/\s+/g, " ").trim(), purpose);
+  if (!text) {
+    return "";
+  }
+  const blocked = [
+    "{",
+    "}",
+    "[",
+    "]",
+    "formula",
+    "metadata",
+    "validation",
+    "developer",
+    "llm",
+    "json",
+    "rule",
+    "threshold",
+    "guardrail",
+    "diagnostic",
+    "fallback",
+  ];
+  const lowered = text.toLowerCase();
+  if (blocked.some((token) => lowered.includes(token))) {
+    return "";
+  }
+  return text.slice(0, 240).trim();
+}
+
+function firstCleanText(values: unknown[], purpose: "positive" | "improvement" | "neutral" = "neutral") {
+  for (const value of values) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const itemRecord = asRecord(item);
+        const text = cleanScoreExplanationText(itemRecord.reason || item, purpose);
+        if (text) {
+          return text;
+        }
+      }
+      continue;
+    }
+    const text = cleanScoreExplanationText(value, purpose);
+    if (text) {
+      return text;
+    }
+  }
+  return "";
+}
+
+function scoreFallbackPositive(key: ScoreKey, value: number) {
+  if (key === "on_brand") {
+    return value >= 75 ? "The output keeps the brand direction visible." : "Some brand cues are present in the output.";
+  }
+  if (key === "prompt_adherence") {
+    return value >= 75 ? "The output follows the main prompt direction." : "The output covers part of the requested prompt.";
+  }
+  return value >= 75 ? "The output is relevant to the audience and topic." : "The output has some relevance to the requested topic.";
+}
+
+function scoreFallbackImprovement(key: ScoreKey) {
+  if (key === "on_brand") {
+    return "Tighten visual style, mood, or typography so the output feels more brand-native.";
+  }
+  if (key === "prompt_adherence") {
+    return "Add more of the requested details so the final output follows the prompt more completely.";
+  }
+  return "Make the message more useful, specific, and clearly connected to the audience.";
+}
+
+function deriveScoreExplanation(
+  scoring: BrandScoringPayload,
+  key: ScoreKey,
+  avoidImprovement?: string,
+): ScoreExplanation {
+  const explicit = scoring.score_explanations?.[key];
+  if (explicit?.positive || explicit?.improvement) {
+    return {
+      positive: cleanScoreExplanationText(explicit.positive, "positive") || scoreFallbackPositive(key, scoring.score_breakdown[key]),
+      improvement: cleanScoreExplanationText(explicit.improvement, "improvement") || scoreFallbackImprovement(key),
+    };
+  }
+
+  const developerExplanation = asRecord(scoring.developer_explanation);
+  const block = asRecord(developerExplanation[key]);
+  const llmAnalysis = asRecord(block.llm_analysis);
+  const llmRoot = asRecord(scoring.llm_prompt_relevance_analysis);
+  const llmExplanations = asRecord(llmRoot.explanations);
+  const visualDetails = asRecord(block.visual_details);
+  const textDetails = asRecord(block.text_details);
+  const qualityDimensions = asRecord(block.quality_dimensions);
+  const promptDetails = asRecord(block.prompt_details);
+
+  const positive = firstCleanText([
+    key === "prompt_adherence" ? llmExplanations.prompt_adherence : undefined,
+    key === "relevance" ? llmExplanations.relevance : undefined,
+    block.reason,
+    block.boosts,
+    scoring.summary?.[scoreSummaryIndex[key]],
+    scoreFallbackPositive(key, scoring.score_breakdown[key]),
+  ], "positive") || scoreFallbackPositive(key, scoring.score_breakdown[key]);
+
+  const improvementCandidates: unknown[] = [];
+  if (key === "on_brand") {
+    improvementCandidates.push(
+      block.penalties,
+      visualDetails.failed_checks,
+      textDetails.deviations,
+      scoring.summary?.[0],
+    );
+  } else {
+    improvementCandidates.push(
+      block.penalties,
+      llmAnalysis.improvement_suggestions,
+      llmAnalysis.brand_intelligence_suggestions,
+      llmAnalysis.missing_content_or_visuals,
+      llmAnalysis.visual_quality_issues,
+      llmAnalysis.critical_requirement_failures,
+      llmRoot.improvement_suggestions,
+      llmRoot.missing_content_or_visuals,
+      promptDetails.visual_checks_failed,
+      qualityDimensions.failed_dimensions,
+      scoring.summary?.[scoreSummaryIndex[key]],
+    );
+  }
+
+  let improvement = "";
+  for (const candidate of improvementCandidates) {
+    const text = firstCleanText([candidate], "improvement");
+    if (!text) {
+      continue;
+    }
+    if (avoidImprovement && text.toLowerCase() === avoidImprovement.toLowerCase()) {
+      continue;
+    }
+    improvement = text;
+    break;
+  }
+
+  return {
+    positive,
+    improvement: improvement || scoreFallbackImprovement(key),
+  };
+}
+
+function deriveBrandScoreExplanations(scoring: BrandScoringPayload): Record<ScoreKey, ScoreExplanation> {
+  const onBrand = deriveScoreExplanation(scoring, "on_brand");
+  const prompt = deriveScoreExplanation(scoring, "prompt_adherence");
+  const relevance = deriveScoreExplanation(scoring, "relevance", prompt.improvement);
+  return {
+    on_brand: onBrand,
+    prompt_adherence: prompt,
+    relevance,
+  };
+}
+
 function ScorePill({ label, value, explanation }: { label: string; value: number; explanation?: ScoreExplanation }) {
   const [isExplanationOpen, setIsExplanationOpen] = useState(false);
   const toneClass =
@@ -418,6 +612,7 @@ function ScorePill({ label, value, explanation }: { label: string; value: number
 
 function BrandScoringCard({ scoring }: { scoring: BrandScoringPayload }) {
   const overallScore = Math.round(scoring.overall_score);
+  const explanations = deriveBrandScoreExplanations(scoring);
   const overallToneClass =
     overallScore >= 75
       ? "border-primary/20 bg-primary text-white"
@@ -437,16 +632,20 @@ function BrandScoringCard({ scoring }: { scoring: BrandScoringPayload }) {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 xl:justify-end">
-          <ScorePill label="On-Brand" value={scoring.score_breakdown.on_brand} />
+          <ScorePill
+            label="On-Brand"
+            value={scoring.score_breakdown.on_brand}
+            explanation={explanations.on_brand}
+          />
           <ScorePill
             label="Prompt"
             value={scoring.score_breakdown.prompt_adherence}
-            explanation={scoring.score_explanations?.prompt_adherence}
+            explanation={explanations.prompt_adherence}
           />
           <ScorePill
             label="Relevance"
             value={scoring.score_breakdown.relevance}
-            explanation={scoring.score_explanations?.relevance}
+            explanation={explanations.relevance}
           />
         </div>
       </div>

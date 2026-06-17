@@ -19768,8 +19768,10 @@ class AIOrchestratorService:
             slide_count=slide_count,
         )
         sample_headline = cls._normalize_metadata_text(sample_contract.get("sample_page_headline"), limit=120)
+        allow_literal_sample_headline = not cls._request_uses_template_adaptance(request)
         if (
-            sample_headline
+            allow_literal_sample_headline
+            and sample_headline
             and not cls._is_generic_carousel_education_label(sample_headline)
             and cls._sample_editorial_overlaps_request(
                 sample_contract,
@@ -21634,6 +21636,12 @@ class AIOrchestratorService:
             cls._request_has_sample_creative(request),
             cls._request_has_template(request),
         )
+
+    @classmethod
+    def _request_uses_template_adaptance(cls, request: AIOrchestrationRequest | None) -> bool:
+        if request is None:
+            return False
+        return cls._select_generation_strategy_for_request(request) == GenerationStrategy.TEMPLATE_ADAPTANCE
 
     def generate(self, request: AIOrchestrationRequest) -> AIOrchestrationResponse:
         strategy = self._select_generation_strategy_for_request(request)
@@ -26945,6 +26953,7 @@ class AIOrchestratorService:
         *,
         sequence_pack_slides: list[dict[str, Any]],
         carousel_archetype: str = "",
+        include_sample_copy_authority: bool = True,
     ) -> list[dict[str, Any]]:
         if not slides or not sequence_pack_slides:
             return [dict(slide) for slide in slides if isinstance(slide, dict)]
@@ -26982,9 +26991,6 @@ class AIOrchestratorService:
                     "reference_structural_cues": list(pack_slide.get("structural_cues") or []),
                     "reference_sequence_summary": str(pack_slide.get("sequence_summary") or ""),
                     "reference_headline_hint": str(pack_slide.get("headline_hint") or ""),
-                    "sample_page_headline": str(pack_slide.get("sample_page_headline") or ""),
-                    "sample_page_supporting": str(pack_slide.get("sample_page_supporting") or ""),
-                    "sample_page_copy": str(pack_slide.get("sample_page_copy") or ""),
                     "sample_page_editorial_role": str(pack_slide.get("sample_page_editorial_role") or ""),
                     "sample_page_copy_behavior": str(pack_slide.get("sample_page_copy_behavior") or ""),
                     "sample_page_copy_density": str(pack_slide.get("sample_page_copy_density") or ""),
@@ -27004,6 +27010,14 @@ class AIOrchestratorService:
                         or reference_slide_index
                     ),
                 }
+                if include_sample_copy_authority:
+                    slide_metadata.update(
+                        {
+                            "sample_page_headline": str(pack_slide.get("sample_page_headline") or ""),
+                            "sample_page_supporting": str(pack_slide.get("sample_page_supporting") or ""),
+                            "sample_page_copy": str(pack_slide.get("sample_page_copy") or ""),
+                        }
+                    )
             slide_metadata["carousel_archetype"] = slide_metadata.get("carousel_archetype") or carousel_archetype
             slide_copy["metadata"] = slide_metadata
             enriched.append(slide_copy)
@@ -28962,6 +28976,7 @@ class AIOrchestratorService:
             normalized_slides,
             sequence_pack_slides=sequence_pack_slides,
             carousel_archetype=carousel_archetype,
+            include_sample_copy_authority=not cls._request_uses_template_adaptance(request),
         )
         if template_surface_policy == "style_reference_only":
             normalized_slides = cls._sanitize_style_reference_sample_slide_specs(
@@ -29907,6 +29922,13 @@ class AIOrchestratorService:
             if style_reference_sample_active
             else ""
         )
+        template_copy_authority_guard = (
+            "Pinned template copy authority guard: treat selected templates as visual/layout references only. "
+            "Do not copy or paraphrase sample text, sample headlines, sample body copy, or sample supporting lines. "
+            "Generate fresh content for the user's input using the approved slide copy."
+            if style_reference_sample_active and AIOrchestratorService._request_uses_template_adaptance(request)
+            else ""
+        )
         sample_logo_exclusion_contract = (
             "SAMPLE LOGO EXCEPTION: when following the selected sample page, copy only the empty logo-safe zone geometry and surrounding whitespace. "
             "Do not copy the sample page's logo artwork, wordmark, brand name, symbol cluster, or any top-corner brand mark; that area must stay blank because the exact stored asset is overlaid after generation."
@@ -29970,6 +29992,7 @@ class AIOrchestratorService:
             sample_page_visual_obedience,
             sample_aware_data_visual_rule,
             sample_surface_adaptation_guard,
+            template_copy_authority_guard,
             sample_editorial_render_contract,
             sample_metadata_guard,
             topic_anchor_guidance,

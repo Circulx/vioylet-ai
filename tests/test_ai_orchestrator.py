@@ -54,7 +54,9 @@ def test_orchestrator_normalizes_hashtag_string_to_list() -> None:
     [
         ("carousel", False, False, False, False, GenerationStrategy.WITHOUT_REFERENCE),
         ("static", False, True, True, True, GenerationStrategy.DEV1_HARI),
+        ("static", True, False, True, True, GenerationStrategy.DEV1_HARI),
         ("infographic", False, True, True, True, GenerationStrategy.DEV1_HARI),
+        ("infographic", True, False, True, True, GenerationStrategy.DEV1_HARI),
         ("carousel", True, False, True, True, GenerationStrategy.TEMPLATE_ADAPTANCE),
         ("carousel", False, True, True, True, GenerationStrategy.CONTENT_INTELLIGENCE),
         ("poster", False, False, True, True, GenerationStrategy.MAIN_AI),
@@ -4004,6 +4006,89 @@ def test_orchestrator_build_carousel_slide_specs_prefers_sequence_pack_count_ove
     assert slides[1]["body"]
 
 
+def test_orchestrator_template_adaptance_slide_specs_drop_sample_copy_authority() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a LinkedIn carousel about how disaster alerts are sequenced.",
+        studio_panel={
+            "platform_preset": "linkedin",
+            "format": "carousel",
+            "file_type": "png",
+            "pinned_template_id": "tpl-alert-sequence",
+        },
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"brand_name": "Violyt"},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        reference_assets=[{"asset_role": "reference_creative", "storage_path": "tenant/reference/alert-sequence-1.png"}],
+        template_context={
+            "sequence_pack": {
+                "surface_policy": "style_reference_only",
+                "slide_count": 3,
+                "slides": [
+                    {
+                        "slide_index": 1,
+                        "template_id": "tpl-1",
+                        "template_name": "Alert Sequence 1",
+                        "reference_asset_path": "tenant/reference/alert-sequence-1.png",
+                        "sample_page_headline": "Sample headline must not become content",
+                        "sample_page_supporting": "Sample support must not become content",
+                        "sample_page_copy": "Sample body must not become content",
+                        "sample_page_copy_behavior": "curiosity_gap",
+                    },
+                    {
+                        "slide_index": 2,
+                        "template_id": "tpl-2",
+                        "template_name": "Alert Sequence 2",
+                        "reference_asset_path": "tenant/reference/alert-sequence-2.png",
+                        "sample_page_headline": "Second sample headline",
+                        "sample_page_copy": "Second sample body",
+                        "sample_page_copy_behavior": "deal_mechanics",
+                    },
+                    {
+                        "slide_index": 3,
+                        "template_id": "tpl-3",
+                        "template_name": "Alert Sequence 3",
+                        "reference_asset_path": "tenant/reference/alert-sequence-3.png",
+                        "sample_page_headline": "Final sample headline",
+                        "sample_page_copy": "Final sample body",
+                        "sample_page_copy_behavior": "strategic_signal",
+                    },
+                ],
+            }
+        },
+    )
+
+    slides = AIOrchestratorService._build_carousel_slide_specs(
+        StructuredTextPayload(
+            headline="How the new alert sequence changes the response window",
+            body="Start with the earliest signal. Layer route impact. Close with the response checklist.",
+            cta="",
+            hashtags=["#Weather"],
+            metadata={
+                "carousel_slide_specs": [
+                    {"slide_number": 1, "slide_role": "hook", "headline": "First signal", "body": "Start with the earliest signal."},
+                    {"slide_number": 2, "slide_role": "structure", "headline": "Route impact", "body": "Layer the route impact."},
+                    {"slide_number": 3, "slide_role": "takeaway", "headline": "Response checklist", "body": "Close with the checklist."},
+                ]
+            },
+        ),
+        request=request,
+        creative_decision=CreativeDecisionPayload(asset_strategy={"template_surface_policy": "style_reference_only"}),
+    )
+
+    first_metadata = slides[0]["metadata"]
+    assert first_metadata["reference_template_name"] == "Alert Sequence 1"
+    assert first_metadata["sample_page_copy_behavior"] == "curiosity_gap"
+    assert "sample_page_headline" not in first_metadata
+    assert "sample_page_supporting" not in first_metadata
+    assert "sample_page_copy" not in first_metadata
+
+
 def test_orchestrator_build_carousel_slide_specs_restores_sequence_pack_reference_metadata_after_visual_focus_sanitization() -> None:
     request = AIOrchestrationRequest(
         tenant_id=uuid4(),
@@ -7228,6 +7313,30 @@ def test_apply_sequence_pack_slide_metadata_preserves_reference_visual_dna() -> 
     assert metadata["reference_visual_craft"]["rendering_style"] == "mixed"
     assert metadata["reference_subject_semantics"]["financial_objects"] == ["yield curves"]
     assert metadata["reference_editorial_dna"]["copy_density"] == "high"
+
+
+def test_apply_sequence_pack_slide_metadata_preserves_sample_copy_by_default() -> None:
+    slides = [{"slide_index": 1, "slide_count": 1, "headline": "Why this matters now", "metadata": {}}]
+    sequence_pack_slides = [
+        {
+            "slide_index": 1,
+            "sample_page_headline": "Sample headline",
+            "sample_page_supporting": "Sample supporting line",
+            "sample_page_copy": "Sample body copy",
+            "sample_page_copy_behavior": "curiosity_gap",
+        }
+    ]
+
+    enriched = AIOrchestratorService._apply_sequence_pack_slide_metadata(
+        slides,
+        sequence_pack_slides=sequence_pack_slides,
+    )
+    metadata = enriched[0]["metadata"]
+
+    assert metadata["sample_page_headline"] == "Sample headline"
+    assert metadata["sample_page_supporting"] == "Sample supporting line"
+    assert metadata["sample_page_copy"] == "Sample body copy"
+    assert metadata["sample_page_copy_behavior"] == "curiosity_gap"
 
 
 def test_orchestrator_build_carousel_slide_render_prompt_includes_story_role_visual_execution_guidance() -> None:
@@ -17742,6 +17851,94 @@ def test_orchestrator_carousel_render_prompt_avoids_literal_sample_reuse_for_sty
     assert len(prompt) <= AIOrchestratorService.CAROUSEL_IMAGE_PROMPT_MAX_LENGTH
 
 
+def test_orchestrator_template_adaptance_prompt_treats_template_as_layout_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        AIOrchestratorService,
+        "_image_text_containment_contract",
+        staticmethod(lambda *, format_name: "Text containment contract."),
+        raising=False,
+    )
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a professional carousel about disaster alert sequencing.",
+        studio_panel={
+            "platform_preset": "linkedin",
+            "format": "carousel",
+            "file_type": "png",
+            "size": {"width": 1080, "height": 1350},
+            "pinned_template_id": "tpl-alert-sequence",
+        },
+        resolved_brand_context={
+            "brand_name": "Violyt",
+            "visual_identity": {
+                "reference_creatives": [
+                    {
+                        "reusable_zones": [
+                            {"role": "logo", "x": 0.78, "y": 0.03, "width": 0.16, "height": 0.08}
+                        ]
+                    }
+                ]
+            },
+        },
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        reference_assets=[
+            {"asset_id": "sample-1", "asset_role": "reference_creative", "storage_path": "tenant/reference/alert-sequence-1.png"},
+        ],
+    )
+    slide = {
+        "role": "hook",
+        "headline": "Why alerts need sequencing",
+        "supporting_line": "The order of signals changes the response window.",
+        "proof_points": ["Earliest signal", "Route impact"],
+        "cta": "",
+        "slide_index": 1,
+        "slide_count": 3,
+        "metadata": {
+            "reference_template_name": "Alert Sequence",
+            "reference_asset_path": "tenant/reference/alert-sequence-1.png",
+            "reference_slide_index": 1,
+            "reference_slide_count": 3,
+            "sample_page_headline": "Do not reuse this sample headline",
+            "sample_page_copy": "Do not reuse this sample body.",
+        },
+    }
+
+    prompt = AIOrchestratorService.build_carousel_slide_render_prompt(
+        request=request,
+        creative_decision=CreativeDecisionPayload(
+            layout_mode="adapted_template",
+            asset_strategy={"template_surface_policy": "style_reference_only"},
+        ),
+        message_strategy=None,
+        slide=slide,
+        scene_graph=GenerationSceneGraph.model_validate(
+            {
+                "canvas": {"width": 1080, "height": 1350, "platform": "linkedin"},
+                "elements": [
+                    {"element_id": "headline", "element_type": "text", "role": "headline", "geometry": {"x": 0.08, "y": 0.1, "width": 0.56, "height": 0.14}},
+                    {"element_id": "body", "element_type": "text", "role": "body", "geometry": {"x": 0.08, "y": 0.28, "width": 0.44, "height": 0.2}},
+                    {"element_id": "logo", "element_type": "image", "role": "logo", "geometry": {"x": 0.78, "y": 0.03, "width": 0.16, "height": 0.08}},
+                ],
+            }
+        ),
+        reference_images=[
+            {"asset_id": "sample-1", "asset_role": "reference_creative", "storage_path": "tenant/reference/alert-sequence-1.png"},
+        ],
+    )
+
+    assert "Pinned template copy authority guard" in prompt
+    assert "treat selected templates as visual/layout references only" in prompt
+    assert "Do not copy or paraphrase sample text" in prompt
+    assert "Generate fresh content for the user's input" in prompt
+    assert "Do not reuse this sample headline" not in prompt
+    assert "Do not reuse this sample body" not in prompt
+    assert len(prompt) <= AIOrchestratorService.CAROUSEL_IMAGE_PROMPT_MAX_LENGTH
+
+
 def test_carousel_render_prompt_uses_all_approved_module_lines_for_sample_modules() -> None:
     request = AIOrchestrationRequest(
         tenant_id=uuid4(),
@@ -20415,6 +20612,146 @@ def test_orchestrator_content_semantic_preflight_replaces_sample_headings_before
     assert "Why this matters now" not in headlines
     assert "What to do with this insight" not in headlines
     assert "carousel_raw_generic_headline" not in {issue["code"] for issue in report["issues"]}
+
+
+def test_orchestrator_template_adaptance_preflight_never_reuses_sample_headline() -> None:
+    sample_headline = "Acme closed its fastest trade deal yet"
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a LinkedIn carousel on the Acme Pacific trade agreement.",
+        studio_panel={
+            "platform_preset": "linkedin",
+            "format": "carousel",
+            "file_type": "png",
+            "pinned_template_id": "tpl-trade-sample",
+        },
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"brand_name": "Acme Capital"},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        reference_assets=[{"asset_role": "reference_creative", "storage_path": "tenant/reference/trade-sample-1.png"}],
+        template_context={
+            "sequence_pack": {
+                "surface_policy": "style_reference_only",
+                "selected_template_id": "tpl-trade-sample",
+                "slide_count": 1,
+                "slides": [
+                    {
+                        "slide_index": 1,
+                        "sample_page_headline": sample_headline,
+                        "sample_page_supporting": "Here is what you missed.",
+                        "sample_page_copy": "Acme Pacific trade agreement fastest trade deal.",
+                        "sample_page_copy_behavior": "curiosity_gap",
+                        "sample_page_editorial_role": "hook",
+                    }
+                ],
+            }
+        },
+    )
+    payload = StructuredTextPayload(
+        headline="Acme Pacific trade agreement",
+        body="A concise explainer.",
+        cta="",
+        hashtags=["#Trade"],
+        metadata={
+            "carousel_slide_specs": [
+                {
+                    "slide_number": 1,
+                    "slide_role": "hook",
+                    "headline": "Why this matters now",
+                    "supporting_line": "The agreement creates a new trade signal.",
+                    "body": "The agreement creates a new trade signal.",
+                    "visual_focus": "Premium trade route module.",
+                    "cta": "",
+                }
+            ]
+        },
+    )
+
+    cleaned = AIOrchestratorService._preflight_text_payload_semantics(
+        request=request,
+        text_payload=payload,
+        compiled_context={},
+    )
+    headline = cleaned.metadata["carousel_slide_specs"][0]["headline"]
+
+    assert AIOrchestratorService._request_uses_template_adaptance(request) is True
+    assert headline != sample_headline
+    assert "fastest trade deal yet" not in headline
+    assert "Acme Pacific trade agreement" in headline
+
+
+def test_orchestrator_auto_carousel_preflight_preserves_matching_sample_headline() -> None:
+    sample_headline = "Acme closed its fastest trade deal yet"
+    template_id = uuid4()
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a LinkedIn carousel on Acme closed its fastest trade deal yet.",
+        studio_panel={"platform_preset": "linkedin", "format": "carousel", "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"brand_name": "Acme Capital"},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        reference_assets=[{"asset_role": "reference_creative", "storage_path": "tenant/reference/trade-sample-1.png"}],
+        layout_decision={
+            "template_id": str(template_id),
+            "primary_adaptation_template_id": str(template_id),
+            "primary_adaptation_matches_selected_template": False,
+        },
+        template_context={
+            "sequence_pack": {
+                "surface_policy": "style_reference_only",
+                "selected_template_id": str(template_id),
+                "slide_count": 1,
+                "slides": [
+                    {
+                        "slide_index": 1,
+                        "sample_page_headline": sample_headline,
+                        "sample_page_supporting": "Here is what you missed.",
+                        "sample_page_copy": "Acme closed its fastest trade deal yet.",
+                        "sample_page_copy_behavior": "curiosity_gap",
+                        "sample_page_editorial_role": "hook",
+                    }
+                ],
+            }
+        },
+    )
+    payload = StructuredTextPayload(
+        headline="Acme trade agreement",
+        body="A concise explainer.",
+        cta="",
+        hashtags=["#Trade"],
+        metadata={
+            "carousel_slide_specs": [
+                {
+                    "slide_number": 1,
+                    "slide_role": "hook",
+                    "headline": "Why this matters now",
+                    "supporting_line": "The agreement creates a new trade signal.",
+                    "body": "The agreement creates a new trade signal.",
+                    "visual_focus": "Premium trade route module.",
+                    "cta": "",
+                }
+            ]
+        },
+    )
+
+    cleaned = AIOrchestratorService._preflight_text_payload_semantics(
+        request=request,
+        text_payload=payload,
+        compiled_context={},
+    )
+
+    assert AIOrchestratorService._select_generation_strategy_for_request(request) == GenerationStrategy.CONTENT_INTELLIGENCE
+    assert cleaned.metadata["carousel_slide_specs"][0]["headline"] == sample_headline
 
 
 def test_orchestrator_content_semantic_preflight_uses_selected_sample_editorial_grammar() -> None:

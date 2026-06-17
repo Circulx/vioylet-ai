@@ -7774,7 +7774,7 @@ class ContentService:
 
     @staticmethod
     def _logo_size_scale() -> float:
-        return 1.2
+        return 0.96
 
     @staticmethod
     def _scaled_logo_dimension(value: int | float) -> int:
@@ -8591,20 +8591,12 @@ class ContentService:
                     anchor=anchor,
                     reference_box=reference_box,
                 )
-        if anchor[1] == "right" and width > min_width:
-            box = (
-                x,
-                y,
-                min(width, max(min_width, int(canvas_width * 0.2))),
-                min(height, max(min_height, int(canvas_height * 0.085))),
-            )
-        else:
-            box = cls._cap_logo_box_to_profile(
-                box=box,
-                canvas_width=canvas_width,
-                canvas_height=canvas_height,
-                format_name=format_name,
-            )
+        box = cls._cap_logo_box_to_profile(
+            box=box,
+            canvas_width=canvas_width,
+            canvas_height=canvas_height,
+            format_name=format_name,
+        )
         return cls._snap_logo_box_to_anchor_edge(
             box=box,
             canvas_width=canvas_width,

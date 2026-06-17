@@ -2731,7 +2731,7 @@ class RendererService:
 
     @staticmethod
     def _logo_size_scale() -> float:
-        return 1.2
+        return 0.96
 
     @staticmethod
     def _scaled_logo_dimension(value: int | float) -> int:

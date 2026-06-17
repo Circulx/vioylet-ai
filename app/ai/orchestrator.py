@@ -2699,7 +2699,7 @@ class AIOrchestratorService:
 
     @staticmethod
     def _logo_size_scale() -> float:
-        return 1.2
+        return 0.96
 
     @staticmethod
     def _scaled_logo_ratio(value: float) -> float:
@@ -2751,8 +2751,9 @@ class AIOrchestratorService:
             else:
                 y = min(max(ref_y, 0.0), max(1.0 - height, 0.0))
             return (x, y, width, height)
-        margin_x = min(20 / canvas_width, max(1.0 - width, 0.0))
-        margin_y = min(20 / canvas_height, max(1.0 - height, 0.0))
+        margin_x = cls._logo_horizontal_margin_ratio(canvas_width, width)
+        margin_top = cls._logo_top_margin_ratio(canvas_height, height)
+        margin_bottom = cls._logo_bottom_margin_ratio(canvas_height, height)
         if horizontal == "left":
             x = margin_x
         elif horizontal == "center":
@@ -25113,6 +25114,153 @@ class AIOrchestratorService:
             f"Keep that zone visually quiet and readable. Disclaimer style: {style}."
         )
 
+    @classmethod
+    def _brand_legal_footer_text_for_format(cls, request: AIOrchestrationRequest) -> str:
+        brand_context = getattr(request, "resolved_brand_context", {}) if request is not None else {}
+        brand_context = brand_context if isinstance(brand_context, dict) else {}
+        brand_assets = brand_context.get("brand_assets") if isinstance(brand_context.get("brand_assets"), dict) else {}
+        legal_disclaimers = brand_assets.get("legal_disclaimers")
+        if not isinstance(legal_disclaimers, list):
+            return ""
+
+        studio_panel = getattr(request, "studio_panel", {}) if request is not None else {}
+        studio_panel = studio_panel if isinstance(studio_panel, dict) else {}
+        format_name = cls._normalize_metadata_text(studio_panel.get("format"), limit=32).casefold()
+        brief = getattr(request, "research_editorial_brief", {}) if request is not None else {}
+        brief = brief if isinstance(brief, dict) else {}
+        prompt_lower = str(getattr(request, "prompt", "") or "").casefold()
+        disclaimer_requested = bool(brief.get("disclaimer_requested")) or ("disclaimer" in prompt_lower)
+
+        applicable: list[dict[str, Any]] = []
+        fallback: list[dict[str, Any]] = []
+        for disclaimer in legal_disclaimers:
+            if not isinstance(disclaimer, dict):
+                continue
+            text = cls._normalize_metadata_text(
+                disclaimer.get("text_template")
+                or disclaimer.get("text")
+                or disclaimer.get("content"),
+                limit=420,
+            )
+            if not text:
+                continue
+            fallback.append(disclaimer)
+            applies_to_formats = {
+                cls._normalize_metadata_text(item, limit=32).casefold()
+                for item in (disclaimer.get("applies_to_formats") or [])
+                if cls._normalize_metadata_text(item, limit=32)
+            }
+            if format_name and format_name in applies_to_formats:
+                applicable.append(disclaimer)
+
+        selected = applicable[0] if applicable else fallback[0] if disclaimer_requested and fallback else None
+        if not selected:
+            return ""
+        return cls._normalize_metadata_text(
+            selected.get("text_template") or selected.get("text") or selected.get("content"),
+            limit=420,
+        )
+
+    @classmethod
+    def _bottom_footer_overlay_requested(
+        cls,
+        request: AIOrchestrationRequest,
+        *,
+        legal_footer_text: Any = "",
+    ) -> bool:
+        if cls._normalize_metadata_text(legal_footer_text, limit=420):
+            return True
+        brief = getattr(request, "research_editorial_brief", {}) if request is not None else {}
+        brief = brief if isinstance(brief, dict) else {}
+        requested = bool(brief.get("disclaimer_requested"))
+        if not requested:
+            prompt_lower = str(getattr(request, "prompt", "") or "").casefold()
+            requested = "disclaimer" in prompt_lower
+        if not requested:
+            return False
+        placement = cls._normalize_metadata_text(brief.get("disclaimer_placement"), limit=24).casefold()
+        return not placement or placement == "bottom_footer"
+
+    @classmethod
+    def _infographic_footer_safe_layout_contract(
+        cls,
+        *,
+        format_name: str,
+        footer_requested: bool,
+        footer_safe_area: dict[str, Any] | None = None,
+    ) -> str:
+        if not footer_requested:
+            return ""
+        if cls._normalize_metadata_text(format_name, limit=32).casefold() != "infographic":
+            return ""
+        safe_area = footer_safe_area if isinstance(footer_safe_area, dict) else {}
+        try:
+            reserved_height = int(safe_area.get("reserved_height") or 0)
+        except (TypeError, ValueError):
+            reserved_height = 0
+        try:
+            content_canvas_height = int(safe_area.get("content_canvas_height") or 0)
+        except (TypeError, ValueError):
+            content_canvas_height = 0
+        reserved_ratio = cls._normalize_metadata_text(safe_area.get("reserved_ratio"), limit=24)
+        size_note = (
+            f" Calculated footer reserve: {reserved_height}px"
+            + (f" ({reserved_ratio})" if reserved_ratio else "")
+            + (f"; content-safe height: {content_canvas_height}px." if content_canvas_height else ".")
+            if reserved_height
+            else ""
+        )
+        return (
+            "Infographic footer-safe layout contract: reserve the calculated bottom footer strip before composing sections; "
+            "treat it as a forbidden content zone and leave calculated footer strip blank for backend footer. "
+            "INFOGRAPHIC FOOTER BLANK-SPACE RULE: Leave the bottom strip plain background only; no modules, icons, charts, labels, CTA, fine print, shadows, patterns, or visual details may enter it. "
+            "Use at most 3 compact content sections/modules above the footer-safe area; compress overflow into approved summary modules instead of extending into the footer."
+            f"{size_note}"
+        )
+
+    @staticmethod
+    def _image_text_containment_contract(*, format_name: str) -> list[str]:
+        normalized_format = str(format_name or "").strip().casefold()
+        if normalized_format == "carousel":
+            surface = "carousel slide"
+        elif normalized_format == "infographic":
+            surface = "infographic"
+        elif normalized_format == "story":
+            surface = "story frame"
+        else:
+            surface = "static social creative"
+        rule_label = (
+            "STATIC/INFOGRAPHIC TEXT NO-TRUNCATION RULE"
+            if normalized_format in {"static", "infographic"}
+            else "TEXT NO-TRUNCATION RULE"
+        )
+        return [
+            (
+                f"{rule_label}: keep every approved readable word, number, chart labels, CTA text, or footer/legal text fully inside the {surface} canvas. "
+                "No text may be clipped, hidden behind visual elements, pushed into crop edges, or reduced to unreadable microtype."
+            ),
+            (
+                "If the copy or data feels dense, reduce module count, simplify the illustration, increase quiet space, and prioritize the strongest approved lines instead of overflowing the layout."
+            ),
+        ]
+
+    @staticmethod
+    def _ad_post_visual_quality_contract(format_name: str) -> str:
+        normalized_format = str(format_name or "").strip().casefold()
+        if normalized_format not in {"static", "story", "poster", "infographic", "carousel"}:
+            return ""
+        if normalized_format == "infographic":
+            return (
+                "Ad-post visual quality contract: create a premium, feed-native infographic with clear section hierarchy, polished spacing, factual visual anchors, and no generic filler motifs."
+            )
+        if normalized_format == "carousel":
+            return (
+                "Ad-post visual quality contract: create a premium carousel slide with strong narrative hierarchy, consistent series styling, and a distinct visual role for this panel."
+            )
+        return (
+            "Ad-post visual quality contract: create a premium, feed-native social creative with one clear focal idea, polished brand-safe craft, and scroll-stopping but readable composition."
+        )
+
     @staticmethod
     def _text_overlay_substrate_contract(
         *,
@@ -25598,6 +25746,7 @@ class AIOrchestratorService:
             for_static_infographic_ad=llm_led_static_infographic,
         )
         ad_post_visual_quality_contract = AIOrchestratorService._ad_post_visual_quality_contract(format_name)
+        text_containment_contract = AIOrchestratorService._image_text_containment_contract(format_name=format_name)
         multimodal_balance_contract = AIOrchestratorService._multimodal_balance_contract(
             format_name=format_name,
             supporting_line=AIOrchestratorService._normalize_metadata_text(metadata.get("supporting_line") or text_payload.body, limit=220),
@@ -25871,6 +26020,7 @@ class AIOrchestratorService:
             logo_surface_guidance,
             disclaimer_overlay_guidance,
             infographic_footer_layout_contract,
+            *text_containment_contract,
             f"Platform: {platform}.",
             f"Format: {format_name}.",
             f"Output type: {file_type}.",
@@ -26018,6 +26168,8 @@ class AIOrchestratorService:
             ),
             logo_surface_guidance,
             disclaimer_overlay_guidance,
+            infographic_footer_layout_contract,
+            *text_containment_contract,
             f"Platform: {platform}.",
             f"Format: {format_name}.",
             f"Output type: {file_type}.",
@@ -31178,6 +31330,25 @@ class AIOrchestratorService:
         text_containment_contract = AIOrchestratorService._image_text_containment_contract(format_name=format_name)
         legal_footer_text = AIOrchestratorService._brand_legal_footer_text_for_format(request)
         disclaimer_overlay_guidance = AIOrchestratorService._disclaimer_overlay_guidance(request)
+        bottom_footer_requested = AIOrchestratorService._bottom_footer_overlay_requested(
+            request,
+            legal_footer_text=legal_footer_text,
+        )
+        request_size = request.studio_panel.get("size") if isinstance(request.studio_panel.get("size"), dict) else {}
+        footer_safe_area = (
+            calculate_footer_safe_area(
+                canvas_width=int(request_size.get("width") or 1080),
+                canvas_height=int(request_size.get("height") or 1080),
+                footer_text=legal_footer_text,
+            )
+            if bottom_footer_requested
+            else {}
+        )
+        infographic_footer_layout_contract = AIOrchestratorService._infographic_footer_safe_layout_contract(
+            format_name=format_name,
+            footer_requested=bottom_footer_requested,
+            footer_safe_area=footer_safe_area,
+        )
         layout_content_budget = AIOrchestratorService._dynamic_layout_content_budget(
             request=request,
             format_name=format_name,
@@ -31421,6 +31592,8 @@ class AIOrchestratorService:
             logo_safe_zone_guidance,
             logo_surface_guidance,
             *logo_non_generation_contract,
+            disclaimer_overlay_guidance,
+            infographic_footer_layout_contract,
             *text_containment_contract,
             f"Theme: {theme_anchor}.",
             f"Message strategy theme: {message_theme}.",
@@ -31605,6 +31778,9 @@ class AIOrchestratorService:
             "Visual quality bar: premium, high-end, richly detailed composition with polished craft, clean hierarchy, and brand-safe restraint.",
             AIOrchestratorService._visual_quality_bar_for_treatment(structured_visual_metadata),
             f"Keep the {reserved_logo_area} area completely empty and visually clean. Do not place any icon, illustration element, text, or visual detail inside or immediately adjacent to this corner.",
+            disclaimer_overlay_guidance,
+            infographic_footer_layout_contract,
+            *text_containment_contract,
             f"Theme: {theme_anchor}.",
             f"Platform: {studio_panel.get('platform_preset', 'social')}.",
             f"Format: {studio_panel.get('format', 'static')}.",

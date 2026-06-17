@@ -1623,6 +1623,8 @@ class BrandScoringService:
     ) -> list[dict[str, Any]]:
         failures: list[dict[str, Any]] = []
         for field, message in fields:
+            if visual_review.get(field) is None:
+                continue
             value = int(visual_review.get(field) or 0)
             if value >= threshold:
                 continue
@@ -2816,12 +2818,16 @@ class BrandScoringService:
             or 0.0
         )
         metrics = {
-            "style alignment": int(visual_review.get("style_alignment_score") or 0),
-            "mood alignment": int(visual_review.get("mood_alignment_score") or 0),
-            "typography alignment": int(visual_review.get("typography_alignment_score") or 0),
-            "motif alignment": int(visual_review.get("motif_alignment_score") or 0),
-            "reference similarity": int(visual_review.get("reference_similarity_score") or 0),
-            "aesthetic consistency": int(visual_review.get("aesthetic_consistency_score") or 0),
+            label: int(visual_review.get(field) or 0)
+            for label, field in {
+                "style alignment": "style_alignment_score",
+                "mood alignment": "mood_alignment_score",
+                "typography alignment": "typography_alignment_score",
+                "motif alignment": "motif_alignment_score",
+                "reference similarity": "reference_similarity_score",
+                "aesthetic consistency": "aesthetic_consistency_score",
+            }.items()
+            if visual_review.get(field) is not None
         }
         weakest_label, weakest_score = min(metrics.items(), key=lambda item: item[1]) if metrics else ("brand fit", score)
         strongest = [label for label, value in metrics.items() if value >= 82][:2]

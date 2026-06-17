@@ -17,6 +17,7 @@ from app.repositories.brand import (
     PersonaRepository,
 )
 from app.schemas.brand import BrandCreateRequest, BrandSectionUpsertRequest, BrandUpdateRequest, GuardrailPayload
+from app.services.brand_summary_memory import BrandSummaryMemoryService
 from app.services.data_validation import DataValidatorService
 from app.services.usage import UsageLimitService
 from app.utils.text import slugify
@@ -34,6 +35,7 @@ class BrandSpaceService:
         self.usage = UsageLimitService(session)
         self.intelligence = BrandIntelligenceService()
         self.validator = DataValidatorService(session)
+        self.brand_summary_memory = BrandSummaryMemoryService()
 
     async def _commit_and_refresh_brand(self, brand: BrandSpace) -> BrandSpace:
         await self.session.commit()
@@ -143,6 +145,11 @@ class BrandSpaceService:
 
     async def refresh_context(self, brand_space_id: UUID) -> BrandSpace:
         brand, _snapshot = await self.validator.refresh_brand_context(brand_space_id)
+        try:
+            sections = await self.sections.list_current_sections(brand_space_id, brand.tenant_id)
+        except AttributeError:
+            sections = []
+        self.brand_summary_memory.upsert_brand_summary(brand, sections=sections)
         return brand
 
     async def upsert_section(self, tenant_id: UUID, brand_space_id: UUID, payload: BrandSectionUpsertRequest) -> BrandSpace:

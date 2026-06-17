@@ -638,7 +638,7 @@ function BrandScoringCard({ scoring }: { scoring: BrandScoringPayload }) {
             explanation={explanations.on_brand}
           />
           <ScorePill
-            label="Prompt"
+            label="Prompt Adherence"
             value={scoring.score_breakdown.prompt_adherence}
             explanation={explanations.prompt_adherence}
           />

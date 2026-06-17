@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+
+
+
 import logging
 import base64
 import json
@@ -90,7 +93,9 @@ def select_generation_engine(
 
 class AIOrchestratorService:
     IMAGE_PROMPT_MAX_LENGTH = 12000
-    CAROUSEL_IMAGE_PROMPT_MAX_LENGTH = 12000
+    DEFAULT_CAROUSEL_IMAGE_PROMPT_MAX_LENGTH = 12000
+    CAROUSEL_IMAGE_PROMPT_MAX_LENGTH = 24000
+    CAROUSEL_STRICT_SAMPLE_IMAGE_PROMPT_MAX_LENGTH = 21000
     SAMPLE_SIMILARITY_ACCEPT_SCORE = 0.82
     SCENE_GRAPH_REPAIR_ATTEMPTS = 2
     CONTENT_SEMANTIC_REPAIR_ATTEMPTS = 1
@@ -21893,25 +21898,53 @@ class AIOrchestratorService:
             "visual_plan": compiled_context.get("visual_plan", {}),
             "live_research": request.live_research,
         }
-        research_summary = research_provider.generate_text(
-            PromptEnvelope(
-                system=(
-                    "Synthesize the provided brand and audience context into a compact downstream research memo for generation. "
-                    "Preserve concrete audience motivations, pain points, objections, preferences, behaviors, differentiators, proof cues, "
-                    "and non-redundant specifics when present. If a research-editorial brief is active, preserve its thesis, angle, insight hierarchy, "
-                    "and outline rather than collapsing the topic into generic social commentary. Keep it brand-safe, but do not genericize the audience into vague filler. "
-                    "Prefer 4-6 short sentences or semicolon-separated lines with concrete guidance."
-                ),
-                user=(
-                    f"Prompt: {request.prompt}\n"
-                    f"Research context: {research_context_payload}\n"
-                    f"Conflict resolution policy: {plan.instructions}"
-                ),
+        research_envelope = PromptEnvelope(
+            system=(
+                "Synthesize the provided brand and audience context into a compact downstream research memo for generation. "
+                "Preserve concrete audience motivations, pain points, objections, preferences, behaviors, differentiators, proof cues, "
+                "and non-redundant specifics when present. If a research-editorial brief is active, preserve its thesis, angle, insight hierarchy, "
+                "and outline rather than collapsing the topic into generic social commentary. Keep it brand-safe, but do not genericize the audience into vague filler. "
+                "Prefer 4-6 short sentences or semicolon-separated lines with concrete guidance."
             ),
+            user=(
+                f"Prompt: {request.prompt}\n"
+                f"Research context: {research_context_payload}\n"
+                f"Conflict resolution policy: {plan.instructions}"
+            ),
+        )
+        self._trace_payload(
+            trace_id,
+            self.trace,
+            "research_summary_prompt",
+            {
+                "system": research_envelope.system,
+                "user": research_envelope.user,
+                "prompt_token_measurement": self._trace_prompt_token_measurement(
+                    {"system": research_envelope.system, "user": research_envelope.user}
+                ),
+                "research_context_token_measurement": self._trace_mapping_token_measurement(research_context_payload),
+            },
+        )
+        research_summary = research_provider.generate_text(
+            research_envelope,
             fallback=(
                 "Preserve concrete audience motivations, pain points, objections, preferences, and retrieved knowledge in a concise brand-safe memo."
             ),
         )
+        provider_usage = getattr(research_provider, "last_usage", None)
+        if isinstance(provider_usage, dict):
+            self._trace_payload(
+                trace_id,
+                self.trace,
+                "research_summary_provider_usage",
+                {
+                    "provider": getattr(research_provider, "provider_name", ""),
+                    "usage": provider_usage,
+                    "prompt_token_measurement": self._trace_prompt_token_measurement(
+                        {"system": research_envelope.system, "user": research_envelope.user}
+                    ),
+                },
+            )
         latency_ms["research_ms"] = round((perf_counter() - research_started_at) * 1000, 2)
         compiled_context["research_summary"] = research_summary
         self._trace_payload(trace_id, self.trace, "compiled_context", compiled_context)
@@ -22153,6 +22186,13 @@ class AIOrchestratorService:
                 {
                     "system": message_strategy_envelope.system,
                     "user": message_strategy_envelope.user,
+                    "prompt_token_measurement": self._trace_prompt_token_measurement(
+                        {
+                            "system": message_strategy_envelope.system,
+                            "user": message_strategy_envelope.user,
+                        }
+                    ),
+                    "compiled_context_token_measurement": self._trace_mapping_token_measurement(compiled_context),
                     "compiled_sections": sorted(compiled_context.keys()),
                 },
             )
@@ -22161,6 +22201,23 @@ class AIOrchestratorService:
                 fallback=fallback_message_strategy,
             )
             latency_ms["message_strategy_ms"] = round((perf_counter() - message_strategy_started_at) * 1000, 2)
+            provider_usage = getattr(generation_provider, "last_usage", None)
+            if isinstance(provider_usage, dict):
+                self._trace_payload(
+                    trace_id,
+                    self.trace,
+                    "message_strategy_provider_usage",
+                    {
+                        "provider": getattr(generation_provider, "provider_name", ""),
+                        "usage": provider_usage,
+                        "prompt_token_measurement": self._trace_prompt_token_measurement(
+                            {
+                                "system": message_strategy_envelope.system,
+                                "user": message_strategy_envelope.user,
+                            }
+                        ),
+                    },
+                )
             self._trace_payload(trace_id, self.trace, "message_strategy_response", message_strategy_response)
             message_strategy = self.normalize_message_strategy_payload(
                 message_strategy_response,
@@ -22199,6 +22256,13 @@ class AIOrchestratorService:
             {
                 "system": planning_envelope.system,
                 "user": planning_envelope.user,
+                "prompt_token_measurement": self._trace_prompt_token_measurement(
+                    {
+                        "system": planning_envelope.system,
+                        "user": planning_envelope.user,
+                    }
+                ),
+                "compiled_context_token_measurement": self._trace_mapping_token_measurement(compiled_context),
                 "compiled_sections": sorted(compiled_context.keys()),
                 "generation_path": generation_path,
             },
@@ -22212,6 +22276,23 @@ class AIOrchestratorService:
                 "scene_graph": fallback_scene_graph,
             },
         )
+        provider_usage = getattr(generation_provider, "last_usage", None)
+        if isinstance(provider_usage, dict):
+            self._trace_payload(
+                trace_id,
+                self.trace,
+                "planning_provider_usage",
+                {
+                    "provider": getattr(generation_provider, "provider_name", ""),
+                    "usage": provider_usage,
+                    "prompt_token_measurement": self._trace_prompt_token_measurement(
+                        {
+                            "system": planning_envelope.system,
+                            "user": planning_envelope.user,
+                        }
+                    ),
+                },
+            )
         self._trace_payload(trace_id, self.trace, "planning_response", planning_response)
         text_dict = self.normalize_text_payload(
             planning_response,
@@ -30932,13 +31013,30 @@ class AIOrchestratorService:
                 continue
             target = optional_sections if cleaned.startswith(optional_prefixes) else required_sections
             target.append(cleaned)
+        template_reference_prompt_active = (
+            style_reference_sample_active
+            or AIOrchestratorService._request_uses_template_adaptance(request)
+            or (
+                not AIOrchestratorService._request_uses_content_intelligence(request)
+                and (
+                    AIOrchestratorService._compiled_context_has_authoritative_layout(compiled_context)
+                    or str((getattr(request, "layout_decision", None) or {}).get("mode") or "").strip().lower()
+                    in {"adapted_template", "exact_template"}
+                )
+            )
+        )
+        prompt_limit = AIOrchestratorService.DEFAULT_CAROUSEL_IMAGE_PROMPT_MAX_LENGTH
+        if template_reference_prompt_active:
+            prompt_limit = AIOrchestratorService.CAROUSEL_IMAGE_PROMPT_MAX_LENGTH
+        elif strict_sample_layout_contract and thin_sample_conditioning_contract:
+            prompt_limit = AIOrchestratorService.CAROUSEL_STRICT_SAMPLE_IMAGE_PROMPT_MAX_LENGTH
         prompt = AIOrchestratorService._compose_prompt_sections(
             required_sections=required_sections,
             optional_sections=optional_sections,
-            limit=AIOrchestratorService.CAROUSEL_IMAGE_PROMPT_MAX_LENGTH,
+            limit=prompt_limit,
         )
         prompt = AIOrchestratorService._scrub_image_prompt_brand_mark_triggers(prompt)
-        return AIOrchestratorService._trim_prompt(prompt, AIOrchestratorService.CAROUSEL_IMAGE_PROMPT_MAX_LENGTH)
+        return AIOrchestratorService._trim_prompt(prompt, prompt_limit)
 
     @staticmethod
     def build_logo_composite_prompt(
@@ -32177,6 +32275,67 @@ class AIOrchestratorService:
         if not value:
             return 0
         return max(1, (len(value.strip()) + 3) // 4)
+
+    @staticmethod
+    def _trace_text_token_measurement(label: str, value: Any) -> dict[str, Any]:
+        text = str(value or "")
+        return {
+            "label": label,
+            "chars": len(text),
+            "lines": text.count("\n") + 1 if text else 0,
+            "estimated_tokens": AIOrchestratorService._estimate_tokens(text),
+            "estimated": True,
+        }
+
+    @classmethod
+    def _trace_prompt_token_measurement(cls, segments: dict[str, Any]) -> dict[str, Any]:
+        measured_segments = [
+            cls._trace_text_token_measurement(label, value)
+            for label, value in segments.items()
+            if str(value or "")
+        ]
+        return {
+            "segments": measured_segments,
+            "total_chars": sum(int(item["chars"]) for item in measured_segments),
+            "estimated_tokens": sum(int(item["estimated_tokens"]) for item in measured_segments),
+            "estimated": True,
+        }
+
+    @classmethod
+    def _trace_mapping_token_measurement(
+        cls,
+        mapping: dict[str, Any] | None,
+        *,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        if not isinstance(mapping, dict) or not mapping:
+            return {"sections": [], "total_chars": 0, "estimated_tokens": 0, "estimated": True}
+        sections: list[dict[str, Any]] = []
+        total_chars = 0
+        total_tokens = 0
+        for key, value in mapping.items():
+            try:
+                serialized = json.dumps(value, ensure_ascii=False, default=str, separators=(",", ":"))
+            except TypeError:
+                serialized = str(value)
+            chars = len(serialized)
+            tokens = cls._estimate_tokens(serialized)
+            total_chars += chars
+            total_tokens += tokens
+            sections.append(
+                {
+                    "section": str(key),
+                    "chars": chars,
+                    "estimated_tokens": tokens,
+                }
+            )
+        sections.sort(key=lambda item: int(item["chars"]), reverse=True)
+        return {
+            "sections": sections[: max(int(limit), 1)],
+            "total_chars": total_chars,
+            "estimated_tokens": total_tokens,
+            "estimated": True,
+        }
 
     @classmethod
     def _prompt_length_metrics(cls, prompt: str | None) -> dict[str, int]:

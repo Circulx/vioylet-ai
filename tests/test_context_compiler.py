@@ -1851,6 +1851,55 @@ def test_context_compiler_expands_content_and_visual_plan_for_carousel_execution
     assert compiled["visual_plan"]["visual_sequence_expectation"] == "distinct_page_compositions"
 
 
+def test_context_compiler_preserves_semantic_carousel_plan_fields() -> None:
+    compiler = ContextCompilerService()
+
+    compiled = compiler.compile(
+        prompt="Analyze the trade agreement implications as a carousel.",
+        brand_context={"brand_name": "Jiraaf"},
+        persona_context={},
+        objective_context={},
+        ordered_knowledge={},
+        studio_panel={"platform_preset": "linkedin", "format": "carousel", "file_type": "pdf"},
+        conversation_context={},
+        session_memory={},
+        research_editorial_brief={
+            "narrative_contract": "semantic_prompt_story_plan",
+            "semantic_carousel_plan": {
+                "family": "macro_analysis",
+                "recommended_slide_count": 5,
+                "story_map": [
+                    {
+                        "role": "hook",
+                        "purpose": "Lead with the undercovered implication.",
+                        "notes": "Short and sharp.",
+                        "section_focus": "implication",
+                        "representation_hint": "hero_stat",
+                    }
+                ],
+            },
+        },
+        content_plan={
+            "format_family": "carousel",
+            "sequence_contract": "semantic_prompt_story_plan",
+            "preferred_slide_count": 5,
+            "semantic_carousel_plan": {"family": "macro_analysis", "recommended_slide_count": 5},
+            "carousel_slide_contracts": [
+                {
+                    "role": "hook",
+                    "purpose": "Lead with the undercovered implication.",
+                    "section_focus": "implication",
+                    "representation_hint": "hero_stat",
+                }
+            ],
+        },
+    )
+
+    assert compiled["research_editorial_brief"]["semantic_carousel_plan"]["story_map"][0]["role"] == "hook"
+    assert compiled["content_plan"]["semantic_carousel_plan"]["family"] == "macro_analysis"
+    assert compiled["content_plan"]["carousel_slide_contracts"][0]["representation_hint"] == "hero_stat"
+
+
 def test_context_compiler_reference_asset_brief_keeps_sequence_cues() -> None:
     compiler = ContextCompilerService()
 

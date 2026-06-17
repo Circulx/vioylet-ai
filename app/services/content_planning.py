@@ -254,6 +254,39 @@ class ContentPlanningService:
         return []
 
     @classmethod
+    def _semantic_carousel_slide_grammar(cls, plan: dict[str, Any]) -> list[dict[str, str]]:
+        story_map = [item for item in (plan.get("story_map") or []) if isinstance(item, dict)]
+        grammar: list[dict[str, str]] = []
+        for item in story_map[:8]:
+            role = str(item.get("role") or "").strip()
+            job = str(item.get("purpose") or item.get("notes") or "").strip()
+            if role or job:
+                grammar.append({"role": role, "job": job})
+        return grammar
+
+    @classmethod
+    def _semantic_carousel_slide_contracts(cls, plan: dict[str, Any]) -> list[dict[str, str]]:
+        story_map = [item for item in (plan.get("story_map") or []) if isinstance(item, dict)]
+        contracts: list[dict[str, str]] = []
+        for item in story_map[:8]:
+            role = str(item.get("role") or "").strip()
+            purpose = str(item.get("purpose") or "").strip()
+            notes = str(item.get("notes") or "").strip()
+            section_focus = str(item.get("section_focus") or "").strip()
+            representation_hint = str(item.get("representation_hint") or "").strip()
+            if role or purpose or notes or section_focus or representation_hint:
+                contracts.append(
+                    {
+                        "role": role,
+                        "purpose": purpose,
+                        "notes": notes,
+                        "section_focus": section_focus,
+                        "representation_hint": representation_hint,
+                    }
+                )
+        return contracts
+
+    @classmethod
     def derive_content_plan(
         cls,
         *,
@@ -261,6 +294,7 @@ class ContentPlanningService:
         format_family_plan: dict[str, Any] | None,
         research_editorial_brief: dict[str, Any] | None,
         planning_family: str = "text",
+        enable_semantic_carousel_plan: bool = False,
     ) -> dict[str, Any]:
         format_plan = format_family_plan if isinstance(format_family_plan, dict) else {}
         research_brief = research_editorial_brief if isinstance(research_editorial_brief, dict) else {}
@@ -280,6 +314,11 @@ class ContentPlanningService:
         sample_explanation_styles = cls._normalized_text_list(sample_editorial_brief.get("explanation_styles"), limit=4)
         sample_copy_densities = cls._normalized_text_list(sample_editorial_brief.get("copy_densities"), limit=4)
         sample_closing_styles = cls._normalized_text_list(sample_editorial_brief.get("closing_styles"), limit=4)
+        semantic_carousel_plan = (
+            research_brief.get("semantic_carousel_plan")
+            if enable_semantic_carousel_plan and isinstance(research_brief.get("semantic_carousel_plan"), dict)
+            else {}
+        )
         preferred_slide_count = int(
             research_brief.get("preferred_slide_count")
             or format_plan.get("preferred_slide_count")
@@ -287,6 +326,7 @@ class ContentPlanningService:
         ) or None
         carousel_archetype = ""
         carousel_slide_grammar: list[dict[str, str]] = []
+        carousel_slide_contracts: list[dict[str, str]] = []
         carousel_archetype_rules: list[str] = []
 
         if format_family == "carousel":
@@ -309,7 +349,16 @@ class ContentPlanningService:
             )
             if ordered_story_beats and carousel_archetype == "ordered_story":
                 sequence_contract = "user_ordered_story_beats"
-            carousel_slide_grammar = cls._carousel_slide_grammar(carousel_archetype)
+            if semantic_carousel_plan.get("story_map") and not ordered_story_beats:
+                sequence_contract = "semantic_prompt_story_plan"
+                preferred_slide_count = max(
+                    preferred_slide_count or 0,
+                    int(semantic_carousel_plan.get("recommended_slide_count") or 0),
+                ) or preferred_slide_count
+                carousel_slide_grammar = cls._semantic_carousel_slide_grammar(semantic_carousel_plan)
+                carousel_slide_contracts = cls._semantic_carousel_slide_contracts(semantic_carousel_plan)
+            else:
+                carousel_slide_grammar = cls._carousel_slide_grammar(carousel_archetype)
             carousel_archetype_rules = cls._carousel_archetype_rules(carousel_archetype)
         elif format_family == "infographic":
             sequence_contract = "native_infographic_sections"
@@ -362,9 +411,11 @@ class ContentPlanningService:
             "research_mode": str(research_brief.get("mode") or "").strip() or "standard",
             "slides": outline if format_family == "carousel" else [],
             "story_outline": outline,
+            "semantic_carousel_plan": semantic_carousel_plan,
             "ordered_story_beats": ordered_story_beats,
             "carousel_archetype": carousel_archetype,
             "carousel_slide_grammar": carousel_slide_grammar,
+            "carousel_slide_contracts": carousel_slide_contracts,
             "carousel_archetype_rules": carousel_archetype_rules,
             "sample_editorial_source": str(sample_editorial_brief.get("source") or "").strip(),
             "sample_story_roles": sample_story_roles,
@@ -389,6 +440,7 @@ class ContentPlanningService:
         live_research: dict[str, Any] | None,
         content_format_guide: dict[str, Any] | None = None,
         deliverable_type: str | None,
+        enable_semantic_carousel_plan: bool = False,
     ) -> dict[str, Any]:
         research_editorial_brief = self.research_editorial.build(
             prompt=prompt,
@@ -414,5 +466,6 @@ class ContentPlanningService:
                 format_family_plan=format_family_plan,
                 research_editorial_brief=research_editorial_brief,
                 planning_family="text",
+                enable_semantic_carousel_plan=enable_semantic_carousel_plan,
             ),
         }

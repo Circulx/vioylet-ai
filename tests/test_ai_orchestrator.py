@@ -224,6 +224,108 @@ def test_orchestrator_content_intelligence_guard_is_auto_carousel_only() -> None
     assert AIOrchestratorService._request_uses_content_intelligence(without_reference) is False
 
 
+def test_content_intelligence_route_enriches_auto_carousel_content_plan(monkeypatch) -> None:
+    template_id = uuid4()
+    captured: dict[str, AIOrchestrationRequest] = {}
+
+    def fake_generate_main_ai(self: AIOrchestratorService, request: AIOrchestrationRequest):  # type: ignore[no-untyped-def]
+        captured["request"] = request
+        return None
+
+    monkeypatch.setattr(AIOrchestratorService, "_generate_main_ai", fake_generate_main_ai)
+    service = AIOrchestratorService()
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a carousel about market structure.",
+        studio_panel={"format": "carousel", "platform_preset": "linkedin", "file_type": "pdf"},
+        resolved_brand_context={},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        reference_assets=[{"asset_role": "reference_creative"}],
+        layout_decision={
+            "template_id": str(template_id),
+            "primary_adaptation_template_id": str(template_id),
+            "primary_adaptation_matches_selected_template": False,
+        },
+        format_family_plan={"family": "carousel", "preferred_slide_count": 4},
+        content_plan={"format_family": "carousel"},
+        research_editorial_brief={
+            "preferred_slide_count": 4,
+            "semantic_carousel_plan": {
+                "family": "macro_analysis",
+                "recommended_slide_count": 5,
+                "story_map": [
+                    {
+                        "role": "hook",
+                        "purpose": "Open with the undercovered implication.",
+                        "section_focus": "implication",
+                        "representation_hint": "hero_stat",
+                    },
+                    {
+                        "role": "structure",
+                        "purpose": "Explain the mechanism.",
+                        "section_focus": "mechanics",
+                        "representation_hint": "process_path",
+                    },
+                ],
+            },
+        },
+    )
+
+    assert service._generate_content_intelligence(request) is None
+
+    enriched = captured["request"].content_plan
+    assert enriched["sequence_contract"] == "semantic_prompt_story_plan"
+    assert enriched["preferred_slide_count"] == 5
+    assert enriched["semantic_carousel_plan"]["family"] == "macro_analysis"
+    assert enriched["carousel_slide_grammar"][0]["role"] == "hook"
+    assert enriched["carousel_slide_contracts"][1]["representation_hint"] == "process_path"
+
+
+def test_pinned_carousel_does_not_use_content_intelligence_enrichment(monkeypatch) -> None:
+    template_id = uuid4()
+    captured: dict[str, AIOrchestrationRequest] = {}
+
+    def fake_generate_main_ai(self: AIOrchestratorService, request: AIOrchestrationRequest):  # type: ignore[no-untyped-def]
+        captured["request"] = request
+        return None
+
+    monkeypatch.setattr(AIOrchestratorService, "_generate_main_ai", fake_generate_main_ai)
+    service = AIOrchestratorService()
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a carousel about market structure.",
+        studio_panel={
+            "format": "carousel",
+            "platform_preset": "linkedin",
+            "file_type": "pdf",
+            "pinned_template_id": str(template_id),
+        },
+        resolved_brand_context={},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        reference_assets=[{"asset_role": "reference_creative"}],
+        content_plan={"format_family": "carousel"},
+        research_editorial_brief={
+            "semantic_carousel_plan": {
+                "family": "macro_analysis",
+                "recommended_slide_count": 5,
+                "story_map": [{"role": "hook", "purpose": "Should not be promoted here."}],
+            },
+        },
+    )
+
+    assert service._dispatch_generation_strategy(GenerationStrategy.TEMPLATE_ADAPTANCE, request) is None
+
+    assert captured["request"].content_plan == {"format_family": "carousel"}
+
+
 def test_orchestrator_uses_fallback_when_hashtags_invalid() -> None:
     fallback = {
         "headline": "Fallback headline",

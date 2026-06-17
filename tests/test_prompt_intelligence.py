@@ -864,7 +864,16 @@ def test_generation_envelope_includes_content_and_visual_plan_for_carousel_metad
                     {"role": "hook", "job": "Open with the undercovered angle."},
                     {"role": "structure", "job": "Explain what actually changed."},
                 ],
+                "carousel_slide_contracts": [
+                    {
+                        "role": "hook",
+                        "purpose": "Lead with the undercovered angle.",
+                        "section_focus": "market implication",
+                        "representation_hint": "hero_stat",
+                    }
+                ],
                 "carousel_archetype_rules": ["Keep factual unpacking and implication on separate slides."],
+                "semantic_carousel_plan": {"family": "macro_analysis", "recommended_slide_count": 5},
             },
             "visual_plan": {
                 "planning_family": "visual",
@@ -894,6 +903,9 @@ def test_generation_envelope_includes_content_and_visual_plan_for_carousel_metad
     assert "body and/or body_points to carry the real per-slide explanation" in combined
     assert "\"carousel_archetype\": \"editorial_reveal\"" in combined
     assert "carousel_slide_grammar" in combined
+    assert "carousel_slide_contracts" in combined
+    assert "hero_stat" in combined
+    assert "semantic_carousel_plan" in combined
     assert "\"sequence_contract\": \"native_carousel_metadata\"" in combined
     assert "\"execution_mode\": \"multi_page_sequence\"" in combined
     assert "\"preferred_slide_count\": 5" in combined

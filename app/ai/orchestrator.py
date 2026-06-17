@@ -42,6 +42,7 @@ from app.core.config import get_settings
 from app.core.exceptions import GenerationFailureError
 from app.ai.tone_intelligence import ToneIntelligenceService
 from app.integrations.object_storage import LocalObjectStorage
+from app.services.content_planning import ContentPlanningService
 from app.services.generation_trace import GenerationTraceService
 from app.utils.input_access_tracking import InputAccessTracker
 from app.utils.footer_safe_area import calculate_footer_safe_area
@@ -21694,7 +21695,34 @@ class AIOrchestratorService:
     def _generate_content_intelligence(self, request: AIOrchestrationRequest) -> AIOrchestrationResponse:
         if not self._request_uses_content_intelligence(request):
             return self._generate_main_ai(request)
-        return self._generate_main_ai(request)
+        format_family_plan = deepcopy(request.format_family_plan if isinstance(request.format_family_plan, dict) else {})
+        if not str(format_family_plan.get("family") or "").strip():
+            format_family_plan["family"] = "carousel"
+        content_plan = deepcopy(request.content_plan if isinstance(request.content_plan, dict) else {})
+        enriched_plan = ContentPlanningService.derive_content_plan(
+            deliverable_type=content_plan.get("deliverable_type") or "visual_generation",
+            format_family_plan=format_family_plan,
+            research_editorial_brief=request.research_editorial_brief if isinstance(request.research_editorial_brief, dict) else {},
+            planning_family=content_plan.get("planning_family") or "content",
+            enable_semantic_carousel_plan=True,
+        )
+        for key in (
+            "carousel_slide_grammar",
+            "carousel_slide_contracts",
+            "carousel_archetype_rules",
+            "semantic_carousel_plan",
+            "preferred_slide_count",
+            "sequence_contract",
+            "sequence_expectation",
+        ):
+            value = enriched_plan.get(key)
+            if value:
+                content_plan[key] = value
+            elif key not in content_plan:
+                content_plan[key] = value
+        for key, value in enriched_plan.items():
+            content_plan.setdefault(key, value)
+        return self._generate_main_ai(request.model_copy(update={"content_plan": content_plan}))
 
     def _generate_main_ai(self, request: AIOrchestrationRequest) -> AIOrchestrationResponse:
         started_at = perf_counter()

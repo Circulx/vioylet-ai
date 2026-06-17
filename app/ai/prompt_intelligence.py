@@ -292,6 +292,26 @@ class PromptIntelligenceService:
             "ordered_story_beats": [str(item).strip() for item in (brief.get("ordered_story_beats") or []) if str(item).strip()][:8],
             "narrative_contract": str(brief.get("narrative_contract") or "").strip(),
             "outline": outline,
+            "semantic_carousel_plan": {
+                "family": str(
+                    ((brief.get("semantic_carousel_plan") or {}) if isinstance(brief.get("semantic_carousel_plan"), dict) else {}).get("family")
+                    or ""
+                ).strip(),
+                "recommended_slide_count": (
+                    ((brief.get("semantic_carousel_plan") or {}) if isinstance(brief.get("semantic_carousel_plan"), dict) else {}).get("recommended_slide_count")
+                ),
+                "story_map": [
+                    {
+                        "role": str(item.get("role") or "").strip(),
+                        "purpose": str(item.get("purpose") or "").strip(),
+                        "notes": str(item.get("notes") or "").strip(),
+                        "section_focus": str(item.get("section_focus") or "").strip(),
+                        "representation_hint": str(item.get("representation_hint") or "").strip(),
+                    }
+                    for item in ((((brief.get("semantic_carousel_plan") or {}) if isinstance(brief.get("semantic_carousel_plan"), dict) else {}).get("story_map") or [])[:8])
+                    if isinstance(item, dict)
+                ],
+            },
             "sample_editorial_brief": {
                 "source": str(((brief.get("sample_editorial_brief") or {}) if isinstance(brief.get("sample_editorial_brief"), dict) else {}).get("source") or "").strip(),
                 "family_name": str(((brief.get("sample_editorial_brief") or {}) if isinstance(brief.get("sample_editorial_brief"), dict) else {}).get("family_name") or "").strip(),
@@ -420,9 +440,33 @@ class PromptIntelligenceService:
                 for item in (plan.get("carousel_slide_grammar") or [])[:6]
                 if isinstance(item, dict) and (str(item.get("role") or "").strip() or str(item.get("job") or "").strip())
             ],
+            "carousel_slide_contracts": [
+                {
+                    key: value
+                    for key, value in {
+                        "role": str(item.get("role") or "").strip(),
+                        "purpose": str(item.get("purpose") or "").strip(),
+                        "notes": str(item.get("notes") or "").strip(),
+                        "section_focus": str(item.get("section_focus") or "").strip(),
+                        "representation_hint": str(item.get("representation_hint") or "").strip(),
+                    }.items()
+                    if value
+                }
+                for item in (plan.get("carousel_slide_contracts") or [])[:8]
+                if isinstance(item, dict)
+            ],
             "carousel_archetype_rules": [
                 str(item).strip() for item in (plan.get("carousel_archetype_rules") or []) if str(item).strip()
             ][:6],
+            "semantic_carousel_plan": {
+                "family": str(
+                    ((plan.get("semantic_carousel_plan") or {}) if isinstance(plan.get("semantic_carousel_plan"), dict) else {}).get("family")
+                    or ""
+                ).strip(),
+                "recommended_slide_count": (
+                    ((plan.get("semantic_carousel_plan") or {}) if isinstance(plan.get("semantic_carousel_plan"), dict) else {}).get("recommended_slide_count")
+                ),
+            },
             "sample_editorial_source": str(plan.get("sample_editorial_source") or "").strip(),
             "sample_story_roles": [str(item).strip() for item in (plan.get("sample_story_roles") or []) if str(item).strip()][:8],
             "sample_headline_patterns": [str(item).strip() for item in (plan.get("sample_headline_patterns") or []) if str(item).strip()][:6],
@@ -481,6 +525,7 @@ class PromptIntelligenceService:
                 "Each metadata.carousel_slide_specs item should be a distinct object with slide_number, slide_role, headline, supporting_line, body, body_points, proof_points, stat_highlights, visual_focus, and transition_note.",
                 f"If {content_plan_name}.ordered_story_beats is present, preserve that beat order exactly and map one core beat to one slide before applying any stock carousel archetype habits.",
                 f"When {content_plan_name}.carousel_archetype is present, treat it as the required carousel grammar and follow {content_plan_name}.carousel_slide_grammar step by step.",
+                f"If {content_plan_name}.carousel_slide_contracts is present, treat each item as a hard per-slide execution brief: preserve its role, cover its purpose, honor its section_focus, and reflect its representation_hint in visual_focus instead of defaulting to generic filler.",
                 f"When {content_plan_name}.carousel_archetype_rules are present, treat them as hard constraints for slide sequencing and role discipline.",
                 "For carousel outputs, slide_role must describe the editorial job of the slide such as hook, context, structure, undercovered_angle, strategic_meaning, takeaway, or closing.",
                 "For carousel outputs, do not let one archetype drift into another: an editorial reveal should not read like a list carousel, and a comparison carousel should not read like a poster split into pages.",
@@ -521,6 +566,7 @@ class PromptIntelligenceService:
                 f"Preserve {brief_name}.thesis, {brief_name}.angle, {brief_name}.reader_payoff, and {brief_name}.hook_strategy instead of flattening them into generic social commentary.",
                 f"Use {brief_name}.insight_hierarchy and {brief_name}.source_pack to anchor the copy in specific facts, clauses, comparisons, or implications when present.",
                 f"If {brief_name}.narrative_contract is preserve_user_order and {brief_name}.ordered_story_beats is present, treat those ordered beats as a hard storytelling contract.",
+                f"If {brief_name}.narrative_contract is semantic_prompt_story_plan and {brief_name}.semantic_carousel_plan.story_map is present, treat that story map as the authoritative slide progression before applying any sample rhythm or generic carousel habit.",
                 f"If {brief_name}.narrative_contract is follow_sample_editorial_rhythm and {brief_name}.sample_editorial_brief.story_roles is present, preserve that sampled slide-role rhythm while adapting all wording to the user's topic.",
                 f"If {brief_name}.narrative_contract is follow_sample_infographic_flow and {brief_name}.sample_editorial_brief.story_roles is present, preserve that sampled infographic section rhythm while adapting the facts and wording to the user's topic.",
                 f"If {brief_name}.narrative_contract is follow_sample_static_hierarchy and {brief_name}.sample_editorial_brief.story_roles is present, preserve that sampled static reading hierarchy while adapting the message to the user's topic.",

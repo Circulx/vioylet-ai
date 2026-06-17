@@ -1172,6 +1172,26 @@ class ContextCompilerService:
             ),
             "narrative_contract": cls._normalize_text(brief.get("narrative_contract"), limit=48),
             "outline": outline,
+            "semantic_carousel_plan": {
+                "family": cls._normalize_text(
+                    ((brief.get("semantic_carousel_plan") or {}) if isinstance(brief.get("semantic_carousel_plan"), dict) else {}).get("family"),
+                    limit=40,
+                ),
+                "recommended_slide_count": int(
+                    (((brief.get("semantic_carousel_plan") or {}) if isinstance(brief.get("semantic_carousel_plan"), dict) else {}).get("recommended_slide_count") or 0)
+                ) or None,
+                "story_map": [
+                    {
+                        "role": cls._normalize_text(item.get("role"), limit=32),
+                        "purpose": cls._truncate_text_on_word_boundary(item.get("purpose"), 180),
+                        "notes": cls._truncate_text_on_word_boundary(item.get("notes"), 140),
+                        "section_focus": cls._truncate_text_on_word_boundary(item.get("section_focus"), 120),
+                        "representation_hint": cls._normalize_text(item.get("representation_hint"), limit=40),
+                    }
+                    for item in ((((brief.get("semantic_carousel_plan") or {}) if isinstance(brief.get("semantic_carousel_plan"), dict) else {}).get("story_map") or [])[:8])
+                    if isinstance(item, dict)
+                ],
+            },
             "sample_editorial_brief": {
                 "source": cls._normalize_text(sample_editorial.get("source"), limit=32),
                 "family_name": cls._normalize_text(sample_editorial.get("family_name"), limit=72),
@@ -1315,11 +1335,31 @@ class ContextCompilerService:
                 for item in (plan.get("carousel_slide_grammar") or [])[:8]
                 if isinstance(item, dict)
             ],
+            "carousel_slide_contracts": [
+                {
+                    "role": cls._normalize_text(item.get("role"), limit=32),
+                    "purpose": cls._truncate_text_on_word_boundary(item.get("purpose"), 180),
+                    "notes": cls._truncate_text_on_word_boundary(item.get("notes"), 140),
+                    "section_focus": cls._truncate_text_on_word_boundary(item.get("section_focus"), 120),
+                    "representation_hint": cls._normalize_text(item.get("representation_hint"), limit=40),
+                }
+                for item in (plan.get("carousel_slide_contracts") or [])[:8]
+                if isinstance(item, dict)
+            ],
             "carousel_archetype_rules": cls._normalized_text_list(
                 plan.get("carousel_archetype_rules"),
                 item_limit=180,
                 limit=8,
             ),
+            "semantic_carousel_plan": {
+                "family": cls._normalize_text(
+                    ((plan.get("semantic_carousel_plan") or {}) if isinstance(plan.get("semantic_carousel_plan"), dict) else {}).get("family"),
+                    limit=40,
+                ),
+                "recommended_slide_count": int(
+                    (((plan.get("semantic_carousel_plan") or {}) if isinstance(plan.get("semantic_carousel_plan"), dict) else {}).get("recommended_slide_count") or 0)
+                ) or None,
+            },
             "sample_editorial_source": cls._normalize_text(plan.get("sample_editorial_source"), limit=32),
             "sample_story_roles": cls._normalized_text_list(plan.get("sample_story_roles"), item_limit=40, limit=8),
             "sample_headline_patterns": cls._normalized_text_list(plan.get("sample_headline_patterns"), item_limit=120, limit=6),

@@ -50,3 +50,49 @@ def test_content_planning_derives_problem_solution_feature_archetype_from_analyz
 
     assert plan["carousel_archetype"] == "problem_solution_feature"
     assert plan["carousel_slide_grammar"][0]["role"] == "problem_frame"
+
+
+def test_content_planning_adds_semantic_carousel_contracts_only_when_enabled() -> None:
+    research_brief = {
+        "preferred_slide_count": 4,
+        "semantic_carousel_plan": {
+            "family": "macro_analysis",
+            "recommended_slide_count": 5,
+            "story_map": [
+                {
+                    "role": "hook",
+                    "purpose": "Open with the undercovered market implication.",
+                    "notes": "Keep it sharp.",
+                    "section_focus": "implication",
+                    "representation_hint": "hero_stat",
+                },
+                {
+                    "role": "structure",
+                    "purpose": "Explain the mechanism behind the shift.",
+                    "section_focus": "mechanics",
+                    "representation_hint": "process_path",
+                },
+            ],
+        },
+    }
+
+    baseline = ContentPlanningService.derive_content_plan(
+        deliverable_type="linkedin_carousel",
+        format_family_plan={"family": "carousel"},
+        research_editorial_brief=research_brief,
+    )
+    enabled = ContentPlanningService.derive_content_plan(
+        deliverable_type="linkedin_carousel",
+        format_family_plan={"family": "carousel"},
+        research_editorial_brief=research_brief,
+        enable_semantic_carousel_plan=True,
+    )
+
+    assert baseline["sequence_contract"] == "native_carousel_metadata"
+    assert baseline["carousel_slide_contracts"] == []
+    assert baseline["semantic_carousel_plan"] == {}
+    assert enabled["sequence_contract"] == "semantic_prompt_story_plan"
+    assert enabled["preferred_slide_count"] == 5
+    assert enabled["carousel_slide_grammar"][0]["role"] == "hook"
+    assert enabled["carousel_slide_contracts"][1]["representation_hint"] == "process_path"
+    assert enabled["semantic_carousel_plan"]["family"] == "macro_analysis"

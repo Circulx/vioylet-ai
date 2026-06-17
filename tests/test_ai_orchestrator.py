@@ -1099,13 +1099,13 @@ def test_orchestrator_logo_safe_zone_guidance_prefers_top_right_hint_and_minimum
     )
 
     assert "top-right" in guidance
-    assert "24% of the width" in guidance
+    assert "19% of the width" in guidance
     assert "4% from the top" in guidance
     assert "backend-calculated brand-asset reservation" in guidance
     assert "backend places the stored brand asset there after image generation" in guidance
     assert "Initial backend brand-asset size analysis" in guidance
     assert "reserve the final placement footprint as an empty box" in guidance
-    assert "259px wide x 110px tall" in guidance
+    assert "207px wide x 88px tall" in guidance
 
 
 def test_orchestrator_logo_safe_zone_guidance_respects_viable_synthesized_logo_geometry() -> None:
@@ -1151,10 +1151,10 @@ def test_orchestrator_logo_safe_zone_guidance_respects_viable_synthesized_logo_g
     guidance = AIOrchestratorService._logo_safe_zone_guidance(request, scene_graph, hint="Top-right")
 
     assert "top-right" in guidance
-    assert "19% of the width" in guidance
+    assert "16% of the width" in guidance
     assert "4% from the top" in guidance
     assert "Initial backend brand-asset size analysis" in guidance
-    assert "205px wide x 92px tall" in guidance
+    assert "176px wide x 78px tall" in guidance
 
 
 def test_orchestrator_build_carousel_slide_render_prompt_uses_slide_or_planning_logo_hint() -> None:
@@ -9273,6 +9273,59 @@ def test_build_final_render_prompt_infographic_keeps_legal_footer_zone_blank() -
     assert "Use at most 3 compact content sections/modules" in prompt
     assert "Leave the bottom strip plain background only" in prompt
     assert "STATIC/INFOGRAPHIC TEXT NO-TRUNCATION RULE" in prompt
+    assert "chart labels, CTA text, or footer/legal text" in prompt
+
+
+def test_build_final_render_prompt_uses_brand_legal_footer_without_scene_footer() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create an Instagram infographic about fixed income planning.",
+        studio_panel={"platform_preset": "instagram", "format": "infographic", "file_type": "png", "size": {"width": 1080, "height": 1350}},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={
+            "brand_name": "Jiraaf",
+            "brand_assets": {
+                "legal_disclaimers": [
+                    {
+                        "text_template": "Investments are subject to market risk. Review all offer documents before investing.",
+                        "applies_to_formats": ["infographic"],
+                    }
+                ]
+            },
+            "visual_identity": {},
+            "guardrails": {},
+        },
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+    text_payload = StructuredTextPayload(
+        headline="Plan your fixed income allocation",
+        body="Show a simple planning flow with clear modules.",
+        cta="",
+        hashtags=[],
+        metadata={"proof_points": ["Map liquidity needs", "Review risk appetite", "Compare tenure options"]},
+    )
+    scene_graph = GenerationSceneGraph.model_validate(
+        {
+            "canvas": {"width": 1080, "height": 1350, "platform": "instagram"},
+            "elements": [],
+        }
+    )
+
+    prompt = AIOrchestratorService.build_final_render_prompt(
+        request=request,
+        text_payload=text_payload,
+        creative_decision=CreativeDecisionPayload(layout_mode="synthesized_layout", confidence=0.8),
+        scene_graph=scene_graph,
+    )
+
+    assert "Infographic footer-safe layout contract" in prompt
+    assert "INFOGRAPHIC FOOTER BLANK-SPACE RULE" in prompt
+    assert "leave calculated footer strip blank for backend footer" in prompt
     assert "chart labels, CTA text, or footer/legal text" in prompt
 
 

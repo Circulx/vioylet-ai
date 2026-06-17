@@ -3876,8 +3876,8 @@ def test_resolve_ai_logo_box_prefers_top_right_hint_and_minimum_size() -> None:
     assert box[0] >= 780
     assert box[1] >= 36
     assert box[1] <= 60
-    assert box[2] >= 258
-    assert box[3] >= 108
+    assert box[2] >= 207
+    assert box[3] >= 87
 
 
 def test_static_infographic_logo_profiles_are_less_dominant_than_carousel() -> None:
@@ -4498,8 +4498,8 @@ def test_resolve_ai_logo_box_prefers_finalized_scene_graph_logo_over_stale_bluep
 
     assert box[0] >= 780
     assert box[1] >= 860
-    assert box[2] >= 180
-    assert box[3] >= 60
+    assert box[2] >= 176
+    assert box[3] >= 78
 
 
 @pytest.mark.asyncio

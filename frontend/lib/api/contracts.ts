@@ -494,6 +494,13 @@ export interface BrandScoringPayload {
     prompt_adherence: number;
     relevance: number;
   };
+  score_explanations?: Record<
+    string,
+    {
+      positive?: string;
+      improvement?: string;
+    }
+  >;
   weighting?: Record<string, number>;
   scoring_mode?: Record<string, string>;
   summary?: string[];

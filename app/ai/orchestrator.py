@@ -21643,6 +21643,18 @@ class AIOrchestratorService:
             return False
         return cls._select_generation_strategy_for_request(request) == GenerationStrategy.TEMPLATE_ADAPTANCE
 
+    @classmethod
+    def _request_uses_content_intelligence(cls, request: AIOrchestrationRequest | None) -> bool:
+        if request is None:
+            return False
+        studio_panel = request.studio_panel if isinstance(request.studio_panel, dict) else {}
+        normalized_format = str(studio_panel.get("format") or "").strip().casefold()
+        return (
+            normalized_format == "carousel"
+            and cls._request_uses_auto_template_selection(request)
+            and not cls._request_uses_pinned_template(request)
+        )
+
     def generate(self, request: AIOrchestrationRequest) -> AIOrchestrationResponse:
         strategy = self._select_generation_strategy_for_request(request)
         self._trace_payload(
@@ -21673,9 +21685,14 @@ class AIOrchestratorService:
             return self._generate_main_ai(request)
         if strategy == GenerationStrategy.CONTENT_INTELLIGENCE:
             # TODO: integrate content-intelligence carousel
-            return self._generate_main_ai(request)
+            return self._generate_content_intelligence(request)
         if strategy == GenerationStrategy.WITHOUT_REFERENCE:
             # TODO: integrate without-reference fallback
+            return self._generate_main_ai(request)
+        return self._generate_main_ai(request)
+
+    def _generate_content_intelligence(self, request: AIOrchestrationRequest) -> AIOrchestrationResponse:
+        if not self._request_uses_content_intelligence(request):
             return self._generate_main_ai(request)
         return self._generate_main_ai(request)
 

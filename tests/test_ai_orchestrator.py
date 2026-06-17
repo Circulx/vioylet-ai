@@ -154,6 +154,74 @@ def test_orchestrator_keeps_auto_carousel_template_on_content_intelligence() -> 
     )
 
     assert AIOrchestratorService._select_generation_strategy_for_request(request) == GenerationStrategy.CONTENT_INTELLIGENCE
+    assert AIOrchestratorService._request_uses_content_intelligence(request) is True
+
+
+def test_orchestrator_content_intelligence_guard_is_auto_carousel_only() -> None:
+    template_id = uuid4()
+    base_request = {
+        "tenant_id": uuid4(),
+        "brand_space_id": uuid4(),
+        "user_id": uuid4(),
+        "prompt": "Create a carousel",
+        "resolved_brand_context": {},
+        "persona_context": {},
+        "objective_context": {},
+        "retrieved_knowledge": {},
+        "reference_assets": [{"asset_role": "reference_creative"}],
+    }
+
+    auto_carousel = AIOrchestrationRequest(
+        **base_request,
+        studio_panel={"format": "carousel", "platform_preset": "linkedin", "file_type": "pdf"},
+        layout_decision={
+            "template_id": str(template_id),
+            "primary_adaptation_template_id": str(template_id),
+            "primary_adaptation_matches_selected_template": False,
+        },
+    )
+    pinned_carousel = AIOrchestrationRequest(
+        **base_request,
+        studio_panel={
+            "format": "carousel",
+            "platform_preset": "linkedin",
+            "file_type": "pdf",
+            "pinned_template_id": str(template_id),
+        },
+    )
+    static_auto = AIOrchestrationRequest(
+        **base_request,
+        studio_panel={"format": "static", "platform_preset": "linkedin", "file_type": "png"},
+        layout_decision={
+            "template_id": str(template_id),
+            "primary_adaptation_template_id": str(template_id),
+            "primary_adaptation_matches_selected_template": False,
+        },
+    )
+    infographic_auto = AIOrchestrationRequest(
+        **base_request,
+        studio_panel={"format": "infographic", "platform_preset": "linkedin", "file_type": "png"},
+        layout_decision={
+            "template_id": str(template_id),
+            "primary_adaptation_template_id": str(template_id),
+            "primary_adaptation_matches_selected_template": False,
+        },
+    )
+    without_reference = AIOrchestrationRequest(
+        **{**base_request, "reference_assets": []},
+        studio_panel={"format": "carousel", "platform_preset": "linkedin", "file_type": "pdf"},
+    )
+
+    assert AIOrchestratorService._select_generation_strategy_for_request(auto_carousel) == GenerationStrategy.CONTENT_INTELLIGENCE
+    assert AIOrchestratorService._request_uses_content_intelligence(auto_carousel) is True
+    assert AIOrchestratorService._select_generation_strategy_for_request(pinned_carousel) == GenerationStrategy.TEMPLATE_ADAPTANCE
+    assert AIOrchestratorService._request_uses_content_intelligence(pinned_carousel) is False
+    assert AIOrchestratorService._select_generation_strategy_for_request(static_auto) == GenerationStrategy.DEV1_HARI
+    assert AIOrchestratorService._request_uses_content_intelligence(static_auto) is False
+    assert AIOrchestratorService._select_generation_strategy_for_request(infographic_auto) == GenerationStrategy.DEV1_HARI
+    assert AIOrchestratorService._request_uses_content_intelligence(infographic_auto) is False
+    assert AIOrchestratorService._select_generation_strategy_for_request(without_reference) == GenerationStrategy.WITHOUT_REFERENCE
+    assert AIOrchestratorService._request_uses_content_intelligence(without_reference) is False
 
 
 def test_orchestrator_uses_fallback_when_hashtags_invalid() -> None:

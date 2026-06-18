@@ -313,7 +313,7 @@ def test_pinned_carousel_does_not_use_content_intelligence_enrichment(monkeypatc
         objective_context={},
         retrieved_knowledge={},
         reference_assets=[{"asset_role": "reference_creative"}],
-        content_plan={"format_family": "carousel"},
+        content_plan={},
         research_editorial_brief={
             "semantic_carousel_plan": {
                 "family": "macro_analysis",
@@ -21871,7 +21871,7 @@ def test_orchestrator_does_not_treat_unverified_static_ranking_values_as_generat
     assert issue_codes == set()
 
 
-def test_orchestrator_still_treats_unverified_carousel_values_as_no_fallback_generation_failure() -> None:
+def test_orchestrator_does_not_treat_unverified_carousel_values_as_data_surface_generation_failure() -> None:
     report = {
         "status": "needs_rewrite",
         "format": "carousel",
@@ -21881,15 +21881,22 @@ def test_orchestrator_still_treats_unverified_carousel_values_as_no_fallback_gen
     }
 
     issue_codes = AIOrchestratorService._unresolved_data_surface_issue_codes(report)
-    failure = AIOrchestratorService._data_surface_generation_failure(report=report)
 
-    assert issue_codes == {"carousel_slide_unsupported_exact_claim"}
-    assert failure.reason_code == "data_surface_content_unresolved"
-    assert failure.failure_type == "content_semantic_validation"
-    assert failure.retryable is True
-    assert "generic visual fallback is disabled" in failure.reason_summary
-    assert "stopped before inventing data" in failure.user_safe_message
-    assert "simplify" not in failure.user_safe_message.casefold()
+    assert issue_codes == set()
+
+
+def test_orchestrator_style_reference_carousel_semantic_issues_do_not_block_generation() -> None:
+    report = {
+        "status": "needs_rewrite",
+        "format": "carousel",
+        "issues": [
+            {"code": "carousel_missing_claim_evidence_pairs", "message": "Evidence missing."},
+            {"code": "carousel_slide_unsupported_exact_claim", "message": "Slide 2 includes unsupported exact claims."},
+            {"code": "carousel_data_visual_unsupported_claims", "message": "Data visual has unsupported claims."},
+        ],
+    }
+
+    assert AIOrchestratorService._unresolved_data_surface_issue_codes(report) == set()
 
 
 @pytest.mark.parametrize(

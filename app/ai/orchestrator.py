@@ -27376,6 +27376,9 @@ class AIOrchestratorService:
                         or reference_slide_index
                     ),
                 }
+                pack_blueprint = pack_slide.get("sample_page_blueprint")
+                if isinstance(pack_blueprint, dict) and pack_blueprint:
+                    slide_metadata["sample_page_blueprint"] = pack_blueprint
                 if include_sample_copy_authority:
                     slide_metadata.update(
                         {
@@ -29557,6 +29560,364 @@ class AIOrchestratorService:
         return attached
 
     @classmethod
+    def _pinned_template_subject_anchor(cls, *values: Any) -> str:
+        for value in values:
+            text = cls._normalize_metadata_text(value, limit=180).strip(" .")
+            if not text:
+                continue
+            subject = cls._carousel_headline_subject(text)
+            if subject:
+                return subject
+            text = re.sub(
+                r"^(?:create|write|generate|make|draft|design)\s+(?:a|an|the)?\s*"
+                r"(?:(?:linkedin|instagram|facebook|social)\s+)?"
+                r"(?:carousel|post|slides?|deck|creative|content)\s+(?:about|on|for)\s+",
+                "",
+                text,
+                flags=re.IGNORECASE,
+            ).strip(" .,:;-")
+            text = re.sub(r"^(?:about|on|for)\s+", "", text, flags=re.IGNORECASE).strip(" .,:;-")
+            words = [
+                word
+                for word in text.split()
+                if word.casefold() not in cls.PROMPT_ECHO_STOPWORDS
+            ]
+            if words:
+                return " ".join(words[:7]).strip(" .,:;-")
+        return ""
+
+    @classmethod
+    def _pinned_template_headline_needs_story_hook(cls, value: Any, *, source_headline: str = "") -> bool:
+        text = cls._normalize_metadata_text(value, limit=140)
+        if not text:
+            return True
+        lowered = text.casefold().strip(" .")
+        source = cls._normalize_metadata_text(source_headline, limit=140).casefold().strip(" .")
+        if source and lowered == source:
+            return True
+        if cls._is_generic_carousel_education_label(text):
+            return True
+        generic_lines = {
+            "why this matters now",
+            "what to know next",
+            "what happened",
+            "key insight",
+            "introduction",
+            "overview",
+            "the key takeaway",
+        }
+        if lowered in generic_lines:
+            return True
+        if re.match(r"^(?:create|write|generate|make|draft)\b", lowered):
+            return True
+        has_hook_language = bool(
+            re.search(
+                r"\b(hidden|silent|surprising|signal|shift|tension|risk|cost|truth|missed|unseen|inside|behind|next)\b",
+                lowered,
+            )
+            or "?" in text
+        )
+        return len(text.split()) <= 5 and not has_hook_language
+
+    @classmethod
+    def _carousel_visual_focus_is_generic(cls, value: Any) -> bool:
+        text = cls._normalize_metadata_text(value, limit=260).casefold()
+        if not text:
+            return True
+        generic_patterns = (
+            r"\bgeneric\b",
+            r"\bbusiness icons?\b",
+            r"\bflat icons?\b",
+            r"\bvector icons?\b",
+            r"\bsmall scattered icons?\b",
+            r"\bclean (?:and )?inviting graphic\b",
+            r"\babstract illustration\b",
+            r"\bdecorative illustration\b",
+            r"\bplatform interface\b",
+            r"\bdashboard graphic\b",
+        )
+        return any(re.search(pattern, text) for pattern in generic_patterns)
+
+    @classmethod
+    def _dynamic_pinned_template_hook_headline(
+        cls,
+        *,
+        headline: str,
+        supporting_line: str,
+        prompt: str,
+        proof_points: list[str],
+        stat_highlights: list[str],
+    ) -> str:
+        subject = cls._pinned_template_subject_anchor(headline, prompt, supporting_line)
+        combined = " ".join([headline, supporting_line, prompt, *proof_points[:2], *stat_highlights[:2]]).casefold()
+        if not subject:
+            return "The shift hiding in plain sight"
+        if re.search(r"\b(silent|hidden|missed|overlooked|undercovered|unseen)\b", combined):
+            return f"The hidden shift behind {subject}"
+        if re.search(r"\b(risk|cost|pressure|threat|crisis|decline|loss)\b", combined):
+            return f"The risk inside {subject}"
+        if stat_highlights or re.search(r"\b\d", combined):
+            return f"The signal inside {subject}"
+        if re.search(r"\b(change|shift|reshap\w*|transform|new|next|future)\b", combined):
+            return f"The shift behind {subject}"
+        return f"What {subject} changes next"
+
+    @classmethod
+    def _dynamic_pinned_template_closing_headline(
+        cls,
+        *,
+        headline: str,
+        supporting_line: str,
+        prompt: str,
+        cta: str,
+    ) -> str:
+        subject = cls._pinned_template_subject_anchor(headline, prompt, supporting_line)
+        if cta:
+            return "The next move is the point"
+        if subject:
+            return f"What {subject} means next"
+        return "What to do with this insight"
+
+    @classmethod
+    def _pinned_template_story_roles(cls, slide_count: int) -> list[str]:
+        if slide_count <= 0:
+            return []
+        if slide_count == 1:
+            return ["hook"]
+        if slide_count == 2:
+            return ["hook", "closing"]
+        if slide_count == 3:
+            return ["hook", "analysis", "closing"]
+        if slide_count == 4:
+            return ["hook", "context", "analysis", "closing"]
+        if slide_count == 5:
+            return ["hook", "context", "key_insight", "analysis", "closing"]
+        roles = ["hook", "context"]
+        middle_count = slide_count - 3
+        middle_pattern = ["key_insight", "analysis", "synthesis"]
+        for index in range(middle_count):
+            roles.append(middle_pattern[index % len(middle_pattern)])
+        roles.append("closing")
+        return roles[:slide_count]
+
+    @classmethod
+    def _derive_pinned_template_adaptation_profile(cls, slides: list[dict[str, Any]]) -> dict[str, Any]:
+        if not slides:
+            return {}
+        craft_fragments: list[str] = []
+        blueprint: dict[str, Any] = {}
+        for slide in slides:
+            if not isinstance(slide, dict):
+                continue
+            metadata = slide.get("metadata") if isinstance(slide.get("metadata"), dict) else {}
+            for key in (
+                "reference_visual_craft",
+                "reference_editorial_dna",
+                "reference_composition_logic",
+                "sample_page_copy_behavior",
+                "sample_page_editorial_role",
+                "sample_page_closing_grammar",
+            ):
+                fragment = cls._normalize_metadata_text(metadata.get(key), limit=160)
+                if fragment:
+                    craft_fragments.append(fragment)
+            candidate_blueprint = metadata.get("sample_page_blueprint")
+            if isinstance(candidate_blueprint, dict) and not blueprint:
+                blueprint = cls._sample_blueprint_without_rendered_footer_text(candidate_blueprint)
+        counts = blueprint.get("module_counts") if isinstance(blueprint.get("module_counts"), dict) else {}
+        layout_mode = cls._sample_blueprint_layout_mode(blueprint) if blueprint else ""
+        visual_permissions = cls._sample_visual_permissions(blueprint) if blueprint else {}
+        craft_text = " ".join(craft_fragments).casefold()
+        large_visual_count = cls._int_or_none(counts.get("large_visual_count")) or 0
+        small_icon_count = cls._int_or_none(counts.get("small_icon_like_count")) or 0
+        card_count = cls._int_or_none(counts.get("card_like_count")) or 0
+        text_count = cls._int_or_none(counts.get("text_block_count")) or 0
+
+        premium_rendered = bool(
+            re.search(r"\b(premium|rendered|render|3d|three[- ]?d|dimensional|depth|photoreal|photo[- ]?real|cinematic|studio|composite|glass|shadow)\b", craft_text)
+        )
+        illustrated = bool(re.search(r"\b(illustration|illustrated|vector|flat|line art|icon)\b", craft_text))
+        minimal = bool(re.search(r"\b(minimal|minimalist|sparse|clean|quiet|simple)\b", craft_text))
+        if premium_rendered:
+            sophistication = "premium_rendered"
+        elif illustrated and not premium_rendered:
+            sophistication = "illustrated"
+        elif minimal:
+            sophistication = "minimal"
+        elif large_visual_count:
+            sophistication = "hero_visual"
+        else:
+            sophistication = "brand_led"
+
+        hero_strategy = "dominant_hero_visual" if premium_rendered or large_visual_count else "layout_matched_visual_modules"
+        if small_icon_count > max(large_visual_count, 0) and not premium_rendered:
+            hero_strategy = "sample_matched_icon_or_module_system"
+        density = "dense" if (text_count + card_count) >= 5 else "balanced" if (text_count + card_count) >= 3 else "spacious"
+        visual_language = cls._normalize_metadata_text(
+            " | ".join(
+                part
+                for part in [
+                    f"sophistication={sophistication}",
+                    f"hero_strategy={hero_strategy}",
+                    f"density={density}",
+                    f"layout={layout_mode}",
+                    "; ".join(craft_fragments[:3]),
+                ]
+                if part
+            ),
+            limit=420,
+        )
+        return {
+            "source": "pinned_template",
+            "visual_sophistication": sophistication,
+            "hero_strategy": hero_strategy,
+            "design_density": density,
+            "layout_mode": layout_mode,
+            "module_counts": {
+                key: value
+                for key, value in {
+                    "large_visual_count": large_visual_count,
+                    "small_icon_like_count": small_icon_count,
+                    "card_like_count": card_count,
+                    "text_block_count": text_count,
+                }.items()
+                if value
+            },
+            "visual_permissions": visual_permissions,
+            "visual_language": visual_language,
+            "opening_strategy": "start with a dynamic curiosity, tension, urgency, or insight hook derived from the prompt",
+            "closing_strategy": "end with synthesis, key takeaway, CTA, or next step; never another informational detail slide",
+            "content_visual_rule": "derive visuals from each slide's approved message and avoid generic business icons unless the pinned template visibly uses icon modules",
+        }
+
+    @classmethod
+    def _pinned_template_content_visual_focus(
+        cls,
+        slide: dict[str, Any],
+        *,
+        profile: dict[str, Any],
+        story_role: str,
+    ) -> str:
+        headline = cls._normalize_metadata_text(slide.get("headline"), limit=140)
+        support = cls._normalize_metadata_text(slide.get("supporting_line") or slide.get("body"), limit=180)
+        proof = cls._normalize_metadata_list(slide.get("proof_points"), limit=2)
+        subject = cls._pinned_template_subject_anchor(headline, support, *proof)
+        sophistication = cls._normalize_metadata_text(profile.get("visual_sophistication"), limit=40)
+        hero_strategy = cls._normalize_metadata_text(profile.get("hero_strategy"), limit=60)
+        visual_language = cls._normalize_metadata_text(profile.get("visual_language"), limit=220)
+        role_token = cls._carousel_story_role_token(story_role)
+        focus_parts: list[str] = []
+        if role_token in {"hook", "cover", "opening", "title"}:
+            focus_parts.append("Large hero visual that makes the opening hook the primary focal point")
+        elif role_token in {"takeaway", "close", "closing", "cta", "final"}:
+            focus_parts.append("Resolved hero or decision-support visual that delivers the conclusion or next step")
+        else:
+            focus_parts.append("Content-specific visual module that advances this narrative beat")
+        if subject:
+            focus_parts.append(f"subject: {subject}")
+        if sophistication == "premium_rendered":
+            focus_parts.append("premium rendered dimensional craft with depth, lighting, and polished object detail")
+        elif sophistication == "illustrated":
+            focus_parts.append("illustration treatment matched to the pinned template")
+        elif sophistication == "minimal":
+            focus_parts.append("minimal visual treatment matched to the pinned template")
+        if hero_strategy:
+            focus_parts.append(f"template hero strategy: {hero_strategy}")
+        if visual_language:
+            focus_parts.append(f"template visual language: {visual_language}")
+        focus_parts.append("avoid generic business icons; every object must reinforce the slide message")
+        return cls._normalize_metadata_text("; ".join(focus_parts), limit=520)
+
+    @classmethod
+    def _pinned_template_adaptation_profile_prompt_section(cls, profile: Any) -> str:
+        if not isinstance(profile, dict) or not profile:
+            return ""
+        compact = json.dumps(profile, ensure_ascii=True, separators=(",", ":"))
+        return (
+            f"Pinned template adaptation profile JSON: {compact}. "
+            "Use this as mandatory visual/story DNA when a template is pinned: preserve the sample layout, match its sophistication, density, depth, hierarchy, and hero strategy, generate visuals from the current slide content, and keep hook-to-close narrative continuity. "
+            "Do not copy sample text or topic objects."
+        )
+
+    @classmethod
+    def _apply_pinned_template_storytelling_contract(
+        cls,
+        slides: list[dict[str, Any]],
+        *,
+        request: AIOrchestrationRequest | None,
+        headline: str,
+        supporting_line: str,
+        cta: str,
+        proof_points: list[str],
+        stat_highlights: list[str],
+    ) -> list[dict[str, Any]]:
+        if not slides or not cls._request_uses_template_adaptance(request):
+            return slides
+        repaired = [deepcopy(slide) for slide in slides if isinstance(slide, dict)]
+        slide_count = len(repaired)
+        if slide_count <= 0:
+            return []
+        profile = cls._derive_pinned_template_adaptation_profile(repaired)
+        story_roles = cls._pinned_template_story_roles(slide_count)
+        prompt = cls._normalize_metadata_text(getattr(request, "prompt", "") if request is not None else "", limit=300)
+        dynamic_hook = cls._dynamic_pinned_template_hook_headline(
+            headline=headline,
+            supporting_line=supporting_line,
+            prompt=prompt,
+            proof_points=proof_points,
+            stat_highlights=stat_highlights,
+        )
+        dynamic_close = cls._dynamic_pinned_template_closing_headline(
+            headline=headline,
+            supporting_line=supporting_line,
+            prompt=prompt,
+            cta=cta,
+        )
+        for index, slide in enumerate(repaired, start=1):
+            story_role = story_roles[index - 1] if index - 1 < len(story_roles) else ("closing" if index == slide_count else "detail")
+            metadata = dict(slide.get("metadata") if isinstance(slide.get("metadata"), dict) else {})
+            existing_role = cls._carousel_story_role_token(metadata.get("story_role") or slide.get("role"))
+            if index == 1:
+                slide["role"] = "hook"
+                if cls._pinned_template_headline_needs_story_hook(slide.get("headline"), source_headline=headline):
+                    slide["headline"] = dynamic_hook
+            elif index == slide_count:
+                slide["role"] = "closing"
+                if cta:
+                    slide["cta"] = cta
+                if cls._pinned_template_headline_needs_story_hook(slide.get("headline"), source_headline=headline) or existing_role not in {"takeaway", "close", "closing", "cta", "final"}:
+                    slide["headline"] = dynamic_close
+            elif existing_role in cls._carousel_generic_story_roles() or not existing_role:
+                slide["role"] = "intro" if story_role == "context" else "detail"
+
+            metadata["story_role"] = story_role
+            metadata["role_guidance"] = cls._carousel_story_role_guidance(story_role)
+            metadata["pinned_template_adaptation_profile"] = profile
+            metadata["pinned_template_story_contract"] = {
+                "sequence_pattern": story_roles,
+                "current_beat": story_role,
+                "opening_requirement": profile.get("opening_strategy"),
+                "closing_requirement": profile.get("closing_strategy"),
+                "visual_rule": profile.get("content_visual_rule"),
+            }
+            visual_focus = cls._normalize_metadata_text(slide.get("visual_focus"), limit=420)
+            if (
+                index in {1, slide_count}
+                or not visual_focus
+                or cls._carousel_visual_focus_is_generic(visual_focus)
+            ):
+                slide["visual_focus"] = cls._pinned_template_content_visual_focus(
+                    slide,
+                    profile=profile,
+                    story_role=story_role,
+                )
+            metadata["template_adaptation_visual_focus"] = slide.get("visual_focus")
+            slide["metadata"] = metadata
+        for slide in repaired[:-1]:
+            slide["cta"] = ""
+        return repaired
+
+    @classmethod
     def _build_carousel_slide_specs(
         cls,
         text_payload: StructuredTextPayload,
@@ -29821,6 +30182,15 @@ class AIOrchestratorService:
             normalized_slides,
             request=request,
             creative_decision=creative_decision,
+        )
+        normalized_slides = cls._apply_pinned_template_storytelling_contract(
+            normalized_slides,
+            request=request,
+            headline=headline,
+            supporting_line=supporting_line,
+            cta=clean_cta,
+            proof_points=proof_points,
+            stat_highlights=stat_highlights,
         )
 
         slide_count = len(normalized_slides)
@@ -30620,6 +30990,10 @@ class AIOrchestratorService:
         reference_creative_profile_section = AIOrchestratorService._reference_creative_profile_prompt_section(
             reference_creative_profile
         )
+        pinned_template_adaptation_profile_section = AIOrchestratorService._pinned_template_adaptation_profile_prompt_section(
+            prompt_slide_metadata.get("pinned_template_adaptation_profile")
+            or slide_metadata.get("pinned_template_adaptation_profile")
+        )
         reference_adaptation_profile_section = AIOrchestratorService._reference_adaptation_profile_prompt_section(
             compiled_context.get("reference_adaptation_profile")
         )
@@ -30913,6 +31287,7 @@ class AIOrchestratorService:
             reference_adaptation_profile_section,
             generation_surface_contract_section,
             reference_creative_profile_section,
+            pinned_template_adaptation_profile_section,
             (
                 (
                     "If this slide includes a CTA, reserve only an empty premium CTA-safe shell in the CTA region; do not render the CTA words in the AI image."

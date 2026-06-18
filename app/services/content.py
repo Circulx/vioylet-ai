@@ -4222,6 +4222,8 @@ class ContentService:
     def _strip_null_bytes(cls, value: Any) -> Any:
         if isinstance(value, str):
             return value.replace("\x00", "")
+        if isinstance(value, UUID):
+            return str(value)
         if isinstance(value, dict):
             return {
                 key: cls._strip_null_bytes(nested)
@@ -4232,6 +4234,21 @@ class ContentService:
         if isinstance(value, tuple):
             return [cls._strip_null_bytes(item) for item in value]
         return value
+
+    @classmethod
+    def _json_safe_payload(cls, value: Any) -> Any:
+        return cls._strip_null_bytes(json.loads(json.dumps(value, default=str)))
+
+    @classmethod
+    def _studio_panel_payload(cls, value: Any) -> dict[str, Any]:
+        if hasattr(value, "model_dump"):
+            payload = value.model_dump(mode="json")
+        elif isinstance(value, dict):
+            payload = deepcopy(value)
+        else:
+            payload = {}
+        safe_payload = cls._json_safe_payload(payload)
+        return safe_payload if isinstance(safe_payload, dict) else {}
 
     @classmethod
     def _sequence_pack_is_weak_hint(cls, value: object) -> bool:
@@ -6121,14 +6138,14 @@ class ContentService:
         if session_id:
             existing = await self.sessions.get(session_id)
             if existing and existing.tenant_id == tenant_id and existing.brand_space_id == brand_space_id:
-                existing.studio_panel = studio_panel or existing.studio_panel
+                existing.studio_panel = self._studio_panel_payload(studio_panel) or existing.studio_panel
                 return existing
         session = ContentSession(
             tenant_id=tenant_id,
             brand_space_id=brand_space_id,
             user_id=user_id,
             title="Brand Workspace Session",
-            studio_panel=studio_panel,
+            studio_panel=self._studio_panel_payload(studio_panel),
             conversational_context={},
         )
         await self.sessions.add(session)
@@ -6142,7 +6159,7 @@ class ContentService:
         content_version: ContentVersion,
     ) -> None:
         artifact_service = getattr(self, "artifacts", ArtifactStateService())
-        session.studio_panel = payload.studio_panel.model_dump()
+        session.studio_panel = self._studio_panel_payload(payload.studio_panel)
         context = dict(session.conversational_context or {})
         context["last_user_prompt"] = str(getattr(payload, "raw_user_prompt", None) or payload.prompt or "").strip()
         context["last_content_version_id"] = str(content_version.id)
@@ -7868,23 +7885,27 @@ class ContentService:
             reference_box = None
         if reference_box is not None:
             ref_x, ref_y, ref_width, ref_height = reference_box
-            safe_padding_x = max(min(int(canvas_width * 0.045), 64), int(ref_width * 0.35))
-            safe_padding_y = max(min(int(canvas_height * 0.025), 44), int(ref_height * 0.18))
-            width = min(max(width, ref_width + safe_padding_x), int(canvas_width * 0.4))
-            height = min(max(height, ref_height + safe_padding_y), int(canvas_height * 0.24))
-            if horizontal == "left":
-                x = min(max(ref_x, 0), max(canvas_width - width, 0))
-            elif horizontal == "center":
-                x = max(min(ref_x + (ref_width // 2) - (width // 2), canvas_width - width), 0)
+            if str(format_name or "").strip().lower() == "carousel":
+                width = max(min(width, ref_width), int(width * 0.75))
+                height = max(min(height, ref_height), int(height * 0.75))
             else:
-                x = max(min(ref_x + ref_width - width, canvas_width - width), 0)
-            if vertical == "bottom":
-                y = max(min(ref_y + ref_height - height, canvas_height - height), 0)
-            elif vertical == "middle":
-                y = max(min(ref_y + (ref_height // 2) - (height // 2), canvas_height - height), 0)
-            else:
-                y = min(max(ref_y, 0), max(canvas_height - height, 0))
-            return (int(x), int(y), int(width), int(height))
+                safe_padding_x = max(min(int(canvas_width * 0.045), 64), int(ref_width * 0.35))
+                safe_padding_y = max(min(int(canvas_height * 0.025), 44), int(ref_height * 0.18))
+                width = min(max(width, ref_width + safe_padding_x), int(canvas_width * 0.4))
+                height = min(max(height, ref_height + safe_padding_y), int(canvas_height * 0.24))
+                if horizontal == "left":
+                    x = min(max(ref_x, 0), max(canvas_width - width, 0))
+                elif horizontal == "center":
+                    x = max(min(ref_x + (ref_width // 2) - (width // 2), canvas_width - width), 0)
+                else:
+                    x = max(min(ref_x + ref_width - width, canvas_width - width), 0)
+                if vertical == "bottom":
+                    y = max(min(ref_y + ref_height - height, canvas_height - height), 0)
+                elif vertical == "middle":
+                    y = max(min(ref_y + (ref_height // 2) - (height // 2), canvas_height - height), 0)
+                else:
+                    y = min(max(ref_y, 0), max(canvas_height - height, 0))
+                return (int(x), int(y), int(width), int(height))
         if horizontal == "left":
             x = margin_x
         elif horizontal == "center":
@@ -8226,7 +8247,7 @@ class ContentService:
 
     @staticmethod
     def _logo_scale_candidates() -> list[float]:
-        return [1.0]
+        return [1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.45, 0.4, 0.35, 0.3]
 
     @classmethod
     def _resolve_logo_collision_guard(
@@ -8284,6 +8305,7 @@ class ContentService:
             canvas_height=canvas_height,
         )
         _initial_x, _initial_y, initial_width, initial_height = logo_box
+        normalized_format = str(format_name or "").strip().lower()
         min_width = max(int(canvas_width * 0.055), 56)
         min_height = max(int(canvas_height * 0.014), 18)
         logo_aspect_ratio = logo_image.width / max(logo_image.height, 1)
@@ -8298,10 +8320,11 @@ class ContentService:
         )
         best: dict[str, object] | None = None
         for anchor in anchors:
-            for scale in cls._logo_scale_candidates():
+            scale_candidates = cls._logo_scale_candidates() if normalized_format == "carousel" else [1.0]
+            for scale in scale_candidates:
                 candidate_width = max(int(round(initial_width * scale)), min_width)
                 candidate_height = max(int(round(initial_height * scale)), min_height)
-                if logo_aspect_ratio >= 2.2:
+                if logo_aspect_ratio >= 2.2 and normalized_format != "carousel":
                     candidate_width = min(
                         max(candidate_width, int(round(candidate_height * logo_aspect_ratio))),
                         max_wordmark_width,
@@ -8346,8 +8369,8 @@ class ContentService:
                 )
                 image_score = cls._image_region_obstruction_score(base_image, safe_box)
                 preference_penalty = 0.0 if anchor == preferred_anchor else 0.35
-                shrink_applied = False
-                size_penalty = 0.0
+                shrink_applied = scale < 1.0
+                size_penalty = (1.0 - scale) * 0.5
                 policy_override = bool(
                     allowed_anchor_keys
                     and policy.get("explicit")
@@ -8367,11 +8390,11 @@ class ContentService:
                     "image_score": image_score,
                     "scale": scale,
                     "shrink_applied": shrink_applied,
-                    "selection_strategy": "fixed_calculated_size",
-                "anchor": anchor_label,
-                "policy_override": policy_override,
-                "default_top_position_locked": default_top_position_locked,
-                "box": candidate_box,
+                    "selection_strategy": "shrunk_to_avoid_collision" if shrink_applied else "fixed_calculated_size",
+                    "anchor": anchor_label,
+                    "policy_override": policy_override,
+                    "default_top_position_locked": default_top_position_locked,
+                    "box": candidate_box,
                     "footprint": footprint,
                     "safe_box": safe_box,
                     "contained": contained,
@@ -8411,6 +8434,7 @@ class ContentService:
                 "offset_y": offset_y,
             }
         return best
+ 
 
     @classmethod
     def _reference_ai_logo_box(
@@ -9757,10 +9781,8 @@ class ContentService:
         sample_points = [base.getpixel((x, sample_y))[:3] for x in (int(width * 0.12), int(width * 0.5), int(width * 0.88))]
         avg_luma = sum((0.2126 * r + 0.7152 * g + 0.0722 * b) for r, g, b in sample_points) / max(len(sample_points), 1)
         if avg_luma >= 145:
-            strip_fill = (255, 255, 255, 226)
             text_fill = (0, 57, 117, 255)
         else:
-            strip_fill = (0, 57, 117, 232)
             text_fill = (255, 255, 255, 255)
 
         overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
@@ -10446,7 +10468,7 @@ class ContentService:
             brand_space_id,
             user_id,
             payload.session_id,
-            payload.studio_panel.model_dump(),
+            self._studio_panel_payload(payload.studio_panel),
         )
         session_memory = await self._build_session_memory(
             tenant_id=tenant_id,
@@ -10913,7 +10935,7 @@ class ContentService:
             selected_persona_id=persona.id if persona else None,
             selected_template_id=template.id if template else None,
             objective_id=objective.id if objective else None,
-            studio_panel=self._strip_null_bytes(payload.studio_panel.model_dump()),
+            studio_panel=self._studio_panel_payload(payload.studio_panel),
             generated_payload=self._strip_null_bytes(response.text.model_dump()),
             blueprint_payload=self._strip_null_bytes(response.blueprint.model_dump()),
             explainability_metadata=self._strip_null_bytes({

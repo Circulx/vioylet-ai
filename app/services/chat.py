@@ -156,7 +156,7 @@ class ChatService:
             user_id=user_id,
             title=title,
             session_kind="chat",
-            studio_panel=payload.studio_panel.model_dump(),
+            studio_panel=self.make_json_safe(payload.studio_panel.model_dump()),
             conversational_context={"message_count": 0},
         )
         await self.sessions.add(session)
@@ -277,15 +277,17 @@ class ChatService:
             user_id=user_id,
             role="user",
             message_text=payload.message,
-            structured_payload={
-                "studio_panel": studio_panel.model_dump(),
-                "intent_mode": intent.mode,
-                "intent_reason": intent.reason,
-                "display_retrieved_asset": intent.display_retrieved_asset,
-                "revision_scope": intent.revision_scope,
-                "workflow_plan": intent.workflow_plan,
-                "workflow_state": None,
-            },
+            structured_payload=self.make_json_safe(
+                {
+                    "studio_panel": studio_panel.model_dump(mode="json"),
+                    "intent_mode": intent.mode,
+                    "intent_reason": intent.reason,
+                    "display_retrieved_asset": intent.display_retrieved_asset,
+                    "revision_scope": intent.revision_scope,
+                    "workflow_plan": intent.workflow_plan,
+                    "workflow_state": None,
+                }
+            ),
             citations=[],
         )
         await self.messages.add(user_message)
@@ -672,7 +674,7 @@ class ChatService:
                         tenant_id=tenant_id,
                         brand_space_id=brand_space_id,
                         content_version_id=content_version.id,
-                        studio_panel=studio_panel.model_dump(),
+                        studio_panel=studio_panel.model_dump(mode="json"),
                     )
                 content_assets = await self.assets.list_by_content(content_version.id)
                 memory_assets = self._resolve_displayed_memory_assets(

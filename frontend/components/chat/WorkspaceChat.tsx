@@ -1162,8 +1162,9 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
       platform_preset: studioPlatform,
       file_type: studioFileType,
       size: { width: sizeOption.width, height: sizeOption.height },
+      pinned_template_id: selectedTemplateId || undefined,
     }),
-    [sizeOption.height, sizeOption.width, studioFileType, studioFormat, studioPlatform],
+    [selectedTemplateId, sizeOption.height, sizeOption.width, studioFileType, studioFormat, studioPlatform],
   );
   const brandLifecycle = brand?.lifecycle_state || "draft";
   const canGenerateInWorkspace = brandLifecycle === "active";

@@ -21086,6 +21086,139 @@ def test_orchestrator_template_adaptance_preflight_never_reuses_sample_headline(
     assert "Acme Pacific trade agreement" in headline
 
 
+def test_orchestrator_pinned_template_adaptance_adds_story_and_visual_profile() -> None:
+    sample_blueprint = {
+        "layout_category": "photo_led_cover",
+        "density": "premium_spacious",
+        "module_counts": {
+            "large_visual_count": 1,
+            "small_icon_like_count": 0,
+            "card_like_count": 1,
+            "text_block_count": 2,
+        },
+        "visual_permissions": {
+            "large_hero_visual_allowed": True,
+            "generic_icon_grid_allowed": False,
+        },
+    }
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a LinkedIn carousel on women borrowers reshaping access to credit.",
+        studio_panel={
+            "platform_preset": "linkedin",
+            "format": "carousel",
+            "file_type": "png",
+            "pinned_template_id": "tpl-premium-credit",
+        },
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"brand_name": "Acme Capital"},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        reference_assets=[{"asset_role": "reference_creative", "storage_path": "tenant/reference/premium-credit-1.png"}],
+        template_context={
+            "sequence_pack": {
+                "surface_policy": "style_reference_only",
+                "selected_template_id": "tpl-premium-credit",
+                "slide_count": 5,
+                "slides": [
+                    {
+                        "slide_index": index,
+                        "story_role": "hook" if index == 1 else "macro_takeaway" if index == 5 else "analysis",
+                        "visual_craft": "premium rendered 3D hero composite with depth, soft lighting, and polished object detail",
+                        "editorial_dna": "curiosity-led opening, analytical middle beats, resolved takeaway close",
+                        "composition_logic": "dominant hero object with restrained supporting copy",
+                        "sample_page_blueprint": sample_blueprint,
+                    }
+                    for index in range(1, 6)
+                ],
+            }
+        },
+    )
+    payload = StructuredTextPayload(
+        headline="Women borrowers are reshaping credit access",
+        body="Borrowing behavior is changing faster than many lenders expect.",
+        cta="Explore next steps",
+        hashtags=["#Credit"],
+        metadata={
+            "carousel_slide_specs": [
+                {
+                    "slide_number": 1,
+                    "slide_role": "hook",
+                    "headline": "Women borrowers are reshaping credit access",
+                    "supporting_line": "Borrowing behavior is changing faster than many lenders expect.",
+                    "visual_focus": "generic business icons",
+                    "cta": "",
+                },
+                {
+                    "slide_number": 2,
+                    "slide_role": "detail",
+                    "headline": "Context",
+                    "supporting_line": "Access patterns are evolving across borrower segments.",
+                    "visual_focus": "flat icons",
+                    "cta": "",
+                },
+                {
+                    "slide_number": 3,
+                    "slide_role": "detail",
+                    "headline": "Key insight",
+                    "supporting_line": "The change is behavioral, not only demographic.",
+                    "visual_focus": "vector icons",
+                    "cta": "",
+                },
+                {
+                    "slide_number": 4,
+                    "slide_role": "detail",
+                    "headline": "Analysis",
+                    "supporting_line": "Products need to reflect real repayment and trust patterns.",
+                    "visual_focus": "dashboard graphic",
+                    "cta": "",
+                },
+                {
+                    "slide_number": 5,
+                    "slide_role": "detail",
+                    "headline": "Conclusion",
+                    "supporting_line": "The strongest credit stories will be designed around the shift.",
+                    "visual_focus": "business icons",
+                    "cta": "Explore next steps",
+                },
+            ]
+        },
+    )
+
+    slides = AIOrchestratorService._build_carousel_slide_specs(payload, request=request)
+
+    assert slides[0]["role"] == "hook"
+    assert slides[0]["headline"] != "Women borrowers are reshaping credit access"
+    assert "shift" in slides[0]["headline"].casefold()
+    assert slides[-1]["role"] == "closing"
+    assert slides[-1]["headline"] == "The next move is the point"
+    assert slides[-1]["cta"] == "Explore next steps"
+    assert all(not slide.get("cta") for slide in slides[:-1])
+
+    first_metadata = slides[0]["metadata"]
+    profile = first_metadata["pinned_template_adaptation_profile"]
+    assert profile["visual_sophistication"] == "premium_rendered"
+    assert profile["hero_strategy"] == "dominant_hero_visual"
+    assert first_metadata["pinned_template_story_contract"]["sequence_pattern"] == [
+        "hook",
+        "context",
+        "key_insight",
+        "analysis",
+        "closing",
+    ]
+    first_visual_focus = slides[0]["visual_focus"].casefold()
+    closing_visual_focus = slides[-1]["visual_focus"].casefold()
+    assert "large hero visual" in first_visual_focus
+    assert "premium rendered" in first_visual_focus
+    assert "avoid generic business icons" in first_visual_focus
+    assert "resolved hero" in closing_visual_focus
+    assert "premium rendered" in closing_visual_focus
+
+
 def test_orchestrator_auto_carousel_preflight_preserves_matching_sample_headline() -> None:
     sample_headline = "Acme closed its fastest trade deal yet"
     template_id = uuid4()

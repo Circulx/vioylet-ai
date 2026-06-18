@@ -224,6 +224,58 @@ async def test_chat_service_routes_greeting_without_triggering_generation() -> N
 
 
 @pytest.mark.asyncio
+async def test_chat_service_sanitizes_user_message_structured_payload_uuids() -> None:
+    session = ContentSession(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        title="Chat Session",
+        session_kind="chat",
+        studio_panel={"format": "carousel", "platform_preset": "linkedin", "file_type": "png"},
+        conversational_context={},
+        is_active=True,
+    )
+    target_asset_id = uuid4()
+    workflow_id = uuid4()
+    chat = ChatService.__new__(ChatService)
+    chat.session = SimpleNamespace(commit=AsyncMock())
+    chat.messages = SimpleNamespace(add=AsyncMock())
+    chat.get_session = AsyncMock(return_value=session)
+    chat.intent_router = SimpleNamespace(
+        route=lambda message, context: ChatIntentDecision(
+            mode="small_talk",
+            reason="test_uuid_payload",
+            direct_reply="Done.",
+            revision_scope={"target_asset_id": target_asset_id},
+            workflow_plan={"type": "review_then_generate", "workflow_id": workflow_id},
+        )
+    )
+    chat.conversation = SimpleNamespace(
+        reply=lambda **kwargs: {
+            "message_text": "Done.",
+            "structured_payload": {"mode": "conversation", "conversation_mode": "small_talk"},
+        }
+    )
+    chat.text_content = SimpleNamespace(generate=AsyncMock(), evaluate=AsyncMock())
+    chat.content = SimpleNamespace(generate=AsyncMock(), export=AsyncMock())
+    chat.assets = SimpleNamespace(list_by_content=AsyncMock(return_value=[]))
+    chat.brands = SimpleNamespace(get_scoped=AsyncMock(return_value=SimpleNamespace(name="Jiraaf")))
+
+    await chat.send_message(
+        tenant_id=session.tenant_id,
+        brand_space_id=session.brand_space_id,
+        user_id=session.user_id,
+        session_id=session.id,
+        payload=ChatMessageCreateRequest(message="Use that pinned template"),
+    )
+
+    user_message = chat.messages.add.await_args_list[0].args[0]
+    assert user_message.structured_payload["revision_scope"]["target_asset_id"] == str(target_asset_id)
+    assert user_message.structured_payload["workflow_plan"]["workflow_id"] == str(workflow_id)
+
+
+@pytest.mark.asyncio
 async def test_chat_service_routes_text_only_requests_without_visual_generation() -> None:
     session = ContentSession(
         id=uuid4(),

@@ -5475,7 +5475,8 @@ class AIOrchestratorService:
         base = (
             "Minimum output quality floor for final static/infographic image: finished premium social creative at thumbnail size and full size; "
             "clear focal path, crisp contrast, deliberate spacing, clean module edges, coherent visual treatment, and at least one topic-specific visual unit tied to "
-            f"{anchors_summary}; never blank, text-only, generic-stock, or random-icon output."
+            f"{anchors_summary}; never blank, text-only, generic-stock, or random-icon output. "
+            "Layout discipline: use a simple, scroll-stopping social ad composition."
         )
         if normalized_format == "infographic":
             return (
@@ -21681,7 +21682,7 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest,
     ) -> AIOrchestrationResponse:
         if strategy == GenerationStrategy.DEV1_HARI:
-            # TODO: integrate dev1-hari static logic
+            # DEV1_HARI static/infographic behavior is integrated in the guarded main pipeline.
             return self._generate_main_ai(request)
         if strategy == GenerationStrategy.TEMPLATE_ADAPTANCE:
             # TODO: integrate template-adaptance carousel
@@ -25270,7 +25271,8 @@ class AIOrchestratorService:
     ) -> str:
         if not footer_requested:
             return ""
-        if cls._normalize_metadata_text(format_name, limit=32).casefold() != "infographic":
+        normalized_format = cls._normalize_metadata_text(format_name, limit=32).casefold()
+        if normalized_format not in {"static", "infographic"}:
             return ""
         safe_area = footer_safe_area if isinstance(footer_safe_area, dict) else {}
         try:
@@ -25290,9 +25292,10 @@ class AIOrchestratorService:
             else ""
         )
         return (
-            "Infographic footer-safe layout contract: reserve the calculated bottom footer strip before composing sections; "
+            "Static/infographic footer-safe layout contract: reserve the calculated bottom footer strip before composing sections; "
             "treat it as a forbidden content zone and leave calculated footer strip blank for backend footer. "
-            "INFOGRAPHIC FOOTER BLANK-SPACE RULE: Leave the bottom strip plain background only; no modules, icons, charts, labels, CTA, fine print, shadows, patterns, or visual details may enter it. "
+            "STATIC/INFOGRAPHIC FOOTER BLANK-SPACE RULE: Leave the bottom strip plain background only; no modules, icons, charts, labels, CTA, fine print, shadows, patterns, or visual details may enter it. "
+            "CTA buttons, CTA labels, chart captions, and closing messages must sit above the footer-safe strip with visible separation. "
             "Use at most 3 compact content sections/modules above the footer-safe area; compress overflow into approved summary modules instead of extending into the footer."
             f"{size_note}"
         )
@@ -25330,11 +25333,15 @@ class AIOrchestratorService:
             return ""
         if normalized_format == "infographic":
             return (
-                "Ad-post visual quality contract: create a premium, feed-native infographic with clear section hierarchy, polished spacing, factual visual anchors, and no generic filler motifs."
+                "Ad-post visual quality rule: campaign-ready social ad creative; Paid-social attractiveness standard: visually attractive, premium, scroll-stopping, mobile-readable; clear emotional hook; foreground/midground/background layering; tactile dimensional hero objects or visual metaphors tied to the topic; Avoid plain educational-poster composition; topic-relevant dimensional/3D hero treatment when brand/reference evidence allows it; do not invent unsupported facts, numbers, labels, UI, or readable text just to make the ad feel more exciting; keep research discipline."
             )
         if normalized_format == "carousel":
             return (
                 "Ad-post visual quality contract: create a premium carousel slide with strong narrative hierarchy, consistent series styling, and a distinct visual role for this panel."
+            )
+        if normalized_format == "static":
+            return (
+            "Ad-post visual quality rule: campaign-ready social ad creative; Paid-social attractiveness standard: visually attractive, premium, scroll-stopping, mobile-readable; clear emotional hook; foreground/midground/background layering; tactile dimensional hero objects or visual metaphors tied to the topic; Avoid plain educational-poster composition; topic-relevant dimensional/3D hero treatment when brand/reference evidence allows it; do not invent unsupported facts, numbers, labels, UI, or readable text just to make the ad feel more exciting; keep research discipline."
             )
         return (
             "Ad-post visual quality contract: create a premium, feed-native social creative with one clear focal idea, polished brand-safe craft, and scroll-stopping but readable composition."
@@ -25765,9 +25772,14 @@ class AIOrchestratorService:
         )
         normalized_format_name = AIOrchestratorService._normalize_metadata_text(format_name, limit=32).casefold()
         llm_led_static_infographic = AIOrchestratorService._llm_led_static_infographic_format(normalized_format_name)
-        scene_graph_has_text_regions = any(
+        scene_graph_text_region_count = sum(
             bool(getattr(element, "visible", True)) and AIOrchestratorService._scene_graph_text_like_element(element)
             for element in (scene_graph.elements or [])
+        )
+        scene_graph_has_text_regions = scene_graph_text_region_count > 0
+        strict_static_final_text_contract = (
+            normalized_format_name == "static"
+            and scene_graph_text_region_count <= 1
         )
         reference_template_structure_active = bool(active_sample_page_blueprint) and normalized_format_name in {
             "static",
@@ -25803,6 +25815,11 @@ class AIOrchestratorService:
         if llm_led_static_infographic:
             format_guidance = (
                 "Treat this as a finished static/infographic social creative. Let the image model choose the composition, module count, visual metaphor, table/list/ranking treatment, and content hierarchy required by the current prompt while keeping only the logo-safe corner and footer/disclaimer strip reserved."
+                + (
+                    " Build a modular visual explainer with up to 3 clearly separated sections and strong vertical pacing."
+                    if format_name == "infographic"
+                    else ""
+                )
             )
         reference_summary = AIOrchestratorService._compact_reference_assets(reference_images or [])
         grounding_sections = AIOrchestratorService._final_render_grounding_sections(
@@ -26088,18 +26105,39 @@ class AIOrchestratorService:
                 )
             )
         )
+        static_infographic_backend_overlay_contract = (
+            "Backend overlay contract for static/infographic: the image model must not draw, typeset, imitate, or place any standalone brand asset, brand-name signature, watermark, masthead, registration text, disclaimer, or footer text. Keep the brand-asset safe corner and bottom footer/disclaimer strip plain and empty; backend post-processing alone will place the exact stored brand asset and legal footer."
+            if llm_led_static_infographic
+            else ""
+        )
         sections = [
             opening_instruction,
-            f"Keep the {reserved_logo_area} area completely empty and visually clean. Do not place any headline, body copy, supporting text, proof point, CTA, icon, or visual element inside or immediately adjacent to this corner.",
-            "Do not typeset the brand name as a top-corner signature.",
-            *AIOrchestratorService._logo_non_generation_contract(
-                brand_name=brand_name,
-                reserved_logo_area=reserved_logo_area,
+            *(
+                []
+                if llm_led_static_infographic
+                else [
+                    f"Keep the {reserved_logo_area} area completely empty and visually clean. Do not place any headline, body copy, supporting text, proof point, CTA, icon, or visual element inside or immediately adjacent to this corner.",
+                    "Do not typeset the brand name as a top-corner signature.",
+                    *AIOrchestratorService._logo_non_generation_contract(
+                        brand_name=brand_name,
+                        reserved_logo_area=reserved_logo_area,
+                    ),
+                ]
             ),
             logo_surface_guidance,
             disclaimer_overlay_guidance,
             infographic_footer_layout_contract,
             *text_containment_contract,
+            *(
+                [
+                    format_guidance,
+                    content_visual_explanation_contract,
+                    ad_post_visual_quality_contract,
+                    final_text_safety_instruction,
+                ]
+                if llm_led_static_infographic
+                else []
+            ),
             f"Platform: {platform}.",
             f"Format: {format_name}.",
             f"Output type: {file_type}.",
@@ -26239,11 +26277,52 @@ class AIOrchestratorService:
         ]
         required_sections = [
             opening_instruction,
-            f"Keep the {reserved_logo_area} area completely empty and visually clean. Do not place any headline, body copy, supporting text, proof point, CTA, icon, or visual element inside or immediately adjacent to this corner.",
-            "Do not typeset the brand name as a top-corner signature.",
-            *AIOrchestratorService._logo_non_generation_contract(
-                brand_name=brand_name,
-                reserved_logo_area=reserved_logo_area,
+            *(
+                [
+                    static_infographic_backend_overlay_contract,
+                    logo_safe_zone_guidance,
+                    format_guidance,
+                    social_media_ad_contract,
+                    content_visual_explanation_contract,
+                    ad_post_visual_quality_contract,
+                    hallucination_control_contract,
+                    compact_hallucination_guard,
+                    *text_containment_contract,
+                    final_text_safety_instruction,
+                    main_text_authority_instruction,
+                    retry_instruction,
+                    *llm_led_text_contract,
+                    *(text_overlay_contract if strict_static_final_text_contract else []),
+                    canvas_fit_guidance,
+                    generation_to_export_fit_guidance,
+                    crop_crowding_instruction,
+                    export_frame_fit_instruction,
+                    (
+                        "Make the supporting visual explain the exact topic and benefit from the approved copy intent and user prompt, while rendering the main approved words directly in the image."
+                        if not use_backend_text_overlay
+                        else "Make the supporting visual explain the exact topic and benefit from the approved copy intent and user prompt, while leaving all words for backend overlay."
+                    ),
+                    "Do not default to a standalone business portrait, generic investor, or unrelated editorial person. Use people only when their action clearly explains the message.",
+                    "" if llm_led_static_infographic and not scene_graph_has_text_regions else "Respect the reference/template layout strictly: preserve the contracted regions, spacing rhythm, text-safe negative space, and image-zone discipline before adding decorative detail.",
+                    infographic_footer_layout_contract,
+                    f"Brand palette to honor: {palette}.",
+                    f"Palette role guidance: {palette_guidance}.",
+                    strict_palette_contract,
+                ]
+                if llm_led_static_infographic
+                else []
+            ),
+            *(
+                []
+                if llm_led_static_infographic
+                else [
+                    f"Keep the {reserved_logo_area} area completely empty and visually clean. Do not place any headline, body copy, supporting text, proof point, CTA, icon, or visual element inside or immediately adjacent to this corner.",
+                    "Do not typeset the brand name as a top-corner signature.",
+                    *AIOrchestratorService._logo_non_generation_contract(
+                        brand_name=brand_name,
+                        reserved_logo_area=reserved_logo_area,
+                    ),
+                ]
             ),
             logo_surface_guidance,
             disclaimer_overlay_guidance,
@@ -26313,7 +26392,7 @@ class AIOrchestratorService:
                 else ""
             ),
             "" if llm_led_static_infographic and not scene_graph_has_text_regions else "Respect the reference/template layout strictly: preserve the contracted regions, spacing rhythm, text-safe negative space, and image-zone discipline before adding decorative detail.",
-            *text_overlay_contract,
+            *(text_overlay_contract if not llm_led_static_infographic else []),
             data_list_surface_guidance,
             proof_point_render_instruction,
             (
@@ -32027,6 +32106,11 @@ class AIOrchestratorService:
                 )
             )
         )
+        static_infographic_backend_overlay_contract = (
+            "Backend overlay contract for static/infographic: the image model must not draw, typeset, imitate, or place any standalone brand asset, brand-name signature, watermark, masthead, registration text, disclaimer, or footer text. Keep the brand-asset safe corner and bottom footer/disclaimer strip plain and empty; backend post-processing alone will place the exact stored brand asset and legal footer."
+            if llm_led_static_infographic
+            else ""
+        )
         if llm_led_static_infographic:
             layout_quality_guard = ""
             infographic_surface_enforcement = ""
@@ -32053,6 +32137,7 @@ class AIOrchestratorService:
                 )
             ),
             llm_led_visual_authority_instruction,
+            static_infographic_backend_overlay_contract,
             llm_led_topic_fit_contract,
             social_media_ad_contract,
             content_visual_explanation_contract,
@@ -32258,6 +32343,8 @@ class AIOrchestratorService:
             llm_led_visual_authority_instruction,
             llm_led_topic_fit_contract,
             social_media_ad_contract,
+            ad_post_visual_quality_contract,
+            AIOrchestratorService._brand_color_text_overlay_preparation_contract(),
             quality_floor_contract,
             reference_adaptation_profile_section,
             generation_surface_contract_section,

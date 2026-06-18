@@ -7794,6 +7794,13 @@ class ContentService:
         return 0.96
 
     @staticmethod
+    def _logo_size_scale_for_format(format_name: str) -> float:
+        normalized_format = str(format_name or "").strip().lower()
+        if normalized_format in {"static", "infographic"}:
+            return 1.2
+        return ContentService._logo_size_scale()
+
+    @staticmethod
     def _scaled_logo_dimension(value: int | float) -> int:
         return max(int(round(float(value) * ContentService._logo_size_scale())), 1)
 
@@ -7821,19 +7828,20 @@ class ContentService:
             width = max(int(canvas_width * 0.2), 170)
             height = max(int(canvas_height * 0.085), 60)
         elif normalized_format == "infographic":
-            width = max(int(canvas_width * 0.155), 132)
-            height = max(int(canvas_height * 0.058), 44)
+            width = max(int(canvas_width * 0.12), 104)
+            height = max(int(canvas_height * 0.045), 34)
         else:
             aspect_ratio = canvas_width / max(canvas_height, 1)
             if aspect_ratio >= 1.3:
-                width = max(int(canvas_width * 0.13), 128)
-                height = max(int(canvas_height * 0.058), 40)
+                width = max(int(canvas_width * 0.11), 112)
+                height = max(int(canvas_height * 0.052), 36)
             else:
-                width = max(int(canvas_width * 0.17), 160)
-                height = max(int(canvas_height * 0.075), 50)
+                width = max(int(canvas_width * 0.145), 132)
+                height = max(int(canvas_height * 0.06), 42)
+        scale = ContentService._logo_size_scale_for_format(normalized_format)
         return (
-            min(ContentService._scaled_logo_dimension(width), canvas_width),
-            min(ContentService._scaled_logo_dimension(height), canvas_height),
+            min(max(int(round(width * scale)), 1), canvas_width),
+            min(max(int(round(height * scale)), 1), canvas_height),
         )
 
     @classmethod
@@ -7872,6 +7880,9 @@ class ContentService:
             canvas_height=canvas_height,
             format_name=format_name,
         )
+        normalized_format = str(format_name or "").strip().lower()
+        if reference_box is not None and normalized_format in {"static", "infographic"}:
+            reference_box = None
         if reference_box is not None:
             ref_x, ref_y, ref_width, ref_height = reference_box
             if str(format_name or "").strip().lower() == "carousel":
@@ -8298,9 +8309,14 @@ class ContentService:
         min_width = max(int(canvas_width * 0.055), 56)
         min_height = max(int(canvas_height * 0.014), 18)
         logo_aspect_ratio = logo_image.width / max(logo_image.height, 1)
-        max_wordmark_width = max(
-            initial_width,
-            min(int(canvas_width * 0.34), max(canvas_width - 40, 1)),
+        normalized_format = str(format_name or "").strip().lower()
+        max_wordmark_width = (
+            initial_width
+            if normalized_format in {"static", "infographic"}
+            else max(
+                initial_width,
+                min(int(canvas_width * 0.34), max(canvas_width - 40, 1)),
+            )
         )
         best: dict[str, object] | None = None
         for anchor in anchors:
@@ -8615,12 +8631,20 @@ class ContentService:
                     anchor=anchor,
                     reference_box=reference_box,
                 )
-        box = cls._cap_logo_box_to_profile(
-            box=box,
-            canvas_width=canvas_width,
-            canvas_height=canvas_height,
-            format_name=format_name,
-        )
+        if str(format_name or "").strip().lower() in {"static", "infographic"} and anchor[1] == "right" and width > min_width:
+            box = (
+                x,
+                y,
+                min(width, min_width),
+                min(height, min_height),
+            )
+        else:
+            box = cls._cap_logo_box_to_profile(
+                box=box,
+                canvas_width=canvas_width,
+                canvas_height=canvas_height,
+                format_name=format_name,
+            )
         return cls._snap_logo_box_to_anchor_edge(
             box=box,
             canvas_width=canvas_width,
@@ -9722,14 +9746,36 @@ class ContentService:
         footer_strip_box = (0, clear_strip_top, width, clear_strip_height)
         quietness_report = self._footer_strip_quietness_report(base, footer_strip_box)
         format_name = str((studio_panel or {}).get("format") or "").strip().lower()
-        if format_name in {"static", "infographic"} and not bool(quietness_report.get("quiet")):
+        static_infographic_format = format_name in {"static", "infographic"}
+        original_footer_strip_box = footer_strip_box
+        relocated_footer_strip_box: tuple[int, int, int, int] | None = None
+        if static_infographic_format and not bool(quietness_report.get("quiet")):
             logger.info(
-                "content.ai_final_render.footer_overlay_skipped_busy_strip content_version_id=%s format=%s score=%s",
+                "content.ai_final_render.footer_overlay_forced_busy_strip content_version_id=%s format=%s score=%s",
                 content.id,
                 format_name,
                 quietness_report.get("score"),
             )
-            return None
+            search_top = max(0, height - max(int(height * 0.22), clear_strip_height * 2))
+            candidate_top = clear_strip_top - 8
+            while candidate_top >= search_top:
+                candidate_box = (0, candidate_top, width, clear_strip_height)
+                candidate_report = self._footer_strip_quietness_report(base, candidate_box)
+                if bool(candidate_report.get("quiet")):
+                    relocated_footer_strip_box = candidate_box
+                    footer_strip_box = candidate_box
+                    quietness_report = {
+                        **dict(candidate_report),
+                        "relocated_from_busy_strip": True,
+                        "original_strip_quietness": quietness_report,
+                    }
+                    clear_strip_top = candidate_top
+                    text_strip_top = min(
+                        max(candidate_top + max((text_strip_top - int(strip_box.get("y") or height) if isinstance(strip_box, dict) else 0), 0), 0),
+                        max(height - text_strip_height, 0),
+                    )
+                    break
+                candidate_top -= max(clear_strip_height // 4, 8)
 
         sample_y = min(max(text_strip_top + max(text_strip_height // 2, 0), 0), height - 1)
         sample_points = [base.getpixel((x, sample_y))[:3] for x in (int(width * 0.12), int(width * 0.5), int(width * 0.88))]
@@ -9741,6 +9787,8 @@ class ContentService:
 
         overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay)
+        if not static_infographic_format:
+            draw.rectangle((0, clear_strip_top, width, height), fill=strip_fill)
         horizontal_padding = int(text_box.get("x") or max(int(width * 0.04), 28)) if isinstance(text_box, dict) else max(int(width * 0.04), 28)
         vertical_padding = int((footer_safe_area.get("footer_padding") or {}).get("y") or max(int(text_strip_height * 0.16), 8))
         max_text_width = int(text_box.get("width") or max(width - horizontal_padding * 2, 10)) if isinstance(text_box, dict) else max(width - horizontal_padding * 2, 10)
@@ -9753,9 +9801,18 @@ class ContentService:
         line_boxes = [draw.textbbox((0, 0), line, font=chosen_font) for line in chosen_lines]
         total_height = sum(box[3] - box[1] for box in line_boxes) + max(len(chosen_lines) - 1, 0) * spacing
         cursor_y = text_strip_top + max((text_strip_height - total_height) // 2, vertical_padding // 2)
+        stroke_fill = (255, 255, 255, 180) if avg_luma < 145 else (0, 0, 0, 96)
+        stroke_width = 1 if static_infographic_format else 0
         for line, box in zip(chosen_lines, line_boxes):
             line_height = box[3] - box[1]
-            draw.text((horizontal_padding, cursor_y - box[1]), line, fill=text_fill, font=chosen_font)
+            draw.text(
+                (horizontal_padding, cursor_y - box[1]),
+                line,
+                fill=text_fill,
+                font=chosen_font,
+                stroke_width=stroke_width,
+                stroke_fill=stroke_fill,
+            )
             cursor_y += line_height + spacing
 
         base = Image.alpha_composite(base, overlay)
@@ -9769,12 +9826,33 @@ class ContentService:
             "render_source": "ai",
             "generation_stage": "final_render",
             "legal_footer_composited_by_service": True,
-            "legal_footer_overlay_strategy": "transparent_exact_footer_text",
-            "legal_footer_background_applied": False,
+            "legal_footer_overlay_strategy": "transparent_footer_text" if static_infographic_format else "exact_footer_strip",
             "legal_footer_reserved_before_composite": False,
-            "legal_footer_overlay_mode": "overlay_only",
+            "legal_footer_overlay_mode": "text_only" if static_infographic_format else "overlay_only",
             "legal_footer_source_image_resized": False,
             "legal_footer_strip_quietness": quietness_report,
+            "legal_footer_original_strip_box": {
+                "x": original_footer_strip_box[0],
+                "y": original_footer_strip_box[1],
+                "width": original_footer_strip_box[2],
+                "height": original_footer_strip_box[3],
+            },
+            "legal_footer_relocated_strip_box": (
+                {
+                    "x": relocated_footer_strip_box[0],
+                    "y": relocated_footer_strip_box[1],
+                    "width": relocated_footer_strip_box[2],
+                    "height": relocated_footer_strip_box[3],
+                }
+                if relocated_footer_strip_box is not None
+                else None
+            ),
+            "legal_footer_background_drawn": not static_infographic_format,
+            "legal_footer_overlap_risk": bool(
+                static_infographic_format
+                and not bool(quietness_report.get("quiet"))
+                and relocated_footer_strip_box is None
+            ),
             "legal_footer_safe_area": {
                 key: value
                 for key, value in footer_safe_area.items()
@@ -9888,11 +9966,11 @@ class ContentService:
             for item in layout_obstructions
             if isinstance(item.get("box"), tuple)
         ]
-        format_name = str((studio_panel or {}).get("format") or "")
-        is_carousel_format = format_name.strip().lower() == "carousel"
+        format_name = str((studio_panel or {}).get("format") or "").strip().lower()
+        static_infographic_format = format_name in {"static", "infographic"}
         base_for_collision = base
         logo_zone_clearance_applied = False
-        if not layout_obstructions and not is_carousel_format:
+        if not static_infographic_format and not layout_obstructions:
             base_for_collision, logo_zone_clearance_applied = self._clear_ai_logo_overlay_region(
                 base,
                 reserved_logo_box,
@@ -9906,7 +9984,7 @@ class ContentService:
             explainability=explainability,
             format_name=format_name,
             preferred_hint=self._extract_logo_position_hint(content, explainability),
-            image_obstruction_weight=0.2 if not layout_obstructions else 4.0,
+            image_obstruction_weight=4.0 if (static_infographic_format or layout_obstructions) else 0.2,
         )
         logo_box = collision_guard["box"]  # type: ignore[assignment]
         contained = collision_guard["contained"]  # type: ignore[assignment]
@@ -9916,32 +9994,29 @@ class ContentService:
         clearance_logo_box = reserved_logo_box
         if logo_zone_clearance_applied:
             base = base_for_collision
-        elif not is_carousel_format:
+        elif not static_infographic_format:
             base, logo_zone_clearance_applied = self._clear_ai_logo_overlay_region(
                 base,
                 clearance_logo_box,
                 format_name=format_name,
                 avoid_boxes=layout_obstruction_boxes,
             )
-        # Clear the reserved zone first, then feather the exact visible
-        # footprint so the pasted logo does not sit on AI-painted residue.
-        compact_clearance_box = self._logo_footprint_clearance_box(
-            image=base,
-            offset_x=offset_x,
-            offset_y=offset_y,
-            logo_width=contained.width,
-            logo_height=contained.height,
-        )
-        # Clear only the true transparent logo footprint plus a tiny feathered halo.
-        # This removes AI-painted noise beneath the logo without creating a visible
-        # rectangular background plate.
-        base, logo_clearance_zone_applied = self._clear_ai_logo_footprint_region(
-            base,
-            logo_image=contained,
-            offset_x=offset_x,
-            offset_y=offset_y,
-            clear_box=compact_clearance_box,
-        )
+        logo_clearance_zone_applied = False
+        if not static_infographic_format:
+            compact_clearance_box = self._logo_footprint_clearance_box(
+                image=base,
+                offset_x=offset_x,
+                offset_y=offset_y,
+                logo_width=contained.width,
+                logo_height=contained.height,
+            )
+            base, logo_clearance_zone_applied = self._clear_ai_logo_footprint_region(
+                base,
+                logo_image=contained,
+                offset_x=offset_x,
+                offset_y=offset_y,
+                clear_box=compact_clearance_box,
+            )
         logo_clearance_zone_applied = logo_clearance_zone_applied or logo_zone_clearance_applied
         background_luminance = self._logo_box_background_luminance(base, logo_box)
         base.paste(contained, (offset_x, offset_y), contained)
@@ -9970,7 +10045,13 @@ class ContentService:
                 "source_storage_path": asset.storage_path,
                 "logo_clearance_zone_applied": logo_clearance_zone_applied,
                 "logo_clearance_anchor": logo_clearance_anchor,
-                "logo_clearance_strategy": "footprint_masked_top_band_patch" if logo_clearance_anchor.startswith("top-") else "footprint_masked_context_patch_or_fill",
+                "logo_clearance_strategy": (
+                    "transparent_asset_overlay_no_clearance"
+                    if static_infographic_format
+                    else "footprint_masked_top_band_patch"
+                    if logo_clearance_anchor.startswith("top-")
+                    else "footprint_masked_context_patch_or_fill"
+                ),
                 "logo_collision_guard": {
                     "applied": True,
                     "score": round(float(collision_guard.get("score", 0.0)), 4),
@@ -10005,12 +10086,16 @@ class ContentService:
                         "height": int((collision_guard.get("safe_box") or (0, 0, 0, 0))[3]),
                     },
                 },
-                "logo_clearance_box": {
-                    "x": compact_clearance_box[0],
-                    "y": compact_clearance_box[1],
-                    "width": compact_clearance_box[2],
-                    "height": compact_clearance_box[3],
-                },
+                "logo_clearance_box": (
+                    None
+                    if static_infographic_format
+                    else {
+                        "x": compact_clearance_box[0],
+                        "y": compact_clearance_box[1],
+                        "width": compact_clearance_box[2],
+                        "height": compact_clearance_box[3],
+                    }
+                ),
             },
         }
 

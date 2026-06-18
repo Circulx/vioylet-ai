@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 from app.ai.prompt_intelligence import PromptIntelligenceService
 
 
@@ -160,6 +162,41 @@ def test_image_led_social_envelope_requires_brand_intelligent_creative_copy() ->
     assert "Do not write like a research paper writer" in combined
     assert "bibliography-like source mentions" in combined
     assert "sample_page_headline" in combined
+
+
+def test_image_led_social_envelope_serializes_uuid_studio_panel_fields() -> None:
+    service = PromptIntelligenceService()
+    pinned_template_id = uuid4()
+
+    envelope = service.compose_image_led_social_envelope(
+        user_prompt="Create a LinkedIn carousel on a new trade deal.",
+        compiled_context={
+            "brand_copy_brief": {"brand_name": "Example Brand"},
+            "brand_visual_brief": {},
+            "audience_brief": {},
+            "render_constraints": {},
+            "session_brief": {},
+            "template_fit_brief": {},
+            "reference_asset_brief": [],
+            "objective_brief": {},
+            "prompt_intelligence_brief": {},
+            "content_format_brief": {"format": "carousel", "platform_preset": "linkedin"},
+            "research_editorial_brief": {},
+            "format_family_plan": {},
+            "content_plan": {},
+            "visual_plan": {},
+            "visual_knowledge_brief": {},
+        },
+        studio_panel={
+            "platform_preset": "linkedin",
+            "format": "carousel",
+            "file_type": "png",
+            "pinned_template_id": pinned_template_id,
+        },
+        message_strategy={},
+    )
+
+    assert str(pinned_template_id) in envelope.user
 
 
 def test_template_adaptance_prompt_treats_sample_copy_as_visual_layout_only() -> None:

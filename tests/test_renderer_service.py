@@ -907,6 +907,91 @@ def test_renderer_preserves_template_background_without_overlaying_generated_vis
         root.rmdir()
 
 
+def test_renderer_overlays_logo_and_legal_footer_for_adapted_template() -> None:
+    renderer = RendererService(session=None)  # type: ignore[arg-type]
+    root = Path("tests") / f"template-logo-footer-{uuid4()}"
+    root.mkdir(parents=True, exist_ok=True)
+    template_path = root / "template.png"
+    logo_path = root / "logo.png"
+    Image.new("RGB", (1080, 1080), color=(244, 248, 252)).save(template_path)
+    Image.new("RGBA", (260, 96), color=(0, 75, 155, 255)).save(logo_path)
+
+    class Storage:
+        def absolute_path(self, path: str) -> str:
+            mapping = {
+                "tenant/brand/templates/template.png": str(template_path),
+                "tenant/brand/logo/logo.png": str(logo_path),
+            }
+            return mapping[path]
+
+    renderer.storage = Storage()
+    payload = RendererInput(
+        tenant_id="11111111-1111-1111-1111-111111111111",
+        brand_space_id="22222222-2222-2222-2222-222222222222",
+        content_version_id="33333333-3333-3333-3333-333333333333",
+        studio_panel={"format": "static", "platform_preset": "instagram", "file_type": "png", "size": {"width": 1080, "height": 1080}},
+        blueprint=BlueprintPayload(
+            layout_type="static",
+            zones=[
+                BlueprintZone(zone_id="logo", role="logo", x=800, y=20, width=240, height=96, max_lines=1),
+                BlueprintZone(zone_id="headline", role="headline", x=64, y=108, width=650, height=150, max_lines=3),
+                BlueprintZone(zone_id="body", role="body", x=64, y=280, width=650, height=210, max_lines=5),
+                BlueprintZone(zone_id="legal_footer", role="legal", x=32, y=1028, width=1016, height=36, max_lines=2),
+            ],
+            hierarchy=["headline", "body", "logo", "legal"],
+            text_blocks=[],
+            image_zones=[],
+            logo_rules={"zone_id": "logo", "required": True},
+            cta_placement={"alignment": "left"},
+            platform_preset="instagram",
+            export_format="png",
+            overflow_strategy={"mode": "shrink_then_wrap"},
+            source_mode="adapted_template",
+            source_template_id="template-1",
+            adaptation_plan={},
+            brand_rules_applied={},
+        ),
+        text=StructuredTextPayload(
+            headline="Credit access is changing",
+            body="A short body line.",
+            cta="",
+            hashtags=[],
+            metadata={"legal_footer": "Investments are subject to market risk. Read all documents carefully."},
+        ),
+        template_asset_path="tenant/brand/templates/template.png",
+        logo_asset_path="tenant/brand/logo/logo.png",
+        brand_visual_rules={"brand_color_palette": {"primary": "#0B4D9A", "secondary": "#666666"}},
+        layout_decision={"adaptation_plan": {"logo_injection_required": True}},
+    )
+
+    try:
+        image, flags = renderer._render_page(
+            payload,
+            {"width": 1080, "height": 1080},
+            {
+                "headline": payload.text.headline,
+                "body": payload.text.body,
+                "legal_footer": payload.text.metadata["legal_footer"],
+                "show_image": False,
+            },
+        )
+        rendered_roles = {str(item.get("role") or "") for item in flags.get("text_blocks_used", [])}
+        logo_box = next(item for item in flags["asset_boxes"] if item["role"] == "logo")["box"]
+        legal_fit = next(item for item in flags["text_fit"] if item.get("role") == "legal")
+
+        assert image.size == (1080, 1080)
+        assert flags["template_rendered"] is True
+        assert flags["logo_rendered"] is True
+        assert "legal" in rendered_roles
+        assert logo_box[1] >= RendererService._logo_top_margin_px(1080)
+        assert legal_fit["occupied_box"][1] >= 1020
+        assert all(item["passed"] for item in flags["overlap_checks"])
+    finally:
+        template_path.unlink(missing_ok=True)
+        logo_path.unlink(missing_ok=True)
+        root.rmdir()
+
+
 def test_renderer_does_not_paste_template_background_for_style_reference_only_adapted_templates() -> None:
     renderer = RendererService(session=None)  # type: ignore[arg-type]
     root = Path("tests") / f"template-style-only-{uuid4()}"

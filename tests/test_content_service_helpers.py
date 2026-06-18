@@ -50,6 +50,23 @@ def test_merge_studio_panel_preserves_existing_size_and_overrides_fields() -> No
     assert merged["size"] == {"width": 1200, "height": 800}
 
 
+def test_studio_panel_payload_serializes_pinned_template_uuid_for_jsonb() -> None:
+    pinned_template_id = uuid4()
+
+    payload = ContentService._studio_panel_payload(
+        {
+            "format": "carousel",
+            "platform_preset": "linkedin",
+            "file_type": "png",
+            "pinned_template_id": pinned_template_id,
+            "size": {"width": 1080, "height": 1350},
+        }
+    )
+
+    assert payload["pinned_template_id"] == str(pinned_template_id)
+    assert payload["format"] == "carousel"
+
+
 def test_tone_check_request_accepts_version_or_structured_payload_without_raw_content() -> None:
     version_only = ToneCheckRequest(content_version_id=uuid4())
     structured_only = ToneCheckRequest(

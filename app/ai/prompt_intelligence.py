@@ -45,6 +45,10 @@ class PromptIntelligenceService:
         "doc": "Provide text that reads well in document form, with clarity and completeness over punchiness.",
     }
 
+    @staticmethod
+    def _prompt_json(value: Any) -> str:
+        return json.dumps(value, ensure_ascii=True, default=str)
+
     @classmethod
     def _format_visual_structure_summary(cls, detailed_context: dict[str, Any]) -> str:
         """🔥 PHASE 4: Format detailed visual context for LLM prompt"""
@@ -1418,58 +1422,58 @@ class PromptIntelligenceService:
         {user_prompt}
 
         Brand copy brief:
-        {json.dumps(brand_copy_brief, ensure_ascii=True)}
+        {self._prompt_json(brand_copy_brief)}
 
         Brand visual brief:
-        {json.dumps(brand_visual_brief, ensure_ascii=True)}
+        {self._prompt_json(brand_visual_brief)}
 
         Audience brief:
-        {json.dumps(audience_brief, ensure_ascii=True)}
+        {self._prompt_json(audience_brief)}
 
         Knowledge brief:
-        {json.dumps(knowledge_brief, ensure_ascii=True)}
+        {self._prompt_json(knowledge_brief)}
 
         Visual knowledge brief:
-        {json.dumps(visual_knowledge_brief, ensure_ascii=True)}
+        {self._prompt_json(visual_knowledge_brief)}
 
         Studio panel:
-        {json.dumps(studio_panel, ensure_ascii=True)}
+        {self._prompt_json(studio_panel)}
 
         Template fit brief:
-        {json.dumps(template_fit_brief, ensure_ascii=True)}
+        {self._prompt_json(template_fit_brief)}
 
         Render constraints:
-        {json.dumps(render_constraints, ensure_ascii=True)}
+        {self._prompt_json(render_constraints)}
 
         Session brief:
-        {json.dumps(session_brief, ensure_ascii=True)}
+        {self._prompt_json(session_brief)}
 
         Reference asset brief:
-        {json.dumps(reference_asset_brief, ensure_ascii=True)}
+        {self._prompt_json(reference_asset_brief)}
 
         Reference adaptation profile:
-        {json.dumps(reference_adaptation_profile, ensure_ascii=True)}
+        {self._prompt_json(reference_adaptation_profile)}
 
         Generation surface contract:
-        {json.dumps(generation_surface_contract, ensure_ascii=True)}
+        {self._prompt_json(generation_surface_contract)}
 
         Prompt intelligence brief:
-        {json.dumps(prompt_intelligence_brief, ensure_ascii=True)}
+        {self._prompt_json(prompt_intelligence_brief)}
 
         Content format brief:
-        {json.dumps(content_format_brief, ensure_ascii=True)}
+        {self._prompt_json(content_format_brief)}
 
         Research editorial brief:
-        {json.dumps(research_editorial_brief, ensure_ascii=True)}
+        {self._prompt_json(research_editorial_brief)}
 
         Format family plan:
-        {json.dumps(format_family_plan, ensure_ascii=True)}
+        {self._prompt_json(format_family_plan)}
 
         Content plan:
-        {json.dumps(content_plan, ensure_ascii=True)}
+        {self._prompt_json(content_plan)}
 
         Visual plan:
-        {json.dumps(visual_plan, ensure_ascii=True)}
+        {self._prompt_json(visual_plan)}
 
         Produce concise, brand-aligned copy that is safe for rendering.
         """.strip()
@@ -1662,61 +1666,61 @@ class PromptIntelligenceService:
         {user_prompt}
 
         Brand copy brief:
-        {json.dumps(brand_copy_brief, ensure_ascii=True)}
+        {self._prompt_json(brand_copy_brief)}
 
         Brand visual brief:
-        {json.dumps(brand_visual_brief, ensure_ascii=True)}
+        {self._prompt_json(brand_visual_brief)}
 
         Audience brief:
-        {json.dumps(audience_brief, ensure_ascii=True)}
+        {self._prompt_json(audience_brief)}
 
         Objective brief:
-        {json.dumps(objective_brief, ensure_ascii=True)}
+        {self._prompt_json(objective_brief)}
 
         Template candidates and fit:
-        {json.dumps(template_fit_brief, ensure_ascii=True)}
+        {self._prompt_json(template_fit_brief)}
 
         Reference assets:
-        {json.dumps(reference_asset_brief, ensure_ascii=True)}
+        {self._prompt_json(reference_asset_brief)}
 
         Reference adaptation profile:
-        {json.dumps(reference_adaptation_profile, ensure_ascii=True)}
+        {self._prompt_json(reference_adaptation_profile)}
 
         Generation surface contract:
-        {json.dumps(generation_surface_contract, ensure_ascii=True)}
+        {self._prompt_json(generation_surface_contract)}
 
         Prompt intelligence brief:
-        {json.dumps(prompt_intelligence_brief, ensure_ascii=True)}
+        {self._prompt_json(prompt_intelligence_brief)}
 
         Content format brief:
-        {json.dumps(content_format_brief, ensure_ascii=True)}
+        {self._prompt_json(content_format_brief)}
 
         Research editorial brief:
-        {json.dumps(research_editorial_brief, ensure_ascii=True)}
+        {self._prompt_json(research_editorial_brief)}
 
         Format family plan:
-        {json.dumps(format_family_plan, ensure_ascii=True)}
+        {self._prompt_json(format_family_plan)}
 
         Content plan:
-        {json.dumps(content_plan, ensure_ascii=True)}
+        {self._prompt_json(content_plan)}
 
         Visual plan:
-        {json.dumps(visual_plan, ensure_ascii=True)}
+        {self._prompt_json(visual_plan)}
 
         Visual knowledge brief:
-        {json.dumps(visual_knowledge_brief, ensure_ascii=True)}
+        {self._prompt_json(visual_knowledge_brief)}
 
         Studio panel:
-        {json.dumps(studio_panel, ensure_ascii=True)}
+        {self._prompt_json(studio_panel)}
 
         Render constraints:
-        {json.dumps(render_constraints, ensure_ascii=True)}
+        {self._prompt_json(render_constraints)}
 
         Session brief:
-        {json.dumps(session_brief, ensure_ascii=True)}
+        {self._prompt_json(session_brief)}
 
         Validation report:
-        {json.dumps(validation_report or {}, ensure_ascii=True)}
+        {self._prompt_json(validation_report or {})}
 
         Replan instruction:
         {replan_note or ""}
@@ -1813,31 +1817,31 @@ class PromptIntelligenceService:
         {user_prompt}
 
         Brand copy brief:
-        {json.dumps(brand_copy_brief, ensure_ascii=True)}
+        {self._prompt_json(brand_copy_brief)}
 
         Audience brief:
-        {json.dumps(audience_brief, ensure_ascii=True)}
+        {self._prompt_json(audience_brief)}
 
         Objective brief:
-        {json.dumps(objective_brief, ensure_ascii=True)}
+        {self._prompt_json(objective_brief)}
 
         Knowledge brief:
-        {json.dumps(knowledge_brief, ensure_ascii=True)}
+        {self._prompt_json(knowledge_brief)}
 
         Prompt intelligence brief:
-        {json.dumps(prompt_intelligence_brief, ensure_ascii=True)}
+        {self._prompt_json(prompt_intelligence_brief)}
 
         Content format brief:
-        {json.dumps(content_format_brief, ensure_ascii=True)}
+        {self._prompt_json(content_format_brief)}
 
         Research editorial brief:
-        {json.dumps(research_editorial_brief, ensure_ascii=True)}
+        {self._prompt_json(research_editorial_brief)}
 
         Format family plan:
-        {json.dumps(format_family_plan, ensure_ascii=True)}
+        {self._prompt_json(format_family_plan)}
 
         Session brief:
-        {json.dumps(session_brief, ensure_ascii=True)}
+        {self._prompt_json(session_brief)}
         """.strip()
         return PromptEnvelope(system=system, user=user)
 
@@ -1989,16 +1993,16 @@ class PromptIntelligenceService:
         {user_prompt}
 
         Message strategy:
-        {json.dumps(message_strategy, ensure_ascii=True)}
+        {self._prompt_json(message_strategy)}
 
         Brand visual brief:
-        {json.dumps(brand_visual_brief, ensure_ascii=True)}
+        {self._prompt_json(brand_visual_brief)}
 
         Template fit brief:
-        {json.dumps(template_fit_brief, ensure_ascii=True)}
+        {self._prompt_json(template_fit_brief)}
 
         Reference asset brief:
-        {json.dumps(reference_asset_brief, ensure_ascii=True)}
+        {self._prompt_json(reference_asset_brief)}
         """
 
         # Add explicit reference image paths for carousel usage
@@ -2052,34 +2056,34 @@ class PromptIntelligenceService:
         user += f"""
 
         Render constraints:
-        {json.dumps(render_constraints, ensure_ascii=True)}
+        {self._prompt_json(render_constraints)}
 
         Prompt intelligence brief:
-        {json.dumps(prompt_intelligence_brief, ensure_ascii=True)}
+        {self._prompt_json(prompt_intelligence_brief)}
 
         Content format brief:
-        {json.dumps(content_format_brief, ensure_ascii=True)}
+        {self._prompt_json(content_format_brief)}
 
         Research editorial brief:
-        {json.dumps(research_editorial_brief, ensure_ascii=True)}
+        {self._prompt_json(research_editorial_brief)}
 
         Format family plan:
-        {json.dumps(format_family_plan, ensure_ascii=True)}
+        {self._prompt_json(format_family_plan)}
 
         Content plan:
-        {json.dumps(content_plan, ensure_ascii=True)}
+        {self._prompt_json(content_plan)}
 
         Visual plan:
-        {json.dumps(visual_plan, ensure_ascii=True)}
+        {self._prompt_json(visual_plan)}
 
         Visual knowledge brief:
-        {json.dumps(visual_knowledge_brief, ensure_ascii=True)}
+        {self._prompt_json(visual_knowledge_brief)}
 
         Studio panel:
-        {json.dumps(studio_panel, ensure_ascii=True)}
+        {self._prompt_json(studio_panel)}
 
         Validation report:
-        {json.dumps(validation_report or {}, ensure_ascii=True)}
+        {self._prompt_json(validation_report or {})}
 
         Replan instruction:
         {replan_note or ""}
@@ -2170,28 +2174,28 @@ class PromptIntelligenceService:
         Surgical scene-graph repair. Preserve all omitted unchanged elements; the backend will merge repaired elements into the existing graph. Return only elements, styles, assets, and creative_decision fields that must change to satisfy the validation report or prevent quality regression.
 
         Compact creative decision:
-        {json.dumps(compact_creative_decision, ensure_ascii=True)}
+        {self._prompt_json(compact_creative_decision)}
 
         Compact scene graph:
-        {json.dumps(compact_scene_graph, ensure_ascii=True)}
+        {self._prompt_json(compact_scene_graph)}
 
         Studio panel:
-        {json.dumps(studio_panel, ensure_ascii=True)}
+        {self._prompt_json(studio_panel)}
 
         Compact repair context:
-        {json.dumps(repair_context_payload, ensure_ascii=True)}
+        {self._prompt_json(repair_context_payload)}
 
         Format family plan:
-        {json.dumps(format_family_plan, ensure_ascii=True)}
+        {self._prompt_json(format_family_plan)}
 
         Content plan:
-        {json.dumps(content_plan, ensure_ascii=True)}
+        {self._prompt_json(content_plan)}
 
         Visual plan:
-        {json.dumps(visual_plan, ensure_ascii=True)}
+        {self._prompt_json(visual_plan)}
 
         Validation report:
-        {json.dumps(compact_validation_report, ensure_ascii=True)}
+        {self._prompt_json(compact_validation_report)}
         """
 
         # Add quality history if available
@@ -2280,7 +2284,7 @@ class PromptIntelligenceService:
         Use empty strings or empty lists when a metadata field is unknown. Never return null for metadata keys.
         Persuasion metadata rules: {persuasion_metadata_rules}
         Rewrite only the targeted fields that actually need changes: {targeted_field_list}.
-        Revision scope: {json.dumps(revision_scope or {}, ensure_ascii=True)}
+        Revision scope: {self._prompt_json(revision_scope or {})}
         Preserve the current campaign surface, template-fit assumptions, and brand-safe messaging unless the rewrite instruction explicitly changes them.
         Do not invent a new campaign angle, template, layout system, scene graph, or visual plan.
         Do not echo the rewrite instruction back as audience-facing copy.
@@ -2312,37 +2316,37 @@ class PromptIntelligenceService:
         {rewrite_instruction}
 
         Targeted fields:
-        {json.dumps(targeted_fields or ["headline", "body", "cta"], ensure_ascii=True)}
+        {self._prompt_json(targeted_fields or ["headline", "body", "cta"])}
 
         Revision scope:
-        {json.dumps(revision_scope or {}, ensure_ascii=True)}
+        {self._prompt_json(revision_scope or {})}
 
         Current structured content:
-        {json.dumps(current_payload, ensure_ascii=True)}
+        {self._prompt_json(current_payload)}
 
         Current message strategy:
-        {json.dumps(message_strategy, ensure_ascii=True)}
+        {self._prompt_json(message_strategy)}
 
         Current tone QA:
-        {json.dumps(tone_analysis, ensure_ascii=True)}
+        {self._prompt_json(tone_analysis)}
 
         Field rewrite plan:
-        {json.dumps(rewrite_field_plan, ensure_ascii=True)}
+        {self._prompt_json(rewrite_field_plan)}
 
         Compiled rewrite context:
-        {json.dumps(rewrite_context_payload, ensure_ascii=True)}
+        {self._prompt_json(rewrite_context_payload)}
 
         Format family plan:
-        {json.dumps(format_family_plan, ensure_ascii=True)}
+        {self._prompt_json(format_family_plan)}
 
         Content plan:
-        {json.dumps(content_plan, ensure_ascii=True)}
+        {self._prompt_json(content_plan)}
 
         Visual plan:
-        {json.dumps(visual_plan, ensure_ascii=True)}
+        {self._prompt_json(visual_plan)}
 
         Studio panel:
-        {json.dumps(studio_panel, ensure_ascii=True)}
+        {self._prompt_json(studio_panel)}
         """.strip()
         return PromptEnvelope(system=system, user=user)
 

@@ -201,11 +201,22 @@ class RendererService:
         return {}
 
     def _footer_text(self, payload: RendererInput, page_text: dict | None = None) -> str:
-        page_footer = str((page_text or {}).get("footer") or "").strip()
+        page_payload = page_text or {}
+        page_footer = str(
+            page_payload.get("footer")
+            or page_payload.get("legal_footer")
+            or page_payload.get("disclaimer")
+            or ""
+        ).strip()
         if page_footer:
             return page_footer
         metadata = payload.text.metadata if isinstance(payload.text.metadata, dict) else {}
-        metadata_footer = str(metadata.get("footer") or "").strip()
+        metadata_footer = str(
+            metadata.get("footer")
+            or metadata.get("legal_footer")
+            or metadata.get("disclaimer")
+            or ""
+        ).strip()
         if metadata_footer:
             return metadata_footer
         template_ref = self._template_style_reference(payload)
@@ -2764,6 +2775,41 @@ class RendererService:
         )
 
     @staticmethod
+    def _logo_box_with_canvas_profile(
+        box: tuple[int, int, int, int],
+        width: int,
+        height: int,
+    ) -> tuple[int, int, int, int]:
+        x0, y0, x1, y1 = box
+        resolved_width = max(x1 - x0, 1)
+        resolved_height = max(y1 - y0, 1)
+        max_logo_width, max_logo_height = RendererService._logo_box_profile_for_canvas(width, height)
+        resolved_width = min(resolved_width, max_logo_width)
+        resolved_height = min(resolved_height, max_logo_height)
+        center_x = x0 + ((x1 - x0) / 2.0)
+        center_y = y0 + ((y1 - y0) / 2.0)
+        horizontal = "left" if center_x <= width * 0.34 else ("right" if center_x >= width * 0.66 else "center")
+        vertical = "top" if center_y <= height * 0.34 else ("bottom" if center_y >= height * 0.66 else "middle")
+        if horizontal == "left":
+            resolved_x = min(RendererService._logo_horizontal_margin_px(width), max(width - resolved_width, 0))
+        elif horizontal == "right":
+            resolved_x = max(width - resolved_width - RendererService._logo_horizontal_margin_px(width), 0)
+        else:
+            resolved_x = max((width - resolved_width) // 2, 0)
+        if vertical == "top":
+            resolved_y = min(RendererService._logo_top_margin_px(height), max(height - resolved_height, 0))
+        elif vertical == "bottom":
+            resolved_y = max(height - resolved_height - RendererService._logo_bottom_margin_px(height), 0)
+        else:
+            resolved_y = max((height - resolved_height) // 2, 0)
+        return (
+            int(resolved_x),
+            int(resolved_y),
+            min(int(resolved_x + resolved_width), width),
+            min(int(resolved_y + resolved_height), height),
+        )
+
+    @staticmethod
     def _scene_graph_box(element: SceneGraphElement, width: int, height: int) -> tuple[int, int, int, int] | None:
         geometry = element.geometry
         if geometry.width is None or geometry.height is None:
@@ -2965,7 +3011,20 @@ class RendererService:
         asset_boxes: list[dict[str, object]] = []
         overlap_checks: list[dict[str, object]] = []
         occupied_text_boxes: list[tuple[int, int, int, int]] = []
-        reserved_text_roles = {"headline", "supporting_line", "body", "proof_points", "cta", "footer", "legal"}
+        reserved_text_roles = {
+            "header",
+            "headline",
+            "supporting_line",
+            "body",
+            "proof_points",
+            "proof_point",
+            "stat_highlights",
+            "stat_highlight",
+            "cta",
+            "footer",
+            "legal",
+            "disclaimer",
+        }
         reserved_text_boxes = [
             box
             for element in scene_graph.elements
@@ -3394,10 +3453,24 @@ class RendererService:
         text_fit_manifest: list[dict[str, object]] = []
         asset_boxes: list[dict[str, object]] = []
         overlap_checks: list[dict[str, object]] = []
+        reserved_text_roles = {
+            "header",
+            "headline",
+            "supporting_line",
+            "body",
+            "proof_points",
+            "proof_point",
+            "stat_highlights",
+            "stat_highlight",
+            "cta",
+            "footer",
+            "legal",
+            "disclaimer",
+        }
         reserved_text_boxes = [
             self._zone_box(zone)
             for role, zone in zone_map.items()
-            if role in {"header", "headline", "body", "proof_points", "proof_point", "stat_highlights", "stat_highlight", "cta", "footer"}
+            if role in reserved_text_roles
         ]
         adaptation_plan = (payload.layout_decision or {}).get("adaptation_plan", {}) or {}
         allow_generated_image_overlay = (
@@ -3451,15 +3524,27 @@ class RendererService:
             or bool(adaptation_plan.get("replace_logo"))
         )
         if should_overlay_logo and logo_zone:
-            adapted_logo_box, adjusted = self._adapt_box_away_from_reserved(
+            raw_logo_box = self._logo_box_with_canvas_profile(
                 self._zone_box(logo_zone),
+                size["width"],
+                size["height"],
+            )
+            adapted_logo_box, adjusted = self._adapt_box_away_from_reserved(
+                raw_logo_box,
                 reserved_boxes=reserved_text_boxes,
                 canvas_width=size["width"],
                 canvas_height=size["height"],
                 padding=20,
             )
-            logo_zone = type("Zone", (), self._zone_manifest(logo_zone.zone_id, logo_zone.role, adapted_logo_box, logo_zone.max_lines))()
-            logo_rendered = self._paste_logo(image, payload.logo_asset_path, logo_zone)
+            logo_rendered = self._render_logo_box(
+                canvas=image,
+                draw=draw,
+                payload=payload,
+                box=adapted_logo_box,
+                primary=primary,
+                accent=accent,
+                fill=primary,
+            )
             asset_boxes.append({"role": "logo", "box": adapted_logo_box, "adjusted": adjusted})
             overlap_checks.append({"role": "logo", "passed": not self._box_overlaps_any(adapted_logo_box, reserved_text_boxes, padding=20)})
 
@@ -3469,7 +3554,8 @@ class RendererService:
         proof_zone = zone_map.get("proof_points") or zone_map.get("proof_point")
         stat_zone = zone_map.get("stat_highlights") or zone_map.get("stat_highlight")
         cta_zone = zone_map.get("cta")
-        footer_zone = zone_map.get("footer")
+        footer_zone = zone_map.get("footer") or zone_map.get("legal") or zone_map.get("disclaimer")
+        footer_role = str(getattr(footer_zone, "role", "") or "footer").strip().lower() if footer_zone else "footer"
         composition = self._composition_plan(payload)
         text_style_plan = composition.get("text_style_plan", {}) if isinstance(composition, dict) else {}
 
@@ -3605,8 +3691,8 @@ class RendererService:
                     text=footer_text,
                     zone=footer_zone,
                     fill=secondary_text,
-                    base_size=20,
-                    padding=12,
+                    base_size=12 if footer_role in {"legal", "disclaimer"} else 20,
+                    padding=4 if footer_role in {"legal", "disclaimer"} else 12,
                     style_hint=self._zone_style_hint(payload, "footer"),
                 ))
         return image, {
@@ -3623,7 +3709,7 @@ class RendererService:
                 {"role": "proof_points", "text": proof_points},
                 {"role": "stat_highlights", "text": stat_highlights},
                 {"role": "cta", "text": page_text.get("cta", "")},
-                {"role": "footer", "text": self._footer_text(payload, page_text)},
+                    {"role": footer_role, "text": self._footer_text(payload, page_text)},
             ],
             "text_fit": text_fit_manifest,
             "asset_boxes": asset_boxes,

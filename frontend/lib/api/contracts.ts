@@ -407,6 +407,7 @@ export interface StudioPanelSelection {
   platform_preset: PlatformPreset;
   file_type: ExportFileType;
   size?: { width: number; height: number };
+  pinned_template_id?: string;
 }
 
 export interface StructuredTextPayload {

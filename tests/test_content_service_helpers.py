@@ -3220,11 +3220,13 @@ def test_build_ai_logo_fallback_asset_does_not_clear_scene_graph_title_near_logo
     )
 
     assert payload is not None
+    assert payload["metadata"]["logo_clearance_zone_applied"] is False
+    assert payload["metadata"]["logo_clearance_strategy"] == "transparent_asset_overlay_no_clearance"
+    assert payload["metadata"]["logo_clearance_box"] is None
     composited_output = root / payload["storage_path"]
     with Image.open(composited_output) as rendered:
         assert rendered.getpixel((800, 74))[:3] == (12, 54, 116)
-        cleared_red, cleared_green, cleared_blue, _ = rendered.getpixel((1050, 70))
-        assert min(cleared_red, cleared_green, cleared_blue) >= 190
+        assert rendered.getpixel((1050, 70))[:3] == (10, 30, 80)
 
     if root.exists():
         for child in sorted(root.rglob("*"), reverse=True):
@@ -3330,7 +3332,8 @@ def test_build_ai_logo_fallback_asset_clears_reserved_logo_zone_for_transparent_
         content_module.open_image_asset = original_open_image_asset
 
     assert payload is not None
-    assert payload["metadata"]["logo_clearance_zone_applied"] is True
+    assert payload["metadata"]["logo_clearance_zone_applied"] is False
+    assert payload["metadata"]["logo_clearance_strategy"] == "transparent_asset_overlay_no_clearance"
     collision_guard = payload["metadata"]["logo_collision_guard"]
     assert collision_guard["selection_strategy"] == "fixed_calculated_size"
     assert collision_guard["shrink_applied"] is False
@@ -3435,13 +3438,21 @@ def test_build_ai_footer_fallback_asset_stamps_exact_legal_footer() -> None:
     assert payload is not None
     assert payload["metadata"]["legal_footer_composited_by_service"] is True
     assert payload["metadata"]["legal_footer_reserved_before_composite"] is False
-    assert payload["metadata"]["legal_footer_overlay_mode"] == "overlay_only"
+    assert payload["metadata"]["legal_footer_overlay_strategy"] == "transparent_footer_text"
+    assert payload["metadata"]["legal_footer_overlay_mode"] == "text_only"
+    assert payload["metadata"]["legal_footer_background_drawn"] is False
     assert payload["metadata"]["legal_footer_source_image_resized"] is False
     assert payload["metadata"]["legal_footer_strip_quietness"]["quiet"] is True
     assert payload["metadata"]["legal_footer_safe_area"]["reserved_height"] == payload["metadata"]["legal_footer_strip_box"]["height"]
     assert payload["metadata"]["legal_footer_text_length"] == len(footer_text)
     assert "image" in captured
-    assert captured["image"].getpixel((40, 1510))[:3] != base.getpixel((40, 1510))[:3]
+    text_box = payload["metadata"]["legal_footer_text_box"]
+    changed_footer_pixels = 0
+    for x in range(text_box["x"], text_box["x"] + text_box["width"], 24):
+        for y in range(text_box["y"], text_box["y"] + text_box["height"], 8):
+            if captured["image"].getpixel((x, y)) != base.getpixel((x, y)):
+                changed_footer_pixels += 1
+    assert changed_footer_pixels > 0
 
 
 def test_footer_safe_area_height_is_derived_from_wrapped_text_and_canvas() -> None:
@@ -3583,7 +3594,7 @@ def test_build_ai_footer_fallback_asset_overlays_footer_without_resizing_source_
     assert captured["image"].getpixel((400, min(content_height + 2, 999))) != base.getpixel((400, min(content_height + 2, 999)))
 
 
-def test_build_ai_footer_fallback_asset_skips_static_overlay_when_footer_strip_is_busy() -> None:
+def test_build_ai_footer_fallback_asset_uses_text_only_static_overlay_when_footer_strip_is_busy() -> None:
     service = ContentService(session=None)  # type: ignore[arg-type]
     tenant_id = uuid4()
     brand_space_id = uuid4()
@@ -3593,7 +3604,7 @@ def test_build_ai_footer_fallback_asset_skips_static_overlay_when_footer_strip_i
     for index, y in enumerate(range(920, 990, 9)):
         fill = (25, 25, 25, 255) if index % 2 == 0 else (245, 164, 24, 255)
         draw.rectangle((60, y, 740, y + 4), fill=fill)
-    footer_text = "Compliance note that should only be overlaid when the reserved footer strip is quiet."
+    footer_text = "Compliance note that must be visible even when the image model fills the reserved footer strip."
     content = ContentVersion(
         id=uuid4(),
         tenant_id=tenant_id,
@@ -3673,8 +3684,17 @@ def test_build_ai_footer_fallback_asset_skips_static_overlay_when_footer_strip_i
     finally:
         content_module.open_image_asset = original_open_image_asset
 
-    assert payload is None
-    assert captured == {}
+    assert payload is not None
+    assert payload["metadata"]["legal_footer_composited_by_service"] is True
+    assert payload["metadata"]["legal_footer_overlay_strategy"] == "transparent_footer_text"
+    assert payload["metadata"]["legal_footer_overlay_mode"] == "text_only"
+    assert payload["metadata"]["legal_footer_background_drawn"] is False
+    assert payload["metadata"]["legal_footer_strip_quietness"]["quiet"] is True
+    assert payload["metadata"]["legal_footer_strip_quietness"]["relocated_from_busy_strip"] is True
+    assert payload["metadata"]["legal_footer_strip_quietness"]["original_strip_quietness"]["quiet"] is False
+    assert payload["metadata"]["legal_footer_relocated_strip_box"] is not None
+    assert "image" in captured
+    assert captured["image"].getpixel((400, 920)) == base.getpixel((400, 920))
 
 
 def test_strip_logo_background_if_safe_removes_dark_matte_edges() -> None:
@@ -3880,7 +3900,7 @@ def test_resolve_ai_logo_box_prefers_top_right_hint_and_minimum_size() -> None:
     assert box[3] >= 87
 
 
-def test_static_infographic_logo_profiles_are_less_dominant_than_carousel() -> None:
+def test_static_infographic_logo_profiles_are_header_sized_without_changing_carousel() -> None:
     carousel_width, carousel_height = ContentService._logo_box_profile_for_format(
         canvas_width=1080,
         canvas_height=1350,
@@ -3897,10 +3917,68 @@ def test_static_infographic_logo_profiles_are_less_dominant_than_carousel() -> N
         format_name="infographic",
     )
 
-    assert static_width < carousel_width
-    assert static_height < carousel_height
-    assert infographic_width < carousel_width
-    assert infographic_height < carousel_height
+    assert (static_width, static_height) == (187, 97)
+    assert (infographic_width, infographic_height) == (155, 72)
+    assert (carousel_width, carousel_height) == (207, 109)
+
+
+def test_static_infographic_default_logo_box_ignores_oversized_reference_logo_zone() -> None:
+    reference_box = (650, 80, 348, 192)
+
+    infographic_box = ContentService._default_ai_logo_box(
+        canvas_width=1024,
+        canvas_height=1536,
+        format_name="infographic",
+        anchor=("top", "right"),
+        reference_box=reference_box,
+    )
+    carousel_box = ContentService._default_ai_logo_box(
+        canvas_width=1024,
+        canvas_height=1536,
+        format_name="carousel",
+        anchor=("top", "right"),
+        reference_box=reference_box,
+    )
+
+    assert infographic_box == (858, 54, 146, 83)
+    assert carousel_box[2] > infographic_box[2]
+    assert carousel_box[3] > infographic_box[3]
+
+
+def test_static_infographic_logo_collision_guard_does_not_expand_wordmark_width() -> None:
+    base = Image.new("RGBA", (1024, 1536), (255, 255, 255, 255))
+    logo = Image.new("RGBA", (1001, 292), (0, 0, 0, 0))
+    ImageDraw.Draw(logo).rectangle((0, 0, 1000, 291), fill=(0, 57, 117, 255))
+    content = ContentVersion(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        session_id=uuid4(),
+        created_by=uuid4(),
+        prompt="Create an infographic",
+        studio_panel={"format": "infographic", "platform_preset": "linkedin", "file_type": "png"},
+        generated_payload={"metadata": {"logo_position": "top-right"}},
+        blueprint_payload={},
+        explainability_metadata={},
+    )
+    logo_box = ContentService._default_ai_logo_box(
+        canvas_width=1024,
+        canvas_height=1536,
+        format_name="infographic",
+        anchor=("top", "right"),
+    )
+
+    result = ContentService._resolve_logo_collision_guard(
+        base_image=base,
+        logo_image=logo,
+        logo_box=logo_box,
+        content=content,
+        explainability={},
+        format_name="infographic",
+        preferred_hint="top-right",
+    )
+
+    assert result["contained"].width <= logo_box[2]
+    assert result["box"][2] == logo_box[2]
 
 
 def test_default_ai_logo_box_hugs_requested_frame_edge() -> None:
@@ -4199,6 +4277,42 @@ def test_normalize_ai_logo_box_snaps_viable_template_box_to_dynamic_top_gap() ->
     )
 
     assert box == (20, 54, 209, 92)
+
+
+def test_normalize_ai_logo_box_uses_dev1_hari_right_anchor_cap_for_infographic_only() -> None:
+    content = ContentVersion(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        session_id=uuid4(),
+        created_by=uuid4(),
+        prompt="Create an infographic",
+        studio_panel={"format": "infographic", "platform_preset": "linkedin", "file_type": "png"},
+        generated_payload={"metadata": {"logo_position": "top-right"}},
+        blueprint_payload={},
+        explainability_metadata={},
+    )
+
+    infographic_box = ContentService._normalize_ai_logo_box(
+        box=(650, 80, 348, 192),
+        canvas_width=1024,
+        canvas_height=1536,
+        format_name="infographic",
+        hint="top-right",
+        content=content,
+        explainability={},
+    )
+    carousel_box = ContentService._normalize_ai_logo_box(
+        box=(650, 80, 348, 192),
+        canvas_width=1024,
+        canvas_height=1536,
+        format_name="carousel",
+        hint="top-right",
+        content=content,
+        explainability={},
+    )
+
+    assert infographic_box == (858, 54, 146, 83)
+    assert carousel_box == (808, 54, 196, 125)
 
 
 def test_resolve_ai_logo_box_uses_reference_creative_logo_ratio_for_top_right() -> None:
@@ -5182,7 +5296,8 @@ def test_build_ai_logo_fallback_asset_clears_reserved_logo_zone_before_overlay()
     )
 
     assert payload is not None
-    assert payload["metadata"]["logo_clearance_zone_applied"] is True
+    assert payload["metadata"]["logo_clearance_zone_applied"] is False
+    assert payload["metadata"]["logo_clearance_strategy"] == "transparent_asset_overlay_no_clearance"
     collision_guard = payload["metadata"]["logo_collision_guard"]
     assert collision_guard["selection_strategy"] == "fixed_calculated_size"
     assert collision_guard["scale"] == 1.0

@@ -3288,20 +3288,17 @@ def test_build_image_prompt_infographic_reserves_brand_legal_footer_space() -> N
     )
 
     prompt = AIOrchestratorService.build_image_prompt(request=request, text_payload=payload)
-    guard = _layout_quality_guard_from_prompt(prompt)
-    capacity = int(guard.split("visible item capacity=", 1)[1].split(" ", 1)[0])
-
-    assert "safe areas=reserve footer/disclaimer safe area before content and CTA" in guard
-    assert "actual footer_safe_area reserves" in guard
-    assert "Infographic footer-safe layout contract" in guard
-    assert "INFOGRAPHIC FOOTER BLANK-SPACE RULE" in guard
-    assert "leave calculated footer strip blank for backend footer" in guard
-    assert "forbidden content zone" in guard
-    assert "Use at most 3 compact content sections/modules" in guard
-    assert "Leave the bottom strip plain background only" in guard
+    assert "Static/infographic footer-safe layout contract" in prompt
+    assert "STATIC/INFOGRAPHIC FOOTER BLANK-SPACE RULE" in prompt
+    assert "leave calculated footer strip blank for backend footer" in prompt
+    assert "forbidden content zone" in prompt
+    assert "CTA buttons, CTA labels, chart captions, and closing messages must sit above the footer-safe strip" in prompt
+    assert "Use at most 3 compact content sections/modules" in prompt
+    assert "Leave the bottom strip plain background only" in prompt
+    assert "Backend overlay contract for static/infographic" in prompt
+    assert "backend post-processing alone will place the exact stored brand asset and legal footer" in prompt
     assert "STATIC/INFOGRAPHIC TEXT NO-TRUNCATION RULE" in prompt
     assert "chart labels, CTA text, or footer/legal text" in prompt
-    assert capacity <= 3
 
 
 def test_injected_legal_footer_uses_dynamic_safe_area_geometry() -> None:
@@ -9215,7 +9212,8 @@ def test_build_final_render_prompt_emphasizes_infographic_structure() -> None:
     assert "current user prompt is the subject authority" in lowered
     assert "compact social infographic" in lowered
     assert "icons/charts/diagrams only when they explain the prompt" in lowered
-    assert "backend controls only the empty space corner and the footer/disclaimer strip" in lowered
+    assert "backend overlay contract for static/infographic" in lowered
+    assert "backend post-processing alone will place the exact stored brand asset and legal footer" in lowered
     assert "infographic surface enforcement" not in lowered
     assert "module-first infographic surface" not in lowered
     assert "infographic section plan to preserve" not in lowered
@@ -9273,12 +9271,16 @@ def test_build_final_render_prompt_infographic_keeps_legal_footer_zone_blank() -
     )
 
     assert "with up to 3 clearly separated sections" in prompt
-    assert "Infographic footer-safe layout contract" in prompt
-    assert "INFOGRAPHIC FOOTER BLANK-SPACE RULE" in prompt
+    assert "Static/infographic footer-safe layout contract" in prompt
+    assert "STATIC/INFOGRAPHIC FOOTER BLANK-SPACE RULE" in prompt
     assert "leave calculated footer strip blank for backend footer" in prompt
     assert "forbidden content zone" in prompt
+    assert "CTA buttons, CTA labels, chart captions, and closing messages must sit above the footer-safe strip" in prompt
     assert "Use at most 3 compact content sections/modules" in prompt
     assert "Leave the bottom strip plain background only" in prompt
+    assert "Reserve a clean empty safe zone" in prompt
+    assert "Initial backend brand-asset size analysis" in prompt
+    assert "Any headline or large text that begins in the same top band" in prompt
     assert "STATIC/INFOGRAPHIC TEXT NO-TRUNCATION RULE" in prompt
     assert "chart labels, CTA text, or footer/legal text" in prompt
 
@@ -9330,8 +9332,8 @@ def test_build_final_render_prompt_uses_brand_legal_footer_without_scene_footer(
         scene_graph=scene_graph,
     )
 
-    assert "Infographic footer-safe layout contract" in prompt
-    assert "INFOGRAPHIC FOOTER BLANK-SPACE RULE" in prompt
+    assert "Static/infographic footer-safe layout contract" in prompt
+    assert "STATIC/INFOGRAPHIC FOOTER BLANK-SPACE RULE" in prompt
     assert "leave calculated footer strip blank for backend footer" in prompt
     assert "chart labels, CTA text, or footer/legal text" in prompt
 
@@ -9382,7 +9384,13 @@ def test_build_final_render_prompt_renders_main_text_for_static_and_defers_only_
     lowered = prompt.casefold()
     assert "llm-led composition authority for static/infographic" in lowered
     assert "current user prompt is the subject authority" in lowered
-    assert "backend controls only the empty space corner and the footer/disclaimer strip" in lowered
+    assert "backend overlay contract for static/infographic" in lowered
+    assert "standalone brand asset" in lowered
+    assert "brand-asset safe corner" in lowered
+    assert "footer text" in lowered
+    assert "reserve a clean empty safe zone" in lowered
+    assert "initial backend brand-asset size analysis" in lowered
+    assert "any headline or large text that begins in the same top band" in lowered
     assert "static/infographic content authority" in lowered
     assert "native feed ad" in lowered
     assert "one bold central message" in lowered
@@ -9401,10 +9409,9 @@ def test_build_final_render_prompt_renders_main_text_for_static_and_defers_only_
     assert "use this headline verbatim" not in lowered
     assert "text overlay contract" not in lowered
     assert "do not render any readable words" not in lowered
-    assert "copy discipline: keep the message concise" in lowered
     assert "layout discipline: use a simple, scroll-stopping social ad composition" in lowered
     assert "do not crop or crowd any reserved text" not in lowered
-    assert "do not render, invent, stylize" in lowered
+    assert "backend post-processing alone will place the exact stored brand asset and legal footer" in lowered
     assert "static panel plan to preserve" not in lowered
 
 
@@ -15543,7 +15550,6 @@ def test_build_final_render_prompt_requests_finished_static_copy_and_backend_log
     assert "fully inside a centered target-aspect safe frame" in prompt
     assert "All rendered text regions plus the reserved corner-safe and legal/footer areas must remain fully inside the export frame" in prompt
     assert "Palette role guidance:" in prompt
-    assert "Strict palette contract:" in prompt
     assert "FINAL TEXT RENDER CONTRACT" in prompt
     assert "Main content render authority:" in prompt
     assert "TEXT OVERLAY CONTRACT" not in prompt

@@ -28,6 +28,75 @@ def test_context_compiler_preserves_legacy_brand_foundation_field() -> None:
     assert compiled["brand_copy_brief"]["brand_foundations"] == "Build trust through clarity, confidence, and measured optimism."
 
 
+def test_context_compiler_preserves_template_adaptance_authority_flags() -> None:
+    compiler = ContextCompilerService()
+
+    compiled = compiler.compile(
+        prompt="Create a LinkedIn carousel about professional investors.",
+        brand_context={
+            "brand_name": "Example",
+            "voice_tone": {},
+            "guardrails": {},
+            "foundations": {},
+            "audience_insights": {},
+            "visual_identity": {},
+        },
+        persona_context={},
+        objective_context={},
+        ordered_knowledge={},
+        studio_panel={"platform_preset": "linkedin", "format": "carousel", "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        content_plan={
+            "format_family": "carousel",
+            "generation_strategy": "template_adaptance",
+            "_template_adaptance_enabled": True,
+            "template_authority_mode": "visual_layout_only",
+        },
+    )
+
+    assert compiled["content_plan"]["generation_strategy"] == "template_adaptance"
+    assert compiled["content_plan"]["_template_adaptance_enabled"] is True
+    assert compiled["content_plan"]["template_authority_mode"] == "visual_layout_only"
+
+
+def test_context_compiler_sequence_pack_keeps_layout_metadata_without_sample_copy() -> None:
+    compact = ContextCompilerService._compact_sequence_pack(
+        {
+            "family_name": "Reference carousel",
+            "sequence_kind": "carousel",
+            "surface_policy": "style_reference_only",
+            "slide_count": 1,
+            "slides": [
+                {
+                    "slide_index": 1,
+                    "story_role": "hook",
+                    "headline_hint": "Do not pass this headline into the prompt",
+                    "sequence_summary": "Do not pass this summary into the prompt",
+                    "sample_page_headline": "Sample headline",
+                    "sample_page_supporting": "Sample supporting line",
+                    "sample_page_copy": "Sample body copy that must not become content authority.",
+                    "sample_page_text_blocks": [{"text": "Rendered text block", "x": 1, "y": 2, "w": 3, "h": 4}],
+                    "sample_page_editorial_role": "hook",
+                    "sample_page_copy_behavior": "curiosity_gap",
+                    "sample_page_copy_density": "low",
+                }
+            ],
+        }
+    )
+
+    slide = compact["slides"][0]
+    assert slide["sample_page_editorial_role"] == "hook"
+    assert slide["sample_page_copy_behavior"] == "curiosity_gap"
+    assert "sample_page_headline" not in slide
+    assert "sample_page_supporting" not in slide
+    assert "sample_page_copy" not in slide
+    assert "sample_page_text_blocks" not in slide
+    assert "headline_hint" not in slide
+    assert "sequence_summary" not in slide
+    assert "headline_hints" not in compact
+
+
 def test_context_compiler_visual_brief_includes_design_system_summaries(monkeypatch) -> None:
     monkeypatch.setenv("DEBUG", "false")
     get_settings.cache_clear()
@@ -358,8 +427,9 @@ def test_context_compiler_drops_zero_area_zones_and_weak_sequence_hints() -> Non
     )
 
     slide = compiled["template_fit_brief"]["sequence_pack"]["slides"][0]
-    assert slide["headline_hint"] == ""
-    assert slide["sequence_summary"] == "cover hook"
+    assert "headline_hint" not in slide
+    assert "sequence_summary" not in slide
+    assert slide["structural_cues"] == ["cover hook"]
     assert [zone["role"] for zone in slide["zone_map"]["zones"]] == ["headline"]
 
 

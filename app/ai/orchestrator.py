@@ -19350,11 +19350,7 @@ class AIOrchestratorService:
     def _needs_content_semantic_validation(cls, request: AIOrchestrationRequest) -> bool:
         return cls._format_name_from_request(request) in {"carousel", "infographic", "static"}
 
-    DATA_SURFACE_BLOCKING_ISSUE_CODES = {
-        "carousel_unsupported_exact_claim",
-        "carousel_slide_unsupported_exact_claim",
-        "carousel_data_visual_unsupported_claims",
-    }
+    DATA_SURFACE_BLOCKING_ISSUE_CODES: set[str] = set()
 
     @classmethod
     def _unresolved_data_surface_issue_codes(cls, report: dict[str, Any] | None) -> set[str]:
@@ -21702,6 +21698,8 @@ class AIOrchestratorService:
         if not self._request_uses_template_adaptance(request):
             return self._generate_main_ai(request)
         content_plan = deepcopy(request.content_plan if isinstance(request.content_plan, dict) else {})
+        if not str(content_plan.get("format_family") or "").strip():
+            content_plan["format_family"] = self._format_name_from_request(request)
         content_plan["_template_adaptance_enabled"] = True
         content_plan["generation_strategy"] = GenerationStrategy.TEMPLATE_ADAPTANCE.value
         content_plan["template_authority_mode"] = "visual_layout_only"

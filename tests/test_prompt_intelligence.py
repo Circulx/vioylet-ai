@@ -1275,3 +1275,123 @@ def test_generation_and_planning_envelopes_include_reference_adaptation_profile_
     assert "carousel_sequence_output" in combined
     assert "Return JSON only with keys: headline, body, cta, hashtags, metadata." in generation.system
     assert "- scene_graph" in planning.system
+
+
+def test_creative_planning_envelope_compacts_large_template_reference_payloads() -> None:
+    service = PromptIntelligenceService()
+    compiled_context = {
+        "brand_copy_brief": {"brand_name": "Example Brand"},
+        "brand_visual_brief": {
+            "dominant_layout_family": "editorial_carousel",
+            "template_sequence_pack": {
+                "slide_count": 5,
+                "slides": [
+                    {
+                        "slide_index": 1,
+                        "story_role": "hook",
+                        "sample_page_copy_density": "medium",
+                        "raw_ocr": "DO_NOT_INCLUDE_BRAND_RAW_OCR",
+                    }
+                ],
+            },
+            "raw_design_dump": "DO_NOT_INCLUDE_BRAND_RAW_DUMP",
+        },
+        "audience_brief": {},
+        "visual_knowledge_brief": {},
+        "render_constraints": {},
+        "session_brief": {},
+        "template_fit_brief": {
+            "mode": "adapted_template",
+            "sequence_pack": {
+                "slide_count": 5,
+                "slides": [
+                    {
+                        "slide_index": 1,
+                        "story_role": "hook",
+                        "sample_page_editorial_role": "opener",
+                        "raw_ocr": "DO_NOT_INCLUDE_TEMPLATE_RAW_OCR",
+                    }
+                ],
+            },
+            "candidate_pages": [{"ocr": "DO_NOT_INCLUDE_TEMPLATE_CANDIDATE"}],
+        },
+        "reference_asset_brief": [
+            {
+                "asset_id": "asset-1",
+                "storage_path": "storage/reference.png",
+                "structural_cues": ["hero", "card", "footer", "extra", "extra2", "extra3", "extra4"],
+                "raw_ocr": "DO_NOT_INCLUDE_REFERENCE_RAW_OCR",
+            }
+        ],
+        "prompt_intelligence_brief": {},
+        "content_format_brief": {"format": "carousel"},
+        "research_editorial_brief": {},
+        "format_family_plan": {"family": "carousel"},
+        "content_plan": {"format_family": "carousel"},
+        "visual_plan": {"format_family": "carousel"},
+    }
+
+    envelope = service.compose_creative_planning_envelope(
+        user_prompt="Create a carousel about bond credit ratings.",
+        compiled_context=compiled_context,
+        studio_panel={"platform_preset": "linkedin", "format": "carousel", "file_type": "png"},
+    )
+    combined = f"{envelope.system}\n{envelope.user}"
+
+    assert "editorial_carousel" in combined
+    assert "sample_page_editorial_role" in combined
+    assert "storage/reference.png" in combined
+    assert "DO_NOT_INCLUDE_BRAND_RAW_OCR" not in combined
+    assert "DO_NOT_INCLUDE_BRAND_RAW_DUMP" not in combined
+    assert "DO_NOT_INCLUDE_TEMPLATE_RAW_OCR" not in combined
+    assert "DO_NOT_INCLUDE_TEMPLATE_CANDIDATE" not in combined
+    assert "DO_NOT_INCLUDE_REFERENCE_RAW_OCR" not in combined
+
+
+def test_scene_graph_repair_envelope_uses_compact_repair_context() -> None:
+    service = PromptIntelligenceService()
+    compiled_context = {
+        "brand_copy_brief": {"brand_name": "Example Brand", "long_notes": ("safe context " * 120) + "DO_NOT_INCLUDE_FULL_CONTEXT"},
+        "brand_visual_brief": {"dominant_layout_family": "editorial"},
+        "template_fit_brief": {"mode": "adapted_template", "raw_candidates": "DO_NOT_INCLUDE_RAW_TEMPLATE_CONTEXT"},
+        "reference_asset_brief": [
+            {"asset_id": "asset-1", "storage_path": "storage/reference.png", "raw_ocr": "DO_NOT_INCLUDE_RAW_REFERENCE"}
+        ],
+        "prompt_intelligence_brief": {},
+        "content_format_brief": {"format": "carousel"},
+        "research_editorial_brief": {},
+        "format_family_plan": {"family": "carousel"},
+        "content_plan": {"format_family": "carousel"},
+        "visual_plan": {"format_family": "carousel"},
+    }
+    current_scene_graph = {
+        "canvas": {"width": 1080, "height": 1350},
+        "elements": [
+            {"element_id": "headline", "role": "headline", "text": "Credit ratings", "geometry": {"x": 0.1, "y": 0.1, "width": 0.8, "height": 0.1}},
+            {"element_id": "decor", "role": "decorative_shape", "text": "", "style": {"notes": "DO_NOT_INCLUDE_NON_TARGET_DECOR" * 80}},
+        ],
+        "raw_renderer_dump": "DO_NOT_INCLUDE_RAW_SCENE_GRAPH",
+    }
+
+    envelope = service.compose_scene_graph_repair_envelope(
+        user_prompt="Create a carousel about credit ratings.",
+        compiled_context=compiled_context,
+        studio_panel={"platform_preset": "linkedin", "format": "carousel", "file_type": "png"},
+        current_scene_graph=current_scene_graph,
+        creative_decision={"layout_mode": "synthesized_layout"},
+        validation_report={
+            "status": "needs_repair",
+            "repairable": True,
+            "issues": [{"element_id": "headline", "rule_id": "text_fit", "message": "Headline exceeds safe area."}],
+        },
+    )
+    combined = f"{envelope.system}\n{envelope.user}"
+
+    assert "Compact repair context" in combined
+    assert "Compact scene graph" in combined
+    assert "Credit ratings" in combined
+    assert "storage/reference.png" in combined
+    assert "DO_NOT_INCLUDE_FULL_CONTEXT" not in combined
+    assert "DO_NOT_INCLUDE_RAW_TEMPLATE_CONTEXT" not in combined
+    assert "DO_NOT_INCLUDE_RAW_REFERENCE" not in combined
+    assert "DO_NOT_INCLUDE_RAW_SCENE_GRAPH" not in combined

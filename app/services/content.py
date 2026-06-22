@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
+from datetime import datetime, timezone
 from io import BytesIO
 import json
 import logging
 from pathlib import Path
 import re
+from time import perf_counter
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -39,6 +41,7 @@ from app.ai.tone_intelligence import ToneIntelligenceService
 from app.core.enums import AssetRole, BrandSpaceLifecycle, JobType
 from app.core.enums import ContentLifecycle, KnowledgeChannel, UsageMetricCode
 from app.core.exceptions import GenerationFailureError, LifecycleError, NotFoundError
+from app.core.config import get_settings
 from app.core.studio import resolve_studio_panel_defaults
 from app.integrations.object_storage import LocalObjectStorage
 from app.models.content import ContentSession, ContentVersion, GeneratedAsset
@@ -235,6 +238,7 @@ class ContentService:
         self.trace = GenerationTraceService()
         self.brand_scoring = BrandScoringService(session)
         self.storage = LocalObjectStorage()
+        self.settings = get_settings()
 
     async def _enqueue_ragas_evaluation_after_generation(
         self,
@@ -244,9 +248,24 @@ class ContentService:
         brand_space_id: UUID,
         content_version_id: UUID,
         generated_image_count: int,
-    ) -> None:
+    ) -> str:
         if not trace_id or generated_image_count <= 0:
-            return
+            return "skipped"
+        if not bool(getattr(self.settings, "automatic_ragas_evaluation_enabled", False)):
+            self.trace.write_payload(
+                trace_id,
+                "ragas_evaluation_skipped",
+                {
+                    "status": "skipped",
+                    "reason": "automatic_ragas_evaluation_disabled",
+                    "generated_image_count": generated_image_count,
+                },
+            )
+            logger.info(
+                "content.generate.ragas_evaluation_skipped trace_id=%s reason=automatic_ragas_evaluation_disabled",
+                trace_id,
+            )
+            return "disabled"
 
         try:
             job = await JobService(self.session).create(
@@ -264,8 +283,10 @@ class ContentService:
                 trace_id,
                 job.id,
             )
+            return "queued"
         except Exception:
             logger.exception("content.generate.ragas_evaluation_queue_failed trace_id=%s", trace_id)
+            return "queue_failed"
 
     @staticmethod
     def _merge_studio_panel(base: dict | None, override: dict | None) -> dict:
@@ -7504,25 +7525,43 @@ class ContentService:
         any_footer_rendered = False
 
         for index, asset in enumerate(ordered_assets, start=1):
-            composited_asset = self._build_ai_logo_fallback_asset(
-                content=content,
-                asset=asset,
-                explainability=explainability,
-                studio_panel=studio_panel,
-                logo_asset_path=logo_asset_path,
-                logo_asset_candidates=logo_asset_candidates,
-                logo_selection=logo_selection,
-            )
+            try:
+                composited_asset = self._build_ai_logo_fallback_asset(
+                    content=content,
+                    asset=asset,
+                    explainability=explainability,
+                    studio_panel=studio_panel,
+                    logo_asset_path=logo_asset_path,
+                    logo_asset_candidates=logo_asset_candidates,
+                    logo_selection=logo_selection,
+                )
+            except Exception as exc:  # noqa: BLE001 - export must not discard paid AI renders
+                logger.warning(
+                    "content.ai_final_render.logo_overlay_skipped_after_error content_version_id=%s asset_storage_path=%s error=%s",
+                    content.id,
+                    asset.storage_path,
+                    exc,
+                )
+                composited_asset = None
             footer_source_asset = self._payload_to_generated_image_asset(
                 composited_asset,
                 fallback_asset=asset,
             ) if composited_asset else asset
-            footer_asset = self._build_ai_footer_fallback_asset(
-                content=content,
-                asset=footer_source_asset,
-                explainability=explainability,
-                studio_panel=studio_panel,
-            )
+            try:
+                footer_asset = self._build_ai_footer_fallback_asset(
+                    content=content,
+                    asset=footer_source_asset,
+                    explainability=explainability,
+                    studio_panel=studio_panel,
+                )
+            except Exception as exc:  # noqa: BLE001 - export must not discard paid AI renders
+                logger.warning(
+                    "content.ai_final_render.footer_overlay_skipped_after_error content_version_id=%s asset_storage_path=%s error=%s",
+                    content.id,
+                    str(getattr(footer_source_asset, "storage_path", "") or ""),
+                    exc,
+                )
+                footer_asset = None
             source_asset_payload = footer_asset or composited_asset or self._generated_asset_payload(asset)
             source_assets.append(source_asset_payload)
             render_manifest_assets.append(
@@ -9780,7 +9819,10 @@ class ContentService:
         sample_y = min(max(text_strip_top + max(text_strip_height // 2, 0), 0), height - 1)
         sample_points = [base.getpixel((x, sample_y))[:3] for x in (int(width * 0.12), int(width * 0.5), int(width * 0.88))]
         avg_luma = sum((0.2126 * r + 0.7152 * g + 0.0722 * b) for r, g, b in sample_points) / max(len(sample_points), 1)
-        if avg_luma >= 145:
+        strip_fill = (0, 57, 117, 238)
+        if not static_infographic_format:
+            text_fill = (255, 255, 255, 255)
+        elif avg_luma >= 145:
             text_fill = (0, 57, 117, 255)
         else:
             text_fill = (255, 255, 255, 255)
@@ -9970,12 +10012,20 @@ class ContentService:
         static_infographic_format = format_name in {"static", "infographic"}
         base_for_collision = base
         logo_zone_clearance_applied = False
-        if not static_infographic_format and not layout_obstructions:
-            base_for_collision, logo_zone_clearance_applied = self._clear_ai_logo_overlay_region(
-                base,
-                reserved_logo_box,
-                format_name=format_name,
-            )
+        if not static_infographic_format:
+            if not layout_obstructions:
+                base_for_collision, logo_zone_clearance_applied = self._clear_ai_logo_overlay_region(
+                    base,
+                    reserved_logo_box,
+                    format_name=format_name,
+                )
+            elif format_name == "carousel":
+                base_for_collision, logo_zone_clearance_applied = self._clear_ai_logo_overlay_region(
+                    base,
+                    reserved_logo_box,
+                    format_name=format_name,
+                    avoid_boxes=layout_obstruction_boxes,
+                )
         collision_guard = self._resolve_logo_collision_guard(
             base_image=base_for_collision,
             logo_image=logo,
@@ -10387,6 +10437,18 @@ class ContentService:
             if isinstance(content_version.explainability_metadata, dict)
             else {}
         )
+        if not self.settings.inline_brand_scoring_enabled:
+            deferred_payload = {
+                "status": "deferred",
+                "reason": "inline_brand_scoring_disabled_for_generation_latency",
+                "output_asset_count": len(output_assets),
+            }
+            content_version.explainability_metadata = {
+                **explainability,
+                "brand_scoring": deferred_payload,
+            }
+            self.trace.write_payload(trace_id, "brand_scoring", deferred_payload)
+            return
         try:
             scorecard = self.brand_scoring.build_scorecard(
                 prompt=prompt,
@@ -10458,6 +10520,8 @@ class ContentService:
         user_id: UUID,
         payload: ContentGenerateRequest,
     ) -> ContentVersion:
+        generation_started_at = perf_counter()
+        generation_performance: list[dict[str, Any]] = []
         context = await self._gather_context(brand_space_id)
         brand = context["brand"]
         if brand.lifecycle_state != BrandSpaceLifecycle.ACTIVE:
@@ -11042,6 +11106,7 @@ class ContentService:
             }
             for asset in (persisted_final_render_assets or response.image_assets)
         ]
+        brand_scoring_started_at = perf_counter()
         self._write_brand_scoring_output(
             trace_id=trace_id,
             prompt=effective_prompt,
@@ -11053,7 +11118,19 @@ class ContentService:
             output_assets=score_output_assets,
             reference_assets=reference_assets,
         )
+        generation_performance.append(
+            {
+                "stage": "brand_scoring",
+                "duration_ms": round((perf_counter() - brand_scoring_started_at) * 1000, 2),
+                "status": (
+                    "inline"
+                    if self.settings.inline_brand_scoring_enabled and score_output_assets
+                    else "deferred"
+                ),
+            }
+        )
 
+        session_update_started_at = perf_counter()
         await self._record_session_context(session, payload, content_version)
         await self.usage.increment(tenant_id, UsageMetricCode.CONTENT_GENERATIONS)
         if response.image_assets:
@@ -11061,6 +11138,13 @@ class ContentService:
         elif persisted_final_render_assets:
             await self.usage.increment(tenant_id, UsageMetricCode.IMAGE_GENERATIONS, len(persisted_final_render_assets))
         await self.session.commit()
+        generation_performance.append(
+            {
+                "stage": "session_usage_commit",
+                "duration_ms": round((perf_counter() - session_update_started_at) * 1000, 2),
+            }
+        )
+        trace_write_started_at = perf_counter()
         self.trace.write_payload(
             trace_id,
             "content_persisted",
@@ -11109,15 +11193,44 @@ class ContentService:
             logo_candidates=logo_candidates,
             logo_selection=logo_selection,
             content_version=content_version,)
+        generation_performance.append(
+            {
+                "stage": "post_generation_trace_writes",
+                "duration_ms": round((perf_counter() - trace_write_started_at) * 1000, 2),
+                "full_payload_traces_enabled": bool(self.settings.generation_trace_full_payloads),
+                "full_brand_usage_report_enabled": bool(self.settings.generation_trace_full_brand_usage_report),
+            }
+        )
 #         await self._run_ragas_evaluation_after_generation(
 #             content_version=content_version,
 #         )
-        await self._enqueue_ragas_evaluation_after_generation(
+        background_job_started_at = perf_counter()
+        ragas_evaluation_status = await self._enqueue_ragas_evaluation_after_generation(
             trace_id,
             tenant_id=tenant_id,
             brand_space_id=brand_space_id,
             content_version_id=content_version.id,
             generated_image_count=len(persisted_final_render_assets) or len(response.image_assets),
+        )
+        generation_performance.append(
+            {
+                "stage": "background_job_enqueue",
+                "duration_ms": round((perf_counter() - background_job_started_at) * 1000, 2),
+                "ragas_evaluation_status": ragas_evaluation_status,
+            }
+        )
+        self.trace.write_payload(
+            trace_id,
+            "generation_performance",
+            {
+                "total_duration_ms": round((perf_counter() - generation_started_at) * 1000, 2),
+                "format": payload.studio_panel.format,
+                "file_type": payload.studio_panel.file_type,
+                "render_authority": response.render_authority,
+                "final_render_asset_count": len(persisted_final_render_assets),
+                "image_asset_count": len(response.image_assets or []),
+                "stages": generation_performance,
+            },
         )
         return content_version
 
@@ -11951,3 +12064,16 @@ class ContentService:
             "cta": content.generated_payload.get("cta", ""),
             "hashtags": content.generated_payload.get("hashtags", []),
         }
+
+    async def archive(self, tenant_id: UUID, brand_space_id: UUID, content_version_id: UUID) -> ContentVersion:
+        content = await self._get_content_scoped(tenant_id, brand_space_id, content_version_id)
+        content.lifecycle_state = ContentLifecycle.ARCHIVED
+        await self.session.commit()
+        await self.session.refresh(content)
+        return content
+
+    async def delete(self, tenant_id: UUID, brand_space_id: UUID, content_version_id: UUID) -> dict:
+        content = await self._get_content_scoped(tenant_id, brand_space_id, content_version_id)
+        content.deleted_at = datetime.now(timezone.utc)
+        await self.session.commit()
+        return {"message": "Content deleted", "content_version_id": str(content.id)}

@@ -3,6 +3,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy import or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.content import ChatMessage, ContentFolder, ContentSession, ContentVersion, GeneratedAsset
@@ -58,7 +59,11 @@ class ContentRepository(Repository[ContentVersion]):
         super().__init__(session, ContentVersion)
 
     async def list_by_brand(self, brand_space_id: UUID, tenant_id: UUID | None = None) -> list[ContentVersion]:
-        stmt = select(ContentVersion).where(ContentVersion.brand_space_id == brand_space_id)
+        stmt = select(ContentVersion).where(
+            ContentVersion.brand_space_id == brand_space_id,
+            ContentVersion.deleted_at.is_(None),
+            ContentVersion.lifecycle_state != "archived",
+        )
         if tenant_id:
             stmt = stmt.where(ContentVersion.tenant_id == tenant_id)
         stmt = stmt.order_by(ContentVersion.created_at.desc())
@@ -81,7 +86,11 @@ class ContentRepository(Repository[ContentVersion]):
         tenant_id: UUID | None = None,
         limit: int | None = None,
     ) -> list[ContentVersion]:
-        stmt = select(ContentVersion).where(ContentVersion.session_id == session_id)
+        stmt = select(ContentVersion).where(
+            ContentVersion.session_id == session_id,
+            ContentVersion.deleted_at.is_(None),
+            ContentVersion.lifecycle_state != "archived",
+        )
         if tenant_id:
             stmt = stmt.where(ContentVersion.tenant_id == tenant_id)
         stmt = stmt.order_by(ContentVersion.created_at.desc())
@@ -141,7 +150,20 @@ class ChatMessageRepository(Repository[ChatMessage]):
     async def list_by_session(self, session_id: UUID) -> list[ChatMessage]:
         result = await self.session.execute(
             select(ChatMessage)
+            .outerjoin(ContentVersion, ChatMessage.content_version_id == ContentVersion.id)
             .where(ChatMessage.session_id == session_id)
+            .where(
+                or_(
+                    ChatMessage.content_version_id.is_(None),
+                    ContentVersion.deleted_at.is_(None),
+                )
+            )
+            .where(
+                or_(
+                    ChatMessage.content_version_id.is_(None),
+                    ContentVersion.lifecycle_state != "archived",
+                )
+            )
             .order_by(ChatMessage.created_at.asc())
         )
         return list(result.scalars().all())
@@ -149,7 +171,20 @@ class ChatMessageRepository(Repository[ChatMessage]):
     async def list_recent_by_session(self, session_id: UUID, limit: int = 8) -> list[ChatMessage]:
         result = await self.session.execute(
             select(ChatMessage)
+            .outerjoin(ContentVersion, ChatMessage.content_version_id == ContentVersion.id)
             .where(ChatMessage.session_id == session_id)
+            .where(
+                or_(
+                    ChatMessage.content_version_id.is_(None),
+                    ContentVersion.deleted_at.is_(None),
+                )
+            )
+            .where(
+                or_(
+                    ChatMessage.content_version_id.is_(None),
+                    ContentVersion.lifecycle_state != "archived",
+                )
+            )
             .order_by(ChatMessage.created_at.desc())
             .limit(limit)
         )

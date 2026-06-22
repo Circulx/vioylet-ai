@@ -161,3 +161,31 @@ async def copy_content(
     assert_brand_access(principal, brand_scope)
 
     return await ContentService(session).copy(principal.tenant_id, brand_scope, payload.content_version_id)
+
+
+@router.post("/{content_id}/archive", response_model=ContentVersionResponse)
+async def archive_content(
+    content_id: UUID,
+    brand_scope: UUID = Depends(get_brand_scope_header),
+    principal: CurrentPrincipal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db_session),
+) -> ContentVersionResponse:
+    brand_scope = require_brand_scope(brand_scope)
+    assert_brand_access(principal, brand_scope)
+
+    content = await ContentService(session).archive(principal.tenant_id, brand_scope, content_id)
+    assets = await AssetRepository(session).list_by_content(content.id)
+    return attach_assets(content, assets)
+
+
+@router.delete("/{content_id}", response_model=dict)
+async def delete_content(
+    content_id: UUID,
+    brand_scope: UUID = Depends(get_brand_scope_header),
+    principal: CurrentPrincipal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    brand_scope = require_brand_scope(brand_scope)
+    assert_brand_access(principal, brand_scope)
+
+    return await ContentService(session).delete(principal.tenant_id, brand_scope, content_id)

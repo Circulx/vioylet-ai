@@ -115,12 +115,15 @@ export const API = {
     HISTORY: { method: "GET", url: "/api/v1/content/history" } as ApiEndpoint<void, ContentVersionResponse[]>,
     DETAIL: { method: "GET", url: (contentId: string) => `/api/v1/content/${contentId}` } as ApiEndpoint<void, ContentVersionResponse>,
     EXPORT: { method: "POST", url: "/api/v1/content/export" } as ApiEndpoint<unknown, RenderResponse>,
+    ARCHIVE: { method: "POST", url: (contentId: string) => `/api/v1/content/${contentId}/archive` } as ApiEndpoint<void, ContentVersionResponse>,
+    DELETE: { method: "DELETE", url: (contentId: string) => `/api/v1/content/${contentId}` } as ApiEndpoint<void, { message: string; content_version_id: string }>,
   },
   CHAT: {
     CREATE_SESSION: { method: "POST", url: "/api/v1/chat/sessions" } as ApiEndpoint<unknown, ChatSessionResponse>,
     LIST_SESSIONS: { method: "GET", url: "/api/v1/chat/sessions" } as ApiEndpoint<void, ChatSessionResponse[]>,
     LIST_MESSAGES: { method: "GET", url: (sessionId: string) => `/api/v1/chat/sessions/${sessionId}/messages` } as ApiEndpoint<void, ChatMessageResponse[]>,
     SEND_MESSAGE: { method: "POST", url: (sessionId: string) => `/api/v1/chat/sessions/${sessionId}/messages` } as ApiEndpoint<unknown, ChatSendResponse>,
+    DELETE_MESSAGE: { method: "DELETE", url: (messageId: string) => `/api/v1/chat/messages/${messageId}` } as ApiEndpoint<void, { message: string; chat_message_id: string }>,
   },
   REVIEW: {
     CREATE_LINK: { method: "POST", url: "/api/v1/review/share-link" } as ApiEndpoint<unknown, ReviewLinkResponse>,

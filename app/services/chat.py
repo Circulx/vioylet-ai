@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 import re
 from typing import Any
@@ -32,7 +32,7 @@ from app.services.text_content import TextContentService
 
 logger = logging.getLogger(__name__)
 
-CHAT_HISTORY_MESSAGE_LIMIT = 30
+CHAT_HISTORY_MESSAGE_LIMIT = 150
 
 
 class ChatService:
@@ -182,6 +182,20 @@ class ChatService:
         for item in items:
             item.structured_payload = self.decorate_structured_payload_assets(item.structured_payload or {})
         return items
+
+    async def delete_message(self, message_id: UUID, tenant_id: UUID, brand_space_id: UUID) -> dict[str, str]:
+        message = await self.messages.get(message_id)
+        if not message or message.tenant_id != tenant_id or message.brand_space_id != brand_space_id:
+            raise NotFoundError("Chat message not found")
+
+        if message.content_version_id:
+            content = await self.contents.get(message.content_version_id)
+            if content and content.tenant_id == tenant_id and content.brand_space_id == brand_space_id:
+                content.deleted_at = datetime.now(timezone.utc)
+
+        await self.messages.delete(message)
+        await self.session.commit()
+        return {"message": "Chat message deleted", "chat_message_id": str(message_id)}
 
     async def backfill_content_history_messages(
         self,

@@ -22,12 +22,61 @@ class OpenAITextProvider(TextGenerationProvider):
     def __init__(self) -> None:
         self.settings = get_settings()
         self.client = OpenAI(api_key=self.settings.openai_api_key) if self.settings.openai_api_key else None
+        self.last_usage: dict[str, Any] | None = None
 
     def _supports_responses_api(self) -> bool:
         return bool(self.client and getattr(self.client, "responses", None))
 
+    @staticmethod
+    def _plain_value(value: Any) -> Any:
+        if value in ("", None, [], {}):
+            return None
+        if isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, list):
+            return [item for item in (OpenAITextProvider._plain_value(item) for item in value) if item is not None]
+        if isinstance(value, dict):
+            return {
+                str(key): cleaned
+                for key, item in value.items()
+                if (cleaned := OpenAITextProvider._plain_value(item)) is not None
+            }
+        if hasattr(value, "model_dump"):
+            try:
+                return OpenAITextProvider._plain_value(value.model_dump())
+            except Exception:  # noqa: BLE001
+                pass
+        if hasattr(value, "__dict__"):
+            return OpenAITextProvider._plain_value(vars(value))
+        return str(value)
+
+    @classmethod
+    def _extract_usage(cls, response: Any, *, model: str, operation: str) -> dict[str, Any] | None:
+        usage = cls._plain_value(getattr(response, "usage", None))
+        if not isinstance(usage, dict) or not usage:
+            return None
+        input_tokens = usage.get("input_tokens", usage.get("prompt_tokens"))
+        output_tokens = usage.get("output_tokens", usage.get("completion_tokens"))
+        total_tokens = usage.get("total_tokens")
+        if total_tokens is None and isinstance(input_tokens, int) and isinstance(output_tokens, int):
+            total_tokens = input_tokens + output_tokens
+        normalized = {
+            "provider": cls.provider_name,
+            "model": model,
+            "operation": operation,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+            "raw_usage": usage,
+        }
+        return {key: val for key, val in normalized.items() if val is not None}
+
+    def _remember_usage(self, response: Any, *, model: str, operation: str) -> None:
+        self.last_usage = self._extract_usage(response, model=model, operation=operation)
+
     def _chat_completion_text(self, *, system: str, user: str) -> str:
         if not self.client:
+            self.last_usage = None
             return ""
         response = self.client.chat.completions.create(
             model=self.settings.tone_model,
@@ -36,10 +85,12 @@ class OpenAITextProvider(TextGenerationProvider):
                 {"role": "user", "content": user},
             ],
         )
+        self._remember_usage(response, model=self.settings.tone_model, operation="chat_text")
         return (response.choices[0].message.content or "").strip() if getattr(response, "choices", None) else ""
 
     def _chat_completion_json(self, *, system: str, user: str) -> str:
         if not self.client:
+            self.last_usage = None
             return ""
         response = self.client.chat.completions.create(
             model=self.settings.llm_model,
@@ -49,10 +100,12 @@ class OpenAITextProvider(TextGenerationProvider):
             ],
             response_format={"type": "json_object"},
         )
+        self._remember_usage(response, model=self.settings.llm_model, operation="chat_structured_json")
         return (response.choices[0].message.content or "").strip() if getattr(response, "choices", None) else ""
 
     def generate_structured_json(self, envelope: PromptEnvelope, fallback: dict[str, Any]) -> dict[str, Any]:
         if not self.client:
+            self.last_usage = None
             return fallback
         if self._supports_responses_api():
             response = self.client.responses.create(
@@ -63,6 +116,7 @@ class OpenAITextProvider(TextGenerationProvider):
                 ],
                 text={"format": {"type": "json_object"}},
             )
+            self._remember_usage(response, model=self.settings.llm_model, operation="responses_structured_json")
             text = response.output_text or json.dumps(fallback)
         else:
             text = self._chat_completion_json(system=envelope.system, user=envelope.user) or json.dumps(fallback)
@@ -70,6 +124,7 @@ class OpenAITextProvider(TextGenerationProvider):
 
     def generate_text(self, envelope: PromptEnvelope, fallback: str) -> str:
         if not self.client:
+            self.last_usage = None
             return fallback
         if self._supports_responses_api():
             response = self.client.responses.create(
@@ -79,6 +134,7 @@ class OpenAITextProvider(TextGenerationProvider):
                     {"role": "user", "content": envelope.user},
                 ],
             )
+            self._remember_usage(response, model=self.settings.tone_model, operation="responses_text")
             return response.output_text or fallback
         return self._chat_completion_text(system=envelope.system, user=envelope.user) or fallback
 
@@ -90,6 +146,7 @@ class OpenAIImageProvider(ImageGenerationBackend):
         self.settings = get_settings()
         self.client = OpenAI(api_key=self.settings.openai_api_key) if self.settings.openai_api_key else None
         self.storage = LocalObjectStorage()
+        self.last_usage: dict[str, Any] | None = None
 
     def _configured_image_quality(self, model_name: str) -> str | None:
         configured = str(getattr(self.settings, "image_generation_quality", "high") or "").strip().lower()
@@ -151,11 +208,14 @@ class OpenAIImageProvider(ImageGenerationBackend):
 
     def generate(self, tenant_id, brand_space_id, prompt: str, size: str | None = None) -> dict[str, Any]:
         if not self.client:
+            self.last_usage = None
             raise RuntimeError("OpenAI image provider unavailable")
+        options = self._image_generate_options(size or "1024x1024")
         result = self.client.images.generate(
             prompt=prompt,
-            **self._image_generate_options(size or "1024x1024"),
+            **options,
         )
+        self.last_usage = OpenAITextProvider._extract_usage(result, model=self.settings.image_model, operation="image_generate")
         image_bytes = self._extract_image_bytes(result)
         image = Image.open(BytesIO(image_bytes))
         stored = self.storage.save_bytes(
@@ -165,7 +225,7 @@ class OpenAIImageProvider(ImageGenerationBackend):
             filename=f"generated-{brand_space_id}.png",
             content=image_bytes,
         )
-        return {
+        payload = {
             "mime_type": "image/png",
             "storage_path": stored.storage_path,
             "width": image.width,
@@ -174,7 +234,10 @@ class OpenAIImageProvider(ImageGenerationBackend):
             "provider": self.provider_name,
             "model": self.settings.image_model,
             "size": size or "1024x1024",
+            "quality": options.get("quality"),
+            "provider_usage": self.last_usage,
         }
+        return {key: val for key, val in payload.items() if val is not None}
 
     def edit(
         self,
@@ -186,6 +249,7 @@ class OpenAIImageProvider(ImageGenerationBackend):
         mask_png_bytes: bytes | None = None,
     ) -> dict[str, Any]:
         if not self.client:
+            self.last_usage = None
             raise RuntimeError("OpenAI image provider unavailable")
         if not image_paths:
             raise ValueError("image_paths must include at least one base image path")
@@ -204,6 +268,7 @@ class OpenAIImageProvider(ImageGenerationBackend):
                 kwargs["mask"] = stack.enter_context(open(mask_file.name, "rb"))
             result = self.client.images.edit(**kwargs)
 
+        self.last_usage = OpenAITextProvider._extract_usage(result, model=self.settings.image_model, operation="image_edit")
         image_bytes = self._extract_image_bytes(result)
         image = Image.open(BytesIO(image_bytes))
         stored = self.storage.save_bytes(
@@ -213,7 +278,7 @@ class OpenAIImageProvider(ImageGenerationBackend):
             filename=f"edited-{brand_space_id}.png",
             content=image_bytes,
         )
-        return {
+        payload = {
             "mime_type": "image/png",
             "storage_path": stored.storage_path,
             "width": image.width,
@@ -222,4 +287,8 @@ class OpenAIImageProvider(ImageGenerationBackend):
             "provider": self.provider_name,
             "model": self.settings.image_model,
             "size": size or "1024x1024",
+            "quality": kwargs.get("quality"),
+            "input_fidelity": kwargs.get("input_fidelity"),
+            "provider_usage": self.last_usage,
         }
+        return {key: val for key, val in payload.items() if val is not None}

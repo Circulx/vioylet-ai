@@ -41,6 +41,7 @@ class GenerationTraceService:
 
     def __init__(self, base_dir: str | Path | None = None, enabled: bool | None = None) -> None:
         settings = get_settings()
+        self.settings = settings
         self.enabled = settings.generation_trace_enabled if enabled is None else enabled
         resolved_base = base_dir or settings.generation_trace_base_path
         self.base_dir = Path(resolved_base)
@@ -217,6 +218,159 @@ class GenerationTraceService:
             return None
         return str(file_path)
 
+    def _read_json_file(self, file_path: Path) -> Any:
+        try:
+            return json.loads(file_path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+
+    @staticmethod
+    def _compact_list(value: Any, *, limit: int = 5) -> list[Any]:
+        if not isinstance(value, list):
+            return []
+        return value[: max(limit, 0)]
+
+    @classmethod
+    def _compact_generation_asset(cls, asset: Any) -> Any:
+        if not isinstance(asset, dict):
+            return asset
+        metadata = asset.get("metadata") if isinstance(asset.get("metadata"), dict) else {}
+        compact_metadata = {
+            key: metadata.get(key)
+            for key in (
+                "provider",
+                "model",
+                "requested_size",
+                "generation_path",
+                "generation_stage",
+                "slide_index",
+                "slide_count",
+                "carousel_role",
+                "render_source",
+                "logo_overlay_strategy",
+                "legal_footer_composited_by_service",
+                "logo_composited_by_service",
+                "provider_usage",
+            )
+            if metadata.get(key) not in (None, "", [], {})
+        }
+        for key in ("quality_assessment", "output_quality_assessment"):
+            report = metadata.get(key)
+            if isinstance(report, dict):
+                compact_metadata[key] = {
+                    "score": report.get("score"),
+                    "issues": cls._compact_list(report.get("issues"), limit=8),
+                    "retry_recommended": report.get("retry_recommended"),
+                    "status": report.get("status"),
+                }
+        return {
+            key: asset.get(key)
+            for key in ("asset_id", "mime_type", "storage_path", "width", "height", "asset_role")
+            if asset.get(key) not in (None, "", [], {})
+        } | ({"metadata": compact_metadata} if compact_metadata else {})
+
+    @classmethod
+    def _compact_explainability_for_trace(cls, explainability: Any) -> Any:
+        if not isinstance(explainability, dict):
+            return explainability
+        compact = {
+            key: explainability.get(key)
+            for key in (
+                "generation_path",
+                "render_authority",
+                "research_summary",
+                "content_semantic_validation",
+                "content_semantic_repair_attempts",
+                "repair_attempts",
+                "fresh_replan_attempted",
+                "scene_graph_ignored_for_final_render",
+                "latency_ms",
+                "generation_trace_id",
+                "token_usage",
+                "cost_estimation",
+                "visual_explanation_mode",
+                "visual_explanation_need",
+                "visual_explanation_density",
+            )
+            if explainability.get(key) not in (None, "", [], {})
+        }
+        for key in ("message_strategy", "creative_decision", "layout_decision", "validation_report", "generation_trace"):
+            value = explainability.get(key)
+            if isinstance(value, dict):
+                compact[key] = value
+        compiled_context = explainability.get("compiled_context")
+        if isinstance(compiled_context, dict):
+            compact["compiled_context_summary"] = {
+                "sections": sorted(compiled_context.keys()),
+                "section_count": len(compiled_context),
+            }
+        for key in ("final_render_asset",):
+            value = explainability.get(key)
+            if isinstance(value, dict):
+                compact[key] = cls._compact_generation_asset(value)
+        final_assets = explainability.get("final_render_assets")
+        if isinstance(final_assets, list):
+            compact["final_render_assets"] = [cls._compact_generation_asset(asset) for asset in final_assets[:20]]
+        refs = explainability.get("selected_reference_images")
+        if isinstance(refs, list):
+            compact["selected_reference_images"] = [
+                {
+                    k: item.get(k)
+                    for k in ("asset_id", "asset_role", "storage_path", "trust_level")
+                    if isinstance(item, dict) and item.get(k)
+                }
+                for item in refs[:12]
+                if isinstance(item, dict)
+            ]
+        return compact
+
+    @classmethod
+    def _compact_trace_payload_for_file(cls, filename: str, payload: Any) -> Any:
+        if not isinstance(payload, dict):
+            return payload
+        name = str(filename or "")
+        if name == "orchestrator_final":
+            compact = dict(payload)
+            if isinstance(compact.get("explainability"), dict):
+                compact["explainability"] = cls._compact_explainability_for_trace(compact.get("explainability"))
+            compact["image_assets"] = [cls._compact_generation_asset(asset) for asset in payload.get("image_assets", []) if isinstance(asset, dict)]
+            compact["final_render_assets"] = [
+                cls._compact_generation_asset(asset)
+                for asset in payload.get("final_render_assets", [])
+                if isinstance(asset, dict)
+            ]
+            if isinstance(payload.get("final_render_asset"), dict):
+                compact["final_render_asset"] = cls._compact_generation_asset(payload.get("final_render_asset"))
+            return compact
+        if name == "content_persisted":
+            compact = dict(payload)
+            if isinstance(compact.get("explainability_metadata"), dict):
+                compact["explainability_metadata"] = cls._compact_explainability_for_trace(compact.get("explainability_metadata"))
+            return compact
+        return payload
+
+    @classmethod
+    def _compact_brand_usage_report(cls, report: dict[str, Any]) -> dict[str, Any]:
+        compact = dict(report)
+        for key in (
+            "section_payloads",
+            "runtime_brand_context",
+            "persona_context",
+            "objective_context",
+            "reference_assets",
+            "template_candidates",
+            "template_context",
+            "retrieved_knowledge",
+            "planning_hints",
+            "sources_used",
+        ):
+            if key in compact:
+                compact[key] = cls._value_preview(compact.get(key), limit=1600)
+        explainability = compact.get("explainability")
+        if isinstance(explainability, dict):
+            compact["explainability"] = cls._compact_explainability_for_trace(explainability)
+        return compact
+
     def _write_text_file(self, file_path: Path, text: str) -> str | None:
         try:
             file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -244,6 +398,8 @@ class GenerationTraceService:
             return None
         target = self.trace_dir(trace_id)
         file_path = target / f"{filename}.json"
+        if not self.settings.generation_trace_full_payloads:
+            payload = self._compact_trace_payload_for_file(filename, payload)
         written = self._write_json_file(file_path, payload)
         if written is None:
             self.write_debug_event(
@@ -256,6 +412,374 @@ class GenerationTraceService:
             )
             return None
         return written
+
+    @staticmethod
+    def _estimated_token_count(value: Any) -> int:
+        text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
+        return max(0, (len(str(text or "")) + 3) // 4)
+
+    @staticmethod
+    def _trace_phase_from_filename(filename: str) -> str:
+        name = str(filename or "").removesuffix(".json")
+        if name.startswith("research_summary"):
+            return "research_summary"
+        if name.startswith("message_strategy"):
+            return "message_strategy"
+        if name.startswith("planning"):
+            return "planning"
+        if name.startswith("content_semantic_repair"):
+            return "content_semantic_repair"
+        if name.startswith("repair_"):
+            return "scene_graph_repair"
+        if name.startswith("fresh_replan"):
+            return "fresh_replan"
+        if name.startswith("quality_retry"):
+            return "quality_retry"
+        if name.startswith("final_render"):
+            return "final_render"
+        if name.startswith("image_generation"):
+            return "image_generation"
+        if name.startswith("live_research"):
+            return "live_research"
+        return name
+
+    @classmethod
+    def _usage_kind(cls, usage: dict[str, Any], *, phase: str = "") -> str:
+        operation = str(usage.get("operation") or "").casefold()
+        model = str(usage.get("model") or "").casefold()
+        phase_text = str(phase or "").casefold()
+        if (
+            "image_generate" in operation
+            or "image_edit" in operation
+            or model.startswith("gpt-image")
+            or phase_text == "image_generation"
+        ):
+            return "image"
+        return "text"
+
+    @classmethod
+    def _normalize_provider_usage(cls, usage: Any, *, source_file: str, phase: str) -> dict[str, Any] | None:
+        if not isinstance(usage, dict) or not usage:
+            return None
+        input_tokens = usage.get("input_tokens", usage.get("prompt_tokens"))
+        output_tokens = usage.get("output_tokens", usage.get("completion_tokens"))
+        total_tokens = usage.get("total_tokens")
+        try:
+            input_tokens = int(input_tokens) if input_tokens is not None else None
+        except (TypeError, ValueError):
+            input_tokens = None
+        try:
+            output_tokens = int(output_tokens) if output_tokens is not None else None
+        except (TypeError, ValueError):
+            output_tokens = None
+        try:
+            total_tokens = int(total_tokens) if total_tokens is not None else None
+        except (TypeError, ValueError):
+            total_tokens = None
+        if total_tokens is None and input_tokens is not None and output_tokens is not None:
+            total_tokens = input_tokens + output_tokens
+        usage_kind = cls._usage_kind(usage, phase=phase)
+        normalized = {
+            "source": "provider_usage",
+            "source_file": source_file,
+            "phase": phase,
+            "provider": usage.get("provider"),
+            "model": usage.get("model"),
+            "operation": usage.get("operation"),
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+            "usage_kind": usage_kind,
+            "image_calls": 1 if usage_kind == "image" else 0,
+            "raw_usage": usage.get("raw_usage") if isinstance(usage.get("raw_usage"), dict) else usage,
+        }
+        return {key: val for key, val in normalized.items() if val not in (None, "", [], {})}
+
+    @classmethod
+    def _collect_provider_usage_records(
+        cls,
+        node: Any,
+        *,
+        source_file: str,
+        phase: str,
+        records: list[dict[str, Any]],
+    ) -> None:
+        if isinstance(node, dict):
+            if isinstance(node.get("provider_usage"), dict):
+                usage = cls._normalize_provider_usage(node.get("provider_usage"), source_file=source_file, phase=phase)
+                if usage:
+                    records.append(usage)
+            if isinstance(node.get("usage"), dict) and source_file.endswith("_provider_usage.json"):
+                usage = cls._normalize_provider_usage(node.get("usage"), source_file=source_file, phase=phase)
+                if usage:
+                    records.append(usage)
+            if isinstance(node.get("usage"), list) and source_file.endswith("_provider_usage.json"):
+                for item in node.get("usage") or []:
+                    usage = cls._normalize_provider_usage(item, source_file=source_file, phase=phase)
+                    if usage:
+                        records.append(usage)
+            for value in node.values():
+                cls._collect_provider_usage_records(value, source_file=source_file, phase=phase, records=records)
+        elif isinstance(node, list):
+            for item in node:
+                cls._collect_provider_usage_records(item, source_file=source_file, phase=phase, records=records)
+
+    @classmethod
+    def _prompt_input_tokens_from_payload(cls, payload: Any) -> int:
+        if not isinstance(payload, dict):
+            return 0
+        prompt = payload.get("prompt") if isinstance(payload.get("prompt"), dict) else payload
+        if not isinstance(prompt, dict):
+            return 0
+        return cls._estimated_token_count(str(prompt.get("system") or "") + str(prompt.get("user") or ""))
+
+    @classmethod
+    def _estimated_usage_records_from_trace_payloads(cls, trace_dir: Path) -> list[dict[str, Any]]:
+        records: list[dict[str, Any]] = []
+
+        def _load_json(path: Path) -> Any:
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                return None
+
+        response_pairs = {
+            "message_strategy_prompt.json": "message_strategy_response.json",
+            "planning_prompt.json": "planning_response.json",
+        }
+        for prompt_file, response_file in response_pairs.items():
+            prompt_path = trace_dir / prompt_file
+            response_path = trace_dir / response_file
+            if not prompt_path.exists():
+                continue
+            phase = cls._trace_phase_from_filename(prompt_file)
+            records.append(
+                {
+                    "source": "trace_prompt_estimate",
+                    "source_file": prompt_file,
+                    "phase": phase,
+                    "usage_kind": "text",
+                    "input_tokens": cls._prompt_input_tokens_from_payload(_load_json(prompt_path)),
+                    "output_tokens": cls._estimated_token_count(_load_json(response_path)) if response_path.exists() else 0,
+                }
+            )
+        for path in sorted(trace_dir.glob("research_summary_prompt.json")):
+            records.append(
+                {
+                    "source": "trace_prompt_estimate",
+                    "source_file": path.name,
+                    "phase": "research_summary",
+                    "usage_kind": "text",
+                    "input_tokens": cls._prompt_input_tokens_from_payload(_load_json(path)),
+                    "output_tokens": 0,
+                }
+            )
+        for path in sorted(list(trace_dir.glob("repair_*.json")) + list(trace_dir.glob("quality_retry_*.json")) + list(trace_dir.glob("fresh_replan_*.json")) + list(trace_dir.glob("content_semantic_repair_*.json"))):
+            payload = _load_json(path)
+            if not isinstance(payload, dict):
+                continue
+            records.append(
+                {
+                    "source": "trace_prompt_estimate",
+                    "source_file": path.name,
+                    "phase": cls._trace_phase_from_filename(path.name),
+                    "usage_kind": "text",
+                    "input_tokens": cls._prompt_input_tokens_from_payload(payload),
+                    "output_tokens": cls._estimated_token_count(payload.get("response", {})),
+                }
+            )
+        return [record for record in records if int(record.get("input_tokens") or 0) or int(record.get("output_tokens") or 0)]
+
+    @classmethod
+    def _estimated_image_call_records_from_trace_payloads(cls, trace_dir: Path) -> list[dict[str, Any]]:
+        records: list[dict[str, Any]] = []
+
+        def _load_json(path: Path) -> Any:
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                return None
+
+        image_generation = trace_dir / "image_generation.json"
+        if image_generation.exists():
+            payload = _load_json(image_generation)
+            records.append(
+                {
+                    "source": "trace_image_call_estimate",
+                    "source_file": image_generation.name,
+                    "phase": "image_generation",
+                    "usage_kind": "image",
+                    "image_calls": 1,
+                    "model": payload.get("model") if isinstance(payload, dict) else None,
+                }
+            )
+        final_render = trace_dir / "final_render_generation.json"
+        payload = _load_json(final_render) if final_render.exists() else None
+        if isinstance(payload, dict):
+            assets = payload.get("assets")
+            call_count = len(assets) if isinstance(assets, list) else int(payload.get("slide_count") or 0)
+            if call_count > 0:
+                records.append(
+                    {
+                        "source": "trace_image_call_estimate",
+                        "source_file": final_render.name,
+                        "phase": "final_render",
+                        "usage_kind": "image",
+                        "image_calls": call_count,
+                    }
+                )
+        return records
+
+    def build_cost_estimation(self, trace_id: str | None) -> dict[str, Any] | None:
+        if not self.enabled or not trace_id or not self.settings.generation_cost_estimation_enabled:
+            return None
+        trace_dir = self.trace_dir(trace_id)
+        if not trace_dir.exists():
+            return None
+        exact_records: list[dict[str, Any]] = []
+        aggregate_files = {
+            "orchestrator_final.json",
+            "content_persisted.json",
+            "content_request.json",
+            "content_request_pre_template_context.json",
+            "orchestrator_request.json",
+            "brand_usage_report.json",
+            "render_input.json",
+            "render_output.json",
+        }
+        for path in sorted(trace_dir.glob("*.json")):
+            if path.name in aggregate_files:
+                continue
+            payload = self._read_json_file(path)
+            phase = self._trace_phase_from_filename(path.name)
+            self._collect_provider_usage_records(payload, source_file=path.name, phase=phase, records=exact_records)
+        deduped_exact: list[dict[str, Any]] = []
+        seen: set[tuple[Any, ...]] = set()
+        for record in exact_records:
+            key = (
+                str(record.get("phase")),
+                str(record.get("operation")),
+                str(record.get("model")),
+                int(record.get("input_tokens") or 0),
+                int(record.get("output_tokens") or 0),
+                int(record.get("total_tokens") or 0),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped_exact.append(record)
+        estimated_text_records = [
+            record
+            for record in self._estimated_usage_records_from_trace_payloads(trace_dir)
+            if not any(str(record.get("phase")) == str(exact.get("phase")) for exact in deduped_exact)
+        ]
+        image_estimate_records = [
+            record
+            for record in self._estimated_image_call_records_from_trace_payloads(trace_dir)
+            if not any(str(exact.get("usage_kind")) == "image" and str(exact.get("phase")) == str(record.get("phase")) for exact in deduped_exact)
+        ]
+        records = [*deduped_exact, *estimated_text_records, *image_estimate_records]
+        totals = {
+            "text_input_tokens": 0,
+            "text_output_tokens": 0,
+            "image_input_tokens": 0,
+            "image_output_tokens": 0,
+            "image_calls": 0,
+            "estimated_usd": 0.0,
+        }
+        by_phase: dict[str, dict[str, Any]] = {}
+        for record in records:
+            phase = str(record.get("phase") or "unknown")
+            phase_total = by_phase.setdefault(
+                phase,
+                {
+                    "phase": phase,
+                    "text_input_tokens": 0,
+                    "text_output_tokens": 0,
+                    "image_input_tokens": 0,
+                    "image_output_tokens": 0,
+                    "image_calls": 0,
+                    "estimated_usd": 0.0,
+                    "sources": [],
+                },
+            )
+            input_tokens = int(record.get("input_tokens") or 0)
+            output_tokens = int(record.get("output_tokens") or 0)
+            image_calls = int(record.get("image_calls") or 0)
+            if str(record.get("usage_kind")) == "image":
+                input_cost = input_tokens * float(self.settings.cost_estimation_image_input_usd_per_million or 0.0) / 1_000_000
+                output_cost = output_tokens * float(self.settings.cost_estimation_image_output_usd_per_million or 0.0) / 1_000_000
+                call_cost = image_calls * float(self.settings.cost_estimation_image_generation_usd_per_call or 0.0)
+                cost = input_cost + output_cost + call_cost
+                totals["image_input_tokens"] += input_tokens
+                totals["image_output_tokens"] += output_tokens
+                totals["image_calls"] += image_calls
+                phase_total["image_input_tokens"] += input_tokens
+                phase_total["image_output_tokens"] += output_tokens
+                phase_total["image_calls"] += image_calls
+            else:
+                input_cost = input_tokens * float(self.settings.cost_estimation_text_input_usd_per_million or 0.0) / 1_000_000
+                output_cost = output_tokens * float(self.settings.cost_estimation_text_output_usd_per_million or 0.0) / 1_000_000
+                cost = input_cost + output_cost
+                totals["text_input_tokens"] += input_tokens
+                totals["text_output_tokens"] += output_tokens
+                phase_total["text_input_tokens"] += input_tokens
+                phase_total["text_output_tokens"] += output_tokens
+            totals["estimated_usd"] += cost
+            phase_total["estimated_usd"] += cost
+            phase_total["sources"].append(
+                {
+                    "source": record.get("source"),
+                    "source_file": record.get("source_file"),
+                    "model": record.get("model"),
+                    "operation": record.get("operation"),
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "image_calls": image_calls,
+                    "estimated_usd": round(cost, 6),
+                }
+            )
+        for value in by_phase.values():
+            value["estimated_usd"] = round(float(value.get("estimated_usd") or 0.0), 6)
+        totals["estimated_usd"] = round(float(totals["estimated_usd"]), 6)
+        manifest = self._read_json_file(trace_dir / "manifest.json")
+        format_name = None
+        if isinstance(manifest, dict):
+            metadata = manifest.get("metadata")
+            if isinstance(metadata, dict):
+                format_name = metadata.get("format") or metadata.get("studio_format")
+        payload = {
+            "trace_id": trace_id,
+            "generated_at": datetime.now().isoformat(),
+            "format": format_name,
+            "currency": "USD",
+            "pricing_source": "configurable_settings",
+            "rate_card": {
+                "text_input_usd_per_million": self.settings.cost_estimation_text_input_usd_per_million,
+                "text_output_usd_per_million": self.settings.cost_estimation_text_output_usd_per_million,
+                "image_input_usd_per_million": self.settings.cost_estimation_image_input_usd_per_million,
+                "image_output_usd_per_million": self.settings.cost_estimation_image_output_usd_per_million,
+                "image_generation_usd_per_call": self.settings.cost_estimation_image_generation_usd_per_call,
+            },
+            "totals": totals,
+            "phases": sorted(by_phase.values(), key=lambda item: str(item.get("phase") or "")),
+            "records": records,
+            "accuracy": {
+                "exact_provider_usage_records": len(deduped_exact),
+                "estimated_text_records": len(estimated_text_records),
+                "estimated_image_call_records": len(image_estimate_records),
+                "old_trace_backfill_note": (
+                    "Existing traces generated before provider usage logging are estimated from saved prompt, response, and asset trace files."
+                ),
+            },
+        }
+        return payload
+
+    def write_cost_estimation(self, trace_id: str | None) -> str | None:
+        payload = self.build_cost_estimation(trace_id)
+        if not payload:
+            return None
+        return self.write_payload(trace_id, "cost_estimation", payload)
 
     def append_event(self, trace_id: str | None, event: str, payload: Any | None = None) -> str | None:
         if not self.enabled or not trace_id:
@@ -1117,9 +1641,14 @@ class GenerationTraceService:
     def write_brand_usage_report(self, trace_id: str | None, report: dict[str, Any]) -> str | None:
         if not self.enabled or not trace_id:
             return None
-        self.write_payload(trace_id, "brand_usage_report", report)
+        stored_report = (
+            report
+            if self.settings.generation_trace_full_brand_usage_report
+            else self._compact_brand_usage_report(report)
+        )
+        self.write_payload(trace_id, "brand_usage_report", stored_report)
         file_path = self.brand_usage_dir() / f"{trace_id}.json"
-        written = self._write_json_file(file_path, report)
+        written = self._write_json_file(file_path, stored_report)
         if written is None:
             self.write_debug_event(
                 "trace.write_brand_usage.failed",
@@ -3319,6 +3848,9 @@ class GenerationTraceService:
             logo_candidates=logo_candidates,
             logo_selection=logo_selection,
         )
+        settings = get_settings()
+        compact_readable = not bool(settings.generation_trace_full_readable_json)
+        compact_brand_usage_snapshot = cls._compact_brand_usage_report(brand_usage_snapshot)
         compliance_summary = cls._validation_summary(explainability)
         full_trace_logs = {
             "trace_manifest": {
@@ -3342,7 +3874,7 @@ class GenerationTraceService:
             "logo_selection": logo_selection or {},
             "generated_payload": generated_payload,
             "blueprint_payload": blueprint_payload,
-            "brand_usage_snapshot": brand_usage_snapshot,
+            "brand_usage_snapshot": compact_brand_usage_snapshot if compact_readable else brand_usage_snapshot,
             "input_access_summary": input_access_summary,
             "compiled_context": (
                 explainability.get("compiled_context")
@@ -3359,6 +3891,39 @@ class GenerationTraceService:
             "validation_summary": compliance_summary,
             "explainability_snapshot": explainability,
         }
+        if compact_readable:
+            full_trace_logs = {
+                "trace_manifest": full_trace_logs["trace_manifest"],
+                "request_payload": request_payload,
+                "brand_usage_snapshot": compact_brand_usage_snapshot,
+                "input_access_summary": cls._value_preview(input_access_summary, limit=1600),
+                "compiled_context_summary": {
+                    "sections": sorted(
+                        (
+                            explainability.get("compiled_context")
+                            if isinstance(explainability.get("compiled_context"), dict)
+                            else {}
+                        ).keys()
+                    ),
+                    "section_count": len(
+                        explainability.get("compiled_context")
+                        if isinstance(explainability.get("compiled_context"), dict)
+                        else {}
+                    ),
+                },
+                "selected_reference_images": [
+                    cls._asset_content_summary(item)
+                    for item in (explainability.get("selected_reference_images") or [])[:8]
+                    if isinstance(item, dict)
+                ],
+                "conditioning_reference_images": [
+                    cls._asset_content_summary(item)
+                    for item in (explainability.get("conditioning_reference_images") or [])[:8]
+                    if isinstance(item, dict)
+                ],
+                "validation_summary": compliance_summary,
+                "explainability_snapshot": cls._compact_explainability_for_trace(explainability),
+            }
         bundle = {
             "planning_strategy": {
                 "trace_id": trace_id,
@@ -3452,7 +4017,17 @@ class GenerationTraceService:
               payload = bundle.get(filename)
               if not isinstance(payload, dict):
                   continue
-              written = self._write_json_file(target_dir / f"{filename}.json", payload)
+              if self.settings.generation_trace_full_readable_json:
+                  json_payload = payload
+              else:
+                  json_payload = {
+                      key: value
+                      for key, value in payload.items()
+                      if key != "full_trace_logs"
+                  }
+                  if isinstance(payload.get("full_trace_logs"), dict):
+                      json_payload["full_trace_logs_summary"] = payload.get("full_trace_logs")
+              written = self._write_json_file(target_dir / f"{filename}.json", json_payload)
               if written:
                   written_files.append(written)
         text_files = self.write_visual_generation_readable_text_bundle(trace_id, bundle)

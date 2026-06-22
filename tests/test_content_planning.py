@@ -21,6 +21,8 @@ def test_content_planning_derives_editorial_reveal_archetype_from_outline() -> N
 
     assert plan["carousel_archetype"] == "editorial_reveal"
     assert plan["carousel_slide_grammar"][0]["role"] == "hook"
+    assert any("mobile-first carousel copy" in rule for rule in plan["planning_rules"])
+    assert any("20-35 words" in rule for rule in plan["planning_rules"])
 
 
 def test_content_planning_derives_list_teaching_archetype_from_bias_topic() -> None:

@@ -11,6 +11,7 @@ from typing import Any
 from uuid import UUID
 
 from app.ai.rag.ocr import OCRService
+from app.ai.providers.openai_provider import OpenAITextProvider
 from app.ai.tone_intelligence import ToneIntelligenceService
 from app.core.config import get_settings
 from app.integrations.object_storage import get_object_storage
@@ -262,6 +263,7 @@ class BrandScoringService:
             if self.settings.openai_api_key
             else None
         )
+        self.last_usage: dict[str, Any] | None = None
         self.base_dir = Path(self.settings.object_storage_base_path)
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
@@ -463,9 +465,11 @@ class BrandScoringService:
         fallback_relevance: int,
     ) -> dict[str, Any] | None:
         if not self.llm_client:
+            self.last_usage = None
             return None
         image_inputs = self._llm_image_inputs(output_assets)
         if not image_inputs:
+            self.last_usage = None
             return None
 
         context_payload = {
@@ -686,17 +690,50 @@ class BrandScoringService:
             )
 
         try:
-            response = self.llm_client.chat.completions.create(
-                model=self.settings.vision_model,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": content},
-                ],
-                response_format={"type": "json_object"},
-            )
-            raw = (response.choices[0].message.content or "").strip() if getattr(response, "choices", None) else ""
+            if getattr(self.llm_client, "responses", None):
+                responses_content: list[dict[str, Any]] = []
+                for item in content:
+                    if item.get("type") == "text":
+                        responses_content.append({"type": "input_text", "text": str(item.get("text") or "")})
+                    elif item.get("type") == "image_url" and isinstance(item.get("image_url"), dict):
+                        responses_content.append(
+                            {
+                                "type": "input_image",
+                                "image_url": str(item["image_url"].get("url") or ""),
+                            }
+                        )
+                response = self.llm_client.responses.create(
+                    model=self.settings.vision_model,
+                    input=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": responses_content},
+                    ],
+                    text={"format": {"type": "json_object"}},
+                )
+                self.last_usage = OpenAITextProvider._extract_usage(
+                    response,
+                    model=self.settings.vision_model,
+                    operation="brand_scoring_vision",
+                )
+                raw = str(getattr(response, "output_text", "") or "").strip()
+            else:
+                response = self.llm_client.chat.completions.create(
+                    model=self.settings.vision_model,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": content},
+                    ],
+                    response_format={"type": "json_object"},
+                )
+                self.last_usage = OpenAITextProvider._extract_usage(
+                    response,
+                    model=self.settings.vision_model,
+                    operation="brand_scoring_vision",
+                )
+                raw = (response.choices[0].message.content or "").strip() if getattr(response, "choices", None) else ""
             parsed = json.loads(raw) if raw else {}
         except Exception as exc:  # noqa: BLE001
+            self.last_usage = None
             logger.warning("brand_scoring.llm_prompt_relevance_failed error=%s", exc)
             return None
 
@@ -770,6 +807,7 @@ class BrandScoringService:
             "carousel_story_assessment": carousel_story_assessment,
             "asset_count": len(image_inputs),
             "overlay_policy": context_payload["overlay_policy"],
+            "provider_usage": self.last_usage,
             "fallback_scores": {
                 "prompt_adherence": fallback_prompt_adherence,
                 "relevance": fallback_relevance,

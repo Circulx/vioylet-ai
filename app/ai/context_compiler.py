@@ -4392,6 +4392,252 @@ class ContextCompilerService:
             "source_attribution_required": bool(current_expectations.get("source_attribution_required")),
         }
 
+    @classmethod
+    def _compact_prompt_text(cls, value: Any, *, limit: int) -> str:
+        text = cls._normalize_text(value)
+        if not text or len(text) <= limit:
+            return text
+        return cls._truncate_text_on_word_boundary(text, limit).rstrip(" ,.;:-")
+
+    @classmethod
+    def _compact_prompt_list(
+        cls,
+        value: Any,
+        *,
+        item_limit: int,
+        text_limit: int,
+        depth: int = 0,
+    ) -> list[Any]:
+        items = value if isinstance(value, list) else []
+        compact: list[Any] = []
+        for item in items[: max(int(item_limit), 0)]:
+            if isinstance(item, dict):
+                cleaned = cls._compact_prompt_mapping(item, field_limit=10, text_limit=text_limit, depth=depth + 1)
+                if cleaned:
+                    compact.append(cleaned)
+            elif isinstance(item, list):
+                cleaned_list = cls._compact_prompt_list(
+                    item,
+                    item_limit=item_limit,
+                    text_limit=text_limit,
+                    depth=depth + 1,
+                )
+                if cleaned_list:
+                    compact.append(cleaned_list)
+            elif isinstance(item, (int, float, bool)):
+                compact.append(item)
+            else:
+                text = cls._compact_prompt_text(item, limit=text_limit)
+                if text:
+                    compact.append(text)
+        return compact
+
+    @classmethod
+    def _compact_prompt_mapping(
+        cls,
+        value: Any,
+        *,
+        field_limit: int = 16,
+        text_limit: int = 360,
+        depth: int = 0,
+    ) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            return {}
+        compact: dict[str, Any] = {}
+        for key, item in list(value.items())[: max(int(field_limit), 0)]:
+            if item in ("", None, [], {}):
+                continue
+            if isinstance(item, dict):
+                nested = cls._compact_prompt_mapping(
+                    item,
+                    field_limit=max(6, field_limit - 2),
+                    text_limit=max(120, int(text_limit * 0.75)),
+                    depth=depth + 1,
+                )
+                if nested:
+                    compact[str(key)] = nested
+            elif isinstance(item, list):
+                list_key = str(key)
+                list_limit = 16 if list_key in {"carousel_slide_specs", "slides", "pages", "sample_page_blueprint"} else 6
+                if depth >= 2 and list_limit == 6:
+                    list_limit = 4
+                nested_list = cls._compact_prompt_list(
+                    item,
+                    item_limit=list_limit,
+                    text_limit=max(120, int(text_limit * 0.75)),
+                    depth=depth + 1,
+                )
+                if nested_list:
+                    compact[str(key)] = nested_list
+            elif isinstance(item, (int, float, bool)):
+                compact[str(key)] = item
+            else:
+                text = cls._compact_prompt_text(item, limit=text_limit)
+                if text:
+                    compact[str(key)] = text
+        return compact
+
+    @classmethod
+    def _compact_prompt_reference_assets(cls, value: Any, *, limit: int = 6) -> list[dict[str, Any]]:
+        assets = value if isinstance(value, list) else []
+        compact: list[dict[str, Any]] = []
+        seen: set[tuple[str, str]] = set()
+        for item in assets:
+            if not isinstance(item, dict):
+                continue
+            asset_id = cls._normalize_text(item.get("asset_id"), limit=72)
+            label = cls._normalize_text(item.get("label") or item.get("name") or item.get("role"), limit=72)
+            key = (asset_id.casefold(), label.casefold())
+            if key in seen:
+                continue
+            seen.add(key)
+            record = {
+                "asset_id": asset_id,
+                "role": cls._normalize_text(item.get("role"), limit=32),
+                "label": label,
+                "trust_level": cls._normalize_text(item.get("trust_level"), limit=24),
+                "format": cls._normalize_text(item.get("format"), limit=24),
+                "page_count": item.get("page_count"),
+                "sequence_kind": cls._normalize_text(item.get("sequence_kind"), limit=32),
+                "structural_cues": cls._normalized_text_list(item.get("structural_cues"), item_limit=80, limit=4),
+                "summary": cls._compact_prompt_text(item.get("summary"), limit=220),
+                "editorial_dna": cls._compact_prompt_mapping(item.get("editorial_dna"), field_limit=8, text_limit=120),
+            }
+            cleaned = {key: val for key, val in record.items() if val not in ("", None, [], {})}
+            if cleaned:
+                compact.append(cleaned)
+            if len(compact) >= limit:
+                break
+        return compact
+
+    @classmethod
+    def _compact_prompt_visual_knowledge(cls, value: Any) -> dict[str, Any]:
+        brief = value if isinstance(value, dict) else {}
+        items: list[dict[str, Any]] = []
+        for item in (brief.get("items") or [])[:3]:
+            if not isinstance(item, dict):
+                continue
+            cleaned = {
+                "channel": cls._normalize_text(item.get("channel"), limit=32),
+                "role": cls._normalize_text(item.get("role"), limit=32),
+                "document_type": cls._normalize_text(item.get("document_type"), limit=48),
+                "content": cls._compact_prompt_text(item.get("content"), limit=180),
+            }
+            cleaned = {key: val for key, val in cleaned.items() if val}
+            if cleaned:
+                items.append(cleaned)
+        return {
+            key: val
+            for key, val in {
+                "grounding_mode": cls._normalize_text(brief.get("grounding_mode"), limit=40),
+                "grounding_strength": cls._normalize_text(brief.get("grounding_strength"), limit=40),
+                "channels_present": cls._normalized_text_list(brief.get("channels_present"), item_limit=40, limit=5),
+                "primary_channels_present": cls._normalized_text_list(brief.get("primary_channels_present"), item_limit=40, limit=4),
+                "summary": cls._compact_prompt_text(brief.get("summary"), limit=260),
+                "items": items,
+                "visual_structure_summary": cls._compact_prompt_text(brief.get("visual_structure_summary"), limit=220),
+            }.items()
+            if val not in ("", None, [], {})
+        }
+
+    @classmethod
+    def compact_generation_prompt_context(cls, compiled_context: dict[str, Any] | None) -> dict[str, Any]:
+        """Return a prompt-only view of compiled context without mutating shared contracts."""
+        context = compiled_context if isinstance(compiled_context, dict) else {}
+        compact = dict(context)
+        compact["brand_copy_brief"] = cls._compact_prompt_mapping(context.get("brand_copy_brief"), field_limit=18, text_limit=260)
+        compact["brand_visual_brief"] = cls._compact_prompt_mapping(context.get("brand_visual_brief"), field_limit=28, text_limit=300)
+        compact["audience_brief"] = cls._compact_prompt_mapping(context.get("audience_brief"), field_limit=16, text_limit=240)
+        compact["objective_brief"] = cls._compact_prompt_mapping(context.get("objective_brief"), field_limit=12, text_limit=240)
+        compact["template_fit_brief"] = cls._compact_prompt_mapping(context.get("template_fit_brief"), field_limit=16, text_limit=240)
+        compact["reference_asset_brief"] = cls._compact_prompt_reference_assets(context.get("reference_asset_brief"), limit=6)
+        compact["asset_catalog"] = cls._compact_prompt_reference_assets(context.get("asset_catalog"), limit=6)
+        compact["reference_adaptation_profile"] = cls._compact_prompt_mapping(
+            context.get("reference_adaptation_profile"),
+            field_limit=16,
+            text_limit=220,
+        )
+        compact["reference_family_profile"] = cls._compact_prompt_mapping(
+            context.get("reference_family_profile"),
+            field_limit=14,
+            text_limit=220,
+        )
+        compact["generation_surface_contract"] = cls._compact_prompt_mapping(
+            context.get("generation_surface_contract"),
+            field_limit=16,
+            text_limit=220,
+        )
+        compact["prompt_intelligence_brief"] = cls._compact_prompt_mapping(
+            context.get("prompt_intelligence_brief"),
+            field_limit=10,
+            text_limit=220,
+        )
+        compact["content_format_brief"] = cls._compact_prompt_mapping(context.get("content_format_brief"), field_limit=14, text_limit=220)
+        compact["research_editorial_brief"] = cls._compact_prompt_mapping(
+            context.get("research_editorial_brief"),
+            field_limit=22,
+            text_limit=260,
+        )
+        compact["live_research"] = cls._compact_prompt_mapping(context.get("live_research"), field_limit=16, text_limit=260)
+        compact["format_family_plan"] = cls._compact_prompt_mapping(context.get("format_family_plan"), field_limit=14, text_limit=220)
+        compact["content_plan"] = cls._compact_prompt_mapping(context.get("content_plan"), field_limit=28, text_limit=240)
+        compact["visual_plan"] = cls._compact_prompt_mapping(context.get("visual_plan"), field_limit=12, text_limit=220)
+        compact["knowledge_brief"] = cls._compact_prompt_list(context.get("knowledge_brief"), item_limit=4, text_limit=220)
+        compact["visual_knowledge_brief"] = cls._compact_prompt_visual_knowledge(context.get("visual_knowledge_brief"))
+        compact["session_brief"] = cls._compact_prompt_mapping(context.get("session_brief"), field_limit=10, text_limit=220)
+        compact["research_summary"] = cls._compact_prompt_text(context.get("research_summary"), limit=900)
+        compact["resolution_instructions"] = cls._compact_prompt_text(context.get("resolution_instructions"), limit=240)
+        compact["prompt_context_optimization"] = {
+            "mode": "compact_generation_prompt_context",
+            "full_context_preserved_for_renderer": True,
+            "dropped_from_prompt_only": ["reference_asset_storage_paths", "visual_knowledge_detailed_context"],
+        }
+        return {key: val for key, val in compact.items() if val not in ("", None, [], {})}
+
+    @classmethod
+    def generation_context_budget_report(
+        cls,
+        *,
+        full_context: dict[str, Any] | None,
+        prompt_context: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        def _measure(mapping: dict[str, Any] | None) -> dict[str, Any]:
+            if not isinstance(mapping, dict):
+                return {"total_chars": 0, "estimated_tokens": 0, "sections": []}
+            sections: list[dict[str, Any]] = []
+            total_chars = 0
+            for key, value in mapping.items():
+                try:
+                    text = json.dumps(value, ensure_ascii=False, default=str, separators=(",", ":"))
+                except TypeError:
+                    text = str(value)
+                chars = len(text)
+                total_chars += chars
+                sections.append(
+                    {
+                        "section": str(key),
+                        "chars": chars,
+                        "estimated_tokens": max(1, (chars + 3) // 4) if chars else 0,
+                    }
+                )
+            sections.sort(key=lambda item: int(item.get("chars") or 0), reverse=True)
+            return {
+                "total_chars": total_chars,
+                "estimated_tokens": max(1, (total_chars + 3) // 4) if total_chars else 0,
+                "sections": sections[:20],
+            }
+
+        full = _measure(full_context)
+        compact = _measure(prompt_context)
+        full_tokens = int(full.get("estimated_tokens") or 0)
+        compact_tokens = int(compact.get("estimated_tokens") or 0)
+        return {
+            "full_context": full,
+            "prompt_context": compact,
+            "estimated_token_savings": max(0, full_tokens - compact_tokens),
+            "estimated_reduction_ratio": round((1 - (compact_tokens / full_tokens)) if full_tokens else 0.0, 4),
+        }
+
     def compile(
         self,
         *,

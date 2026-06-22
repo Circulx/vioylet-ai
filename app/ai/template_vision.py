@@ -2,29 +2,99 @@ from __future__ import annotations
 
 import base64
 from collections import Counter
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
 
 from openai import OpenAI
 
+from app.ai.providers.openai_provider import OpenAITextProvider
 from app.core.config import get_settings
 
 
 class TemplateVisionAnalyzer:
     def __init__(self) -> None:
         settings = get_settings()
+        self.settings = settings
         self.client = OpenAI(api_key=settings.openai_api_key) if settings.openai_api_key else None
         self.model = settings.vision_model
+        self.last_usage: dict[str, Any] | None = None
+        self.cache_enabled = bool(getattr(settings, "template_vision_cache_enabled", True))
+        self.cache_base_path = Path(getattr(settings, "template_vision_cache_base_path", "") or "")
+
+    def _cache_path(self, *, image_hash: str) -> Path | None:
+        if not self.cache_enabled or not image_hash:
+            return None
+        cache_key = hashlib.sha256(
+            json.dumps(
+                {
+                    "model": self.model,
+                    "image_hash": image_hash,
+                    "schema": "template_vision_deep_design_audit_v1",
+                },
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()
+        return self.cache_base_path / f"{cache_key}.json"
+
+    @staticmethod
+    def _analysis_without_provider_usage(payload: dict[str, Any]) -> dict[str, Any]:
+        cleaned = dict(payload)
+        cleaned.pop("provider_usage", None)
+        cleaned.pop("vision_cache", None)
+        return cleaned
+
+    def _load_cached_analysis(self, cache_path: Path | None) -> dict[str, Any] | None:
+        if cache_path is None or not cache_path.exists():
+            return None
+        try:
+            payload = json.loads(cache_path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        if not isinstance(payload, dict) or not isinstance(payload.get("analysis"), dict):
+            return None
+        cached = dict(payload["analysis"])
+        cached["provider_usage"] = None
+        cached["vision_cache"] = {"status": "hit", "cache_key": cache_path.stem}
+        return cached
+
+    def _write_cached_analysis(self, cache_path: Path | None, analysis: dict[str, Any]) -> None:
+        if cache_path is None or not isinstance(analysis, dict):
+            return
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(
+                json.dumps(
+                    {
+                        "model": self.model,
+                        "analysis": self._analysis_without_provider_usage(analysis),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        except Exception:
+            return
 
     def analyze(self, image_path: str, fallback: dict[str, Any]) -> dict[str, Any]:
         if not self.client:
+            self.last_usage = None
             return fallback
         path = Path(image_path)
         if not path.exists():
+            self.last_usage = None
             return fallback
         try:
-            encoded = base64.b64encode(path.read_bytes()).decode("utf-8")
+            image_bytes = path.read_bytes()
+            image_hash = hashlib.sha256(image_bytes).hexdigest()
+            cache_path = self._cache_path(image_hash=image_hash)
+            cached = self._load_cached_analysis(cache_path)
+            if cached is not None:
+                self.last_usage = None
+                return cached
+            encoded = base64.b64encode(image_bytes).decode("utf-8")
             response = self.client.responses.create(
                 model=self.model,
                 input=[
@@ -153,6 +223,11 @@ class TemplateVisionAnalyzer:
                 ],
                 text={"format": {"type": "json_object"}},
             )
+            self.last_usage = OpenAITextProvider._extract_usage(
+                response,
+                model=self.model,
+                operation="template_vision_analysis",
+            )
             parsed = json.loads(response.output_text or "{}")
             background_style = parsed.get("background_style", fallback.get("background_style", {}))
             if not isinstance(background_style, dict):
@@ -169,7 +244,7 @@ class TemplateVisionAnalyzer:
                 "type": background_type,
                 "dominant_mode": background_type,
             }
-            return {
+            analysis = {
                 "background_style": background_style,
                 "layout_type": parsed.get("layout_type", fallback.get("layout_type", "template")),
                 "editable_zones": parsed.get("editable_zones", fallback.get("editable_zones", [])),
@@ -192,8 +267,16 @@ class TemplateVisionAnalyzer:
                 "premium_quality": parsed.get("premium_quality", {}),
                 "icons": parsed.get("icons", []),
                 "platform_hints": parsed.get("platform_hints", []),
+                "provider_usage": self.last_usage,
+                "vision_cache": {
+                    "status": "miss",
+                    "cache_key": cache_path.stem if cache_path is not None else None,
+                },
             }
+            self._write_cached_analysis(cache_path, analysis)
+            return analysis
         except Exception:  # noqa: BLE001
+            self.last_usage = None
             return fallback
 
     @staticmethod

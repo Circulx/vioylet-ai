@@ -79,6 +79,22 @@ class Settings(BaseSettings):
     renderer_default_height: int = 1080
     generation_trace_enabled: bool = True
     generation_trace_base_path: str = str(BASE_DIR / "storage" / "generation_traces")
+    generation_trace_full_payloads: bool = False
+    generation_trace_full_brand_usage_report: bool = False
+    generation_trace_full_readable_json: bool = False
+    generation_cost_estimation_enabled: bool = True
+    cost_estimation_text_input_usd_per_million: float = 0.40
+    cost_estimation_text_output_usd_per_million: float = 1.60
+    cost_estimation_image_input_usd_per_million: float = 2.00
+    cost_estimation_image_output_usd_per_million: float = 8.00
+    cost_estimation_image_generation_usd_per_call: float = 0.00
+    inline_brand_scoring_enabled: bool = False
+    automatic_ragas_evaluation_enabled: bool = False
+    template_vision_cache_enabled: bool = True
+    template_vision_cache_base_path: str = str(BASE_DIR / "storage" / "template_vision_cache")
+    ai_final_render_skip_advisory_scene_repairs: bool = True
+    ai_final_render_skip_pre_image_quality_retries: bool = True
+    ai_final_render_carousel_sample_similarity_retries: int = 0
 
     worker_poll_interval_seconds: int = 3
     worker_batch_size: int = 10

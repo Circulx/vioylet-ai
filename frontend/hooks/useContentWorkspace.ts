@@ -42,6 +42,60 @@ export const useExportContent = (brandId: string) =>
       }),
   });
 
+export const useArchiveContent = (brandId: string, sessionId?: string) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (contentId: string) =>
+      request(API.CONTENT.ARCHIVE, {
+        pathParams: contentId,
+        headers: brandHeaders(brandId),
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["brand", brandId, "content-history"] });
+      await queryClient.invalidateQueries({ queryKey: ["brand", brandId, "chat-sessions"] });
+      if (sessionId) {
+        await queryClient.invalidateQueries({ queryKey: ["brand", brandId, "chat-session", sessionId, "messages"] });
+      }
+    },
+  });
+};
+
+export const useDeleteContent = (brandId: string, sessionId?: string) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (contentId: string) =>
+      request(API.CONTENT.DELETE, {
+        pathParams: contentId,
+        headers: brandHeaders(brandId),
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["brand", brandId, "content-history"] });
+      await queryClient.invalidateQueries({ queryKey: ["brand", brandId, "chat-sessions"] });
+      if (sessionId) {
+        await queryClient.invalidateQueries({ queryKey: ["brand", brandId, "chat-session", sessionId, "messages"] });
+      }
+    },
+  });
+};
+
+export const useDeleteChatMessage = (brandId: string, sessionId?: string) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (messageId: string) =>
+      request(API.CHAT.DELETE_MESSAGE, {
+        pathParams: messageId,
+        headers: brandHeaders(brandId),
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["brand", brandId, "chat-sessions"] });
+      if (sessionId) {
+        await queryClient.invalidateQueries({ queryKey: ["brand", brandId, "chat-session", sessionId, "messages"] });
+      }
+      await queryClient.invalidateQueries({ queryKey: ["brand", brandId, "content-history"] });
+    },
+  });
+};
+
 export const useTemplateRecommendations = (
   brandId: string,
   prompt: string,

@@ -72,3 +72,19 @@ async def send_chat_message(
         user_message=ChatMessageResponse.model_validate(user_message),
         assistant_message=ChatMessageResponse.model_validate(assistant_message),
     )
+
+
+@router.delete("/messages/{message_id}")
+async def delete_chat_message(
+    message_id: UUID,
+    brand_scope: UUID = Depends(get_brand_scope_header),
+    principal: CurrentPrincipal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict[str, str]:
+    brand_scope = require_brand_scope(brand_scope)
+    assert_brand_access(principal, brand_scope)
+    return await ChatService(session).delete_message(
+        message_id=message_id,
+        tenant_id=principal.tenant_id,
+        brand_space_id=brand_scope,
+    )

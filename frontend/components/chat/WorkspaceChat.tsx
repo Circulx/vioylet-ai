@@ -4,22 +4,26 @@ import Link from "next/link";
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import {
+  Archive,
   BadgePlus,
   Info,
   Loader2,
   Megaphone,
+  MoreVertical,
   Paperclip,
   PencilLine,
   Plus,
   RefreshCw,
   SendHorizontal,
   Sparkles,
+  Trash2,
   Wand2,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from "@/components/ui/carousel";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { PageHeading, SurfaceCard, UsageRing } from "@/components/common/DesignPrimitives";
@@ -37,7 +41,10 @@ import { useBrands } from "@/hooks/useBrands";
 import {
   useChatMessages,
   useChatSessions,
+  useArchiveContent,
   useCreateChatSession,
+  useDeleteChatMessage,
+  useDeleteContent,
   useKnowledgeAssets,
   useSendChatMessage,
   useTemplateRecommendations,
@@ -63,6 +70,7 @@ type Platform = "instagram" | "linkedin" | "x" | "youtube_thumbnail";
 type FormatMode = "static" | "carousel" | "infographic" | "video";
 type FileType = "doc" | "pdf" | "jpg" | "png";
 type PendingExperience = "conversation" | "visual";
+type GeneratedContentAction = "archive" | "delete";
 
 const actionOptions = [
   { id: "idea", label: "Generate Campaign Idea", icon: Sparkles },
@@ -314,6 +322,11 @@ function resolveGeneratedImageAssets(payload: ChatAssistantStructuredPayload | R
       ["render_export", "render_preview", "ai_image"].includes(asset.asset_role),
     ),
   );
+}
+
+function resolveGeneratedContentVersionId(message: { content_version_id?: string; structured_payload?: ChatAssistantStructuredPayload | Record<string, unknown> }) {
+  const payload = message.structured_payload as ChatAssistantStructuredPayload | undefined;
+  return message.content_version_id || payload?.content_version_id || "";
 }
 
 function resolveGenerationDecision(payload: ChatAssistantStructuredPayload | Record<string, unknown> | undefined) {
@@ -1120,6 +1133,9 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
   const resolvedActiveSessionId = activeSessionId || sessions?.[0]?.id || "";
   const { data: messages } = useChatMessages(brandId, resolvedActiveSessionId);
   const sendMessage = useSendChatMessage(brandId);
+  const archiveContent = useArchiveContent(brandId, resolvedActiveSessionId);
+  const deleteContent = useDeleteContent(brandId, resolvedActiveSessionId);
+  const deleteChatMessage = useDeleteChatMessage(brandId, resolvedActiveSessionId);
   const toneCheck = useToneCheck(brandId);
 
   const [selectedAction, setSelectedAction] = useState<ActionMode>("none");
@@ -1146,6 +1162,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
   const [selectedTemplateName, setSelectedTemplateName] = useState("");
   const [attachmentError, setAttachmentError] = useState("");
   const [workspaceError, setWorkspaceError] = useState("");
+  const [hiddenMessageIds, setHiddenMessageIds] = useState<Set<string>>(() => new Set());
   const [pendingExperience, setPendingExperience] = useState<PendingExperience>("conversation");
   const [pendingMessagePreview, setPendingMessagePreview] = useState("");
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
@@ -1231,7 +1248,10 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
   const recentKnowledgeAssets = (knowledgeAssets || []).filter(
     (asset) => !attachedAssets.some((selected) => selected.id === asset.id),
   ).slice(0, 4);
-  const orderedMessages = useMemo(() => orderMessagesChronologically(messages || []), [messages]);
+  const orderedMessages = useMemo(
+    () => orderMessagesChronologically(messages || []).filter((message) => !hiddenMessageIds.has(message.id)),
+    [hiddenMessageIds, messages],
+  );
   const hasConversation = Boolean(orderedMessages.length);
   const [generationProgressIndex, setGenerationProgressIndex] = useState(0);
   const activeGenerationMessage = isGeneratingMessage
@@ -1339,6 +1359,46 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
       setAttachmentError("");
     } catch (error) {
       setWorkspaceError(extractApiError(error, "Unable to start the workspace session right now."));
+    }
+  };
+
+  const handleGeneratedContentAction = async (
+    messageId: string,
+    contentVersionId: string,
+    action: GeneratedContentAction,
+  ) => {
+    if (!contentVersionId) {
+      setWorkspaceError("Unable to find this generated sample.");
+      return;
+    }
+    try {
+      setWorkspaceError("");
+      if (action === "archive") {
+        await archiveContent.mutateAsync(contentVersionId);
+      } else {
+        await deleteContent.mutateAsync(contentVersionId);
+      }
+      setHiddenMessageIds((current) => {
+        const next = new Set(current);
+        next.add(messageId);
+        return next;
+      });
+    } catch (error) {
+      setWorkspaceError(extractApiError(error, action === "archive" ? "Unable to archive this generated sample." : "Unable to delete this generated sample."));
+    }
+  };
+
+  const handleDeleteChatMessage = async (messageId: string) => {
+    try {
+      setWorkspaceError("");
+      await deleteChatMessage.mutateAsync(messageId);
+      setHiddenMessageIds((current) => {
+        const next = new Set(current);
+        next.add(messageId);
+        return next;
+      });
+    } catch (error) {
+      setWorkspaceError(extractApiError(error, "Unable to delete this message."));
     }
   };
 
@@ -1476,6 +1536,10 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                       const previewUrl = previewAssets[0]?.asset_url || undefined;
                       const generationDecision = message.role === "assistant" ? resolveGenerationDecision(message.structured_payload) : null;
                       const brandScoring = message.role === "assistant" ? resolveBrandScoring(message.structured_payload) : null;
+                      const generatedContentVersionId = message.role === "assistant" ? resolveGeneratedContentVersionId(message) : "";
+                      const isGeneratedActionPending = archiveContent.isPending || deleteContent.isPending;
+                      const showMessageDeleteAction = message.role === "user" || previewAssets.length === 0;
+                      const isMessageDeletePending = deleteChatMessage.isPending;
                       const imageStatus =
                         message.role === "assistant" &&
                         !previewUrl &&
@@ -1484,16 +1548,84 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                           : null;
                       return (
                         <div key={message.id} className={`max-w-[86%] ${message.role === "user" ? "ml-auto" : "mr-auto"}`}>
-                          <div className={`rounded-[24px] px-5 py-4 text-[1.05rem] leading-7 shadow-[0_16px_36px_-30px_rgba(15,23,42,0.35)] ${
+                          <div className={`relative rounded-[24px] px-5 py-4 text-[1.05rem] leading-7 shadow-[0_16px_36px_-30px_rgba(15,23,42,0.35)] ${
                             message.role === "user"
                               ? "bg-[#F2F4FA] text-slate-800"
                               : "border border-[#ECEFFA] bg-white text-slate-800"
                           }`}>
-                            <p className="whitespace-pre-wrap">{message.message_text}</p>
+                            {showMessageDeleteAction ? (
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    className="absolute right-2 top-2 h-7 w-7 rounded-full text-slate-500 hover:bg-white/80 hover:text-slate-900"
+                                    aria-label="Message options"
+                                    disabled={isMessageDeletePending}
+                                  >
+                                    <MoreVertical className="h-4 w-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="w-32">
+                                  <DropdownMenuItem
+                                    variant="destructive"
+                                    disabled={isMessageDeletePending}
+                                    onSelect={(event) => {
+                                      event.preventDefault();
+                                      void handleDeleteChatMessage(message.id);
+                                    }}
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                    Delete
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            ) : null}
+                            <p className={`whitespace-pre-wrap ${showMessageDeleteAction ? "pr-8" : ""}`}>{message.message_text}</p>
                           </div>
                           {message.role === "assistant" ? <GenerationDecisionCard decision={generationDecision} /> : null}
                           {previewAssets.length ? (
-                            <div className="mt-4 overflow-hidden rounded-[24px] border border-slate-200 bg-white">
+                            <div className="relative mt-4 overflow-hidden rounded-[24px] border border-slate-200 bg-white">
+                              {generatedContentVersionId ? (
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      className="absolute right-3 top-3 z-20 h-8 w-8 rounded-full border border-slate-200 bg-white/95 text-slate-600 shadow-sm hover:bg-white hover:text-slate-900"
+                                      aria-label="Generated sample options"
+                                      disabled={isGeneratedActionPending}
+                                    >
+                                      <MoreVertical className="h-4 w-4" />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end" className="w-36">
+                                    <DropdownMenuItem
+                                      disabled={isGeneratedActionPending}
+                                      onSelect={(event) => {
+                                        event.preventDefault();
+                                        void handleGeneratedContentAction(message.id, generatedContentVersionId, "archive");
+                                      }}
+                                    >
+                                      <Archive className="h-4 w-4" />
+                                      Archive
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      variant="destructive"
+                                      disabled={isGeneratedActionPending}
+                                      onSelect={(event) => {
+                                        event.preventDefault();
+                                        void handleGeneratedContentAction(message.id, generatedContentVersionId, "delete");
+                                      }}
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                      Delete
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              ) : null}
                               {previewAssets.length === 1 && previewUrl ? (
                                 /* eslint-disable-next-line @next/next/no-img-element */
                                 <img src={previewUrl} alt="Generated image" className="w-full object-cover" />

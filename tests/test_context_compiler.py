@@ -1,3 +1,5 @@
+import json
+
 from app.ai.context_compiler import ContextCompilerService
 from app.core.config import get_settings
 
@@ -58,6 +60,78 @@ def test_context_compiler_preserves_template_adaptance_authority_flags() -> None
     assert compiled["content_plan"]["generation_strategy"] == "template_adaptance"
     assert compiled["content_plan"]["_template_adaptance_enabled"] is True
     assert compiled["content_plan"]["template_authority_mode"] == "visual_layout_only"
+
+
+def test_compact_generation_prompt_context_keeps_contracts_but_removes_heavy_prompt_baggage() -> None:
+    heavy_text = "Visual intelligence detail. " * 120
+    compiled = {
+        "brand_visual_brief": {
+            "dominant_layout_family": "editorial",
+            "hierarchy_summary": heavy_text,
+            "design_system": {
+                "sample_count": 12,
+                "composition_logic_summary": heavy_text,
+            },
+        },
+        "template_fit_brief": {
+            "sequence_pack": {
+                "slide_count": 8,
+                "slides": [
+                    {
+                        "slide_index": index,
+                        "story_role": "hook" if index == 1 else "body",
+                        "sample_page_copy": heavy_text,
+                    }
+                    for index in range(1, 9)
+                ],
+            },
+        },
+        "reference_asset_brief": [
+            {
+                "asset_id": "asset-1",
+                "role": "reference_creative",
+                "label": "Sample page",
+                "storage_path": "tenant/brand/reference_creatives/" + ("x" * 600) + ".png",
+                "summary": heavy_text,
+                "editorial_dna": {"slide_count": 5, "storytelling_mode": heavy_text},
+            }
+        ],
+        "visual_knowledge_brief": {
+            "summary": heavy_text,
+            "items": [{"channel": "reference_creative", "content": heavy_text}],
+            "detailed_context": {"layout_structures": [{"raw": heavy_text}]},
+        },
+        "content_plan": {
+            "format_family": "carousel",
+            "preferred_slide_count": 5,
+            "carousel_slide_contracts": [{"role": "hook", "purpose": heavy_text}],
+        },
+    }
+
+    compact = ContextCompilerService.compact_generation_prompt_context(compiled)
+
+    assert compact["content_plan"]["preferred_slide_count"] == 5
+    assert compact["template_fit_brief"]["sequence_pack"]["slide_count"] == 8
+    assert len(compact["template_fit_brief"]["sequence_pack"]["slides"]) == 8
+    assert "storage_path" not in compact["reference_asset_brief"][0]
+    assert "detailed_context" not in compact["visual_knowledge_brief"]
+    assert len(json.dumps(compact, default=str)) < len(json.dumps(compiled, default=str))
+
+
+def test_generation_context_budget_report_shows_prompt_context_reduction() -> None:
+    full_context = {
+        "brand_visual_brief": {"summary": "A" * 1200},
+        "reference_asset_brief": [{"storage_path": "B" * 1000, "summary": "C" * 600}],
+    }
+    prompt_context = ContextCompilerService.compact_generation_prompt_context(full_context)
+
+    report = ContextCompilerService.generation_context_budget_report(
+        full_context=full_context,
+        prompt_context=prompt_context,
+    )
+
+    assert report["estimated_token_savings"] > 0
+    assert report["estimated_reduction_ratio"] > 0
 
 
 def test_context_compiler_sequence_pack_keeps_layout_metadata_without_sample_copy() -> None:

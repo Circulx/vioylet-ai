@@ -12,6 +12,7 @@ import httpx
 from openai import OpenAI
 
 from app.ai.providers.base import PromptEnvelope
+from app.ai.providers.openai_provider import OpenAITextProvider
 from app.ai.providers.router import ProviderRouter
 from app.core.config import get_settings
 
@@ -71,6 +72,7 @@ class LiveResearchService:
         self.providers = ProviderRouter()
         self.research_provider = self.providers.get_text_provider("research")
         self.openai_search_client = OpenAI(api_key=self.settings.openai_api_key) if self.settings.openai_api_key else None
+        self.last_usage_events: list[dict[str, Any]] = []
 
     @staticmethod
     def _normalize_text(value: Any, limit: int | None = None) -> str:
@@ -459,6 +461,14 @@ class LiveResearchService:
                 }
             ],
         )
+        usage = OpenAITextProvider._extract_usage(
+            response,
+            model=self.settings.live_research_search_model or self.settings.llm_model,
+            operation="live_research_web_search",
+        )
+        if usage:
+            usage["query"] = self._normalize_text(query, limit=180)
+            self.last_usage_events.append(usage)
         results: list[dict[str, str]] = []
         payload: Any = response.model_dump() if hasattr(response, "model_dump") else response
         self._collect_web_search_sources(payload, results)
@@ -565,6 +575,7 @@ class LiveResearchService:
         *,
         force: bool = False,
     ) -> dict[str, Any]:
+        self.last_usage_events = []
         verified_fact_limit = self._requested_verified_fact_limit(prompt, studio_panel)
         if not self.settings.live_research_enabled:
             if force:
@@ -579,6 +590,7 @@ class LiveResearchService:
                     "queries": [],
                     "facts_to_verify": ["exact values", "dates", "percentages", "chart labels", "sources"],
                     "verified_fact_limit": verified_fact_limit,
+                    "provider_usage": list(self.last_usage_events),
                 }
             return {}
         plan = await self._plan_queries(prompt, studio_panel, compiled_context)
@@ -592,6 +604,7 @@ class LiveResearchService:
                 "queries": plan.get("queries", []),
                 "facts_to_verify": plan.get("facts_to_verify", []),
                 "verified_fact_limit": verified_fact_limit,
+                "provider_usage": list(self.last_usage_events),
             }
         if force or plan.get("needs_live_research") or prompt_urls:
             if not self._has_live_search_backend() and not prompt_urls:
@@ -613,6 +626,7 @@ class LiveResearchService:
                     "facts_to_verify": plan.get("facts_to_verify", []),
                     "preferred_sources": plan.get("preferred_sources", []),
                     "verified_fact_limit": verified_fact_limit,
+                    "provider_usage": list(self.last_usage_events),
                 }
         timeout = httpx.Timeout(self.settings.live_research_timeout_seconds)
         raw_sources: list[dict[str, str]] = []
@@ -641,6 +655,7 @@ class LiveResearchService:
                 "queries": plan.get("queries", []),
                 "facts_to_verify": plan.get("facts_to_verify", []),
                 "verified_fact_limit": verified_fact_limit,
+                "provider_usage": list(self.last_usage_events),
             }
         synthesis_fallback = {
             "summary": self._normalize_text(
@@ -677,6 +692,11 @@ class LiveResearchService:
                     envelope,
                     synthesis_fallback,
                 )
+                provider_usage = getattr(self.research_provider, "last_usage", None)
+                if isinstance(provider_usage, dict):
+                    usage_event = dict(provider_usage)
+                    usage_event["operation"] = usage_event.get("operation") or "live_research_synthesis"
+                    self.last_usage_events.append(usage_event)
             except Exception:
                 synthesis = synthesis_fallback
         summary = self._normalize_text((synthesis or {}).get("summary"), limit=1400)
@@ -715,4 +735,5 @@ class LiveResearchService:
             "facts_to_verify": plan.get("facts_to_verify", []),
             "preferred_sources": plan.get("preferred_sources", []),
             "verified_fact_limit": verified_fact_limit,
+            "provider_usage": list(self.last_usage_events),
         }

@@ -67,6 +67,99 @@ def test_studio_panel_payload_serializes_pinned_template_uuid_for_jsonb() -> Non
     assert payload["format"] == "carousel"
 
 
+def test_write_brand_scoring_output_defers_when_inline_scoring_disabled() -> None:
+    class _Trace:
+        def __init__(self) -> None:
+            self.payloads = []
+
+        def write_payload(self, trace_id, filename, payload):  # noqa: ANN001, ANN201
+            self.payloads.append((trace_id, filename, payload))
+
+    class _Scorer:
+        def build_scorecard(self, **_kwargs):  # noqa: ANN003, ANN201
+            raise AssertionError("inline brand scorer should not run")
+
+    service = ContentService.__new__(ContentService)
+    service.settings = SimpleNamespace(inline_brand_scoring_enabled=False)
+    service.trace = _Trace()
+    service.brand_scoring = _Scorer()
+    version = SimpleNamespace(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        explainability_metadata={"existing": "kept"},
+    )
+
+    service._write_brand_scoring_output(
+        trace_id="trace-1",
+        prompt="Create a static LinkedIn post",
+        studio_panel={"format": "static"},
+        brand_context={},
+        persona_context={},
+        objective_context={},
+        content_version=version,
+        output_assets=[
+            {
+                "asset_id": "asset-1",
+                "mime_type": "image/png",
+                "storage_path": "generated/demo.png",
+                "asset_role": "render_preview",
+                "metadata": {},
+                "asset_kind": "image",
+            }
+        ],
+    )
+
+    assert version.explainability_metadata["existing"] == "kept"
+    assert version.explainability_metadata["brand_scoring"]["status"] == "deferred"
+    assert service.trace.payloads == [
+        (
+            "trace-1",
+            "brand_scoring",
+            {
+                "status": "deferred",
+                "reason": "inline_brand_scoring_disabled_for_generation_latency",
+                "output_asset_count": 1,
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ragas_evaluation_enqueue_skips_when_automatic_evaluation_disabled() -> None:
+    class _Trace:
+        def __init__(self) -> None:
+            self.payloads = []
+
+        def write_payload(self, trace_id, filename, payload):  # noqa: ANN001, ANN201
+            self.payloads.append((trace_id, filename, payload))
+
+    service = ContentService.__new__(ContentService)
+    service.settings = SimpleNamespace(automatic_ragas_evaluation_enabled=False)
+    service.trace = _Trace()
+
+    status = await service._enqueue_ragas_evaluation_after_generation(
+        "trace-1",
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        content_version_id=uuid4(),
+        generated_image_count=1,
+    )
+
+    assert status == "disabled"
+    assert service.trace.payloads == [
+        (
+            "trace-1",
+            "ragas_evaluation_skipped",
+            {
+                "status": "skipped",
+                "reason": "automatic_ragas_evaluation_disabled",
+                "generated_image_count": 1,
+            },
+        )
+    ]
+
+
 def test_tone_check_request_accepts_version_or_structured_payload_without_raw_content() -> None:
     version_only = ToneCheckRequest(content_version_id=uuid4())
     structured_only = ToneCheckRequest(
@@ -3869,6 +3962,53 @@ def test_build_ai_final_render_export_payloads_returns_multi_slide_export_for_ca
     assert payload["renderer_metadata"]["render_manifest"]["carousel_slide_count"] == 3
 
 
+def test_build_ai_final_render_export_payloads_keeps_assets_when_compositing_fails(monkeypatch) -> None:
+    service = ContentService(session=None)  # type: ignore[arg-type]
+    tenant_id = uuid4()
+    brand_space_id = uuid4()
+    content = ContentVersion(
+        tenant_id=tenant_id,
+        brand_space_id=brand_space_id,
+        session_id=uuid4(),
+        created_by=uuid4(),
+        prompt="Create a carousel",
+        studio_panel={"format": "carousel", "platform_preset": "instagram", "file_type": "png"},
+        generated_payload={},
+        blueprint_payload={},
+        explainability_metadata={},
+    )
+    asset = GeneratedAsset(
+        id=uuid4(),
+        tenant_id=tenant_id,
+        brand_space_id=brand_space_id,
+        content_version_id=uuid4(),
+        asset_role="render_preview",
+        mime_type="image/png",
+        storage_path=f"{tenant_id}/{brand_space_id}/generated/final-render-slide-1.png",
+        width=1080,
+        height=1080,
+        metadata_json={"render_source": "ai", "generation_stage": "final_render", "slide_index": 1, "slide_count": 1},
+    )
+
+    def _raise_logo_error(**_kwargs):
+        raise NameError("simulated compositing issue")
+
+    monkeypatch.setattr(service, "_build_ai_logo_fallback_asset", _raise_logo_error)
+
+    payload = service._build_ai_final_render_export_payloads(
+        content=content,
+        assets=[asset],
+        explainability={"scene_graph": {"elements": []}, "generation_path": "ai_final_render", "creative_decision": {}},
+        studio_panel={"format": "carousel", "platform_preset": "instagram", "file_type": "png", "size": {"width": 1080, "height": 1080}},
+        selected_template_id=None,
+        logo_asset_path="stored/logo.png",
+    )
+
+    assert payload["preview_asset"]["storage_path"].endswith("final-render-slide-1.png")
+    assert len(payload["export_assets"]) == 1
+    assert payload["renderer_metadata"]["render_manifest"]["logo_fallback_composited"] is False
+
+
 def test_resolve_ai_logo_box_prefers_top_right_hint_and_minimum_size() -> None:
     content = ContentVersion(
         tenant_id=uuid4(),
@@ -5328,6 +5468,100 @@ def test_build_ai_logo_fallback_asset_clears_reserved_logo_zone_before_overlay()
     assert logo_red >= 220
     assert logo_green >= 120
     assert logo_blue <= 80
+
+    if root.exists():
+        for child in sorted(root.rglob("*"), reverse=True):
+            if child.is_file():
+                child.unlink()
+            elif child.is_dir():
+                child.rmdir()
+        root.rmdir()
+
+
+def test_carousel_logo_collision_scoring_uses_cleaned_reserved_zone_with_layout_obstructions() -> None:
+    service = ContentService(session=None)  # type: ignore[arg-type]
+    tenant_id = uuid4()
+    brand_space_id = uuid4()
+    root = Path("tests") / f"ai-final-render-carousel-logo-clearance-{uuid4()}"
+
+    class _Storage:
+        def __init__(self, base_path: Path) -> None:
+            self.base_path = base_path
+
+        def exists(self, storage_path: str) -> bool:
+            return (self.base_path / storage_path).exists()
+
+        def absolute_path(self, storage_path: str) -> str:
+            return str((self.base_path / storage_path).resolve())
+
+        def save_bytes(self, tenant_id, brand_space_id, category, filename, content):
+            relative = f"{category}/{filename}"
+            target = self.base_path / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+            return SimpleNamespace(storage_path=relative, absolute_path=str(target.resolve()))
+
+    service.storage = _Storage(root)
+
+    final_render_path = f"{tenant_id}/{brand_space_id}/generated/final-render.png"
+    logo_path = f"{tenant_id}/{brand_space_id}/logo/jiraaf.png"
+    final_render_file = root / final_render_path
+    final_render_file.parent.mkdir(parents=True, exist_ok=True)
+    base = Image.new("RGBA", (1024, 1536), (246, 252, 255, 255))
+    for x in range(810, 1010):
+        for y in range(42, 126):
+            base.putpixel((x, y), (12, 32, 80, 255))
+    base.save(final_render_file, format="PNG")
+
+    logo_file = root / logo_path
+    logo_file.parent.mkdir(parents=True, exist_ok=True)
+    logo = Image.new("RGBA", (1001, 292), (0, 0, 0, 0))
+    ImageDraw.Draw(logo).rectangle((0, 0, 1000, 291), fill=(0, 57, 117, 255))
+    logo.save(logo_file, format="PNG")
+
+    content = ContentVersion(
+        id=uuid4(),
+        tenant_id=tenant_id,
+        brand_space_id=brand_space_id,
+        session_id=uuid4(),
+        created_by=uuid4(),
+        prompt="Create a LinkedIn carousel",
+        studio_panel={"format": "carousel", "platform_preset": "linkedin", "file_type": "pdf"},
+        generated_payload={"metadata": {"logo_position": "top-right"}},
+        blueprint_payload={
+            "zones": [
+                {"zone_id": "hero_image", "role": "image", "x": 80, "y": 300, "width": 420, "height": 420}
+            ]
+        },
+        explainability_metadata={},
+    )
+    asset = GeneratedAsset(
+        id=uuid4(),
+        tenant_id=tenant_id,
+        brand_space_id=brand_space_id,
+        content_version_id=uuid4(),
+        asset_role="render_preview",
+        mime_type="image/png",
+        storage_path=final_render_path,
+        width=1024,
+        height=1536,
+        metadata_json={"render_source": "ai", "generation_stage": "final_render"},
+    )
+
+    payload = service._build_ai_logo_fallback_asset(
+        content=content,
+        asset=asset,
+        explainability={"scene_graph": {"elements": []}, "generation_path": "ai_final_render"},
+        studio_panel={"format": "carousel", "platform_preset": "linkedin", "file_type": "pdf", "size": {"width": 1024, "height": 1536}},
+        logo_asset_path=logo_path,
+    )
+
+    assert payload is not None
+    collision_guard = payload["metadata"]["logo_collision_guard"]
+    assert collision_guard["selection_strategy"] == "fixed_calculated_size"
+    assert collision_guard["scale"] == 1.0
+    assert collision_guard["shrink_applied"] is False
+    assert collision_guard["visible_logo_size"]["width"] >= 150
 
     if root.exists():
         for child in sorted(root.rglob("*"), reverse=True):

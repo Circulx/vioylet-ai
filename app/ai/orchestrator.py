@@ -94,8 +94,8 @@ def select_generation_engine(
 class AIOrchestratorService:
     IMAGE_PROMPT_MAX_LENGTH = 12000
     DEFAULT_CAROUSEL_IMAGE_PROMPT_MAX_LENGTH = 12000
-    CAROUSEL_IMAGE_PROMPT_MAX_LENGTH = 24000
-    CAROUSEL_STRICT_SAMPLE_IMAGE_PROMPT_MAX_LENGTH = 21000
+    CAROUSEL_IMAGE_PROMPT_MAX_LENGTH = 21000
+    CAROUSEL_STRICT_SAMPLE_IMAGE_PROMPT_MAX_LENGTH = 19000
     SAMPLE_SIMILARITY_ACCEPT_SCORE = 0.82
     SCENE_GRAPH_REPAIR_ATTEMPTS = 2
     CONTENT_SEMANTIC_REPAIR_ATTEMPTS = 1
@@ -3817,9 +3817,14 @@ class AIOrchestratorService:
         marker = " ".join(str(value or "").casefold().replace("us$", "usd ").split())
         marker = marker.replace("nz$", "nzd ")
         marker = marker.replace("$", "usd ")
-        marker = marker.replace("₹", "inr ")
+        marker = marker.replace("\u20b9", "inr ")
         marker = marker.replace("â‚¹", "inr ")
         marker = re.sub(r"\brs\.?\s*", "inr ", marker)
+        marker = re.sub(
+            r"\b(usd|nzd|inr)\s+(\d[\d,]*(?:\.\d+)?)\b",
+            lambda match: f"{match.group(1)} {match.group(2).replace(',', '')}",
+            marker,
+        )
         marker = re.sub(r"\b(usd|nzd|inr)\s*(\d+(?:\.\d+)?)\s*b\b", r"\1 \2 billion", marker)
         marker = re.sub(r"\b(usd|nzd|inr)\s*(\d+(?:\.\d+)?)\s*m\b", r"\1 \2 million", marker)
         marker = re.sub(r"\b(\d+(?:\.\d+)?)\s*b\b", r"\1 billion", marker)
@@ -3840,7 +3845,7 @@ class AIOrchestratorService:
 
     @classmethod
     def _exact_claim_markers(cls, value: Any) -> set[str]:
-        text = AIOrchestratorService._coerce_text_value(value)
+        text = AIOrchestratorService._raw_text_for_exact_claims(value)
         if not text:
             return set()
         markers: set[str] = set()
@@ -3849,10 +3854,10 @@ class AIOrchestratorService:
             r"\b(?:19|20)\d{2}\b",
             r"\b\d+(?:\.\d+)?\s?%",
             r"\b(?:top|rank(?:ed)?|#)\s?\d+\b",
-            r"\bus\$\s?\d+(?:\.\d+)?(?:\s?(?:billion|million|crore|lakh|trillion))?\b",
-            r"\b(?:usd|nzd|nz\$|inr|rs\.?|â‚¹|\$)\s?\d+(?:\.\d+)?\s?[bm]\b",
+            r"(?<!\w)us\$\s?\d[\d,]*(?:\.\d+)?(?:\s?(?:billion|million|crore|lakh|trillion))?\b",
+            r"(?<!\w)(?:usd|nzd|nz\$|inr|rs\.?|\u20b9|â‚¹|\$)\s?\d[\d,]*(?:\.\d+)?\s?[bm]\b",
             r"\b\d+(?:\.\d+)?\s?[bm]\b",
-            r"\b(?:usd|inr|rs\.?|₹|\$)\s?\d+(?:\.\d+)?(?:\s?(?:billion|million|crore|lakh|trillion))?\b",
+            r"(?<!\w)(?:usd|inr|rs\.?|\u20b9|â‚¹|\$)\s?\d[\d,]*(?:\.\d+)?(?:\s?(?:billion|million|crore|lakh|trillion))?\b",
             r"\b\d+(?:\.\d+)?\s?(?:billion|million|crore|lakh|trillion|tariff lines|years|skilled professionals|occupations)\b",
             r"\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:[\s-]+(?:one|two|three|four|five|six|seven|eight|nine))?\s?(?:billion|million|crore|lakh|trillion|tariff lines|years|skilled professionals|occupations)\b",
         )
@@ -3862,6 +3867,18 @@ class AIOrchestratorService:
                 if marker:
                     markers.add(marker)
         return markers
+
+    @staticmethod
+    def _raw_text_for_exact_claims(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value
+        if isinstance(value, dict):
+            return json.dumps(value, default=str, ensure_ascii=False)
+        if isinstance(value, (list, tuple, set)):
+            return " ".join(AIOrchestratorService._raw_text_for_exact_claims(item) for item in value)
+        return str(value)
 
     @classmethod
     def _supported_exact_claim_markers(
@@ -11353,7 +11370,19 @@ class AIOrchestratorService:
             if element_id in seen_element_ids:
                 continue
             seen_element_ids.add(element_id)
+            raw_layer_value = normalized.get("layer")
+            numeric_layer_index: int | None = None
+            if isinstance(raw_layer_value, (int, float)) and not isinstance(raw_layer_value, bool):
+                numeric_layer_index = int(raw_layer_value)
+                if 0 <= numeric_layer_index < len(payload["layers"]):
+                    normalized["layer"] = payload["layers"][numeric_layer_index]
+                else:
+                    normalized["layer"] = str(numeric_layer_index)
+            elif raw_layer_value is not None:
+                normalized["layer"] = str(raw_layer_value)
             normalized["geometry"] = self._normalize_scene_element_geometry(normalized)
+            if numeric_layer_index is not None and normalized["geometry"].get("z_index") is None:
+                normalized["geometry"]["z_index"] = numeric_layer_index
             normalized["text"] = self._normalize_scene_element_text(normalized)
             normalized["validation_hints"] = self._coerce_mapping(normalized.get("validation_hints"))
             normalized["style"] = self._normalize_text_style_for_brand(
@@ -16117,6 +16146,12 @@ class AIOrchestratorService:
             value = vision_analysis.get(key)
             if isinstance(value, dict) and value:
                 merged[key] = value
+        provider_usage = vision_analysis.get("provider_usage")
+        if isinstance(provider_usage, dict) and provider_usage:
+            merged["provider_usage"] = provider_usage
+        vision_cache = vision_analysis.get("vision_cache")
+        if isinstance(vision_cache, dict) and vision_cache:
+            merged["vision_cache"] = vision_cache
         if vision_analysis:
             merged["vision_analysis_status"] = "openai_vision_enhanced"
         return merged
@@ -18071,6 +18106,12 @@ class AIOrchestratorService:
 
                 vision_summary = {
                     "status": "openai_vision_enhanced",
+                    "provider_usage": vision_blueprint.get("provider_usage")
+                    if isinstance(vision_blueprint.get("provider_usage"), dict)
+                    else None,
+                    "vision_cache": vision_blueprint.get("vision_cache")
+                    if isinstance(vision_blueprint.get("vision_cache"), dict)
+                    else None,
                     "premium_quality": premium_quality,
                     "ocr_structure": {
                         "readable_text_blocks": readable_blocks,
@@ -18408,7 +18449,11 @@ class AIOrchestratorService:
         similarity_report: dict[str, Any] | None = None
         similarity_retry_attempts = 0
         static_infographic_no_retry = self._llm_led_static_infographic_format(self._format_name_from_request(request))
-        max_similarity_retries = 0 if static_infographic_no_retry else 1
+        configured_similarity_retries = max(
+            int(getattr(self.settings, "ai_final_render_carousel_sample_similarity_retries", 0) or 0),
+            0,
+        )
+        max_similarity_retries = 0 if static_infographic_no_retry else configured_similarity_retries
         output_quality_retry_attempts = 0
         configured_output_quality_retries = max(int(self.settings.image_quality_retry_attempts or 1), 0)
         max_output_quality_retries = 0 if static_infographic_no_retry else configured_output_quality_retries
@@ -18438,6 +18483,7 @@ class AIOrchestratorService:
             and stable_sample_blueprint
         )
         for attempt in range(1, max_generation_attempts + 1):
+            attempt_started_at = perf_counter()
             trace_label = (
                 f"final_render_conditioned_generation{trace_suffix}"
                 if reference_image_paths and attempt == 1
@@ -18447,6 +18493,7 @@ class AIOrchestratorService:
                 if attempt == 1
                 else f"final_render_sample_similarity_repair_generation{trace_suffix}_attempt_{attempt:02d}"
             )
+            image_call_started_at = perf_counter()
             if reference_image_paths:
                 asset = self._edit_image_with_retries(
                     image_provider=image_provider,
@@ -18469,12 +18516,15 @@ class AIOrchestratorService:
                     trace_id=trace_id,
                     trace_label=trace_label,
                 )
+            image_call_ms = round((perf_counter() - image_call_started_at) * 1000, 2)
+            output_quality_started_at = perf_counter()
             output_quality_report = self._assess_final_render_output_image(
                 request=request,
                 asset=asset,
                 image_size=image_size,
                 approved_text_payload=approved_text_payload,
             )
+            output_quality_ms = round((perf_counter() - output_quality_started_at) * 1000, 2)
             if output_quality_report:
                 asset["output_quality_assessment"] = output_quality_report
                 asset["output_quality_retry_attempts"] = output_quality_retry_attempts
@@ -18511,6 +18561,11 @@ class AIOrchestratorService:
                         "report": output_quality_report,
                         "slide_index": slide_index,
                         "slide_count": slide_count,
+                        "timing_ms": {
+                            "image_provider_call_ms": image_call_ms,
+                            "output_quality_assessment_ms": output_quality_ms,
+                            "attempt_total_ms": round((perf_counter() - attempt_started_at) * 1000, 2),
+                        },
                     },
                 )
                 if (
@@ -18587,6 +18642,7 @@ class AIOrchestratorService:
             output_storage_path = str(asset.get("storage_path") or "").strip()
             if not output_storage_path or not self.storage.exists(output_storage_path):
                 return asset, similarity_report, similarity_retry_attempts, current_prompt
+            similarity_started_at = perf_counter()
             similarity_report = self._sample_output_similarity_from_paths_with_vision(
                 sample_image_path=sample_reference_paths[0],
                 output_image_path=self.storage.absolute_path(output_storage_path),
@@ -18617,6 +18673,12 @@ class AIOrchestratorService:
                     "report": similarity_report,
                     "slide_index": slide_index,
                     "slide_count": slide_count,
+                    "timing_ms": {
+                        "image_provider_call_ms": image_call_ms,
+                        "output_quality_assessment_ms": output_quality_ms,
+                        "sample_similarity_assessment_ms": round((perf_counter() - similarity_started_at) * 1000, 2),
+                        "attempt_total_ms": round((perf_counter() - attempt_started_at) * 1000, 2),
+                    },
                 },
             )
             if accepted:
@@ -20497,6 +20559,17 @@ class AIOrchestratorService:
         ]
         if not previous_slides or not rewritten_slides:
             return rewritten_payload
+        rewritten_payload = cls._preserve_carousel_rewrite_exact_claims(
+            previous_slides=previous_slides,
+            rewritten_payload=rewritten_payload,
+            rewritten_slides=rewritten_slides,
+        )
+        rewritten_metadata = rewritten_payload.get("metadata") if isinstance(rewritten_payload.get("metadata"), dict) else {}
+        rewritten_slides = [
+            dict(item)
+            for item in (rewritten_metadata.get("carousel_slide_specs") or rewritten_metadata.get("slides") or [])
+            if isinstance(item, dict)
+        ]
         if len(rewritten_slides) >= len(previous_slides):
             return rewritten_payload
         slide_indexes = [
@@ -20540,6 +20613,165 @@ class AIOrchestratorService:
         }
         merged_payload["metadata"] = merged_metadata
         return merged_payload
+
+    @classmethod
+    def _preserve_carousel_rewrite_exact_claims(
+        cls,
+        *,
+        previous_slides: list[dict[str, Any]],
+        rewritten_payload: dict[str, Any],
+        rewritten_slides: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        previous_by_number: dict[int, dict[str, Any]] = {}
+        for index, slide in enumerate(previous_slides, start=1):
+            slide_number = cls._int_or_none(slide.get("slide_number")) or cls._int_or_none(slide.get("slide_index")) or index
+            previous_by_number[slide_number] = slide
+
+        preserved_slides: list[dict[str, Any]] = []
+        for index, rewritten_slide in enumerate(rewritten_slides, start=1):
+            slide_number = (
+                cls._int_or_none(rewritten_slide.get("slide_number"))
+                or cls._int_or_none(rewritten_slide.get("slide_index"))
+                or index
+            )
+            previous_slide = previous_by_number.get(slide_number) or (previous_slides[index - 1] if index - 1 < len(previous_slides) else {})
+            preserved_slides.append(
+                cls._preserve_carousel_slide_exact_claims(
+                    previous_slide=previous_slide,
+                    rewritten_slide=rewritten_slide,
+                )
+            )
+
+        merged_payload = dict(rewritten_payload)
+        for key in ("headline", "body", "cta"):
+            if key in merged_payload:
+                merged_payload[key] = cls._restore_corrupted_currency_claims(
+                    previous_source=previous_slides,
+                    rewritten_value=merged_payload.get(key),
+                )
+        metadata = dict(merged_payload.get("metadata") if isinstance(merged_payload.get("metadata"), dict) else {})
+        metadata["carousel_slide_specs"] = preserved_slides
+        for key in ("proof_points", "body_points", "stat_highlights", "claim_evidence_pairs"):
+            if key in metadata:
+                metadata[key] = cls._restore_corrupted_currency_claims(
+                    previous_source=previous_slides,
+                    rewritten_value=metadata.get(key),
+                )
+        merged_payload["metadata"] = metadata
+        return merged_payload
+
+    @classmethod
+    def _preserve_carousel_slide_exact_claims(
+        cls,
+        *,
+        previous_slide: dict[str, Any],
+        rewritten_slide: dict[str, Any],
+    ) -> dict[str, Any]:
+        if not previous_slide:
+            return dict(rewritten_slide)
+        preserved = dict(rewritten_slide)
+        for key in ("headline", "supporting_line", "body", "cta"):
+            if key in preserved:
+                preserved[key] = cls._restore_corrupted_currency_claims(
+                    previous_source=previous_slide,
+                    rewritten_value=preserved.get(key),
+                )
+            if key in previous_slide and key in preserved:
+                preserved[key] = cls._preserve_rewrite_exact_claim_value(
+                    previous_value=previous_slide.get(key),
+                    rewritten_value=preserved.get(key),
+                )
+        for key in ("body_points", "proof_points", "stat_highlights"):
+            if key in preserved:
+                preserved[key] = cls._restore_corrupted_currency_claims(
+                    previous_source=previous_slide,
+                    rewritten_value=preserved.get(key),
+                )
+            if key in previous_slide and key in preserved:
+                preserved[key] = cls._preserve_rewrite_exact_claim_value(
+                    previous_value=previous_slide.get(key),
+                    rewritten_value=preserved.get(key),
+                )
+        if "claim_evidence_pairs" in preserved:
+            preserved["claim_evidence_pairs"] = cls._restore_corrupted_currency_claims(
+                previous_source=previous_slide,
+                rewritten_value=preserved.get("claim_evidence_pairs"),
+            )
+        if "claim_evidence_pairs" in previous_slide and "claim_evidence_pairs" in preserved:
+            preserved["claim_evidence_pairs"] = cls._preserve_rewrite_exact_claim_value(
+                previous_value=previous_slide.get("claim_evidence_pairs"),
+                rewritten_value=preserved.get("claim_evidence_pairs"),
+            )
+        return preserved
+
+    @classmethod
+    def _restore_corrupted_currency_claims(cls, *, previous_source: Any, rewritten_value: Any) -> Any:
+        currency_map = cls._currency_amount_display_map(previous_source)
+        if not currency_map:
+            return rewritten_value
+        if isinstance(rewritten_value, str):
+            return cls._restore_corrupted_currency_text(rewritten_value, currency_map=currency_map)
+        if isinstance(rewritten_value, list):
+            return [
+                cls._restore_corrupted_currency_claims(previous_source=previous_source, rewritten_value=item)
+                for item in rewritten_value
+            ]
+        if isinstance(rewritten_value, dict):
+            restored = dict(rewritten_value)
+            for key, value in list(restored.items()):
+                restored[key] = cls._restore_corrupted_currency_claims(
+                    previous_source=previous_source,
+                    rewritten_value=value,
+                )
+            return restored
+        return rewritten_value
+
+    @classmethod
+    def _currency_amount_display_map(cls, value: Any) -> dict[str, str]:
+        text = cls._raw_text_for_exact_claims(value)
+        if not text:
+            return {}
+        pattern = re.compile(
+            r"(?<!\w)(?:\u20b9|â‚¹|rs\.?|inr|usd|us\$|nzd|nz\$|\$)\s?(?P<amount>\d[\d,]*(?:\.\d+)?)(?:\s?(?:billion|million|crore|lakh|trillion))?",
+            flags=re.IGNORECASE,
+        )
+        amounts: dict[str, str] = {}
+        for match in pattern.finditer(text):
+            amount_digits = re.sub(r"[^\d.]", "", match.group("amount") or "")
+            display = match.group(0).strip()
+            if amount_digits and display:
+                amounts.setdefault(amount_digits, display)
+        return amounts
+
+    @classmethod
+    def _restore_corrupted_currency_text(cls, text: str, *, currency_map: dict[str, str]) -> str:
+        if not text or not currency_map:
+            return text
+
+        def replace(match: re.Match[str]) -> str:
+            raw = match.group(0)
+            digits = re.sub(r"[^\d.]", "", raw)
+            if not digits.startswith("9") or len(digits) <= 1:
+                return raw
+            replacement = currency_map.get(digits[1:])
+            return replacement or raw
+
+        return re.sub(
+            r"(?<!\d)9\d[\d,]*(?:\.\d+)?(?:\s?(?:billion|million|crore|lakh|trillion))?(?!\d)",
+            replace,
+            text,
+            flags=re.IGNORECASE,
+        )
+
+    @classmethod
+    def _preserve_rewrite_exact_claim_value(cls, *, previous_value: Any, rewritten_value: Any) -> Any:
+        previous_markers = cls._exact_claim_markers(previous_value)
+        if not previous_markers:
+            return rewritten_value
+        rewritten_markers = cls._exact_claim_markers(rewritten_value)
+        if previous_markers.issubset(rewritten_markers):
+            return rewritten_value
+        return previous_value
 
     @classmethod
     def _validate_content_semantics(
@@ -21479,6 +21711,11 @@ class AIOrchestratorService:
             creative_decision=creative_decision,
         )
         attempts = 0
+        prompt_context = self.compiler.compact_generation_prompt_context(compiled_context)
+        prompt_context_budget = self.compiler.generation_context_budget_report(
+            full_context=compiled_context,
+            prompt_context=prompt_context,
+        )
         while (
             report.get("status") != "clean"
             and bool(report.get("repairable"))
@@ -21489,7 +21726,7 @@ class AIOrchestratorService:
                 original_prompt=request.prompt,
                 rewrite_instruction=str(report.get("rewrite_instruction") or "").strip(),
                 current_payload=text_payload.model_dump(mode="json"),
-                compiled_context=compiled_context,
+                compiled_context=prompt_context,
                 message_strategy=message_strategy.model_dump(mode="json"),
                 tone_analysis={},
                 rewrite_field_plan=self._content_semantic_rewrite_field_plan(
@@ -21507,17 +21744,20 @@ class AIOrchestratorService:
                 rewrite_envelope,
                 fallback=text_payload.model_dump(mode="json"),
             )
+            provider_usage = getattr(generation_provider, "last_usage", None)
             self._trace_payload(
                 trace_id,
                 self.trace,
                 f"content_semantic_repair_{attempts:02d}",
                 {
                     "report": report,
+                    "compiled_context_budget": prompt_context_budget,
                     "prompt": {
                         "system": rewrite_envelope.system,
                         "user": rewrite_envelope.user,
                     },
                     "response": rewrite_response,
+                    "provider_usage": provider_usage if isinstance(provider_usage, dict) else None,
                 },
             )
             text_dict = self.normalize_text_payload(
@@ -21859,6 +22099,18 @@ class AIOrchestratorService:
                 gathered_live_research = {}
             if isinstance(gathered_live_research, dict) and gathered_live_research:
                 request.live_research = input_access_tracker.wrap_source("live_research", gathered_live_research)
+                provider_usage = gathered_live_research.get("provider_usage")
+                if isinstance(provider_usage, list) and provider_usage:
+                    self._trace_payload(
+                        trace_id,
+                        self.trace,
+                        "live_research_provider_usage",
+                        {
+                            "usage": provider_usage,
+                            "status": gathered_live_research.get("status"),
+                            "queries": gathered_live_research.get("queries", []),
+                        },
+                    )
                 compiled_context = self.compiler.compile(
                     prompt=request.prompt,
                     brand_context=request.resolved_brand_context,
@@ -21884,18 +22136,19 @@ class AIOrchestratorService:
         latency_ms["context_compile_ms"] = round((perf_counter() - compile_started_at) * 1000, 2)
 
         research_started_at = perf_counter()
+        research_prompt_context = self.compiler.compact_generation_prompt_context(compiled_context)
         research_context_payload = {
-            "brand_copy_brief": compiled_context.get("brand_copy_brief", {}),
-            "audience_brief": compiled_context.get("audience_brief", {}),
-            "objective_brief": compiled_context.get("objective_brief", {}),
-            "knowledge_brief": compiled_context.get("knowledge_brief", []),
-            "template_fit_brief": compiled_context.get("template_fit_brief", {}),
-            "prompt_intelligence_brief": compiled_context.get("prompt_intelligence_brief", {}),
-            "research_editorial_brief": compiled_context.get("research_editorial_brief", {}),
-            "format_family_plan": compiled_context.get("format_family_plan", {}),
-            "content_plan": compiled_context.get("content_plan", {}),
-            "visual_plan": compiled_context.get("visual_plan", {}),
-            "live_research": request.live_research,
+            "brand_copy_brief": research_prompt_context.get("brand_copy_brief", {}),
+            "audience_brief": research_prompt_context.get("audience_brief", {}),
+            "objective_brief": research_prompt_context.get("objective_brief", {}),
+            "knowledge_brief": research_prompt_context.get("knowledge_brief", []),
+            "template_fit_brief": research_prompt_context.get("template_fit_brief", {}),
+            "prompt_intelligence_brief": research_prompt_context.get("prompt_intelligence_brief", {}),
+            "research_editorial_brief": research_prompt_context.get("research_editorial_brief", {}),
+            "format_family_plan": research_prompt_context.get("format_family_plan", {}),
+            "content_plan": research_prompt_context.get("content_plan", {}),
+            "visual_plan": research_prompt_context.get("visual_plan", {}),
+            "live_research": research_prompt_context.get("live_research", {}),
         }
         research_envelope = PromptEnvelope(
             system=(
@@ -21946,7 +22199,14 @@ class AIOrchestratorService:
             )
         latency_ms["research_ms"] = round((perf_counter() - research_started_at) * 1000, 2)
         compiled_context["research_summary"] = research_summary
+        generation_prompt_context = self.compiler.compact_generation_prompt_context(compiled_context)
+        generation_context_budget = self.compiler.generation_context_budget_report(
+            full_context=compiled_context,
+            prompt_context=generation_prompt_context,
+        )
         self._trace_payload(trace_id, self.trace, "compiled_context", compiled_context)
+        self._trace_payload(trace_id, self.trace, "compiled_prompt_context_budget", generation_context_budget)
+        self._trace_payload(trace_id, self.trace, "compiled_prompt_context", generation_prompt_context)
         brand_name = request.resolved_brand_context.get("brand_name", "Violyt")
         platform_preset = request.studio_panel.get("platform_preset", "social")
         format_name = request.studio_panel.get("format", "static")
@@ -22175,7 +22435,7 @@ class AIOrchestratorService:
             message_strategy_started_at = perf_counter()
             message_strategy_envelope = self.prompts.compose_message_strategy_envelope(
                 user_prompt=request.prompt,
-                compiled_context=compiled_context,
+                compiled_context=generation_prompt_context,
                 studio_panel=request.studio_panel,
             )
             self._trace_payload(
@@ -22191,8 +22451,9 @@ class AIOrchestratorService:
                             "user": message_strategy_envelope.user,
                         }
                     ),
-                    "compiled_context_token_measurement": self._trace_mapping_token_measurement(compiled_context),
-                    "compiled_sections": sorted(compiled_context.keys()),
+                    "compiled_context_token_measurement": self._trace_mapping_token_measurement(generation_prompt_context),
+                    "compiled_context_budget": generation_context_budget,
+                    "compiled_sections": sorted(generation_prompt_context.keys()),
                 },
             )
             message_strategy_response = generation_provider.generate_structured_json(
@@ -22230,7 +22491,7 @@ class AIOrchestratorService:
             )
             planning_envelope = self.prompts.compose_image_led_social_envelope(
                 user_prompt=request.prompt,
-                compiled_context=compiled_context,
+                compiled_context=generation_prompt_context,
                 studio_panel=request.studio_panel,
                 message_strategy=message_strategy.model_dump(mode="json"),
                 validation_report=request.validation_report,
@@ -22244,7 +22505,7 @@ class AIOrchestratorService:
             )
             planning_envelope = self.prompts.compose_creative_planning_envelope(
                 user_prompt=request.prompt,
-                compiled_context=compiled_context,
+                compiled_context=generation_prompt_context,
                 studio_panel=request.studio_panel,
                 validation_report=request.validation_report,
             )
@@ -22261,8 +22522,9 @@ class AIOrchestratorService:
                         "user": planning_envelope.user,
                     }
                 ),
-                "compiled_context_token_measurement": self._trace_mapping_token_measurement(compiled_context),
-                "compiled_sections": sorted(compiled_context.keys()),
+                "compiled_context_token_measurement": self._trace_mapping_token_measurement(generation_prompt_context),
+                "compiled_context_budget": generation_context_budget,
+                "compiled_sections": sorted(generation_prompt_context.keys()),
                 "generation_path": generation_path,
             },
         )
@@ -22414,6 +22676,11 @@ class AIOrchestratorService:
             self._style_reference_only_carousel_active(request, creative_decision)
             and self._should_use_ai_final_render(request, generation_path, creative_decision)
         )
+        ai_final_render_static_infographic = (
+            generation_path == "image_led_social"
+            and self._llm_led_static_infographic_format(self._format_name_from_request(request))
+            and self._should_use_ai_final_render(request, generation_path, creative_decision)
+        )
         if style_reference_final_render_active and validation_report.status != "clean":
             self._trace_payload(
                 trace_id,
@@ -22429,6 +22696,28 @@ class AIOrchestratorService:
                 issues=[],
                 summary=[
                     "Scene graph validation deferred because style-reference carousel final render uses selected sample pages as the layout authority."
+                ],
+                repairable=False,
+            )
+        elif (
+            ai_final_render_static_infographic
+            and bool(getattr(self.settings, "ai_final_render_skip_advisory_scene_repairs", True))
+            and validation_report.status != "clean"
+        ):
+            self._trace_payload(
+                trace_id,
+                self.trace,
+                "scene_graph_validation_deferred_to_ai_final_render",
+                {
+                    "reason": "static_infographic_ai_final_render_uses_final_prompt_and_output_vision_as_authority",
+                    "deferred_issues": [issue.rule_id for issue in validation_report.issues],
+                },
+            )
+            validation_report = SceneGraphValidationReport(
+                status="clean",
+                issues=[],
+                summary=[
+                    "Scene graph validation deferred because static/infographic AI final render uses the final render prompt and output vision QA as the visual authority."
                 ],
                 repairable=False,
             )
@@ -22461,7 +22750,7 @@ class AIOrchestratorService:
 
             repair_envelope = self.prompts.compose_scene_graph_repair_envelope(
                 user_prompt=request.prompt,
-                compiled_context=compiled_context,
+                compiled_context=generation_prompt_context,
                 studio_panel=request.studio_panel,
                 current_scene_graph=scene_graph.model_dump(mode="json"),
                 creative_decision=creative_decision.model_dump(mode="json"),
@@ -22475,17 +22764,20 @@ class AIOrchestratorService:
                     "scene_graph": scene_graph.model_dump(mode="json"),
                 },
             )
+            provider_usage = getattr(generation_provider, "last_usage", None)
             self._trace_payload(
                 trace_id,
                 self.trace,
                 f"repair_{repair_attempts:02d}",
                 {
                     "validation_report": validation_report.model_dump(mode="json"),
+                    "compiled_context_budget": generation_context_budget,
                     "prompt": {
                         "system": repair_envelope.system,
                         "user": repair_envelope.user,
                     },
                     "response": repair_response,
+                    "provider_usage": provider_usage if isinstance(provider_usage, dict) else None,
                 },
             )
             creative_decision = self.normalize_creative_decision_payload(
@@ -22564,7 +22856,7 @@ class AIOrchestratorService:
             if generation_path == "image_led_social":
                 fresh_replan_envelope = self.prompts.compose_image_led_social_envelope(
                     user_prompt=request.prompt,
-                    compiled_context=compiled_context,
+                    compiled_context=generation_prompt_context,
                     studio_panel=request.studio_panel,
                     message_strategy=message_strategy.model_dump(mode="json"),
                     validation_report=validation_report.model_dump(mode="json"),
@@ -22573,7 +22865,7 @@ class AIOrchestratorService:
             else:
                 fresh_replan_envelope = self.prompts.compose_creative_planning_envelope(
                     user_prompt=request.prompt,
-                    compiled_context=compiled_context,
+                    compiled_context=generation_prompt_context,
                     studio_panel=request.studio_panel,
                     validation_report=validation_report.model_dump(mode="json"),
                     replan_note=replan_note,
@@ -22586,17 +22878,20 @@ class AIOrchestratorService:
                     "scene_graph": fallback_scene_graph,
                 },
             )
+            provider_usage = getattr(generation_provider, "last_usage", None)
             self._trace_payload(
                 trace_id,
                 self.trace,
                 "fresh_replan_01",
                 {
                     "validation_report": validation_report.model_dump(mode="json"),
+                    "compiled_context_budget": generation_context_budget,
                     "prompt": {
                         "system": fresh_replan_envelope.system,
                         "user": fresh_replan_envelope.user,
                     },
                     "response": fresh_replan_response,
+                    "provider_usage": provider_usage if isinstance(provider_usage, dict) else None,
                 },
             )
             text_dict = self.normalize_text_payload(
@@ -22790,8 +23085,26 @@ class AIOrchestratorService:
             compiled_context=compiled_context,
         )
         quality_retry_attempts = 0
+        skip_pre_image_quality_retries = (
+            generation_path == "image_led_social"
+            and self._llm_led_static_infographic_format(self._format_name_from_request(request))
+            and self._should_use_ai_final_render(request, generation_path, creative_decision)
+            and bool(getattr(self.settings, "ai_final_render_skip_pre_image_quality_retries", True))
+        )
+        if skip_pre_image_quality_retries and float(quality_assessment.get("score") or 0.0) < float(self.settings.image_quality_min_score or self.IMAGE_QUALITY_MIN_SCORE):
+            self._trace_payload(
+                trace_id,
+                self.trace,
+                "pre_image_quality_retry_deferred_to_final_render",
+                {
+                    "reason": "static_infographic_ai_final_render_uses_output_vision_quality_check",
+                    "quality_assessment": quality_assessment,
+                    "threshold": float(self.settings.image_quality_min_score or self.IMAGE_QUALITY_MIN_SCORE),
+                },
+            )
         while (
             generation_path == "image_led_social"
+            and not skip_pre_image_quality_retries
             and float(quality_assessment.get("score") or 0.0) < float(self.settings.image_quality_min_score or self.IMAGE_QUALITY_MIN_SCORE)
             and quality_retry_attempts < max(int(self.settings.image_quality_retry_attempts or 1), 0)
         ):
@@ -22799,7 +23112,7 @@ class AIOrchestratorService:
             quality_report = self._quality_report_from_assessment(quality_assessment)
             repair_envelope = self.prompts.compose_scene_graph_repair_envelope(
                 user_prompt=request.prompt,
-                compiled_context=compiled_context,
+                compiled_context=generation_prompt_context,
                 studio_panel=request.studio_panel,
                 current_scene_graph=scene_graph.model_dump(mode="json"),
                 creative_decision=creative_decision.model_dump(mode="json"),
@@ -22812,6 +23125,7 @@ class AIOrchestratorService:
                     "scene_graph": scene_graph.model_dump(mode="json"),
                 },
             )
+            provider_usage = getattr(generation_provider, "last_usage", None)
             self._trace_payload(
                 trace_id,
                 self.trace,
@@ -22819,11 +23133,13 @@ class AIOrchestratorService:
                 {
                     "quality_assessment": quality_assessment,
                     "validation_report": quality_report.model_dump(mode="json"),
+                    "compiled_context_budget": generation_context_budget,
                     "prompt": {
                         "system": repair_envelope.system,
                         "user": repair_envelope.user,
                     },
                     "response": repair_response,
+                    "provider_usage": provider_usage if isinstance(provider_usage, dict) else None,
                 },
             )
             creative_decision = self.normalize_creative_decision_payload(
@@ -23353,6 +23669,7 @@ class AIOrchestratorService:
                             "slide_index": slide_index,
                             "slide_count": slide_count,
                             "carousel_role": slide.get("role"),
+                            "provider_usage": asset.get("provider_usage"),
                         },
                     )
                     slide_text_payload = StructuredTextPayload(
@@ -23394,6 +23711,7 @@ class AIOrchestratorService:
                         **self._prompt_length_metrics(final_render_prompt),
                         "text_overlay_strategy": text_overlay_strategy,
                         "requested_size": asset.get("size", image_size),
+                        "provider_usage": asset.get("provider_usage"),
                         "generation_path": generation_path,
                         "layout_mode": creative_decision.layout_mode,
                         "scene_graph_used": not scene_graph_ignored_for_final_render,
@@ -23548,7 +23866,9 @@ class AIOrchestratorService:
                         asset_role=asset["asset_role"],
                         metadata={
                             "provider": asset.get("provider"),
+                            "model": asset.get("model") or self.settings.image_model,
                             "requested_size": asset.get("size", image_size),
+                            "provider_usage": asset.get("provider_usage"),
                             "generation_path": generation_path,
                             **self._prompt_length_metrics(image_prompt),
                             "visual_explanation_mode": visual_explanation_plan.get("mode"),
@@ -23675,6 +23995,10 @@ class AIOrchestratorService:
                 "tone_analysis": tone_analysis,
             },
         )
+        cost_estimation = self.trace.build_cost_estimation(trace_id)
+        if cost_estimation:
+            explainability["cost_estimation"] = cost_estimation
+            self._trace_payload(trace_id, self.trace, "cost_estimation", cost_estimation)
         return AIOrchestrationResponse(
             message_strategy=message_strategy,
             text=text_payload,
@@ -24699,6 +25023,40 @@ class AIOrchestratorService:
                 continue
             seen.add(key)
             cleaned.append(AIOrchestratorService._normalize_metadata_text(text, limit=90))
+            if len(cleaned) >= limit:
+                break
+        return cleaned
+
+    @classmethod
+    def _normalize_carousel_proof_lines(cls, value: Any, *, limit: int, item_limit: int = 180) -> list[str]:
+        if value is None:
+            return []
+        raw_items: list[str] = []
+        if isinstance(value, str):
+            chunks = re.split(r"(?:\r?\n|[;|])+|\s*[-*]\s+|,\s+(?=[A-Z0-9])", value)
+            raw_items = chunks if len(chunks) > 1 else [value]
+        elif isinstance(value, (list, tuple, set)):
+            for item in value:
+                if isinstance(item, dict):
+                    raw_items.append(str(item.get("label") or item.get("text") or item.get("value") or "").strip())
+                else:
+                    raw_items.append(str(item).strip())
+        else:
+            raw_items = [str(value).strip()]
+
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for item in raw_items:
+            text = re.sub(r"^\s*(?:[#*\-]+|\d+[.)]\s+)", "", item).strip()
+            if not text:
+                continue
+            text = cls._sanitize_text_for_canvas(text)
+            text = cls._normalize_metadata_text(text, limit=item_limit)
+            key = text.casefold()
+            if not text or key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(text)
             if len(cleaned) >= limit:
                 break
         return cleaned
@@ -27152,7 +27510,7 @@ class AIOrchestratorService:
                 slide_metadata.get("story_role") or cleaned.get("role") or cleaned.get("slide_role"),
                 limit=48,
             ).casefold().replace(" ", "_")
-            for key, item_limit in (("proof_points", 120), ("body_points", 140), ("stat_highlights", 90)):
+            for key, item_limit in (("proof_points", 180), ("body_points", 160), ("stat_highlights", 120)):
                 values = []
                 for item in cleaned.get(key) or []:
                     item_text = cls._metadata_text_without_truncation_marker(item, limit=item_limit)
@@ -27724,7 +28082,7 @@ class AIOrchestratorService:
                 or raw_slide.get("facts")
                 or raw_slide.get("callouts")
             )
-            slide_points = cls._normalize_metadata_list(raw_points, limit=4)
+            slide_points = cls._normalize_carousel_proof_lines(raw_points, limit=4)
             if not slide_points:
                 slide_points = cls._normalize_metadata_list(fallback_slide.get("proof_points"), limit=3)
             if not slide_points and resolved_support:
@@ -28525,6 +28883,476 @@ class AIOrchestratorService:
         if body_length <= 80 and module_count <= 1:
             return "airy"
         return "balanced"
+
+    @staticmethod
+    def _word_count(value: Any) -> int:
+        return len(re.findall(r"\b[\w%$./+-]+\b", str(value or "")))
+
+    @classmethod
+    def _truncate_to_words(cls, value: Any, *, max_words: int, min_words: int = 5) -> str:
+        text = cls._normalize_metadata_text(value, limit=360)
+        if not text:
+            return ""
+        if cls._word_count(text) <= max_words:
+            return text
+        sentence_candidates = cls._sentences(text)
+        for candidate in sentence_candidates[:2]:
+            if min_words <= cls._word_count(candidate) <= max_words:
+                return candidate.strip(" ,.;:-")
+        for separator in (" - ", ";", ",", " because ", " while ", " together "):
+            for candidate in text.split(separator):
+                cleaned = candidate.strip(" ,.;:-")
+                if min_words <= cls._word_count(cleaned) <= max_words:
+                    return cleaned
+        words = re.findall(r"\S+", text)
+        meaningful_words = words[:max_words]
+        weak_endings = {
+            "a",
+            "an",
+            "and",
+            "as",
+            "at",
+            "by",
+            "for",
+            "from",
+            "in",
+            "into",
+            "of",
+            "on",
+            "or",
+            "the",
+            "to",
+            "with",
+            "without",
+        }
+        while len(meaningful_words) > min_words and meaningful_words[-1].strip(" ,.;:-").casefold() in weak_endings:
+            meaningful_words.pop()
+        return " ".join(meaningful_words).strip(" ,.;:-")
+
+    @classmethod
+    def _compact_carousel_metric_line(cls, value: Any, *, max_words: int) -> str:
+        text = cls._normalize_metadata_text(value, limit=220)
+        if not text:
+            return ""
+        if ":" in text:
+            label, metric = [part.strip(" ,.;:-") for part in text.split(":", 1)]
+            if metric and re.search(r"\d|%", metric):
+                label = re.sub(r"^(?:percentage|estimated|daily|number)\s+of\s+", "", label, flags=re.IGNORECASE)
+                label = re.sub(r"^estimated\s+", "", label, flags=re.IGNORECASE)
+                label = re.split(r"\b(?:due to|if|in|during)\b", label, maxsplit=1, flags=re.IGNORECASE)[0]
+                label = label.strip(" ,.;:-")
+                text = f"{metric} {label.lower()}".strip()
+        return cls._truncate_to_words(text, max_words=max_words)
+
+    @classmethod
+    def _carousel_slide_needs_comparison_structure(cls, slide: dict[str, Any]) -> bool:
+        fields: list[Any] = [
+            slide.get("headline"),
+            slide.get("supporting_line"),
+            slide.get("body"),
+            slide.get("cta"),
+            *(slide.get("proof_points") or []),
+            *(slide.get("body_points") or []),
+            *(slide.get("stat_highlights") or []),
+        ]
+        text = " ".join(cls._normalize_metadata_text(item, limit=220) for item in fields if item).casefold()
+        if not text:
+            return False
+        has_a_b_pair = bool(
+            re.search(r"\b(?:person|individual|investor|founder)\s+a\b", text)
+            and re.search(r"\b(?:person|individual|investor|founder)\s+b\b", text)
+        )
+        has_comparison = bool(
+            "same income" in text
+            or "identical income" in text
+            or "identical earnings" in text
+            or "different spending" in text
+            or " vs " in text
+            or " versus " in text
+        )
+        has_money_behavior = any(token in text for token in ("spend", "save", "invest", "wealth", "surplus"))
+        return has_money_behavior and (has_a_b_pair or has_comparison)
+
+    @classmethod
+    def _restore_compacted_currency_claims(cls, *, source: Any, value: Any) -> Any:
+        return cls._restore_corrupted_currency_claims(previous_source=source, rewritten_value=value)
+
+    @classmethod
+    def _compact_comparison_gap_line(cls, value: Any) -> str:
+        text = cls._normalize_metadata_text(value, limit=160)
+        if not text:
+            return ""
+        match = re.search(
+            r"(?P<amount>(?:\u20b9|Ã¢â€šÂ¹|rs\.?|inr|usd|us\$|nzd|nz\$|\$)?\s?\d[\d,]*(?:\.\d+)?)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        lowered = text.casefold()
+        if match and any(token in lowered for token in ("additional", "extra", "frees up", "free up", "surplus")):
+            return f"B invests extra {match.group('amount').strip()} monthly"
+        return text
+
+    @classmethod
+    def _repair_missing_indian_currency_markers(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            def replace(match: re.Match[str]) -> str:
+                prefix = match.group("prefix") or ""
+                amount = match.group("amount") or ""
+                unit = match.group("unit") or ""
+                if "," not in amount and not unit.strip():
+                    return match.group(0)
+                return f"{prefix}\u20b9{amount}{unit}"
+
+            return re.sub(
+                r"(?P<prefix>^|[\s(])9(?P<amount>\d[\d,]*(?:\.\d+)?)(?P<unit>\s*(?:crore|lakh|million|billion|trillion))?",
+                replace,
+                value,
+                flags=re.IGNORECASE,
+            )
+        if isinstance(value, list):
+            return [cls._repair_missing_indian_currency_markers(item) for item in value]
+        if isinstance(value, dict):
+            return {key: cls._repair_missing_indian_currency_markers(item) for key, item in value.items()}
+        return value
+
+    @classmethod
+    def _carousel_visible_text_word_count(cls, slide: dict[str, Any]) -> int:
+        fields: list[Any] = [
+            slide.get("headline"),
+            slide.get("supporting_line"),
+            slide.get("body"),
+            slide.get("cta"),
+        ]
+        for key in ("proof_points", "body_points", "stat_highlights"):
+            fields.extend(cls._normalize_metadata_list(slide.get(key), limit=8))
+        fields.extend(
+            cls._claim_evidence_pair_lines(
+                cls._normalize_claim_evidence_pairs(slide.get("claim_evidence_pairs"), limit=4),
+                limit=4,
+            )
+        )
+        return sum(cls._word_count(item) for item in fields if item)
+
+    @classmethod
+    def _mobile_carousel_copy_budget(cls, slide: dict[str, Any], *, slide_index: int, slide_count: int) -> dict[str, int]:
+        metadata = slide.get("metadata") if isinstance(slide.get("metadata"), dict) else {}
+        story_role = cls._normalize_metadata_text(
+            metadata.get("story_role") or slide.get("role") or slide.get("slide_role"),
+            limit=48,
+        ).casefold().replace(" ", "_")
+        sample_density = cls._normalize_metadata_text(metadata.get("sample_page_copy_density"), limit=32).casefold()
+        is_cover = slide_index <= 1 or story_role in {"hook", "cover", "opening", "title"}
+        is_closing = slide_index >= slide_count or story_role in {"takeaway", "close", "closing", "cta", "final"}
+        max_total = 30 if is_cover else 34 if is_closing else 38
+        if sample_density in {"airy", "low", "minimal"}:
+            max_total = min(max_total, 32)
+        elif sample_density in {"dense", "high"}:
+            max_total = min(max_total + 4, 40)
+        return {
+            "headline": 11 if is_cover else 10,
+            "supporting_line": 12,
+            "body": 14 if is_cover or is_closing else 16,
+            "proof_line": 10,
+            "cta": 9,
+            "max_total": max_total,
+            "max_modules": 2 if is_cover or is_closing else 3,
+        }
+
+    @classmethod
+    def _compact_carousel_slide_for_mobile(
+        cls,
+        slide: dict[str, Any],
+        *,
+        slide_index: int,
+        slide_count: int,
+    ) -> dict[str, Any]:
+        compacted = dict(slide)
+        metadata = dict(compacted.get("metadata") if isinstance(compacted.get("metadata"), dict) else {})
+        original_snapshot = {
+            key: compacted.get(key)
+            for key in (
+                "headline",
+                "supporting_line",
+                "body",
+                "proof_points",
+                "body_points",
+                "stat_highlights",
+                "claim_evidence_pairs",
+                "cta",
+            )
+            if compacted.get(key)
+        }
+        original_word_count = cls._carousel_visible_text_word_count(compacted)
+        budget = cls._mobile_carousel_copy_budget(compacted, slide_index=slide_index, slide_count=slide_count)
+        comparison_driven = cls._carousel_slide_needs_comparison_structure(compacted)
+        if comparison_driven:
+            for key in ("headline", "supporting_line", "body", "cta", "proof_points", "body_points", "stat_highlights"):
+                if key in compacted:
+                    compacted[key] = cls._repair_missing_indian_currency_markers(compacted.get(key))
+            original_snapshot = cls._repair_missing_indian_currency_markers(original_snapshot)
+
+        compacted["headline"] = cls._truncate_to_words(compacted.get("headline"), max_words=budget["headline"])
+        compacted["supporting_line"] = cls._truncate_to_words(
+            compacted.get("supporting_line"),
+            max_words=budget["supporting_line"],
+        )
+        compacted["body"] = cls._truncate_to_words(
+            compacted.get("body"),
+            max_words=budget["body"] + 8 if comparison_driven else budget["body"],
+        )
+        compacted["cta"] = cls._truncate_to_words(compacted.get("cta"), max_words=budget["cta"])
+        if compacted.get("body") and cls._carousel_texts_semantically_overlap(
+            compacted.get("body"),
+            compacted.get("supporting_line"),
+        ):
+            compacted["body"] = ""
+
+        proof_lines: list[str] = []
+        for key in ("stat_highlights", "proof_points", "body_points"):
+            proof_lines.extend(
+                cls._compact_carousel_metric_line(item, max_words=budget["proof_line"])
+                for item in cls._normalize_carousel_proof_lines(compacted.get(key), limit=8)
+            )
+        proof_lines = sorted(
+            [line for line in proof_lines if line],
+            key=lambda line: 0 if re.search(r"\d|%|\b(?:barrels?|bps|crore|lakh|million|billion|trillion)\b", line, re.IGNORECASE) else 1,
+        )
+        proof_lines = cls._restore_compacted_currency_claims(source=original_snapshot, value=proof_lines)
+        proof_lines = cls._dedupe_metadata_collection(
+            proof_lines,
+            blocked_texts=[
+                compacted.get("headline"),
+                compacted.get("supporting_line"),
+                compacted.get("cta"),
+            ],
+            limit=budget["max_modules"],
+        )
+        comparison_body_points: list[str] = []
+        if comparison_driven:
+            comparison_body_points = [
+                cls._compact_carousel_metric_line(item, max_words=budget["proof_line"])
+                for item in cls._normalize_carousel_proof_lines(compacted.get("body_points"), limit=3)
+            ]
+            comparison_body_points = cls._restore_compacted_currency_claims(
+                source=original_snapshot,
+                value=[line for line in comparison_body_points if line],
+            )
+            comparison_body_points = [
+                cls._compact_comparison_gap_line(line)
+                for line in comparison_body_points
+                if cls._compact_comparison_gap_line(line)
+            ]
+            comparison_body_points = cls._dedupe_metadata_collection(
+                comparison_body_points,
+                blocked_texts=[
+                    compacted.get("headline"),
+                    compacted.get("supporting_line"),
+                    compacted.get("body"),
+                    compacted.get("cta"),
+                ],
+                limit=1,
+            )
+        compacted["headline"] = cls._restore_compacted_currency_claims(source=original_snapshot, value=compacted.get("headline"))
+        compacted["supporting_line"] = cls._restore_compacted_currency_claims(source=original_snapshot, value=compacted.get("supporting_line"))
+        compacted["body"] = cls._restore_compacted_currency_claims(source=original_snapshot, value=compacted.get("body"))
+        compacted["cta"] = cls._restore_compacted_currency_claims(source=original_snapshot, value=compacted.get("cta"))
+        compacted["proof_points"] = proof_lines
+        compacted["body_points"] = comparison_body_points if comparison_driven else []
+        compacted["stat_highlights"] = []
+
+        if (
+            proof_lines
+            and compacted.get("body")
+            and cls._carousel_visible_text_word_count(compacted) > budget["max_total"]
+        ):
+            if comparison_driven:
+                if len(compacted.get("proof_points") or []) > 1:
+                    compacted["proof_points"] = list(compacted.get("proof_points") or [])[:1]
+                elif compacted.get("proof_points"):
+                    compacted["proof_points"] = []
+            else:
+                compacted["body"] = ""
+        while (
+            not comparison_driven
+            and cls._carousel_visible_text_word_count(compacted) > budget["max_total"]
+            and compacted.get("body")
+        ):
+            compacted["body"] = cls._truncate_to_words(compacted.get("body"), max_words=max(budget["body"] - 4, 8))
+            break
+        if comparison_driven and cls._carousel_visible_text_word_count(compacted) > budget["max_total"] and compacted.get("proof_points"):
+            compacted["proof_points"] = []
+        if comparison_driven and cls._carousel_visible_text_word_count(compacted) > budget["max_total"]:
+            comparison_support = "Same income, different surplus"
+            if not any(token in " ".join(
+                [
+                    str(original_snapshot.get("supporting_line") or ""),
+                    str(original_snapshot.get("body") or ""),
+                ]
+            ).casefold() for token in ("income", "earn", "earning", "salary")):
+                comparison_support = "A spends more; B keeps more"
+            compacted["supporting_line"] = comparison_support
+        if cls._carousel_visible_text_word_count(compacted) > budget["max_total"] and len(compacted.get("proof_points") or []) > 1:
+            compacted["proof_points"] = list(compacted.get("proof_points") or [])[:1]
+        if cls._carousel_visible_text_word_count(compacted) > budget["max_total"]:
+            compacted["supporting_line"] = cls._truncate_to_words(compacted.get("supporting_line"), max_words=9)
+
+        compacted_word_count = cls._carousel_visible_text_word_count(compacted)
+        if compacted_word_count < original_word_count:
+            metadata["pre_mobile_compaction"] = original_snapshot
+            metadata["mobile_copy_budget"] = {
+                "max_visible_words": budget["max_total"],
+                "original_visible_words": original_word_count,
+                "compacted_visible_words": compacted_word_count,
+            }
+        compacted["metadata"] = metadata
+        return compacted
+
+    @classmethod
+    def _same_income_comparison_requested(cls, request: AIOrchestrationRequest | None) -> bool:
+        prompt = cls._normalize_metadata_text(getattr(request, "prompt", "") if request is not None else "", limit=260).casefold()
+        return bool(
+            prompt
+            and "same income" in prompt
+            and ("spending habit" in prompt or "different spending" in prompt)
+            and ("wealth" in prompt or "long-term" in prompt or "long term" in prompt)
+        )
+
+    @classmethod
+    def _extract_same_income_comparison_amounts(
+        cls,
+        *,
+        slides: list[dict[str, Any]],
+        source_slides: list[dict[str, Any]] | None = None,
+    ) -> dict[str, str]:
+        source = source_slides if source_slides else slides
+        raw_text = json.dumps(source, ensure_ascii=False).replace("\\n", "\n")
+        repaired_text = cls._repair_missing_indian_currency_markers(raw_text)
+
+        def amount_after(pattern: str) -> str:
+            match = re.search(pattern, repaired_text, flags=re.IGNORECASE | re.DOTALL)
+            return cls._normalize_metadata_text(match.group("amount"), limit=40).rstrip(" ,.;:-") if match else ""
+
+        amounts = {
+            "income": amount_after(r"(?:same|identical|earn(?:ing)?|income)[^₹$]{0,80}(?P<amount>₹\s?\d[\d,]*(?:\.\d+)?)"),
+            "a_spend": amount_after(r"(?:investor|person|individual|founder)\s+a\s+spends?\s+(?P<amount>₹\s?\d[\d,]*(?:\.\d+)?)"),
+            "b_spend": amount_after(r"(?:investor|person|individual|founder)\s+b\s+spends?\s+(?P<amount>₹\s?\d[\d,]*(?:\.\d+)?)"),
+            "a_save": amount_after(r"(?:investor|person|individual|founder)\s+a[^.]{0,100}sav(?:e|es|ing)\s+(?P<amount>₹\s?\d[\d,]*(?:\.\d+)?)"),
+            "b_save": amount_after(r"(?:investor|person|individual|founder)\s+b[^.]{0,100}sav(?:e|es|ing)\s+(?P<amount>₹\s?\d[\d,]*(?:\.\d+)?)"),
+            "gap": amount_after(r"(?:extra|additional|difference|surplus)[^₹$]{0,80}(?P<amount>₹\s?\d[\d,]*(?:\.\d+)?)"),
+        }
+        vs_match = re.search(
+            r"(?P<first>₹\s?\d[\d,]*(?:\.\d+)?)\s+monthly\s+vs\.?\s+(?P<second>₹\s?\d[\d,]*(?:\.\d+)?)\s+monthly",
+            repaired_text,
+            flags=re.IGNORECASE,
+        )
+        if vs_match:
+            amounts["b_save"] = amounts.get("b_save") or cls._normalize_metadata_text(vs_match.group("first"), limit=40)
+            amounts["a_save"] = amounts.get("a_save") or cls._normalize_metadata_text(vs_match.group("second"), limit=40)
+        return {key: value for key, value in amounts.items() if value}
+
+    @classmethod
+    def _apply_same_income_comparison_story_contract(
+        cls,
+        slides: list[dict[str, Any]],
+        *,
+        request: AIOrchestrationRequest | None,
+        source_slides: list[dict[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
+        if not slides or not cls._same_income_comparison_requested(request):
+            return slides
+        amounts = cls._extract_same_income_comparison_amounts(slides=slides, source_slides=source_slides)
+        repaired = [dict(slide) for slide in slides if isinstance(slide, dict)]
+        if not repaired:
+            return slides
+
+        def update_slide(index: int, *, headline: str, supporting_line: str, body: str = "", body_points: list[str] | None = None, proof_points: list[str] | None = None, cta: str | None = None) -> None:
+            if index >= len(repaired):
+                return
+            slide = dict(repaired[index])
+            metadata = dict(slide.get("metadata") if isinstance(slide.get("metadata"), dict) else {})
+            metadata["same_income_comparison_contract_applied"] = True
+            slide.update(
+                {
+                    "headline": headline,
+                    "supporting_line": supporting_line,
+                    "body": body,
+                    "body_points": body_points or [],
+                    "proof_points": proof_points or [],
+                    "stat_highlights": [],
+                    "claim_evidence_pairs": [],
+                    "metadata": metadata,
+                }
+            )
+            if cta is not None:
+                slide["cta"] = cta
+            repaired[index] = slide
+
+        income = amounts.get("income") or "the same income"
+        a_spend = amounts.get("a_spend")
+        b_spend = amounts.get("b_spend")
+        a_save = amounts.get("a_save")
+        b_save = amounts.get("b_save")
+        gap = amounts.get("gap")
+
+        update_slide(
+            0,
+            headline="Same Income. Different Wealth.",
+            supporting_line=f"Both earn {income}. The gap starts with what they keep." if income.startswith("₹") else "The gap starts with what each person keeps.",
+            body="",
+            proof_points=[],
+        )
+        if a_spend and b_spend:
+            update_slide(
+                1,
+                headline="Where The Gap Starts",
+                supporting_line=f"A spends {a_spend}. B spends {b_spend}.",
+                body=f"B keeps {gap} more every month." if gap else "B keeps more investable surplus every month.",
+                body_points=[],
+                proof_points=[],
+            )
+        if a_save and b_save:
+            update_slide(
+                2,
+                headline="The Investment Gap",
+                supporting_line=f"A invests {a_save}. B invests {b_save}.",
+                body=f"Same salary, but {gap} more works for B each month." if gap else "Same salary, more money working each month.",
+                body_points=[],
+                proof_points=[],
+            )
+        update_slide(
+            3,
+            headline="Why It Compounds",
+            supporting_line=f"The extra {gap} repeats every month." if gap else "The surplus repeats every month.",
+            body="Over years, the surplus becomes the wealth gap.",
+            body_points=[],
+            proof_points=[],
+        )
+        update_slide(
+            len(repaired) - 1,
+            headline="The Habit That Changes The Curve",
+            supporting_line="Spend consciously. Invest the surplus.",
+            body="",
+            body_points=[],
+            proof_points=["Compare spending", "Invest surplus"],
+            cta="Explore fixed-income options",
+        )
+        return repaired
+
+    @classmethod
+    def _compact_carousel_slides_for_mobile(cls, slides: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        slide_count = len([slide for slide in slides if isinstance(slide, dict)])
+        compacted: list[dict[str, Any]] = []
+        for index, slide in enumerate(slides, start=1):
+            if not isinstance(slide, dict):
+                continue
+            compacted.append(
+                cls._compact_carousel_slide_for_mobile(
+                    slide,
+                    slide_index=index,
+                    slide_count=slide_count,
+                )
+            )
+        return compacted
 
     @staticmethod
     def _carousel_sequence_position(index: int, slide_count: int) -> str:
@@ -29652,6 +30480,8 @@ class AIOrchestratorService:
         combined = " ".join([headline, supporting_line, prompt, *proof_points[:2], *stat_highlights[:2]]).casefold()
         if not subject:
             return "The shift hiding in plain sight"
+        if re.search(r"\b(hidden|silent|missed|overlooked|undercovered|unseen)\b", subject, flags=re.IGNORECASE):
+            return subject
         if re.search(r"\b(silent|hidden|missed|overlooked|undercovered|unseen)\b", combined):
             return f"The hidden shift behind {subject}"
         if re.search(r"\b(risk|cost|pressure|threat|crisis|decline|loss)\b", combined):
@@ -30227,6 +31057,12 @@ class AIOrchestratorService:
                 story_contracts=story_contracts,
                 pacing_resolution=pacing_resolution,
             )
+        normalized_slides = cls._apply_same_income_comparison_story_contract(
+            normalized_slides,
+            request=request,
+            source_slides=structured_source if isinstance(structured_source, list) else [],
+        )
+        normalized_slides = cls._compact_carousel_slides_for_mobile(normalized_slides)
         return normalized_slides
 
     @staticmethod

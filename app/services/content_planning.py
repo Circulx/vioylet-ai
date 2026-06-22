@@ -360,6 +360,14 @@ class ContentPlanningService:
             else:
                 carousel_slide_grammar = cls._carousel_slide_grammar(carousel_archetype)
             carousel_archetype_rules = cls._carousel_archetype_rules(carousel_archetype)
+            for rule in (
+                "Use mobile-first carousel copy: one idea per slide, no paragraph blocks.",
+                "Keep visible slide copy around 20-35 words and never above 40 words unless the user explicitly requests dense copy.",
+                "Prefer headline plus one short support line or 2-3 compact proof callouts over full body paragraphs.",
+                "Preserve exact numbers and factual units while shortening surrounding explanation.",
+            ):
+                if rule not in planning_rules:
+                    planning_rules.append(rule)
         elif format_family == "infographic":
             sequence_contract = "native_infographic_sections"
             sequence_expectation = "section_by_section_progression"

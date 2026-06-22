@@ -2159,6 +2159,70 @@ def test_orchestrator_build_carousel_slide_specs_allocates_claim_evidence_by_sto
     assert any("Mobility clauses are the undercovered angle" in point for point in role_to_slide["undercovered_angle"]["proof_points"])
 
 
+def test_orchestrator_build_carousel_slide_specs_compacts_mobile_visible_copy_without_losing_metric_context() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a LinkedIn carousel on why the Strait of Hormuz matters.",
+        studio_panel={"platform_preset": "linkedin", "format": "carousel", "file_type": "pdf"},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"brand_name": "Jiraaf"},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+        research_editorial_brief={
+            "outline": [
+                {"title": "Opening hook", "role": "hook"},
+                {"title": "Mechanism", "role": "structure"},
+                {"title": "Hidden risk", "role": "undercovered_angle"},
+                {"title": "Market meaning", "role": "strategic_meaning"},
+                {"title": "Takeaway", "role": "takeaway"},
+            ]
+        },
+    )
+
+    slides = AIOrchestratorService._build_carousel_slide_specs(
+        StructuredTextPayload(
+            headline="The Critical Waterway Steering Global Oil and Market Dynamics",
+            body=(
+                "Explore why the narrow Strait of Hormuz shapes global oil supply, energy security, "
+                "and market stability, giving investors a clearer way to understand risk signals."
+            ),
+            cta="Discover how understanding this vital route empowers smarter fixed-income investing with transparent expertise.",
+            hashtags=[],
+            metadata={
+                "supporting_line": "A narrow passage with outsized global economic impact for energy markets and investor confidence.",
+                "carousel_slide_specs": [
+                    {
+                        "role": "undercovered_angle",
+                        "headline": "An Irreplaceable Chokepoint with No Backup",
+                        "supporting_line": "Global energy relies heavily on this narrow passage.",
+                        "body": (
+                            "If the Strait closes, more than 14 million barrels per day could be blocked, "
+                            "yet no alternative routes can accommodate this essential volume."
+                        ),
+                        "proof_points": [
+                            "No viable alternative routes exist for Persian Gulf oil",
+                            "Estimated oil output loss due to 2026 Strait of Hormuz closure: More than 14 million barrels per day",
+                        ],
+                    }
+                ],
+            },
+        ),
+        request=request,
+    )
+
+    dense_slide = slides[0]
+    budget = dense_slide["metadata"]["mobile_copy_budget"]
+
+    assert budget["original_visible_words"] > budget["compacted_visible_words"]
+    assert AIOrchestratorService._carousel_visible_text_word_count(dense_slide) <= budget["max_visible_words"]
+    assert any("14 million" in point and "barrels per day" in point for point in dense_slide["proof_points"])
+    assert "pre_mobile_compaction" in dense_slide["metadata"]
+
+
 def test_orchestrator_build_carousel_slide_specs_does_not_repeat_global_proof_points_across_editorial_roles() -> None:
     request = AIOrchestrationRequest(
         tenant_id=uuid4(),
@@ -5044,6 +5108,169 @@ def test_merge_targeted_carousel_rewrite_payload_preserves_unrepaired_slides() -
     assert slides[2]["headline"] == "New 3"
     assert slides[3]["headline"] == "New 4"
     assert slides[3]["cta"] == ""
+
+
+def test_merge_targeted_carousel_rewrite_payload_preserves_currency_claims() -> None:
+    previous_payload = StructuredTextPayload(
+        headline="Carousel",
+        body="Original full sequence",
+        cta="",
+        hashtags=[],
+        metadata={
+            "carousel_slide_specs": [
+                {
+                    "slide_number": 1,
+                    "slide_role": "hook",
+                    "headline": "Same Income, Different Futures",
+                    "body": "Meet two founders with the same ₹1,00,000 monthly income.",
+                    "stat_highlights": ["Identical ₹1,00,000 income each month"],
+                },
+                {
+                    "slide_number": 2,
+                    "slide_role": "structure",
+                    "headline": "Spending Habits Define Available Capital",
+                    "body": "Investor A spends ₹80,000, saving ₹20,000. Investor B spends ₹70,000, saving ₹30,000.",
+                    "body_points": ["Investor B frees up additional ₹10,000 monthly for investment."],
+                    "stat_highlights": ["Investing ₹30,000 monthly vs. ₹20,000 monthly"],
+                },
+            ]
+        },
+    )
+    rewritten_payload = {
+        "headline": "Carousel",
+        "body": "Updated targeted slides",
+        "cta": "",
+        "hashtags": [],
+        "metadata": {
+            "carousel_slide_specs": [
+                {
+                    "slide_number": 1,
+                    "slide_role": "hook",
+                    "headline": "Same Income, Different Futures",
+                    "body": "Meet two founders each earning \n91,00,000 monthly.",
+                    "stat_highlights": ["Identical \n91,00,000 income each month"],
+                },
+                {
+                    "slide_number": 2,
+                    "slide_role": "structure",
+                    "headline": "Spending Habits Define Available Capital",
+                    "body": "Investor A spends \n980,000 while Investor B spends \n970,000.",
+                    "body_points": ["Investor B yields \n910,000 more monthly to invest."],
+                    "stat_highlights": ["Investing \n930,000 monthly vs. \n920,000 monthly"],
+                },
+            ]
+        },
+    }
+
+    merged = AIOrchestratorService._merge_targeted_carousel_rewrite_payload(
+        previous_payload=previous_payload,
+        rewritten_payload=rewritten_payload,
+        revision_scope={"only_targeted": True},
+    )
+
+    slides = merged["metadata"]["carousel_slide_specs"]
+    merged_text = json.dumps(slides, ensure_ascii=False)
+    assert "91,00,000" not in merged_text
+    assert "910,000" not in merged_text
+    assert "930,000" not in merged_text
+    assert "920,000" not in merged_text
+    assert "₹1,00,000" in merged_text
+    assert "₹10,000" in merged_text
+    assert "₹30,000" in merged_text
+    assert "₹20,000" in merged_text
+
+
+def test_dynamic_pinned_template_hook_does_not_duplicate_hidden_subject() -> None:
+    headline = AIOrchestratorService._dynamic_pinned_template_hook_headline(
+        headline="The Hidden Wealth Impact of Spending",
+        supporting_line="How identical earnings mask different wealth outcomes.",
+        prompt="Create a LinkedIn carousel comparing two individuals with the same income.",
+        proof_points=[],
+        stat_highlights=[],
+    )
+
+    assert headline == "The Hidden Wealth Impact of Spending"
+
+
+def test_mobile_carousel_compaction_preserves_same_income_comparison_and_currency() -> None:
+    slides = [
+        {
+            "role": "detail",
+            "headline": "Spending Habits Define Available Capital",
+            "supporting_line": "Investor A spends more; Investor B saves more.",
+            "body": (
+                "Both founders earn \n91,00,000 monthly. Investor A spends \n980,000, "
+                "saving \n920,000. Investor B spends \n970,000, saving \n930,000."
+            ),
+            "body_points": ["Investor B frees up additional \n910,000 monthly for investment."],
+            "proof_points": [],
+            "stat_highlights": ["Investing \n930,000 monthly vs. \n920,000 monthly"],
+            "metadata": {"story_role": "structure"},
+        }
+    ]
+
+    slide = AIOrchestratorService._compact_carousel_slide_for_mobile(
+        slides[0],
+        slide_index=2,
+        slide_count=5,
+    )
+    serialized = json.dumps(slide, ensure_ascii=False)
+
+    assert "Investor A spends \u20b980,000" in slide["body"]
+    assert "Investor B spends \u20b970,000" in slide["body"]
+    assert any("\u20b910,000" in point for point in slide["body_points"])
+    assert "910,000" not in serialized
+    assert "930,000" not in serialized
+    assert AIOrchestratorService._carousel_visible_text_word_count(slide) <= 40
+
+
+def test_same_income_comparison_story_contract_restores_ab_sequence_after_template_adaptation() -> None:
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a LinkedIn carousel comparing two individuals with the same income but different spending habits and how it affects their long-term wealth.",
+        studio_panel={"platform_preset": "linkedin", "format": "carousel", "file_type": "png"},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+    adapted_slides = [
+        {"headline": "The Hidden Wealth Impact of Spending", "supporting_line": "Same income, different futures.", "metadata": {"story_role": "hook"}},
+        {"headline": "Spending Habits Define Available Capital", "supporting_line": "Same income, different surplus.", "body": "Both founders earn the same monthly income", "body_points": ["Investor B yields \n910,000 more monthly to invest."], "metadata": {"story_role": "structure"}},
+        {"headline": "Beyond Saving: The Investment Edge", "supporting_line": "Choosing the right investments amplifies wealth growth.", "proof_points": ["Investing \n930,000 monthly vs. \n920,000 monthly"], "metadata": {"story_role": "key_insight"}},
+        {"headline": "Why It Matters: Long-Term Wealth Trajectory", "supporting_line": "Small monthly savings compound into large wealth gaps.", "metadata": {"story_role": "analysis"}},
+        {"headline": "Spend Smart, Invest Wiser, Build Lasting Wealth", "supporting_line": "Unlock the power of disciplined spending and curated fixed-income investing with Jiraaf.", "cta": "Discover Jiraaf", "metadata": {"story_role": "closing"}},
+    ]
+    source_slides = [
+        {"body": "Meet two founders each earning \n91,00,000 monthly."},
+        {
+            "body": "Investor A spends \n980,000, saving \n920,000. Investor B spends \n970,000, saving \n930,000.",
+            "body_points": ["Investor B frees up additional \n910,000 monthly for investment."],
+        },
+        {"stat_highlights": ["Investing \n930,000 monthly vs. \n920,000 monthly"]},
+    ]
+
+    contracted = AIOrchestratorService._apply_same_income_comparison_story_contract(
+        adapted_slides,
+        request=request,
+        source_slides=source_slides,
+    )
+    compacted = AIOrchestratorService._compact_carousel_slides_for_mobile(contracted)
+    serialized = json.dumps(compacted, ensure_ascii=False)
+
+    assert compacted[0]["headline"] == "Same Income. Different Wealth."
+    assert "₹80,000" in compacted[1]["supporting_line"]
+    assert "₹70,000" in compacted[1]["supporting_line"]
+    assert "₹10,000" in compacted[1]["body"]
+    assert "₹20,000" in compacted[2]["supporting_line"]
+    assert "₹30,000" in compacted[2]["supporting_line"]
+    assert "wealth gap" in compacted[3]["body"].casefold()
+    assert compacted[4]["cta"] == "Explore fixed-income options"
+    assert "910,000" not in serialized
 
 
 def test_orchestrator_content_semantic_validator_flags_generic_headline_unsupported_claim_and_weak_visual_focus() -> None:
@@ -8907,6 +9134,52 @@ def test_orchestrator_normalizes_shorthand_scene_graph_elements() -> None:
     assert scene_graph.elements[1].element_id == "micro_design_element"
     assert scene_graph.elements[2].element_type == "text"
     assert scene_graph.elements[2].element_id == "headline"
+
+
+def test_orchestrator_normalizes_numeric_scene_graph_layers() -> None:
+    service = AIOrchestratorService()
+    request = AIOrchestrationRequest(
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        user_id=uuid4(),
+        prompt="Create a LinkedIn carousel about spending habits.",
+        studio_panel={"platform_preset": "linkedin", "format": "carousel", "file_type": "png", "size": {"width": 1080, "height": 1350}},
+        conversation_context={},
+        session_memory={},
+        resolved_brand_context={"brand_name": "Jiraaf", "guardrails": {}, "visual_identity": {}},
+        persona_context={},
+        objective_context={},
+        retrieved_knowledge={},
+    )
+    creative_decision = CreativeDecisionPayload(
+        layout_mode="synthesized_layout",
+        confidence=0.74,
+        asset_strategy={},
+    )
+
+    scene_graph = service.normalize_scene_graph_payload(
+        {
+            "canvas": {"width": 1080, "height": 1350, "platform": "linkedin"},
+            "layers": ["background", "content", "brand"],
+            "elements": [
+                {"element_id": "bg", "element_type": "rectangle", "role": "background", "layer": 0, "geometry": {"x": 0, "y": 0, "width": 1, "height": 1}},
+                {"element_id": "headline", "element_type": "text", "role": "headline", "layer": 1, "geometry": {"x": 0.1, "y": 0.1, "width": 0.8, "height": 0.12}, "text": "Same income, different futures"},
+                {"element_id": "logo", "element_type": "logo", "role": "logo", "layer": 2, "geometry": {"x": 0.78, "y": 0.04, "width": 0.14, "height": 0.06}},
+            ],
+        },
+        fallback={"canvas": {"width": 1080, "height": 1350, "platform": "linkedin"}, "elements": []},
+        creative_decision=creative_decision,
+        text_payload={
+            "headline": "Same income, different futures",
+            "body": "",
+            "cta": "",
+            "metadata": {"logo_position": "top-right"},
+        },
+        request=request,
+        compiled_context={"brand_visual_brief": {"font_families": []}},
+    )
+
+    assert [element.layer for element in scene_graph.elements[:3]] == ["background", "content", "brand"]
 
 
 def test_orchestrator_finalize_logo_scene_policy_overwrites_stale_anchor_and_dedupes_logo_elements() -> None:

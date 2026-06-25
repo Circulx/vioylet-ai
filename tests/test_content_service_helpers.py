@@ -4436,7 +4436,7 @@ def test_normalize_ai_logo_box_snaps_viable_template_box_to_dynamic_top_gap() ->
     assert box == (20, 54, 209, 92)
 
 
-def test_normalize_ai_logo_box_uses_dev1_hari_right_anchor_cap_for_infographic_only() -> None:
+def test_normalize_ai_logo_box_uses_static_infographic_reference_right_anchor_cap_for_infographic_only() -> None:
     content = ContentVersion(
         tenant_id=uuid4(),
         brand_space_id=uuid4(),

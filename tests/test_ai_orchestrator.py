@@ -53,13 +53,13 @@ def test_orchestrator_normalizes_hashtag_string_to_list() -> None:
     ("format_type", "pin", "auto", "has_sample_creative", "has_template", "expected"),
     [
         ("carousel", False, False, False, False, GenerationStrategy.WITHOUT_REFERENCE),
-        ("static", False, True, True, True, GenerationStrategy.DEV1_HARI),
-        ("static", True, False, True, True, GenerationStrategy.DEV1_HARI),
-        ("infographic", False, True, True, True, GenerationStrategy.DEV1_HARI),
-        ("infographic", True, False, True, True, GenerationStrategy.DEV1_HARI),
+        ("static", False, True, True, True, GenerationStrategy.STATIC_INFOGRAPHIC_REFERENCE),
+        ("static", True, False, True, True, GenerationStrategy.STATIC_INFOGRAPHIC_REFERENCE),
+        ("infographic", False, True, True, True, GenerationStrategy.STATIC_INFOGRAPHIC_REFERENCE),
+        ("infographic", True, False, True, True, GenerationStrategy.STATIC_INFOGRAPHIC_REFERENCE),
         ("carousel", True, False, True, True, GenerationStrategy.TEMPLATE_ADAPTANCE),
         ("carousel", False, True, True, True, GenerationStrategy.CONTENT_INTELLIGENCE),
-        ("poster", False, False, True, True, GenerationStrategy.MAIN_AI),
+        ("poster", False, False, True, True, GenerationStrategy.STANDARD_GENERATION),
     ],
 )
 def test_select_generation_engine_routes_expected_strategy(
@@ -216,9 +216,9 @@ def test_orchestrator_content_intelligence_guard_is_auto_carousel_only() -> None
     assert AIOrchestratorService._request_uses_content_intelligence(auto_carousel) is True
     assert AIOrchestratorService._select_generation_strategy_for_request(pinned_carousel) == GenerationStrategy.TEMPLATE_ADAPTANCE
     assert AIOrchestratorService._request_uses_content_intelligence(pinned_carousel) is False
-    assert AIOrchestratorService._select_generation_strategy_for_request(static_auto) == GenerationStrategy.DEV1_HARI
+    assert AIOrchestratorService._select_generation_strategy_for_request(static_auto) == GenerationStrategy.STATIC_INFOGRAPHIC_REFERENCE
     assert AIOrchestratorService._request_uses_content_intelligence(static_auto) is False
-    assert AIOrchestratorService._select_generation_strategy_for_request(infographic_auto) == GenerationStrategy.DEV1_HARI
+    assert AIOrchestratorService._select_generation_strategy_for_request(infographic_auto) == GenerationStrategy.STATIC_INFOGRAPHIC_REFERENCE
     assert AIOrchestratorService._request_uses_content_intelligence(infographic_auto) is False
     assert AIOrchestratorService._select_generation_strategy_for_request(without_reference) == GenerationStrategy.WITHOUT_REFERENCE
     assert AIOrchestratorService._request_uses_content_intelligence(without_reference) is False
@@ -489,8 +489,8 @@ def test_static_and_infographic_dispatch_do_not_enable_content_intelligence(monk
         studio_panel={"format": "infographic", "platform_preset": "linkedin", "file_type": "png"},
     )
 
-    assert service._dispatch_generation_strategy(GenerationStrategy.DEV1_HARI, static_request) is None
-    assert service._dispatch_generation_strategy(GenerationStrategy.DEV1_HARI, infographic_request) is None
+    assert service._dispatch_generation_strategy(GenerationStrategy.STATIC_INFOGRAPHIC_REFERENCE, static_request) is None
+    assert service._dispatch_generation_strategy(GenerationStrategy.STATIC_INFOGRAPHIC_REFERENCE, infographic_request) is None
 
     assert captured[0].content_plan == static_request.content_plan
     assert captured[1].content_plan == infographic_request.content_plan

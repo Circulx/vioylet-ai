@@ -56,8 +56,8 @@ logger = logging.getLogger(__name__)
 
 
 class GenerationStrategy(Enum):
-    MAIN_AI = "main_ai"
-    DEV1_HARI = "dev1_hari"
+    STANDARD_GENERATION = "standard_generation"
+    STATIC_INFOGRAPHIC_REFERENCE = "static_infographic_reference"
     TEMPLATE_ADAPTANCE = "template_adaptance"
     CONTENT_INTELLIGENCE = "content_intelligence"
     WITHOUT_REFERENCE = "without_reference"
@@ -80,7 +80,7 @@ def select_generation_engine(
         return GenerationStrategy.WITHOUT_REFERENCE
 
     if normalized_format in {"static", "infographic"}:
-        return GenerationStrategy.DEV1_HARI
+        return GenerationStrategy.STATIC_INFOGRAPHIC_REFERENCE
 
     if normalized_format == "carousel":
         if is_pinned:
@@ -88,7 +88,7 @@ def select_generation_engine(
         if is_auto and not is_pinned:
             return GenerationStrategy.CONTENT_INTELLIGENCE
 
-    return GenerationStrategy.MAIN_AI
+    return GenerationStrategy.STANDARD_GENERATION
 
 
 class AIOrchestratorService:
@@ -21921,7 +21921,7 @@ class AIOrchestratorService:
         strategy: GenerationStrategy,
         request: AIOrchestrationRequest,
     ) -> AIOrchestrationResponse:
-        if strategy == GenerationStrategy.DEV1_HARI:
+        if strategy == GenerationStrategy.STATIC_INFOGRAPHIC_REFERENCE:
             # static/infographic behavior is integrated in the guarded main pipeline.
             return self._generate_main_ai(request)
         if strategy == GenerationStrategy.TEMPLATE_ADAPTANCE:

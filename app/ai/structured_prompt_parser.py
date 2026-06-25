@@ -5,6 +5,8 @@ from typing import Any
 
 
 class StructuredPromptParser:
+    # Groups structured prompt parser behavior for prompt parsing.
+    # Callers use this class to produce or evaluate data consumed by structured prompt metadata.
     """
     Parser for extracting structured information from user prompts.
     Handles title/subtitle extraction, data tables, visual element requests, etc.
@@ -12,6 +14,8 @@ class StructuredPromptParser:
     
     @classmethod
     def parse_prompt(cls, prompt: str) -> dict[str, Any]:
+        # Parses prompt from prompt text for structured prompt metadata.
+        # The helper owns a small rule that would distract from the surrounding flow.
         """
         Parse a prompt into structured components.
         
@@ -38,6 +42,7 @@ class StructuredPromptParser:
             "raw_sections": {}
         }
         
+        # Each extraction is stored separately so later planners can use structured intent instead of reparsing prose.
         # Extract title
         result["title"] = cls._extract_title(prompt)
         
@@ -72,6 +77,8 @@ class StructuredPromptParser:
     
     @classmethod
     def _extract_title(cls, prompt: str) -> str | None:
+        # Extracts title from prompt text for structured prompt metadata.
+        # Later planning can reuse the structured value instead of scanning the source again.
         """Extract title from prompt."""
         # Pattern: "Title - ..." or "Title: ..."
         patterns = [
@@ -91,6 +98,8 @@ class StructuredPromptParser:
     
     @classmethod
     def _extract_subtitle(cls, prompt: str) -> str | None:
+        # Extracts subtitle from prompt text for structured prompt metadata.
+        # Later planning can reuse the structured value instead of scanning the source again.
         """Extract subtitle/subheading from prompt."""
         patterns = [
             r"[Ss]ub(?:title|heading)\s*[-:]\s*(.+?)(?:\n|$)",
@@ -108,6 +117,8 @@ class StructuredPromptParser:
     
     @classmethod
     def _extract_data_table(cls, prompt: str) -> dict[str, Any] | None:
+        # Extracts table from prompt text for structured prompt metadata.
+        # The extracted signal becomes prompt context, metadata, or ranking input.
         """
         Extract structured data table from prompt.
         
@@ -131,6 +142,7 @@ class StructuredPromptParser:
                 data_points = []
                 for i, year in enumerate(years):
                     if i < len(value_matches):
+                        # Year/value rows are paired by position because the prompt format splits labels from values.
                         value_str, unit = value_matches[i]
                         data_points.append({
                             "label": year,
@@ -169,6 +181,8 @@ class StructuredPromptParser:
     
     @classmethod
     def _extract_visual_elements(cls, prompt: str) -> list[str]:
+        # Extracts visual elements from prompt text for structured prompt metadata.
+        # Later planning can reuse the structured value instead of scanning the source again.
         """Extract requested visual elements."""
         elements = []
         prompt_lower = prompt.lower()
@@ -192,6 +206,8 @@ class StructuredPromptParser:
     
     @classmethod
     def _extract_chart_type(cls, prompt: str) -> str | None:
+        # Extracts chart type from prompt text for structured prompt metadata.
+        # The extracted signal becomes prompt context, metadata, or ranking input.
         """Extract the type of chart requested."""
         prompt_lower = prompt.lower()
         
@@ -212,6 +228,8 @@ class StructuredPromptParser:
     
     @classmethod
     def _extract_special_instructions(cls, prompt: str) -> list[str]:
+        # Extracts special instructions from prompt text for structured prompt metadata.
+        # The extracted signal becomes prompt context, metadata, or ranking input.
         """Extract special formatting or style instructions."""
         instructions = []
         prompt_lower = prompt.lower()
@@ -243,6 +261,8 @@ class StructuredPromptParser:
 
     @classmethod
     def _extract_ordered_story_beats(cls, prompt: str) -> list[str]:
+        # Extracts ordered story beats from prompt text for structured prompt metadata.
+        # Later planning can reuse the structured value instead of scanning the source again.
         """Extract explicit ordered story/narrative instructions from long-form briefs."""
         prompt_text = " ".join(str(prompt or "").split())
         if not prompt_text:
@@ -262,6 +282,7 @@ class StructuredPromptParser:
 
         if not segment:
             segment = prompt_text
+        # Action verbs preserve the user's intended story order for carousel and infographic planning.
 
         action_pattern = re.compile(
             r"(?P<prefix>Start with|Begin with|Open with|Lead with|Explain|Show|Then connect(?: it)?(?: to)?|Connect(?: it)?(?: to)?|Then|Move to|Follow with|End with|Close with|Finish with)\s+"
@@ -325,6 +346,8 @@ class StructuredPromptParser:
 
     @classmethod
     def _extract_disclaimer_request(cls, prompt: str) -> dict[str, Any]:
+        # Extracts disclaimer request from prompt text for structured prompt metadata.
+        # Later planning can reuse the structured value instead of scanning the source again.
         """Extract whether the prompt explicitly requests a disclaimer/footer."""
         prompt_lower = str(prompt or "").lower()
         requested = "disclaimer" in prompt_lower
@@ -347,6 +370,8 @@ class StructuredPromptParser:
     
     @classmethod
     def _extract_body(cls, prompt: str, parsed_result: dict[str, Any]) -> str | None:
+        # Extracts body from prompt text and parsed result for structured prompt metadata.
+        # The extracted signal becomes prompt context, metadata, or ranking input.
         """Extract the main body text, excluding other extracted sections."""
         # Remove title, subtitle, data sections
         body = prompt
@@ -379,6 +404,8 @@ class StructuredPromptParser:
     
     @classmethod
     def _extract_raw_sections(cls, prompt: str) -> dict[str, str]:
+        # Extracts sections from prompt text for structured prompt metadata.
+        # Later planning can reuse the structured value instead of scanning the source again.
         """Extract all identifiable sections as raw text."""
         sections = {}
         
@@ -411,6 +438,8 @@ class StructuredPromptParser:
     
     @classmethod
     def format_for_metadata(cls, parsed: dict[str, Any]) -> dict[str, Any]:
+        # Centralizes metadata from parsed for structured prompt metadata.
+        # The helper owns a small rule that would distract from the surrounding flow.
         """
         Format parsed prompt data for use in metadata fields.
         

@@ -54,8 +54,13 @@ from app.utils.palette_roles import derive_palette_roles, hex_to_rgb, is_soft_ne
 
 logger = logging.getLogger(__name__)
 
+# Pipeline map: API/worker code builds AIOrchestrationRequest, this service compiles context, asks providers for plans/copy/images,
+# validates or repairs the results, then returns AIOrchestrationResponse for persistence and rendering.
+
 
 class GenerationStrategy(Enum):
+    # Lists the coarse routes available before a request enters the full generation pipeline.
+    # select_generation_engine returns one of these values so later branches know whether templates or references are authoritative.
     STANDARD_GENERATION = "standard_generation"
     STATIC_INFOGRAPHIC_REFERENCE = "static_infographic_reference"
     TEMPLATE_ADAPTANCE = "template_adaptance"
@@ -70,6 +75,8 @@ def select_generation_engine(
     has_sample_creative: Any,
     has_template: Any,
 ) -> GenerationStrategy:
+    # Chooses the first route from format, pin/auto flags, and whether a sample creative or template is available.
+    # The enum result selects standard, template-adapted, content-intelligence, or no-reference handling.
     normalized_format = str(format_type or "").strip().casefold()
     is_pinned = bool(pin)
     is_auto = bool(auto)
@@ -92,18 +99,24 @@ def select_generation_engine(
 
 
 class AIOrchestratorService:
+    # Coordinates context, planning, copy, scene graphs, images, validation, rendering, tracing, and response assembly.
+    # Workers call this service with AIOrchestrationRequest and persist the AIOrchestrationResponse it returns.
+    # Main flow: resolve inputs -> compile context -> plan messaging/creative -> validate/repair -> render assets -> build response.
     IMAGE_PROMPT_MAX_LENGTH = 12000
     DEFAULT_CAROUSEL_IMAGE_PROMPT_MAX_LENGTH = 12000
     CAROUSEL_IMAGE_PROMPT_MAX_LENGTH = 21000
     CAROUSEL_STRICT_SAMPLE_IMAGE_PROMPT_MAX_LENGTH = 19000
+    # These thresholds decide when the pipeline trusts generated visual output versus asking for another repair attempt.
     SAMPLE_SIMILARITY_ACCEPT_SCORE = 0.82
     SCENE_GRAPH_REPAIR_ATTEMPTS = 2
     CONTENT_SEMANTIC_REPAIR_ATTEMPTS = 1
     IMAGE_QUALITY_MIN_SCORE = 0.72
+    # Format sets split responsibility between the image model, backend text overlay, and template/reference adaptation branches.
     AI_FINAL_RENDER_FORMATS = {"static", "story", "poster", "carousel", "infographic"}
     BACKEND_TEXT_OVERLAY_SCENE_GRAPH_FORMATS = {"carousel"}
     TEMPLATE_LOCKED_IMAGE_LED_FORMATS = {"static", "story", "poster"}
     DEFAULT_LAYERS = ["background", "decorative", "primary_visual", "content", "brand", "footer"]
+    # These prompt words are ignored when checking whether the model merely echoed the user's instruction.
     PROMPT_ECHO_STOPWORDS = {
         "a",
         "an",
@@ -494,6 +507,8 @@ class AIOrchestratorService:
     )
 
     def __init__(self) -> None:
+        # Wires providers, guardrails, prompt building, tone QA, blueprints, context compilation, storage, tracing, and vision analysis.
+        # Each generation call reuses these collaborators while building one AIOrchestrationResponse.
         self.settings = get_settings()
         self.providers = ProviderRouter()
         self.guardrails = GuardrailService()
@@ -512,6 +527,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest,
         compiled_context: dict[str, Any],
     ) -> dict[str, Any]:
+        # Builds a conservative creative decision from backend layout hints when the planning LLM is unavailable or unusable.
+        # The fallback keeps layout mode, selected template, rationale, and asset strategy present for downstream branches.
         planning_hints = dict(request.layout_decision or {})
         template_candidates = request.template_candidates or []
         hinted_mode = str(planning_hints.get("mode") or compiled_context.get("template_fit_brief", {}).get("mode") or "synthesized_layout")
@@ -532,6 +549,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _normalize_template_lookup_key(value: object) -> str:
+        # Normalizes template lookup key from input value for AIOrchestratorService.
+        # This shields downstream matching from casing, whitespace, and empty-value noise.
         text = str(value or "").strip()
         if not text:
             return ""
@@ -546,6 +565,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _sequence_reference_signature(cls, value: object) -> tuple[str, int] | None:
+        # Centralizes sequence reference signature from input value for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         normalized = cls._normalize_template_lookup_key(value)
         if not normalized:
             return None
@@ -560,6 +581,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _storage_reference_candidates(cls, value: object) -> list[str]:
+        # Centralizes storage reference candidates from input value for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         raw = str(value or "").strip()
         if not raw:
             return []
@@ -608,6 +631,8 @@ class AIOrchestratorService:
         creative_decision: CreativeDecisionPayload | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> str:
+        # Builds effective template surface policy from request state, creative decision, and metadata for AIOrchestratorService.
+        # It calls _template_sequence_pack while assembling the payload or prompt text.
         candidate_values: list[Any] = []
         if creative_decision and isinstance(getattr(creative_decision, "asset_strategy", None), dict):
             candidate_values.append((creative_decision.asset_strategy or {}).get("template_surface_policy"))
@@ -648,6 +673,8 @@ class AIOrchestratorService:
         template_name: str | None = None,
         template_candidates: list[dict[str, Any]] | None = None,
     ) -> str | None:
+        # Resolves template candidate identifier from template reference, template name, and template candidates for AIOrchestratorService.
+        # This hides source-specific naming and path quirks from the main flow.
         raw_reference = str(template_reference or "").strip()
         if raw_reference and re.fullmatch(r"[0-9a-fA-F-]{36}", raw_reference):
             return raw_reference
@@ -677,6 +704,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest,
         creative_decision: CreativeDecisionPayload | None = None,
     ) -> dict[str, Any] | None:
+        # Centralizes template sequence pack from request state and creative decision for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         template_context = request.template_context if isinstance(request.template_context, dict) else {}
         pack = template_context.get("sequence_pack")
         if not isinstance(pack, dict):
@@ -718,6 +747,8 @@ class AIOrchestratorService:
         *,
         creative_decision: CreativeDecisionPayload | None = None,
     ) -> bool:
+        # Centralizes sequence pack active template from request state, sequence pack, and creative decision for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if not isinstance(sequence_pack, dict):
             return False
         layout_decision = request.layout_decision if request is not None and isinstance(request.layout_decision, dict) else {}
@@ -751,6 +782,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _explicit_requested_slide_count(request: AIOrchestrationRequest | None) -> int | None:
+        # Counts explicit requested slide count from request state for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if request is None:
             return None
         prompt = str(getattr(request, "prompt", "") or "")
@@ -767,6 +800,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _sequence_pack_semantic_tokens(cls, value: Any) -> set[str]:
+        # Centralizes sequence pack semantic tokens from input value for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         high_signal_short_tokens = {
             "aum",
             "cpi",
@@ -870,6 +905,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest | None,
         sequence_pack: dict[str, Any] | None,
     ) -> bool:
+        # Centralizes sequence pack semantically relevant from request state and sequence pack for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if request is None or not isinstance(sequence_pack, dict):
             return True
         prompt_tokens = cls._sequence_pack_semantic_tokens(getattr(request, "prompt", ""))
@@ -896,6 +933,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest | None,
         template_label: Any,
     ) -> bool:
+        # Extracts template label semantically relevant from request state and template label for AIOrchestratorService.
+        # It calls _sequence_pack_semantic_tokens to turn raw evidence into the structured signal the caller needs.
         if request is None:
             return True
         prompt_tokens = cls._sequence_pack_semantic_tokens(getattr(request, "prompt", ""))
@@ -912,6 +951,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest,
         creative_decision: CreativeDecisionPayload | None = None,
     ) -> set[str]:
+        # Derives sequence pack style reference surface paths from request state and creative decision for AIOrchestratorService.
+        # It calls _template_sequence_pack to turn raw evidence into the structured signal the caller needs.
         pack = cls._template_sequence_pack(request, creative_decision=creative_decision)
         if not isinstance(pack, dict):
             return set()
@@ -928,6 +969,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _structured_list_items(value: Any) -> list[str]:
+        # Extracts structured items from input value for AIOrchestratorService.
+        # It calls _coerce_text_value and _sanitize_text_for_canvas to turn raw evidence into the structured signal the caller needs.
         if isinstance(value, str):
             text = value
         else:
@@ -954,6 +997,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest,
         creative_decision: CreativeDecisionPayload | None = None,
     ) -> bool:
+        # Checks force sequence pack from request state and creative decision for AIOrchestratorService.
+        # The boolean result controls the nearby policy or validation branch.
         format_name = str(request.studio_panel.get("format") or "").strip().lower()
         if format_name != "carousel":
             return False
@@ -989,6 +1034,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest | None = None,
         creative_decision: CreativeDecisionPayload | None = None,
     ) -> list[dict[str, Any]]:
+        # Centralizes slide reference images from slide, reference images, and request state for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         slide_metadata = slide.get("metadata") if isinstance(slide.get("metadata"), dict) else {}
         desired_path = str(slide_metadata.get("reference_asset_path") or "").strip()
         desired_template_name = str(slide_metadata.get("reference_template_name") or "").strip()
@@ -1128,6 +1175,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest | None,
         creative_decision: CreativeDecisionPayload | None = None,
     ) -> dict[str, Any] | None:
+        # Derives style reference layout anchor asset from slide, request state, and creative decision for AIOrchestratorService.
+        # It calls _effective_template_surface_policy and _reference_asset_by_storage_path to turn raw evidence into the structured signal the caller ne.
         if request is None:
             return None
         slide_metadata = slide.get("metadata") if isinstance(slide.get("metadata"), dict) else {}
@@ -1173,6 +1222,8 @@ class AIOrchestratorService:
         creative_decision: CreativeDecisionPayload | None = None,
         for_conditioning: bool = False,
     ) -> list[dict[str, Any]]:
+        # Merges slide layout anchor reference from slide, reference assets, and request state for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         merged = [dict(asset) for asset in reference_assets if isinstance(asset, dict)]
         layout_anchor = cls._style_reference_layout_anchor_asset(
             slide,
@@ -1208,6 +1259,8 @@ class AIOrchestratorService:
         output_slide_count: int,
         reference_slide_count: int,
     ) -> int:
+        # Centralizes proportional sequence reference index from slide index, output slide count, and reference slide count for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         normalized_reference_count = max(int(reference_slide_count or 0), 0)
         if normalized_reference_count <= 0:
             return 0
@@ -1230,6 +1283,8 @@ class AIOrchestratorService:
         slide_index: int,
         slide_count: int,
     ) -> list[dict[str, Any]]:
+        # Extracts prepare slide reference assets from assets, slide index, and slide count for AIOrchestratorService.
+        # It calls _reference_asset_slide_page_index to turn raw evidence into the structured signal the caller needs.
         prepared: list[dict[str, Any]] = []
         for asset in assets:
             if not isinstance(asset, dict):
@@ -1249,6 +1304,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _reference_asset_declared_page_count(cls, asset: dict[str, Any]) -> int:
+        # Counts reference asset declared page count from asset record for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         for candidate in (
             asset.get("page_count"),
             ((asset.get("metadata") or {}) if isinstance(asset.get("metadata"), dict) else {}).get("page_count"),
@@ -1270,6 +1327,8 @@ class AIOrchestratorService:
         slide_index: int,
         slide_count: int,
     ) -> int | None:
+        # Extracts reference asset slide page index from asset record, slide index, and slide count for AIOrchestratorService.
+        # It calls _reference_asset_declared_page_count to turn raw evidence into the structured signal the caller needs.
         mime_type = str(asset.get("mime_type") or "").strip().lower()
         if mime_type != "application/pdf":
             return None
@@ -1303,6 +1362,8 @@ class AIOrchestratorService:
         *,
         number_keys: tuple[str, ...],
     ) -> list[dict[str, Any]]:
+        # Merges partial sequence specs from incoming, fallback payload, and number keys for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         fallback_items = [dict(item) for item in (fallback or []) if isinstance(item, dict)]
         incoming_items = [dict(item) for item in (incoming or []) if isinstance(item, dict)]
         if not incoming_items:
@@ -1315,6 +1376,8 @@ class AIOrchestratorService:
         merged = [dict(item) for item in fallback_items]
 
         def _match_index(item: dict[str, Any], position: int) -> int | None:
+            # Matches index from item and position for AIOrchestratorService.
+            # The helper owns a small rule that would distract from the surrounding flow.
             for key in number_keys:
                 value = item.get(key)
                 if isinstance(value, bool):
@@ -1346,6 +1409,8 @@ class AIOrchestratorService:
         *,
         creative_decision: CreativeDecisionPayload | None = None,
     ) -> set[str]:
+        # Centralizes preferred sequence reference paths from request state and creative decision for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         if request is None:
             return set()
         pack = cls._template_sequence_pack(request, creative_decision=creative_decision)
@@ -1372,6 +1437,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest,
         storage_path: str,
     ) -> dict[str, Any] | None:
+        # Extracts reference asset storage path from request state and storage path for AIOrchestratorService.
+        # It calls _storage_reference_candidates and _sequence_reference_signature to turn raw evidence into the structured signal the caller needs.
         desired = str(storage_path or "").strip()
         if not desired:
             return None
@@ -1414,6 +1481,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest,
         storage_path: str,
     ) -> dict[str, Any] | None:
+        # Extracts catalog asset storage path from request state and storage path for AIOrchestratorService.
+        # It calls _storage_reference_candidates to turn raw evidence into the structured signal the caller needs.
         desired = str(storage_path or "").strip()
         if not desired:
             return None
@@ -1448,6 +1517,8 @@ class AIOrchestratorService:
         *,
         limit: int = 10,
     ) -> str:
+        # Compacts slide geometry contract from slide, scene graph, and limit for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         slide_metadata = slide.get("metadata") if isinstance(slide.get("metadata"), dict) else {}
         zone_map = slide_metadata.get("reference_zone_map") if isinstance(slide_metadata.get("reference_zone_map"), dict) else {}
         raw_zones = zone_map.get("zones") if isinstance(zone_map.get("zones"), list) else []
@@ -1481,6 +1552,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _zone_position_label(x: float, y: float, w: float, h: float) -> str:
+        # Measures zone position label from x, y, and w for AIOrchestratorService.
+        # Keeping the math here avoids subtle differences between renderer-facing branches.
         center_x = x + (w / 2.0)
         center_y = y + (h / 2.0)
         vertical = "top" if center_y < 0.34 else "bottom" if center_y > 0.66 else "middle"
@@ -1500,6 +1573,8 @@ class AIOrchestratorService:
         *,
         limit: int = 6,
     ) -> str:
+        # Measures reference zone layout guidance from slide and limit for AIOrchestratorService.
+        # It calls _normalize_metadata_text and _zone_position_label to turn raw evidence into the structured signal the caller needs.
         slide_metadata = slide.get("metadata") if isinstance(slide.get("metadata"), dict) else {}
         zone_map = slide_metadata.get("reference_zone_map") if isinstance(slide_metadata.get("reference_zone_map"), dict) else {}
         raw_zones = zone_map.get("zones") if isinstance(zone_map.get("zones"), list) else []
@@ -1567,6 +1642,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest | None,
         compiled_context: dict[str, Any] | None = None,
     ) -> bool:
+        # Centralizes slide sample metadata semantically contaminated from slide, request state, and compiled context for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if request is None or not isinstance(slide, dict):
             return False
         slide_metadata = slide.get("metadata") if isinstance(slide.get("metadata"), dict) else {}
@@ -1624,6 +1701,8 @@ class AIOrchestratorService:
         scene_graph: GenerationSceneGraph | None = None,
         limit_zones: int = 12,
     ) -> str:
+        # Builds strict sample layout contract from slide, request state, and creative decision for AIOrchestratorService.
+        # It calls _effective_template_surface_policy and _slide_sample_metadata_semantically_contaminated while assembling the payload or prompt text.
         slide_metadata = slide.get("metadata") if isinstance(slide.get("metadata"), dict) else {}
         template_surface_policy = cls._effective_template_surface_policy(
             request,
@@ -1650,6 +1729,7 @@ class AIOrchestratorService:
             else slide_metadata.get("reference_zone_map")
             or slide_authority.get("zone_map")
         )
+        # When metadata is stale, ignore extracted zone DNA and let the actual sample image remain authoritative.
         raw_zones = zone_map.get("zones") if isinstance(zone_map.get("zones"), list) else []
         zones: list[dict[str, Any]] = []
         role_counts: dict[str, int] = {}
@@ -1676,6 +1756,7 @@ class AIOrchestratorService:
             zones.append(zone)
             role_counts[role] = role_counts.get(role, 0) + 1
         if not zones and isinstance(sample_page_blueprint.get("zones"), list):
+            # sample_page_blueprint is the safe fallback because it comes from the selected rendered sample page.
             for item in sample_page_blueprint.get("zones", [])[:limit_zones]:
                 if not isinstance(item, dict):
                     continue
@@ -1812,6 +1893,7 @@ class AIOrchestratorService:
         }
         if sample_page_blueprint:
             prompt_sample_page_blueprint = cls._sample_blueprint_without_rendered_footer_text(sample_page_blueprint)
+            # Preserve Feature 1/2/3 shared fields while trimming footer text that should not become content authority.
             contract["sample_page_blueprint"] = {
                 "source": "rendered_selected_sample_page",
                 "layout_category": cls._normalize_metadata_text(
@@ -1843,6 +1925,7 @@ class AIOrchestratorService:
                 and (metadata_contaminated or sample_page_blueprint)
             )
         ):
+            # Scene graph geometry is only used when no sample/reference blueprint is already governing layout.
             geometry_contract = cls._compact_scene_graph_geometry(scene_graph, limit=limit_zones)
             if geometry_contract:
                 try:
@@ -1858,6 +1941,8 @@ class AIOrchestratorService:
         creative_decision: CreativeDecisionPayload | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> bool:
+        # Derives style reference only carousel active from request state, creative decision, and metadata for AIOrchestratorService.
+        # It calls _effective_template_surface_policy to turn raw evidence into the structured signal the caller needs.
         if request is None:
             return False
         format_name = str((request.studio_panel or {}).get("format") or "").strip().lower()
@@ -1878,6 +1963,8 @@ class AIOrchestratorService:
         compiled_context: dict[str, Any] | None = None,
         reference_images: list[dict[str, Any]] | None = None,
     ) -> bool:
+        # Centralizes reference layout adaptation active from request state, creative decision, and metadata for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if cls._style_reference_only_carousel_active(
             request,
             creative_decision=creative_decision,
@@ -1923,6 +2010,8 @@ class AIOrchestratorService:
             evidence_assets = list(getattr(request, "asset_catalog", []) or getattr(request, "reference_assets", []) or [])
 
         def normalize_family(value: Any) -> str:
+            # Centralizes family from input value for AIOrchestratorService.
+            # The helper owns a small rule that would distract from the surrounding flow.
             normalized = cls._normalize_metadata_text(value, limit=48).casefold()
             normalized = normalized.replace("-", "_").replace(" ", "_").replace("/", "_").strip("_")
             if normalized in {"static", "story", "poster", "hero", "single_frame"}:
@@ -1957,6 +2046,8 @@ class AIOrchestratorService:
         creative_decision: CreativeDecisionPayload | None,
         scene_graph: GenerationSceneGraph | None = None,
     ) -> str:
+        # Builds thin sample conditioning contract from slide, request state, and creative decision for AIOrchestratorService.
+        # It calls _slide_sample_metadata_semantically_contaminated and _normalize_metadata_text while assembling the payload or prompt text.
         slide_metadata = slide.get("metadata") if isinstance(slide.get("metadata"), dict) else {}
         if not cls._style_reference_only_carousel_active(
             request,
@@ -2069,6 +2160,8 @@ class AIOrchestratorService:
         creative_decision: CreativeDecisionPayload | None,
         metadata: dict[str, Any] | None = None,
     ) -> str:
+        # Derives enforce style reference only final prompt from prompt text, request state, and creative decision for AIOrchestratorService.
+        # It calls _style_reference_only_carousel_active to turn raw evidence into the structured signal the caller needs.
         if not cls._style_reference_only_carousel_active(
             request,
             creative_decision=creative_decision,
@@ -2105,6 +2198,8 @@ class AIOrchestratorService:
         creative_decision: CreativeDecisionPayload | None,
         slide_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Derives enforce style reference only final asset metadata from metadata, request state, and creative decision for AIOrchestratorService.
+        # It calls _style_reference_only_carousel_active to turn raw evidence into the structured signal the caller needs.
         cleaned = dict(metadata or {})
         if cls._style_reference_only_carousel_active(
             request,
@@ -2122,6 +2217,8 @@ class AIOrchestratorService:
         cls,
         request: AIOrchestrationRequest | None,
     ) -> bool:
+        # Measures request authoritative reference zone maps from request state for AIOrchestratorService.
+        # The measurement feeds layout, crop, overlap, or density decisions.
         if request is None:
             return False
         template_context = request.template_context if isinstance(request.template_context, dict) else {}
@@ -2135,6 +2232,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _should_block_low_quality_final_render(cls, assessment: dict[str, Any]) -> bool:
+        # Checks block low quality final from assessment for AIOrchestratorService.
+        # The boolean result controls the nearby policy or validation branch.
         score = float(assessment.get("score") or 0.0)
         issues = {str(item).strip() for item in (assessment.get("issues") or []) if str(item).strip()}
         hard_failure_issues = {
@@ -2160,6 +2259,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest,
         compiled_context: dict[str, Any],
     ) -> dict[str, Any]:
+        # Centralizes fallback message strategy from request state and compiled context for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         brand_copy_brief = compiled_context.get("brand_copy_brief", {}) or {}
         objective_brief = {
             **self._coerce_mapping(request.objective_context),
@@ -2462,6 +2563,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _infer_layout_type(prompt: str, studio_panel: dict[str, Any], text_payload: dict[str, Any]) -> str:
+        # Centralizes infer layout type from prompt text, studio settings, and copy payload for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         lowered_prompt = prompt.lower()
         format_name = str(studio_panel.get("format") or "static")
         if format_name == "infographic":
@@ -2485,10 +2588,14 @@ class AIOrchestratorService:
 
     @staticmethod
     def _normalized_box(x: float, y: float, width: float, height: float) -> dict[str, Any]:
+        # Normalizes box from x, y, and width for AIOrchestratorService.
+        # Later prompt and metadata code can compare the cleaned value directly.
         return {"x": x, "y": y, "width": width, "height": height, "units": "normalized"}
 
     @staticmethod
     def _logo_safe_zone_geometry(scene_graph: GenerationSceneGraph | None) -> tuple[float, float, float, float] | None:
+        # Measures logo safe zone geometry from scene graph for AIOrchestratorService.
+        # Keeping the math here avoids subtle differences between renderer-facing branches.
         if not isinstance(scene_graph, GenerationSceneGraph):
             return None
         for element in scene_graph.elements or []:
@@ -2520,6 +2627,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _logo_anchor_from_hint(cls, hint: str | None) -> tuple[str, str] | None:
+        # Centralizes logo anchor hint from hint for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         text = str(hint or "").strip().lower()
         if not text:
             return None
@@ -2532,6 +2641,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _normalize_logo_position_option(cls, value: Any) -> str:
+        # Normalizes logo position option from input value for AIOrchestratorService.
+        # It delegates shared cleanup to _logo_anchor_from_hint and _normalize_metadata_text before returning the cleaned value.
         text = cls._normalize_metadata_text(value, limit=80).casefold()
         if not text:
             return ""
@@ -2552,6 +2663,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _brand_logo_placement_policy(cls, brand_context: dict[str, Any] | None) -> dict[str, Any]:
+        # Builds brand logo placement policy from brand context for AIOrchestratorService.
+        # It calls _normalize_logo_position_option while assembling the payload or prompt text.
         visual_identity = (
             brand_context.get("visual_identity", {}) if isinstance(brand_context, dict) else {}
         ) or {}
@@ -2603,6 +2716,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest,
         creative_decision: CreativeDecisionPayload | None = None,
     ) -> list[str]:
+        # Measures logo position priority request from request state and creative decision for AIOrchestratorService.
+        # The measurement feeds layout, crop, overlap, or density decisions.
         format_name = str(request.studio_panel.get("format") or "").strip().lower()
         layout_mode = str((creative_decision.layout_mode if isinstance(creative_decision, CreativeDecisionPayload) else "") or "").strip().lower()
         if format_name == "infographic":
@@ -2617,6 +2732,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _sample_blueprint_logo_position(cls, sample_page_blueprint: Any) -> str:
+        # Measures sample blueprint logo position from sample page blueprint for AIOrchestratorService.
+        # It calls _normalize_logo_position_option and _anchor_from_logo_geometry to turn raw evidence into the structured signal the caller needs.
         blueprint = sample_page_blueprint if isinstance(sample_page_blueprint, dict) else {}
         if not blueprint:
             return ""
@@ -2663,6 +2780,8 @@ class AIOrchestratorService:
         text_payload: dict[str, Any],
         scene_graph_payload: dict[str, Any] | None = None,
     ) -> str:
+        # Measures effective logo position hint from request state, creative decision, and copy payload for AIOrchestratorService.
+        # It calls _brand_logo_placement_policy and _sample_blueprint_logo_position to turn raw evidence into the structured signal the caller needs.
         policy = cls._brand_logo_placement_policy(request.resolved_brand_context)
         allowed_positions = policy.get("allowed_positions") or []
         default_position = str(policy.get("default_position") or "")
@@ -2699,28 +2818,40 @@ class AIOrchestratorService:
 
     @classmethod
     def _logo_reserved_area_label(cls, hint: str | None) -> str:
+        # Extracts logo reserved area label from hint for AIOrchestratorService.
+        # It calls _normalize_logo_position_option to turn raw evidence into the structured signal the caller needs.
         normalized = cls._normalize_logo_position_option(hint)
         return normalized or "reserved corner-safe"
 
     @staticmethod
     def _logo_size_scale() -> float:
+        # Centralizes logo size scale for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         return 0.96
 
     @staticmethod
     def _scaled_logo_ratio(value: float) -> float:
+        # Centralizes scaled logo ratio from input value for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         return max(float(value) * AIOrchestratorService._logo_size_scale(), 0.0)
 
     @staticmethod
     def _logo_horizontal_margin_ratio(canvas_width: int, width: float) -> float:
+        # Centralizes logo horizontal margin ratio from canvas width and width for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         return min(20 / max(float(canvas_width), 1.0), max(1.0 - width, 0.0))
 
     @staticmethod
     def _logo_top_margin_ratio(canvas_height: int, height: float) -> float:
+        # Centralizes logo top margin ratio from canvas height and height for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         dynamic_margin = max(20 / max(float(canvas_height), 1.0), 0.035)
         return min(dynamic_margin, max(1.0 - height, 0.0))
 
     @staticmethod
     def _logo_bottom_margin_ratio(canvas_height: int, height: float) -> float:
+        # Centralizes logo bottom margin ratio from canvas height and height for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         return min(20 / max(float(canvas_height), 1.0), max(1.0 - height, 0.0))
 
     @classmethod
@@ -2730,6 +2861,8 @@ class AIOrchestratorService:
         *,
         anchor: tuple[str, str] | None,
     ) -> tuple[float, float, float, float]:
+        # Measures default logo safe zone geometry from request state and anchor for AIOrchestratorService.
+        # It calls _logo_box_profile_for_panel and _reference_logo_safe_zone_geometry to turn raw evidence into the structured signal the caller needs.
         width, height = cls._logo_box_profile_for_panel(request.studio_panel)
         reference_geometry = cls._reference_logo_safe_zone_geometry(request=request, anchor=anchor)
         vertical, horizontal = anchor or ("top", "right")
@@ -2781,6 +2914,8 @@ class AIOrchestratorService:
         geometry: tuple[float, float, float, float],
         anchor: tuple[str, str],
     ) -> tuple[float, float, float, float]:
+        # Snaps snap logo safe zone geometry anchor edge from request state, geometry, and anchor for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         x, y, width, height = geometry
         size = (request.studio_panel or {}).get("size")
         size = size if isinstance(size, dict) else {}
@@ -2811,12 +2946,16 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest,
         geometry: tuple[float, float, float, float],
     ) -> tuple[float, float, float, float]:
+        # Caps cap logo safe zone geometry profile from request state and geometry for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         x, y, width, height = geometry
         preferred_width, preferred_height = cls._logo_box_profile_for_panel(request.studio_panel)
         return (x, y, min(width, preferred_width), min(height, preferred_height))
 
     @staticmethod
     def _logo_box_profile_for_panel(studio_panel: dict[str, Any] | None) -> tuple[float, float]:
+        # Measures logo box profile panel from studio settings for AIOrchestratorService.
+        # It calls _scaled_logo_ratio to turn raw evidence into the structured signal the caller needs.
         panel = studio_panel or {}
         format_name = str(panel.get("format") or "").strip().lower()
         size = panel.get("size") if isinstance(panel.get("size"), dict) else {}
@@ -2838,6 +2977,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest,
         anchor: tuple[str, str] | None,
     ) -> tuple[float, float, float, float] | None:
+        # Measures reference logo safe zone geometry from request state and anchor for AIOrchestratorService.
+        # It calls _coerce_list and _coerce_mapping to turn raw evidence into the structured signal the caller needs.
         if anchor is None:
             return None
         visual_identity = (
@@ -2848,6 +2989,8 @@ class AIOrchestratorService:
         candidates: list[tuple[float, float, float, float]] = []
 
         def _zone_geometry(zone: Any) -> tuple[float, float, float, float] | None:
+            # Measures zone geometry from zone for AIOrchestratorService.
+            # It calls _coerce_mapping to turn raw evidence into the structured signal the caller needs.
             payload = cls._coerce_mapping(zone)
             if not payload:
                 return None
@@ -2867,6 +3010,8 @@ class AIOrchestratorService:
             return (x, y, width, height)
 
         def _collect(zones: Any) -> None:
+            # Collects collect from zones for AIOrchestratorService.
+            # The main branch stays readable while this function handles the local edge case.
             for zone in cls._coerce_list(zones):
                 payload = cls._coerce_mapping(zone)
                 if str(payload.get("role") or "").strip().lower() != "logo":
@@ -2891,6 +3036,8 @@ class AIOrchestratorService:
             return None
 
         def _median(values: list[float]) -> float:
+            # Centralizes median from values for AIOrchestratorService.
+            # The main branch stays readable while this function handles the local edge case.
             ordered = sorted(values)
             return ordered[len(ordered) // 2]
 
@@ -2903,6 +3050,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _normalize_logo_background_tone(value: Any) -> str:
+        # Normalizes logo background tone from input value for AIOrchestratorService.
+        # Later prompt and metadata code can compare the cleaned value directly.
         text = str(value or "").strip().casefold()
         if not text:
             return ""
@@ -2923,6 +3072,8 @@ class AIOrchestratorService:
         creative_decision: CreativeDecisionPayload | dict[str, Any] | None = None,
         scene_graph: GenerationSceneGraph | None = None,
     ) -> str:
+        # Resolves logo background tone from metadata, creative decision, and scene graph for AIOrchestratorService.
+        # The caller receives the canonical identifier/path/config value expected by the next step.
         candidates: list[Any] = []
         metadata = metadata if isinstance(metadata, dict) else {}
         candidates.append(metadata.get("logo_background_tone"))
@@ -2964,6 +3115,8 @@ class AIOrchestratorService:
         *,
         background_tone: str | None,
     ) -> str:
+        # Builds logo surface guidance from background tone for AIOrchestratorService.
+        # It calls _normalize_logo_background_tone while assembling the payload or prompt text.
         tone = cls._normalize_logo_background_tone(background_tone)
         if tone == "light":
             return (
@@ -2979,6 +3132,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _logo_non_generation_contract(cls, *, brand_name: str | None, reserved_logo_area: str) -> list[str]:
+        # Builds logo non generation contract from brand name and reserved logo area for AIOrchestratorService.
+        # It calls _normalize_metadata_text while assembling the payload or prompt text.
         normalized_brand_name = cls._normalize_metadata_text(brand_name, limit=80)
         brand_label = normalized_brand_name or "the brand name"
         return [
@@ -3000,6 +3155,8 @@ class AIOrchestratorService:
         geometry: tuple[float, float, float, float] | None,
         hint: str | None = None,
     ) -> tuple[float, float, float, float]:
+        # Normalizes logo safe zone geometry from request state, geometry, and hint for AIOrchestratorService.
+        # It delegates shared cleanup to _logo_anchor_from_hint and _reference_logo_safe_zone_geometry before returning the cleaned value.
         hint_anchor = cls._logo_anchor_from_hint(hint)
         reference_geometry = cls._reference_logo_safe_zone_geometry(request=request, anchor=hint_anchor)
         if geometry is None:
@@ -3038,6 +3195,8 @@ class AIOrchestratorService:
         scene_graph: GenerationSceneGraph | None = None,
         hint: str | None = None,
     ) -> str:
+        # Measures logo safe zone guidance from request state, scene graph, and hint for AIOrchestratorService.
+        # It calls _logo_safe_zone_geometry and _normalize_logo_safe_zone_geometry to turn raw evidence into the structured signal the caller needs.
         geometry = cls._logo_safe_zone_geometry(scene_graph)
         geometry = cls._normalize_logo_safe_zone_geometry(request=request, geometry=geometry, hint=hint)
         x, y, width, height = geometry
@@ -3105,6 +3264,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _prior_layout_archetype(request: AIOrchestrationRequest) -> str:
+        # Centralizes prior layout archetype from request state for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         latest_content = (request.session_memory or {}).get("latest_content_version", {}) or {}
         scene_graph = latest_content.get("scene_graph", {}) if isinstance(latest_content, dict) else {}
         styles = scene_graph.get("styles", {}) if isinstance(scene_graph, dict) else {}
@@ -3118,6 +3279,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _follow_up_mode(request: AIOrchestrationRequest) -> str:
+        # Centralizes follow up mode from request state for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         follow_up_intent = (request.session_memory or {}).get("follow_up_intent", {}) or {}
         return str(follow_up_intent.get("mode") or "").strip().casefold()
 
@@ -3129,6 +3292,8 @@ class AIOrchestratorService:
         candidates: list[str],
         default: str,
     ) -> str:
+        # Chooses layout archetype from request state, candidates, and default for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         follow_up_mode = cls._follow_up_mode(request)
         if follow_up_mode != "variant_of_previous":
             return default
@@ -3145,6 +3310,8 @@ class AIOrchestratorService:
         text_payload: dict[str, Any],
         compiled_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Builds image led layout profile from request state, copy payload, and compiled context for AIOrchestratorService.
+        # It calls _infer_layout_type and _extract_layout_dna_from_compiled_context while assembling the payload or prompt text.
         size = request.studio_panel.get("size") or BlueprintService.PRESET_DIMENSIONS.get(
             request.studio_panel.get("platform_preset", "instagram"),
             BlueprintService.PRESET_DIMENSIONS["instagram"],
@@ -3315,6 +3482,8 @@ class AIOrchestratorService:
         creative_decision: dict[str, Any],
         compiled_context: dict[str, Any],
     ) -> dict[str, Any]:
+        # Centralizes fallback scene graph from request state, copy payload, and creative decision for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         size = request.studio_panel.get("size") or BlueprintService.PRESET_DIMENSIONS.get(
             request.studio_panel.get("platform_preset", "instagram"),
             BlueprintService.PRESET_DIMENSIONS["instagram"],
@@ -3595,6 +3764,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _repair_common_mojibake(cls, value: str) -> str:
+        # Repairs common mojibake from input value for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         text = value or ""
         if not any(token in text for token in ("Ã", "Â", "â€", "â€™", "â€œ", "â€”", "â€“", "â€¢")):
             return text
@@ -3606,6 +3777,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _sanitize_text_for_canvas(cls, value: str) -> str:
+        # Sanitizes text canvas from input value for AIOrchestratorService.
+        # It delegates shared cleanup to _repair_common_mojibake before returning the cleaned value.
         text = cls._repair_common_mojibake(value or "")
         text = cls.MOJIBAKE_SYMBOL_PATTERN.sub(" ", text)
         text = cls.DISALLOWED_GLYPH_PATTERN.sub(" ", text)
@@ -3613,6 +3786,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _normalized_prompt_tokens(cls, value: str) -> list[str]:
+        # Normalizes prompt tokens from input value for AIOrchestratorService.
+        # This shields downstream matching from casing, whitespace, and empty-value noise.
         cleaned = re.sub(r"[^a-z0-9\s]+", " ", (value or "").lower())
         return [
             token
@@ -3622,6 +3797,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _looks_like_prompt_echo(cls, value: Any, prompt: str) -> bool:
+        # Checks prompt echo from input value and prompt text for AIOrchestratorService.
+        # It reuses _coerce_text_value and _normalized_prompt_tokens so related checks follow the same rule.
         candidate = cls._coerce_text_value(value)
         if not candidate:
             return False
@@ -3676,6 +3853,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _has_mistake_carousel_signals(cls, *values: Any) -> bool:
+        # Checks mistake carousel signals for AIOrchestratorService.
+        # It reuses _normalize_metadata_text so related checks follow the same rule.
         combined = " ".join(
             cls._normalize_metadata_text(value, limit=240)
             for value in values
@@ -3685,6 +3864,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _prefers_multiple_mistake_slides(cls, *values: Any) -> bool:
+        # Centralizes prefers multiple mistake slides for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         combined = " ".join(
             cls._normalize_metadata_text(value, limit=240)
             for value in values
@@ -3694,6 +3875,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _is_generic_carousel_education_label(cls, value: Any) -> bool:
+        # Checks generic carousel education label from input value for AIOrchestratorService.
+        # It reuses _normalize_metadata_text so related checks follow the same rule.
         text = cls._normalize_metadata_text(value, limit=120).casefold()
         if not text:
             return False
@@ -3722,6 +3905,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _content_topic_tokens(cls, request: AIOrchestrationRequest | None) -> set[str]:
+        # Centralizes content topic tokens from request state for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         tokens = cls._request_topic_tokens(request)
         return {
             token
@@ -3736,6 +3921,8 @@ class AIOrchestratorService:
         *,
         request: AIOrchestrationRequest | None,
     ) -> bool:
+        # Centralizes headline lacks topic specificity from headline and request state for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         text = cls._normalize_metadata_text(headline, limit=140)
         if not text:
             return True
@@ -3761,6 +3948,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _canonicalize_number_words_in_exact_claim_marker(value: str) -> str:
+        # Counts canonicalize number words in exact claim marker from input value for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         units = {
             "zero": 0,
             "one": 1,
@@ -3797,6 +3986,8 @@ class AIOrchestratorService:
         unit_words = "|".join(units.keys())
 
         def replace(match: re.Match[str]) -> str:
+            # Centralizes replace from match for AIOrchestratorService.
+            # The helper owns a small rule that would distract from the surrounding flow.
             first = match.group("first")
             second = match.group("second")
             suffix = match.group("suffix")
@@ -3814,6 +4005,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _canonical_exact_claim_marker(value: Any) -> str:
+        # Centralizes canonical exact claim marker from input value for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         marker = " ".join(str(value or "").casefold().replace("us$", "usd ").split())
         marker = marker.replace("nz$", "nzd ")
         marker = marker.replace("$", "usd ")
@@ -3834,6 +4027,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _exact_claim_marker_aliases(marker: str) -> set[str]:
+        # Centralizes exact claim marker aliases from marker for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         normalized = " ".join(str(marker or "").split())
         if not normalized:
             return set()
@@ -3845,6 +4040,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _exact_claim_markers(cls, value: Any) -> set[str]:
+        # Centralizes exact claim markers from input value for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         text = AIOrchestratorService._raw_text_for_exact_claims(value)
         if not text:
             return set()
@@ -3870,6 +4067,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _raw_text_for_exact_claims(value: Any) -> str:
+        # Extracts text exact claims from input value for AIOrchestratorService.
+        # The extracted signal becomes prompt context, metadata, or ranking input.
         if value is None:
             return ""
         if isinstance(value, str):
@@ -3887,6 +4086,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest,
         compiled_context: dict[str, Any] | None,
     ) -> set[str]:
+        # Centralizes supported exact claim markers from request state and compiled context for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         source_texts: list[Any] = [request.prompt]
         for source in (
             request.research_editorial_brief,
@@ -3916,6 +4117,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest,
         compiled_context: dict[str, Any] | None,
     ) -> set[str]:
+        # Centralizes unsupported exact claim markers from text, request state, and compiled context for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         markers = cls._exact_claim_markers(text)
         if not markers:
             return set()
@@ -3932,6 +4135,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest,
         compiled_context: dict[str, Any] | None,
     ) -> bool:
+        # Checks research fact context from request state and compiled context for AIOrchestratorService.
+        # The boolean result controls the nearby policy or validation branch.
         for source in (
             request.research_editorial_brief,
             request.live_research,
@@ -3951,6 +4156,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _visual_focus_is_weak_for_carousel(cls, value: Any) -> bool:
+        # Centralizes visual focus weak carousel from input value for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         text = cls._normalize_metadata_text(value, limit=420).casefold()
         if not text:
             return True
@@ -4003,6 +4210,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _visual_focus_is_raw_reference_payload(cls, value: Any) -> bool:
+        # Builds visual focus reference from input value for AIOrchestratorService.
+        # It calls _normalize_metadata_text while assembling the payload or prompt text.
         if isinstance(value, dict):
             raw_type = cls._normalize_metadata_text(value.get("type"), limit=80).casefold()
             if raw_type in {"reference_image", "uploaded_reference", "asset", "image_asset"}:
@@ -4032,6 +4241,8 @@ class AIOrchestratorService:
         *,
         request: AIOrchestrationRequest | None,
     ) -> bool:
+        # Extracts content line evidence anchor from input value and request state for AIOrchestratorService.
+        # It calls _normalize_metadata_text and _content_topic_tokens to turn raw evidence into the structured signal the caller needs.
         text = cls._normalize_metadata_text(value, limit=320)
         if len(text.split()) < 6:
             return False
@@ -4063,6 +4274,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _is_promotional_line(cls, value: Any) -> bool:
+        # Checks promotional line from input value for AIOrchestratorService.
+        # It reuses _normalize_metadata_text so related checks follow the same rule.
         text = cls._normalize_metadata_text(value, limit=220)
         if not text:
             return False
@@ -4070,6 +4283,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _is_mistake_candidate_line(cls, value: Any) -> bool:
+        # Checks mistake candidate line from input value for AIOrchestratorService.
+        # It reuses _normalize_metadata_text and _is_promotional_line so related checks follow the same rule.
         text = cls._normalize_metadata_text(value, limit=220)
         if not text:
             return False
@@ -4081,6 +4296,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _mistake_cover_headline(cls, *values: Any) -> str:
+        # Centralizes mistake cover headline for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         combined = " ".join(
             cls._normalize_metadata_text(value, limit=240)
             for value in values
@@ -4097,6 +4314,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _strip_mistake_markers(cls, value: Any) -> str:
+        # Strips strip mistake markers from input value for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         cleaned = cls._normalize_metadata_text(value, limit=160)
         if not cleaned:
             return ""
@@ -4108,6 +4327,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _infer_mistake_headline(cls, value: Any, *, fallback_focus: str = "", index: int = 1) -> str:
+        # Centralizes infer mistake headline from input value, fallback focus, and index for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         cleaned = cls._strip_mistake_markers(value)
         lowered = cleaned.casefold()
         if "diversif" in lowered:
@@ -4135,6 +4356,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _mistake_supporting_line(cls, *values: Any) -> str:
+        # Extracts mistake supporting line for AIOrchestratorService.
+        # It calls _normalize_metadata_text and _is_promotional_line to turn raw evidence into the structured signal the caller needs.
         for candidate in values:
             cleaned = cls._normalize_metadata_text(candidate, limit=220)
             if not cleaned:
@@ -4161,6 +4384,8 @@ class AIOrchestratorService:
         stat_highlights: list[str],
         body_sentences: list[str],
     ) -> list[dict[str, Any]]:
+        # Centralizes mistake detail groups from headline, supporting line, and proof points for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         groups: list[dict[str, Any]] = []
         current: dict[str, Any] | None = None
         labeled_stream = [*proof_points, *body_sentences]
@@ -4259,6 +4484,8 @@ class AIOrchestratorService:
         *,
         prompt: str,
     ) -> StructuredTextPayload:
+        # Repairs prompt echo text from payload and prompt text for AIOrchestratorService.
+        # It delegates shared cleanup to _normalize_metadata_list and _prompt_topic_summary before returning the cleaned value.
         raw = payload.model_dump(mode="json")
         metadata = dict(raw.get("metadata") or {})
         proof_points = cls._normalize_metadata_list(metadata.get("proof_points"), limit=4)
@@ -4310,6 +4537,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _text_payload_prompt_dict(payload: Any) -> dict[str, Any]:
+        # Builds text prompt from payload for AIOrchestratorService.
+        # The returned payload is the compact contract consumed by the next branch.
         if hasattr(payload, "model_dump"):
             try:
                 dumped = payload.model_dump(mode="json")
@@ -4327,6 +4556,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _prompt_topic_summary(cls, prompt: str) -> str:
+        # Builds prompt topic summary from prompt text for AIOrchestratorService.
+        # It calls _coerce_text_value while assembling the payload or prompt text.
         text = cls._coerce_text_value(prompt)
         if not text:
             return ""
@@ -4355,6 +4586,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _headline_from_prompt_topic(cls, topic: str) -> str:
+        # Builds headline prompt topic from topic for AIOrchestratorService.
+        # It calls _normalize_metadata_text while assembling the payload or prompt text.
         cleaned = cls._normalize_metadata_text(topic, limit=72)
         if not cleaned:
             return "Brand Update"
@@ -4366,6 +4599,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _body_from_prompt_topic(cls, topic: str) -> str:
+        # Builds body prompt topic from topic for AIOrchestratorService.
+        # It calls _normalize_metadata_text and _prompt_topic_focus while assembling the payload or prompt text.
         cleaned = cls._normalize_metadata_text(topic, limit=160)
         if not cleaned:
             return ""
@@ -4381,6 +4616,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _supporting_line_from_prompt_topic(cls, topic: str) -> str:
+        # Builds supporting line prompt topic from topic for AIOrchestratorService.
+        # It calls _normalize_metadata_text and _prompt_topic_focus while assembling the payload or prompt text.
         cleaned = cls._normalize_metadata_text(topic, limit=120)
         if not cleaned:
             return ""
@@ -4399,6 +4636,8 @@ class AIOrchestratorService:
         *,
         compiled_context: dict[str, Any] | None = None,
     ) -> str:
+        # Centralizes fallback topic focus from prompt text and compiled context for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         prompt_topic = cls._normalize_metadata_text(cls._prompt_topic_summary(prompt), limit=140)
         if prompt_topic:
             return prompt_topic
@@ -4422,6 +4661,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _prompt_topic_focus(cls, topic: str) -> tuple[str, str]:
+        # Builds prompt topic focus from topic for AIOrchestratorService.
+        # It calls _normalize_metadata_text while assembling the payload or prompt text.
         cleaned = cls._normalize_metadata_text(topic, limit=160)
         lowered = cleaned.casefold()
         patterns: list[tuple[str, str]] = [
@@ -4443,6 +4684,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _topic_specific_detail_lens(cls, topic: str) -> str:
+        # Centralizes topic specific detail lens from topic for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         lowered = cls._normalize_metadata_text(topic, limit=160).casefold()
         if not lowered:
             return "specific details people can act on right away"
@@ -4471,6 +4714,8 @@ class AIOrchestratorService:
         primary_goal: Any,
         semantic_support_phrase: str,
     ) -> str:
+        # Centralizes contextual headline fallback from topic focus, motivation, and pain point for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         normalized_topic = cls._normalize_metadata_text(topic_focus, limit=120)
         normalized_motivation = cls._normalize_metadata_text(motivation, limit=96)
         normalized_pain_point = cls._normalize_metadata_text(pain_point, limit=96)
@@ -4530,6 +4775,8 @@ class AIOrchestratorService:
         knowledge_line: str,
         semantic_support_phrase: str,
     ) -> str:
+        # Centralizes contextual supporting fallback from topic focus, motivation, and pain point for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         normalized_topic = cls._normalize_metadata_text(topic_focus, limit=120)
         normalized_motivation = cls._normalize_metadata_text(motivation, limit=96)
         normalized_pain_point = cls._normalize_metadata_text(pain_point, limit=96)
@@ -4580,6 +4827,8 @@ class AIOrchestratorService:
         pain_point: str,
         objection: str,
     ) -> str:
+        # Centralizes contextual cta fallback from topic focus, primary goal, and pain point for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         normalized_goal = cls._normalize_metadata_text(primary_goal, limit=80)
         normalized_topic = cls._normalize_metadata_text(topic_focus, limit=120)
         normalized_pain_point = cls._normalize_metadata_text(pain_point, limit=96)
@@ -4612,6 +4861,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _looks_like_fallback_copy_scaffold(cls, value: Any) -> bool:
+        # Checks fallback copy scaffold from input value for AIOrchestratorService.
+        # It reuses _normalize_metadata_text so related checks follow the same rule.
         text = cls._normalize_metadata_text(value, limit=220).casefold()
         if not text:
             return False
@@ -4627,6 +4878,8 @@ class AIOrchestratorService:
         limit: int,
         prompt: str,
     ) -> str:
+        # Extracts usable fallback copy text from input value, limit, and prompt text for AIOrchestratorService.
+        # It calls _normalize_metadata_text and _looks_like_fallback_copy_scaffold to turn raw evidence into the structured signal the caller needs.
         text = cls._normalize_metadata_text(value, limit=limit)
         if not text or text.casefold() == "missing":
             return ""
@@ -4646,6 +4899,8 @@ class AIOrchestratorService:
         max_items: int,
         exclude: list[str] | None = None,
     ) -> list[str]:
+        # Centralizes fallback copy fragments from candidates, prompt text, and limit for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         fragments: list[str] = []
         seen = {
             cls._normalize_metadata_text(item, limit=limit).casefold()
@@ -4677,6 +4932,8 @@ class AIOrchestratorService:
         primary_campaign_theme: Any,
         core_audience_message: Any,
     ) -> str:
+        # Centralizes fallback headline copy from prompt text, claim evidence pairs, and desired outcomes for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         candidates: list[Any] = [
             *desired_outcomes[:2],
             key_value_proposition,
@@ -4712,6 +4969,8 @@ class AIOrchestratorService:
         supporting_copy_direction: Any,
         key_value_proposition: Any,
     ) -> str:
+        # Centralizes fallback body copy from prompt text, headline, and core audience message for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         claim_lines = cls._claim_evidence_pair_lines(claim_evidence_pairs, limit=2)
         fragments = cls._fallback_copy_fragments(
             [
@@ -4747,6 +5006,8 @@ class AIOrchestratorService:
         proof_cues: list[str],
         trust_signals: list[str],
     ) -> str:
+        # Centralizes fallback cta copy from prompt text, cta intent, and primary goal for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         direct_cta = cls._usable_fallback_copy_text(cta_intent, limit=44, prompt=prompt)
         if direct_cta and len(direct_cta.split()) <= 6:
             return direct_cta.rstrip(" .!?")
@@ -4780,6 +5041,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _looks_like_objection_response(cls, value: Any) -> bool:
+        # Checks objection response from input value for AIOrchestratorService.
+        # It reuses _normalize_metadata_text so related checks follow the same rule.
         text = cls._normalize_metadata_text(value, limit=180)
         if not text:
             return False
@@ -4799,6 +5062,8 @@ class AIOrchestratorService:
         comparison_points: list[str],
         research_highlights: list[str],
     ) -> str:
+        # Centralizes fallback objection handling copy from objections, pain points, and proof cues for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         objection = cls._normalize_metadata_text(objections[0] if objections else "", limit=160)
         pain_point = cls._normalize_metadata_text(pain_points[0] if pain_points else "", limit=140)
         proof_cue = cls._normalize_metadata_text(proof_cues[0] if proof_cues else "", limit=140)
@@ -4854,6 +5119,8 @@ class AIOrchestratorService:
         elements: list[dict[str, Any]],
         text_payload: dict[str, Any],
     ) -> list[dict[str, Any]]:
+        # Builds sync scene graph copy text from elements and copy payload for AIOrchestratorService.
+        # It calls _coerce_mapping and _normalize_metadata_text while assembling the payload or prompt text.
         metadata = cls._coerce_mapping(text_payload.get("metadata"))
         supporting_line = cls._normalize_metadata_text(
             metadata.get("supporting_line") or text_payload.get("body"),
@@ -4884,10 +5151,14 @@ class AIOrchestratorService:
 
     @classmethod
     def _contains_disallowed_glyphs(cls, value: str) -> bool:
+        # Centralizes contains disallowed glyphs from input value for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         return bool(cls.DISALLOWED_GLYPH_PATTERN.search(value or "") or cls.MOJIBAKE_SYMBOL_PATTERN.search(value or ""))
 
     @staticmethod
     def _scene_graph_visible_elements(scene_graph: GenerationSceneGraph) -> list[Any]:
+        # Centralizes scene graph visible elements from scene graph for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         return [element for element in scene_graph.elements if element.visible]
 
     def _should_apply_support_fallback(
@@ -4896,6 +5167,8 @@ class AIOrchestratorService:
         scene_graph: GenerationSceneGraph,
         validation_report: SceneGraphValidationReport,
     ) -> bool:
+        # Checks apply support fallback from scene graph and validation report for AIOrchestratorService.
+        # It reuses _scene_graph_visible_elements so related checks follow the same rule.
         visible_elements = self._scene_graph_visible_elements(scene_graph)
         content_elements = [element for element in visible_elements if element.role != "background"]
         severe_rules = {
@@ -4918,6 +5191,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _should_request_fresh_replan(validation_report: SceneGraphValidationReport) -> bool:
+        # Checks request fresh replan from validation report for AIOrchestratorService.
+        # This keeps the allowed/blocked rule in one place.
         severe_rules = {
             "missing_headline",
             "insufficient_scene_graph_structure",
@@ -4929,6 +5204,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _fresh_replan_note(validation_report: SceneGraphValidationReport) -> str:
+        # Centralizes fresh replan note from validation report for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         issues = [str(issue.rule_id or "").strip() for issue in validation_report.issues if str(issue.rule_id or "").strip()]
         if not issues:
             return (
@@ -4943,6 +5220,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _scene_graph_has_authoritative_geometry(cls, scene_graph: GenerationSceneGraph | None) -> bool:
+        # Measures scene graph authoritative geometry from scene graph for AIOrchestratorService.
+        # It calls _scene_graph_element_is_visual_image_like to turn raw evidence into the structured signal the caller needs.
         if not isinstance(scene_graph, GenerationSceneGraph):
             return False
         geometry_count = 0
@@ -4961,6 +5240,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _compiled_context_has_authoritative_layout(cls, compiled_context: dict[str, Any] | None) -> bool:
+        # Centralizes compiled context authoritative layout from compiled context for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         context = dict(compiled_context or {})
         template_fit = cls._coerce_mapping(context.get("template_fit_brief"))
         brand_visual = cls._coerce_mapping(context.get("brand_visual_brief"))
@@ -4989,6 +5270,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _scene_graph_element_is_visual_image_like(cls, element: SceneGraphElement | dict[str, Any] | None) -> bool:
+        # Centralizes scene graph element visual image from element for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if element is None:
             return False
         if isinstance(element, dict):
@@ -5030,6 +5313,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _compact_scene_graph_geometry(scene_graph: GenerationSceneGraph | None, limit: int = 8) -> str:
+        # Compacts scene graph geometry from scene graph and limit for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if not isinstance(scene_graph, GenerationSceneGraph):
             return ""
         geometry_manifest: list[dict[str, Any]] = []
@@ -5070,6 +5355,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _compact_layout_dna_contract(cls, compiled_context: dict[str, Any] | None, limit: int = 8) -> str:
+        # Compacts layout dna contract from compiled context and limit for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         context = dict(compiled_context or {})
         template_fit = cls._coerce_mapping(context.get("template_fit_brief"))
         brand_visual = cls._coerce_mapping(context.get("brand_visual_brief"))
@@ -5130,6 +5417,8 @@ class AIOrchestratorService:
         reference_assets: list[dict[str, Any]] | None,
         allow_template_surface_imitation: bool = False,
     ) -> list[str]:
+        # Centralizes final grounding sections from request state, creative decision, and copy payload for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         compiled_context = dict(compiled_context or {})
         metadata = text_payload.metadata or {}
         visual_identity = request.resolved_brand_context.get("visual_identity", {}) or {}
@@ -5220,6 +5509,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest,
         compiled_context: dict[str, Any] | None = None,
     ) -> str:
+        # Builds research editorial prompt section from request state and compiled context for AIOrchestratorService.
+        # It calls _claim_evidence_pairs_from_research_brief and _normalize_metadata_text while assembling the payload or prompt text.
         context = dict(compiled_context or {})
         request_brief = getattr(request, "research_editorial_brief", None)
         brief = (
@@ -5264,6 +5555,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest,
         compiled_context: dict[str, Any] | None = None,
     ) -> str:
+        # Builds image generation anti hallucination prompt section from request state and compiled context for AIOrchestratorService.
+        # It calls _exact_claim_markers and _exact_claim_marker_aliases while assembling the payload or prompt text.
         context = dict(compiled_context or {})
         source_texts: list[Any] = [getattr(request, "prompt", "")]
         for source in (
@@ -5310,6 +5603,8 @@ class AIOrchestratorService:
         for_carousel: bool,
         for_static_infographic_ad: bool = False,
     ) -> list[str]:
+        # Builds consultant quality contract from for visual only, for carousel, and for static infographic ad for AIOrchestratorService.
+        # The returned payload is the compact contract consumed by the next branch.
         layout_target = (
             "Use an advanced explanatory slide composition with deliberate grouping, alignment, rhythm, and negative space; "
             "do not collapse into a generic top-heading, middle-image, bottom-footer layout."
@@ -5337,6 +5632,8 @@ class AIOrchestratorService:
         format_name: Any,
         platform: Any,
     ) -> str:
+        # Builds social media ad composition contract from format name and platform for AIOrchestratorService.
+        # It calls _normalize_metadata_text while assembling the payload or prompt text.
         normalized_format = cls._normalize_metadata_text(format_name, limit=32).casefold()
         normalized_platform = cls._normalize_metadata_text(platform, limit=48) or "social media"
         base = (
@@ -5363,6 +5660,8 @@ class AIOrchestratorService:
         format_name: Any,
         use_backend_text_overlay: bool = False,
     ) -> str:
+        # Builds image hallucination control contract from format name and use backend text overlay for AIOrchestratorService.
+        # It calls _normalize_metadata_text while assembling the payload or prompt text.
         normalized_format = cls._normalize_metadata_text(format_name, limit=32).casefold() or "image"
         text_authority = (
             "Backend will place exact text later, so the image model must not create visible wording, numbers, logos, badges, source labels, or pseudo-text."
@@ -5384,6 +5683,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest | None,
         format_name: Any,
     ) -> str:
+        # Compacts static infographic hallucination guard from request state and format name for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         normalized_format = cls._normalize_metadata_text(format_name, limit=32).casefold()
         if normalized_format not in {"static", "infographic"}:
             return ""
@@ -5402,6 +5703,8 @@ class AIOrchestratorService:
         format_name: Any,
         platform: Any,
     ) -> str:
+        # Builds content visual explanation contract from request state, format name, and platform for AIOrchestratorService.
+        # It calls _normalize_metadata_text and _final_render_request_topic_tokens while assembling the payload or prompt text.
         normalized_format = cls._normalize_metadata_text(format_name, limit=32).casefold()
         normalized_platform = cls._normalize_metadata_text(platform, limit=48) or "social media"
         topic_anchors = sorted(cls._final_render_request_topic_tokens(request))[:8]
@@ -5433,6 +5736,8 @@ class AIOrchestratorService:
         compiled_context: dict[str, Any] | None,
         reference_assets: list[dict[str, Any]] | None = None,
     ) -> str:
+        # Builds creative topic 3 d visual contract from request state, format name, and compiled context for AIOrchestratorService.
+        # It calls _compiled_visual_style_policy and _select_reference_visual_profile while assembling the payload or prompt text.
         normalized_format = cls._normalize_metadata_text(format_name, limit=32).casefold()
         if normalized_format not in {"static", "infographic"}:
             return ""
@@ -5484,6 +5789,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest | None,
         format_name: Any,
     ) -> str:
+        # Builds final static infographic quality floor contract from request state and format name for AIOrchestratorService.
+        # It calls _normalize_metadata_text and _final_render_request_topic_tokens while assembling the payload or prompt text.
         normalized_format = cls._normalize_metadata_text(format_name, limit=32).casefold()
         if normalized_format not in {"static", "infographic"}:
             return ""
@@ -5515,6 +5822,8 @@ class AIOrchestratorService:
         claim_evidence_pairs: list[dict[str, str]] | None = None,
         for_visual_only: bool,
     ) -> list[str]:
+        # Builds multimodal balance contract from format name, supporting line, and proof points for AIOrchestratorService.
+        # It calls _normalize_metadata_text while assembling the payload or prompt text.
         normalized_format = str(format_name or "").strip().casefold()
         proof_count = len([item for item in (proof_points or []) if cls._normalize_metadata_text(item, limit=140)])
         claim_count = len(
@@ -5568,6 +5877,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _element_normalized_area(element: Any) -> float:
+        # Centralizes element area from element for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         geometry = getattr(element, "geometry", None)
         if geometry is None:
             return 0.0
@@ -5585,6 +5896,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _scene_graph_text_like_element(cls, element: Any) -> bool:
+        # Extracts scene graph text element from element for AIOrchestratorService.
+        # The extracted signal becomes prompt context, metadata, or ranking input.
         role = str(getattr(element, "role", "") or getattr(element, "element_type", "")).strip().lower()
         element_type = str(getattr(element, "element_type", "")).strip().lower()
         return role in {
@@ -5606,6 +5919,8 @@ class AIOrchestratorService:
         *,
         format_name: str,
     ) -> str:
+        # Centralizes multimodal balance issue from scene graph and format name for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         normalized_format = str(format_name or "").strip().casefold()
         if normalized_format not in {"static", "carousel", "infographic", "story", "poster"}:
             return ""
@@ -5628,6 +5943,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _reference_family_zone_boxes(cls, value: Any, *, limit: int = 10) -> list[dict[str, Any]]:
+        # Measures reference family zone boxes from input value and limit for AIOrchestratorService.
+        # It calls _coerce_list and _normalize_metadata_text to turn raw evidence into the structured signal the caller needs.
         zone_boxes: list[dict[str, Any]] = []
         for item in cls._coerce_list(value)[:limit]:
             if not isinstance(item, dict):
@@ -5657,6 +5974,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _reference_family_zone_role_candidates(cls, role: str) -> list[str]:
+        # Measures reference family zone role candidates from role for AIOrchestratorService.
+        # The measurement feeds layout, crop, overlap, or density decisions.
         normalized = str(role or "").strip().casefold()
         mapping = {
             "headline": ["headline"],
@@ -5684,6 +6003,8 @@ class AIOrchestratorService:
         *,
         image_like: bool = False,
     ) -> dict[str, Any]:
+        # Measures reference family role box from zone boxes, role, and image like for AIOrchestratorService.
+        # It calls _reference_family_zone_role_candidates to turn raw evidence into the structured signal the caller needs.
         candidates = cls._reference_family_zone_role_candidates(role)
         if image_like:
             candidates = [
@@ -5703,6 +6024,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _normalized_geometry_iou(current: dict[str, Any], target: dict[str, Any]) -> float:
+        # Normalizes geometry iou from current and target for AIOrchestratorService.
+        # This shields downstream matching from casing, whitespace, and empty-value noise.
         try:
             current_x = float(current.get("x"))
             current_y = float(current.get("y"))
@@ -5737,6 +6060,8 @@ class AIOrchestratorService:
         cls,
         compiled_context: dict[str, Any] | None,
     ) -> dict[str, Any]:
+        # Builds reference family active slide profile from compiled context for AIOrchestratorService.
+        # It calls _reference_family_profile while assembling the payload or prompt text.
         profile = cls._reference_family_profile(compiled_context)
         slide_profiles = [dict(item) for item in profile.get("slide_profiles", []) if isinstance(item, dict)]
         return slide_profiles[0] if slide_profiles else {}
@@ -5748,6 +6073,8 @@ class AIOrchestratorService:
         *,
         compiled_context: dict[str, Any] | None,
     ) -> dict[str, Any]:
+        # Applies apply reference family scene defaults from scene graph payload and compiled context for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         payload = dict(scene_graph_payload or {})
         profile = cls._reference_family_profile(compiled_context)
         slide_profile = cls._reference_family_active_slide_profile(compiled_context) if profile else {}
@@ -5844,6 +6171,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest | None,
         creative_decision: CreativeDecisionPayload | None,
     ) -> dict[str, Any]:
+        # Applies apply sequence pack scene defaults from scene graph payload, request state, and creative decision for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         payload = dict(scene_graph_payload or {})
         if request is None:
             return payload
@@ -5933,6 +6262,8 @@ class AIOrchestratorService:
         cls,
         compiled_context: dict[str, Any] | None,
     ) -> dict[str, Any]:
+        # Centralizes context visual craft hints from compiled context for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         context = cls._coerce_mapping(compiled_context)
         brand_visual = cls._coerce_mapping(context.get("brand_visual_brief"))
         design_system = cls._coerce_mapping(brand_visual.get("design_system"))
@@ -5955,6 +6286,8 @@ class AIOrchestratorService:
         )
 
         def first_value(mapping: dict[str, Any], *keys: str) -> str:
+            # Centralizes first from mapping for AIOrchestratorService.
+            # The main branch stays readable while this function handles the local edge case.
             for key in keys:
                 value = mapping.get(key)
                 if isinstance(value, list):
@@ -6008,6 +6341,8 @@ class AIOrchestratorService:
         *,
         compiled_context: dict[str, Any] | None,
     ) -> dict[str, Any]:
+        # Applies apply context visual craft hints from scene graph payload and compiled context for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         hints = cls._context_visual_craft_hints(compiled_context)
         if not hints:
             return scene_graph_payload
@@ -6034,6 +6369,8 @@ class AIOrchestratorService:
         *,
         compiled_context: dict[str, Any] | None,
     ) -> dict[str, Any]:
+        # Centralizes reference family closeness from scene graph and compiled context for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         profile = cls._reference_family_profile(compiled_context)
         if not profile:
             return {"score": 1.0, "issues": []}
@@ -6163,6 +6500,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _prompt_sequence_pack(cls, compiled_context: dict[str, Any] | None) -> dict[str, Any]:
+        # Builds prompt sequence pack from compiled context for AIOrchestratorService.
+        # It calls _coerce_mapping while assembling the payload or prompt text.
         context = dict(compiled_context or {})
         template_fit = cls._coerce_mapping(context.get("template_fit_brief"))
         for candidate in (
@@ -6182,6 +6521,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _reference_family_profile(cls, compiled_context: dict[str, Any] | None) -> dict[str, Any]:
+        # Builds reference family profile from compiled context for AIOrchestratorService.
+        # It calls _coerce_mapping while assembling the payload or prompt text.
         context = dict(compiled_context or {})
         profile = cls._coerce_mapping(context.get("reference_family_profile"))
         return profile if profile else {}
@@ -6192,6 +6533,8 @@ class AIOrchestratorService:
         profile: dict[str, Any],
         slide: dict[str, Any] | None,
     ) -> dict[str, Any]:
+        # Builds reference family slide profile from profile and slide for AIOrchestratorService.
+        # It calls _int_or_none while assembling the payload or prompt text.
         if not isinstance(profile, dict) or not isinstance(slide, dict):
             return {}
         slide_profiles = [dict(item) for item in profile.get("slide_profiles", []) if isinstance(item, dict)]
@@ -6213,6 +6556,8 @@ class AIOrchestratorService:
         slide: dict[str, Any] | None = None,
         for_visual_only: bool,
     ) -> list[str]:
+        # Builds reference family contract sections from compiled context, slide, and for visual only for AIOrchestratorService.
+        # It calls _reference_family_profile and _normalize_metadata_text while assembling the payload or prompt text.
         profile = cls._reference_family_profile(compiled_context)
         if not profile:
             return []
@@ -6292,6 +6637,8 @@ class AIOrchestratorService:
         sequence_pack: dict[str, Any],
         slide: dict[str, Any] | None,
     ) -> dict[str, Any]:
+        # Centralizes sequence pack slide authority from sequence pack and slide for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if not isinstance(sequence_pack, dict) or not isinstance(slide, dict):
             return {}
         slides = [dict(item) for item in sequence_pack.get("slides", []) if isinstance(item, dict)]
@@ -6323,6 +6670,8 @@ class AIOrchestratorService:
         limit: int = 6,
         text_limit: int = 200,
     ) -> str:
+        # Builds sequence pack mapping summary from input value, scalar keys, and list keys for AIOrchestratorService.
+        # It calls _normalize_metadata_text and _normalize_metadata_list while assembling the payload or prompt text.
         mapping = value if isinstance(value, dict) else {}
         parts: list[str] = []
         seen: set[str] = set()
@@ -6358,6 +6707,8 @@ class AIOrchestratorService:
         for_carousel: bool,
         for_visual_only: bool,
     ) -> list[str]:
+        # Centralizes sequence blueprint alignment sections from compiled context, slide, and for carousel for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         sequence_pack = cls._prompt_sequence_pack(compiled_context)
         if not sequence_pack:
             return []
@@ -6485,6 +6836,8 @@ class AIOrchestratorService:
         *,
         for_carousel: bool,
     ) -> list[str]:
+        # Centralizes sample visual alignment sections from compiled context and for carousel for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         context = dict(compiled_context or {})
         template_fit = cls._coerce_mapping(context.get("template_fit_brief"))
         brand_visual = cls._coerce_mapping(context.get("brand_visual_brief"))
@@ -6516,6 +6869,8 @@ class AIOrchestratorService:
         )
 
         def _joined_terms(*values: Any, limit: int = 6, text_limit: int = 180) -> str:
+            # Joins joined terms from limit and text limit for AIOrchestratorService.
+            # The helper owns a small rule that would distract from the surrounding flow.
             collected: list[str] = []
             seen: set[str] = set()
             for value in values:
@@ -6660,6 +7015,8 @@ class AIOrchestratorService:
         *,
         format_name: str,
     ) -> dict[str, Any]:
+        # Derives compiled visual style policy from compiled context and format name for AIOrchestratorService.
+        # It calls _coerce_mapping to turn raw evidence into the structured signal the caller needs.
         context = dict(compiled_context or {})
         brand_visual = cls._coerce_mapping(context.get("brand_visual_brief"))
         design_system = cls._coerce_mapping(brand_visual.get("design_system"))
@@ -6684,6 +7041,8 @@ class AIOrchestratorService:
         cls,
         compiled_context: dict[str, Any] | None,
     ) -> list[dict[str, Any]]:
+        # Centralizes compiled reference visual profiles from compiled context for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         context = dict(compiled_context or {})
         brand_visual = cls._coerce_mapping(context.get("brand_visual_brief"))
         raw_profiles = brand_visual.get("reference_visual_profiles")
@@ -6699,6 +7058,8 @@ class AIOrchestratorService:
         reference_assets: list[dict[str, Any]] | None = None,
         slide: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Selects reference visual profile from compiled context, reference assets, and slide for AIOrchestratorService.
+        # It reuses _compiled_reference_visual_profiles and _normalize_metadata_text so related checks follow the same rule.
         profiles = cls._compiled_reference_visual_profiles(compiled_context)
         if not profiles:
             return {}
@@ -6734,6 +7095,8 @@ class AIOrchestratorService:
         *,
         policy_mode: bool,
     ) -> str:
+        # Derives visual style evidence summary from mapping and policy mode for AIOrchestratorService.
+        # It calls _coerce_mapping and _normalize_metadata_text to turn raw evidence into the structured signal the caller needs.
         source = cls._coerce_mapping(mapping)
         if not source:
             return ""
@@ -6771,6 +7134,8 @@ class AIOrchestratorService:
         reference_assets: list[dict[str, Any]] | None = None,
         slide: dict[str, Any] | None = None,
     ) -> list[str]:
+        # Derives visual style policy prompt sections from compiled context, format name, and reference assets for AIOrchestratorService.
+        # It calls _compiled_visual_style_policy and _select_reference_visual_profile to turn raw evidence into the structured signal the caller needs.
         policy = cls._compiled_visual_style_policy(compiled_context, format_name=format_name)
         if not policy:
             return []
@@ -6858,6 +7223,8 @@ class AIOrchestratorService:
         compiled_context: dict[str, Any] | None = None,
         style_reference_final_render_active: bool = False,
     ) -> bool:
+        # Checks ignore scene graph final from generation path, fresh replan attempted, and validation report for AIOrchestratorService.
+        # It reuses _should_request_fresh_replan and _scene_graph_has_authoritative_geometry so related checks follow the same rule.
         if generation_path == "image_led_social" and style_reference_final_render_active:
             return True
         return (
@@ -6870,6 +7237,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _final_render_ignore_note(validation_report: SceneGraphValidationReport) -> str:
+        # Centralizes final ignore note from validation report for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         issues = [str(issue.rule_id or "").strip() for issue in validation_report.issues if str(issue.rule_id or "").strip()]
         if not issues:
             return (
@@ -6884,6 +7253,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _coerce_mapping(value: Any) -> dict[str, Any]:
+        # Coerces mapping from input value for AIOrchestratorService.
+        # This keeps provider output from leaking inconsistent types into later steps.
         if isinstance(value, dict):
             return dict(value)
         if value is None:
@@ -6910,6 +7281,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _coerce_list(value: Any) -> list[Any]:
+        # Coerces coerce list from input value for AIOrchestratorService.
+        # This keeps provider output from leaking inconsistent types into later steps.
         if value is None:
             return []
         if isinstance(value, list):
@@ -6922,6 +7295,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _normalize_trace_payload(payload: Any) -> Any:
+        # Normalizes trace from payload for AIOrchestratorService.
+        # It delegates shared cleanup to _repair_common_mojibake before returning the cleaned value.
         if isinstance(payload, str):
             return AIOrchestratorService._repair_common_mojibake(payload)
         if isinstance(payload, dict):
@@ -6937,6 +7312,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _trace_payload(trace_id: str | None, tracer: GenerationTraceService, filename: str, payload: Any) -> None:
+        # Builds trace from trace id, tracer, and filename for AIOrchestratorService.
+        # It calls _normalize_trace_payload while assembling the payload or prompt text.
         tracer.write_payload(
             trace_id,
             filename,
@@ -6945,10 +7322,14 @@ class AIOrchestratorService:
 
     @staticmethod
     def _trace_event(trace_id: str | None, tracer: GenerationTraceService, event: str, payload: Any | None = None) -> None:
+        # Centralizes trace event from trace id, tracer, and event for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         tracer.append_event(trace_id, event, payload)
 
     @classmethod
     def _compiled_font_families(cls, compiled_context: dict[str, Any]) -> list[str]:
+        # Derives compiled font families from compiled context for AIOrchestratorService.
+        # It calls _normalize_metadata_text to turn raw evidence into the structured signal the caller needs.
         families: list[str] = []
         for item in (compiled_context.get("brand_visual_brief", {}) or {}).get("font_families", []) or []:
             normalized = cls._normalize_metadata_text(item, limit=64)
@@ -6958,6 +7339,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _extract_font_sizes_from_brand_context(cls, brand_context: dict[str, Any]) -> dict[str, int]:
+        # Extracts font sizes brand context from brand context for AIOrchestratorService.
+        # Later planning can reuse the structured value instead of scanning the source again.
         """Extract font sizes from analyzed reference samples (typography_dna)"""
         # Default font sizes (fallback if not extracted)
         defaults = {
@@ -6992,6 +7375,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _extract_layout_dna_from_brand_context(cls, brand_context: dict[str, Any], format_hint: str) -> dict[str, Any] | None:
+        # Extracts layout dna brand context from brand context and format hint for AIOrchestratorService.
+        # Later planning can reuse the structured value instead of scanning the source again.
         """Extract layout DNA from reference creatives"""
         visual_identity = brand_context.get("visual_identity", {})
         reference_creatives = visual_identity.get("reference_creatives", [])
@@ -7006,6 +7391,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _extract_layout_dna_from_compiled_context(cls, compiled_context: dict[str, Any], format_hint: str) -> dict[str, Any] | None:
+        # Extracts layout dna compiled context from compiled context and format hint for AIOrchestratorService.
+        # The extracted signal becomes prompt context, metadata, or ranking input.
         brand_visual_brief = compiled_context.get("brand_visual_brief", {}) if isinstance(compiled_context, dict) else {}
         template_fit_brief = compiled_context.get("template_fit_brief", {}) if isinstance(compiled_context, dict) else {}
         candidates = [
@@ -7024,6 +7411,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _build_profile_from_layout_dna(cls, layout_dna: dict[str, Any], layout_type: str, format_name: str) -> dict[str, Any]:
+        # Builds profile layout dna from layout dna, layout type, and format name for AIOrchestratorService.
+        # It calls _normalized_box and _sanitize_scene_element_name while assembling the payload or prompt text.
         """Build layout profile from extracted layout DNA"""
         raw_zones = layout_dna.get("zones", {})
         spacing = layout_dna.get("spacing", {})
@@ -7188,6 +7577,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _default_font_role_for_role(role: str) -> str:
+        # Derives default font role role from role for AIOrchestratorService.
+        # The derived signal gives the LLM explicit evidence instead of asking it to infer the same thing later.
         normalized = str(role or "").strip().lower()
         if normalized == "headline":
             return "heading_sans"
@@ -7206,6 +7597,8 @@ class AIOrchestratorService:
         allowed_font_families: list[str],
         validation_hints: dict[str, Any],
     ) -> dict[str, Any]:
+        # Normalizes text style brand from style, role, and allowed font families for AIOrchestratorService.
+        # It delegates shared cleanup to _default_font_role_for_role before returning the cleaned value.
         normalized = dict(style or {})
         requested_family = str(
             normalized.get("font_family")
@@ -7237,6 +7630,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _major_asset_strategy_flags(asset_strategy: dict[str, Any]) -> dict[str, bool]:
+        # Extracts major asset strategy flags from asset strategy for AIOrchestratorService.
+        # The extracted signal becomes prompt context, metadata, or ranking input.
         strategy = asset_strategy or {}
         return {
             "generated_image": bool(strategy.get("use_generated_image")),
@@ -7247,6 +7642,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _normalized_dominant_visual_system(asset_strategy: dict[str, Any]) -> str:
+        # Normalizes dominant visual system from asset strategy for AIOrchestratorService.
+        # This shields downstream matching from casing, whitespace, and empty-value noise.
         value = str((asset_strategy or {}).get("dominant_visual_system") or "").strip().lower()
         aliases = {
             "image_led": "generated_image",
@@ -7267,6 +7664,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _normalized_supporting_visual_system(asset_strategy: dict[str, Any]) -> str:
+        # Normalizes supporting visual system from asset strategy for AIOrchestratorService.
+        # Later prompt and metadata code can compare the cleaned value directly.
         value = str(
             (asset_strategy or {}).get("supporting_visual_system")
             or (asset_strategy or {}).get("type_led_supporting_system")
@@ -7291,6 +7690,8 @@ class AIOrchestratorService:
         reference_images: list[dict[str, Any]] | None = None,
         message_strategy: MessageStrategyPayload | None = None,
     ) -> dict[str, str]:
+        # Builds visual explanation plan from request state, copy payload, and creative decision for AIOrchestratorService.
+        # It calls _normalize_metadata_list and _normalized_supporting_visual_system while assembling the payload or prompt text.
         metadata = getattr(text_payload, "metadata", None)
         metadata = metadata if isinstance(metadata, dict) else {}
         strategy_payload = message_strategy.model_dump(mode="json") if isinstance(message_strategy, MessageStrategyPayload) else {}
@@ -7394,6 +7795,8 @@ class AIOrchestratorService:
         )
 
         def has_term(term: str) -> bool:
+            # Checks term from term for AIOrchestratorService.
+            # The boolean result controls the nearby policy or validation branch.
             normalized = term.strip().casefold()
             if not normalized:
                 return False
@@ -7402,6 +7805,8 @@ class AIOrchestratorService:
             return bool(re.search(rf"(?<![a-z0-9]){re.escape(normalized)}(?![a-z0-9])", text))
 
         def has_any(terms: tuple[str, ...]) -> bool:
+            # Checks any from terms for AIOrchestratorService.
+            # This keeps the allowed/blocked rule in one place.
             return any(has_term(term) for term in terms)
 
         if (
@@ -7470,6 +7875,8 @@ class AIOrchestratorService:
         *,
         text_payload: StructuredTextPayload | None = None,
     ) -> bool:
+        # Checks explicit visual request from prompt text and copy payload for AIOrchestratorService.
+        # It reuses _coerce_text_value so related checks follow the same rule.
         metadata = (text_payload.metadata or {}) if isinstance(text_payload, StructuredTextPayload) else {}
         combined = " ".join(
             part
@@ -7509,6 +7916,8 @@ class AIOrchestratorService:
             "flow",
         )
         def contains_explicit_visual_term(term: str) -> bool:
+            # Centralizes contains explicit visual term from term for AIOrchestratorService.
+            # The helper owns a small rule that would distract from the surrounding flow.
             normalized = term.strip().casefold()
             if not normalized:
                 return False
@@ -7530,6 +7939,8 @@ class AIOrchestratorService:
         format_name: str,
         visual_plan: dict[str, Any] | None = None,
     ) -> bool:
+        # Centralizes infographic surface intent from prompt text, format name, and visual plan for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         if str(format_name or "").strip().casefold() != "infographic":
             return False
         text = cls._normalize_metadata_text(prompt, limit=720).casefold()
@@ -7549,6 +7960,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _explicit_top_n_item_count(cls, *values: Any) -> int | None:
+        # Counts explicit top n item count for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         text = cls._normalize_metadata_text(" ".join(cls._coerce_text_value(value) for value in values), limit=900)
         if not text:
             return None
@@ -7563,6 +7976,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _data_list_surface_available_count(cls, metadata: Any) -> int:
+        # Counts surface available count from metadata for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         if not isinstance(metadata, dict):
             return 0
         counts = [
@@ -7604,6 +8019,8 @@ class AIOrchestratorService:
         text_payload: StructuredTextPayload | None = None,
         visual_plan: dict[str, Any] | None = None,
     ) -> bool:
+        # Centralizes surface intent from prompt text, format name, and metadata for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         normalized_format = str(format_name or "").strip().casefold()
         if normalized_format not in {"static", "infographic"}:
             return False
@@ -7656,6 +8073,8 @@ class AIOrchestratorService:
         text_payload: StructuredTextPayload | None = None,
         visual_plan: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
+        # Builds surface contract from prompt text, format name, and metadata for AIOrchestratorService.
+        # It calls _explicit_top_n_item_count and _data_list_surface_available_count while assembling the payload or prompt text.
         normalized_format = str(format_name or "").strip().casefold()
         if not cls._data_list_surface_intent(
             prompt=prompt,
@@ -7696,6 +8115,8 @@ class AIOrchestratorService:
         request_prompt: Any,
         format_name: str,
     ) -> tuple[dict[str, Any], list[str]]:
+        # Sanitizes infographic surface visual metadata fields from metadata, request prompt, and format name for AIOrchestratorService.
+        # It delegates shared cleanup to _normalize_metadata_text and _topic_anchor_keywords before returning the cleaned value.
         cleaned = dict(metadata or {})
         if not cleaned or not cls._infographic_surface_intent(
             prompt=request_prompt,
@@ -7742,6 +8163,8 @@ class AIOrchestratorService:
         structured_visual_metadata: Any = None,
         visual_plan: dict[str, Any] | None = None,
     ) -> str:
+        # Builds infographic surface enforcement section from request state, format name, and structured visual metadata for AIOrchestratorService.
+        # It calls _explicit_top_n_item_count and _infographic_surface_intent while assembling the payload or prompt text.
         if not cls._infographic_surface_intent(
             prompt=getattr(request, "prompt", ""),
             format_name=format_name,
@@ -7771,6 +8194,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _data_visualization_requested(cls, *values: Any) -> bool:
+        # Centralizes visualization requested for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         combined = " ".join(
             cls._normalize_metadata_text(value, limit=520)
             for value in values
@@ -7782,6 +8207,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _numeric_data_visualization_requested(cls, *values: Any) -> bool:
+        # Centralizes numeric visualization requested for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         combined = " ".join(
             cls._normalize_metadata_text(value, limit=520)
             for value in values
@@ -7797,6 +8224,8 @@ class AIOrchestratorService:
         *values: Any,
         limit: int = 10,
     ) -> list[str]:
+        # Extracts visualization anchor lines from limit for AIOrchestratorService.
+        # It calls _normalize_metadata_text to turn raw evidence into the structured signal the caller needs.
         anchors: list[str] = []
         for value in values:
             if isinstance(value, dict):
@@ -7850,6 +8279,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest,
         anchors: list[str],
     ) -> bool:
+        # Centralizes visualization content anchor from request state and anchors for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if not anchors:
             return False
         topic_tokens = cls._content_topic_tokens(request)
@@ -7871,6 +8302,8 @@ class AIOrchestratorService:
         anchors: list[str],
         format_name: str,
     ) -> str:
+        # Builds visualization contract from request state, visual intent, and anchors for AIOrchestratorService.
+        # It calls _numeric_data_visualization_requested and _data_visualization_has_content_anchor while assembling the payload or prompt text.
         if not cls._data_visualization_requested(request.prompt, visual_intent, *anchors):
             return ""
         numeric_requested = cls._numeric_data_visualization_requested(request.prompt, visual_intent, *anchors)
@@ -7905,6 +8338,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _broad_visual_context_prompt_section(cls, lines: Any, *, limit: int = 5) -> str:
+        # Builds broad visual context prompt section from lines and limit for AIOrchestratorService.
+        # It calls _normalize_metadata_list while assembling the payload or prompt text.
         context_lines = cls._normalize_metadata_list(lines, limit=limit)
         if not context_lines:
             return ""
@@ -7916,6 +8351,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _sample_visual_permissions(cls, sample_page_blueprint: Any) -> dict[str, Any]:
+        # Centralizes sample visual permissions from sample page blueprint for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         blueprint = sample_page_blueprint if isinstance(sample_page_blueprint, dict) else {}
         permissions = blueprint.get("visual_permissions") if isinstance(blueprint.get("visual_permissions"), dict) else {}
         return dict(permissions)
@@ -7927,6 +8364,8 @@ class AIOrchestratorService:
         sample_page_blueprint: Any,
         visual_type: str,
     ) -> bool:
+        # Centralizes sample permission allows visual type from sample page blueprint and visual type for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         blueprint = sample_page_blueprint if isinstance(sample_page_blueprint, dict) else {}
         permissions = cls._sample_visual_permissions(blueprint)
         if not blueprint or not permissions:
@@ -7982,6 +8421,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _prompt_has_explicit_data_anchor(cls, prompt: Any) -> bool:
+        # Builds prompt explicit anchor from prompt text for AIOrchestratorService.
+        # It calls _normalize_metadata_text and _exact_claim_markers while assembling the payload or prompt text.
         text = cls._normalize_metadata_text(prompt, limit=520)
         if not text:
             return False
@@ -7997,6 +8438,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _structured_visual_anchor_source_allowed(cls, source: Any) -> bool:
+        # Checks structured visual anchor source allowed from source for AIOrchestratorService.
+        # It reuses _normalize_metadata_text so related checks follow the same rule.
         source_label = cls._normalize_metadata_text(source, limit=64).casefold()
         return source_label in cls.STRUCTURED_VISUAL_APPROVED_ANCHOR_SOURCES
 
@@ -8008,11 +8451,15 @@ class AIOrchestratorService:
         source_label: str,
         limit: int = 8,
     ) -> list[str]:
+        # Extracts structured visual anchor lines from input value, source label, and limit for AIOrchestratorService.
+        # It calls _normalize_metadata_text to turn raw evidence into the structured signal the caller needs.
         lines: list[str] = []
         seen: set[str] = set()
         normalized_source = cls._normalize_metadata_text(source_label, limit=64).casefold()
 
         def append_line(candidate: Any) -> None:
+            # Extracts append line from candidate for AIOrchestratorService.
+            # It calls _normalize_metadata_text to turn raw evidence into the structured signal the caller needs.
             if len(lines) >= limit:
                 return
             text = cls._normalize_metadata_text(candidate, limit=260)
@@ -8025,6 +8472,8 @@ class AIOrchestratorService:
             lines.append(text)
 
         def collect(item: Any) -> None:
+            # Centralizes collect from item for AIOrchestratorService.
+            # The helper owns a small rule that would distract from the surrounding flow.
             if len(lines) >= limit:
                 return
             if isinstance(item, dict):
@@ -8056,14 +8505,20 @@ class AIOrchestratorService:
 
     @classmethod
     def _structured_visual_nested_anchor_sources(cls, *containers: Any) -> list[tuple[str, Any]]:
+        # Centralizes structured visual nested anchor sources for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         buckets: dict[str, list[Any]] = {}
 
         def add(source: str, value: Any) -> None:
+            # Centralizes add from source and input value for AIOrchestratorService.
+            # The helper owns a small rule that would distract from the surrounding flow.
             if value is None:
                 return
             buckets.setdefault(source, []).append(value)
 
         def collect(value: Any) -> None:
+            # Centralizes collect from input value for AIOrchestratorService.
+            # The helper owns a small rule that would distract from the surrounding flow.
             if isinstance(value, dict):
                 for key in cls.STRUCTURED_VISUAL_NESTED_ANCHOR_KEYS:
                     if key in value:
@@ -8090,6 +8545,8 @@ class AIOrchestratorService:
         prompt: Any = "",
         request: AIOrchestrationRequest | None = None,
     ) -> list[tuple[str, Any]]:
+        # Centralizes structured visual anchor sources from metadata, prompt text, and request state for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         sources: list[tuple[str, Any]] = []
         prompt_text = prompt
         if not prompt_text and request is not None:
@@ -8124,6 +8581,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest | None = None,
         limit: int = 8,
     ) -> list[dict[str, Any]]:
+        # Centralizes structured visual anchor entries from sources, request state, and limit for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         entries: list[dict[str, Any]] = []
         seen: set[str] = set()
         for source, value in sources:
@@ -8169,9 +8628,13 @@ class AIOrchestratorService:
         limit: int = 5,
         include_reusable_design_assets: bool = True,
     ) -> list[str]:
+        # Centralizes brand visual grounding evidence from visual identity, reference assets, and asset catalog for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         evidence: list[str] = []
 
         def add(value: Any, *, item_limit: int = 120) -> None:
+            # Centralizes add from input value and item limit for AIOrchestratorService.
+            # The helper owns a small rule that would distract from the surrounding flow.
             normalized = cls._normalize_metadata_text(value, limit=item_limit)
             if not normalized:
                 return
@@ -8224,6 +8687,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _visual_treatment_from_text(cls, value: Any) -> tuple[str, str]:
+        # Extracts visual treatment text from input value for AIOrchestratorService.
+        # It calls _normalize_metadata_text to turn raw evidence into the structured signal the caller needs.
         text = cls._normalize_metadata_text(value, limit=900).casefold()
         if not text:
             return "brand_led", "default"
@@ -8264,6 +8729,8 @@ class AIOrchestratorService:
         anchor_count: int = 0,
         format_name: str = "",
     ) -> dict[str, Any]:
+        # Resolves visual treatment preference from prompt text, combined intent, and visual plan for AIOrchestratorService.
+        # The caller receives the canonical identifier/path/config value expected by the next step.
         blueprint = sample_page_blueprint if isinstance(sample_page_blueprint, dict) else {}
         plan = visual_plan if isinstance(visual_plan, dict) else {}
         grounding = list(brand_grounding or [])
@@ -8272,6 +8739,8 @@ class AIOrchestratorService:
         evidence_sources: dict[str, list[str]] = {value: [] for value in cls.VISUAL_TREATMENT_PREFERENCE_VALUES}
 
         def add_score(treatment: str, amount: float, source: str, reason: str) -> None:
+            # Centralizes add from treatment, amount, and source for AIOrchestratorService.
+            # The main branch stays readable while this function handles the local edge case.
             if treatment not in scores or amount <= 0:
                 return
             scores[treatment] += amount
@@ -8294,6 +8763,8 @@ class AIOrchestratorService:
         )
 
         def score_text(source: str, value: Any, weight: float) -> None:
+            # Extracts text from source, input value, and weight for AIOrchestratorService.
+            # It calls _normalize_metadata_text to turn raw evidence into the structured signal the caller needs.
             text = cls._normalize_metadata_text(value, limit=900)
             if not text:
                 return
@@ -8371,6 +8842,8 @@ class AIOrchestratorService:
             add_score("data_module", 110.0, "approved_data_anchors", "strict data anchors and permissions")
 
         def product_context_present() -> bool:
+            # Centralizes product context present for AIOrchestratorService.
+            # The main branch stays readable while this function handles the local edge case.
             return bool(
                 re.search(
                     r"\b(product|platform|app|screen|dashboard|ui|interface|analytics panel|laptop)\b",
@@ -8381,6 +8854,8 @@ class AIOrchestratorService:
         blocked_reasons: list[str] = []
 
         def permission_allowed(treatment: str) -> bool:
+            # Checks permission allowed from treatment for AIOrchestratorService.
+            # It reuses _sample_permission_allows_visual_type so related checks follow the same rule.
             if treatment == "product_dashboard":
                 if not product_context_present():
                     blocked_reasons.append("product_dashboard blocked: no product/ui context evidence")
@@ -8456,6 +8931,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _creativity_signal_lines(cls, value: Any, *, brand_grounding: list[str], limit: int = 5) -> list[str]:
+        # Extracts creativity signal lines from input value, brand grounding, and limit for AIOrchestratorService.
+        # It calls _normalize_metadata_text to turn raw evidence into the structured signal the caller needs.
         text = cls._normalize_metadata_text(value, limit=900)
         lowered = text.casefold()
         signals: list[str] = []
@@ -8494,6 +8971,8 @@ class AIOrchestratorService:
         asset_catalog: Any = None,
         compiled_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Normalizes structured visual metadata from metadata, request state, and visual intent for AIOrchestratorService.
+        # It delegates shared cleanup to _numeric_data_visualization_requested and _sample_permission_allows_visual_type before returning the cleaned va.
         raw = metadata.get("structured_visual_metadata") if isinstance(metadata, dict) else {}
         raw = raw if isinstance(raw, dict) else {}
         blueprint = (
@@ -8621,6 +9100,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _structured_visual_metadata_prompt_section(cls, structured_visual_metadata: Any) -> str:
+        # Builds structured visual metadata prompt section from structured visual metadata for AIOrchestratorService.
+        # It calls _normalize_metadata_text while assembling the payload or prompt text.
         metadata = structured_visual_metadata if isinstance(structured_visual_metadata, dict) else {}
         if not metadata:
             return ""
@@ -8663,6 +9144,8 @@ class AIOrchestratorService:
         asset_catalog: Any = None,
         compiled_context: dict[str, Any] | None = None,
     ) -> str:
+        # Builds dynamic visual art direction section from request state, format name, and semantic visual brief for AIOrchestratorService.
+        # It calls _normalize_metadata_text and _visual_treatment_from_text while assembling the payload or prompt text.
         metadata = structured_visual_metadata if isinstance(structured_visual_metadata, dict) else {}
         plan = visual_plan if isinstance(visual_plan, dict) else {}
         preference = metadata.get("visual_treatment_preference") if isinstance(metadata.get("visual_treatment_preference"), dict) else {}
@@ -8725,6 +9208,8 @@ class AIOrchestratorService:
 
         data_lines = data_visualization_anchor_lines if isinstance(data_visualization_anchor_lines, list) else []
         def anchor_count_value(value: Any) -> int:
+            # Counts anchor count from input value for AIOrchestratorService.
+            # The main branch stays readable while this function handles the local edge case.
             try:
                 return int(value or 0)
             except (TypeError, ValueError):
@@ -8805,6 +9290,8 @@ class AIOrchestratorService:
         compiled_context: dict[str, Any] | None = None,
         logo_position_hint: str = "",
     ) -> dict[str, Any]:
+        # Resolves reference creative profile from request state, format name, and sample page blueprint for AIOrchestratorService.
+        # The caller receives the canonical identifier/path/config value expected by the next step.
         blueprint = (
             cls._sample_blueprint_without_rendered_footer_text(sample_page_blueprint)
             if isinstance(sample_page_blueprint, dict)
@@ -9020,6 +9507,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _reference_creative_profile_prompt_section(cls, profile: Any) -> str:
+        # Builds reference creative profile prompt section from profile for AIOrchestratorService.
+        # This keeps payload shape decisions close to the code that understands the inputs.
         if not isinstance(profile, dict) or not profile:
             return ""
         profile = dict(profile)
@@ -9044,6 +9533,8 @@ class AIOrchestratorService:
         list_limit: int = 6,
         text_limit: int = 180,
     ) -> Any:
+        # Compacts prompt json from input value, depth, and max depth for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         if value in ("", None, [], {}):
             return None
         if isinstance(value, dict):
@@ -9108,6 +9599,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _compact_reference_adaptation_profile_for_prompt(cls, profile: dict[str, Any]) -> dict[str, Any]:
+        # Compacts reference adaptation profile prompt from profile for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         compact: dict[str, Any] = {}
         for key in (
             "source_format_family",
@@ -9135,6 +9628,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _reference_adaptation_profile_prompt_section(cls, profile: Any) -> str:
+        # Builds reference adaptation profile prompt section from profile for AIOrchestratorService.
+        # It calls _compact_reference_adaptation_profile_for_prompt while assembling the payload or prompt text.
         if not isinstance(profile, dict) or not profile:
             return ""
         compact_profile = cls._compact_reference_adaptation_profile_for_prompt(profile)
@@ -9148,6 +9643,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _generation_surface_contract_prompt_section(cls, contract: Any) -> str:
+        # Builds generation surface contract prompt section from contract for AIOrchestratorService.
+        # The returned payload is the compact contract consumed by the next branch.
         if not isinstance(contract, dict) or not contract:
             return ""
         compact = json.dumps(contract, ensure_ascii=True, separators=(",", ":"))
@@ -9169,11 +9666,15 @@ class AIOrchestratorService:
         layout_content_budget: dict[str, Any] | None = None,
         sample_page_blueprint: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Builds reference template structure from compiled context, profile, and source family for AIOrchestratorService.
+        # It calls _sample_blueprint_without_rendered_footer_text and _sample_blueprint_layout_mode while assembling the payload or prompt text.
         context = compiled_context if isinstance(compiled_context, dict) else {}
         structure = profile.get("template_structure") if isinstance(profile.get("template_structure"), dict) else {}
         runtime_blueprint = sample_page_blueprint if isinstance(sample_page_blueprint, dict) else {}
 
         def normalize_family(value: Any) -> str:
+            # Centralizes family from input value for AIOrchestratorService.
+            # The helper owns a small rule that would distract from the surrounding flow.
             text = cls._normalize_metadata_text(value, limit=48).casefold()
             normalized = text.replace("-", "_").replace(" ", "_").replace("/", "_").strip("_")
             if normalized in {"static", "story", "poster", "hero", "single_frame"}:
@@ -9185,6 +9686,8 @@ class AIOrchestratorService:
             return normalized if normalized in {"static", "carousel", "infographic"} else ""
 
         def trusted_reference(item: Any) -> bool:
+            # Centralizes trusted reference from item for AIOrchestratorService.
+            # The helper owns a small rule that would distract from the surrounding flow.
             if not isinstance(item, dict):
                 return False
             role = cls._normalize_metadata_text(item.get("role") or item.get("asset_role"), limit=32).casefold()
@@ -9361,6 +9864,8 @@ class AIOrchestratorService:
         *,
         format_name: str,
     ) -> dict[str, Any]:
+        # Centralizes reference template sample page blueprint from compiled context and format name for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         context = compiled_context if isinstance(compiled_context, dict) else {}
         profile = context.get("reference_adaptation_profile") if isinstance(context.get("reference_adaptation_profile"), dict) else {}
         if not profile:
@@ -9414,6 +9919,8 @@ class AIOrchestratorService:
         layout_content_budget: dict[str, Any] | None = None,
         sample_page_blueprint: dict[str, Any] | None = None,
     ) -> list[str]:
+        # Builds reference template adaptation prompt sections from compiled context, format name, and layout content budget for AIOrchestratorService.
+        # It calls _normalize_metadata_text and _reference_template_structure_payload while assembling the payload or prompt text.
         context = compiled_context if isinstance(compiled_context, dict) else {}
         profile = context.get("reference_adaptation_profile") if isinstance(context.get("reference_adaptation_profile"), dict) else {}
         runtime_blueprint = sample_page_blueprint if isinstance(sample_page_blueprint, dict) else {}
@@ -9559,6 +10066,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _visual_quality_bar_for_treatment(cls, structured_visual_metadata: Any) -> str:
+        # Checks visual quality bar treatment from structured visual metadata for AIOrchestratorService.
+        # It reuses _normalize_metadata_text so related checks follow the same rule.
         metadata = structured_visual_metadata if isinstance(structured_visual_metadata, dict) else {}
         preference = metadata.get("visual_treatment_preference") if isinstance(metadata.get("visual_treatment_preference"), dict) else {}
         treatment = cls._normalize_metadata_text(preference.get("preferred"), limit=40).casefold()
@@ -9610,6 +10119,8 @@ class AIOrchestratorService:
         disclaimer_guidance: Any = "",
         logo_position_hint: str = "",
     ) -> dict[str, Any]:
+        # Centralizes dynamic layout content budget from request state, format name, and copy payload for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         payload = text_payload
         slide_payload = slide if isinstance(slide, dict) else {}
         meta = metadata if isinstance(metadata, dict) else {}
@@ -9620,6 +10131,8 @@ class AIOrchestratorService:
         permissions = cls._sample_visual_permissions(blueprint)
 
         def count_int(key: str) -> int:
+            # Counts count int from key for AIOrchestratorService.
+            # The main branch stays readable while this function handles the local edge case.
             try:
                 return int(counts.get(key) or 0)
             except (TypeError, ValueError):
@@ -9742,6 +10255,8 @@ class AIOrchestratorService:
         raw_items: list[tuple[str, str]] = []
 
         def add_line(source: str, value: Any) -> None:
+            # Extracts add line from source and input value for AIOrchestratorService.
+            # It calls _normalize_metadata_text to turn raw evidence into the structured signal the caller needs.
             text = cls._normalize_metadata_text(value, limit=180)
             if text:
                 raw_items.append((source, text))
@@ -9919,6 +10434,8 @@ class AIOrchestratorService:
         slide: dict[str, Any],
         layout_budget: dict[str, Any] | None,
     ) -> dict[str, Any]:
+        # Builds prompt visible slide layout budget from slide and layout budget for AIOrchestratorService.
+        # This keeps payload shape decisions close to the code that understands the inputs.
         if not isinstance(layout_budget, dict):
             return slide
         prompt_slide = dict(slide)
@@ -9938,6 +10455,8 @@ class AIOrchestratorService:
         text_payload: StructuredTextPayload,
         layout_budget: dict[str, Any] | None,
     ) -> StructuredTextPayload:
+        # Builds prompt visible text layout budget from copy payload and layout budget for AIOrchestratorService.
+        # This keeps payload shape decisions close to the code that understands the inputs.
         if not isinstance(layout_budget, dict):
             return text_payload
         metadata = dict(text_payload.metadata or {})
@@ -9971,6 +10490,8 @@ class AIOrchestratorService:
         disclaimer_guidance: Any = "",
         layout_budget: dict[str, Any] | None = None,
     ) -> str:
+        # Builds dynamic layout quality guard section from request state, format name, and copy payload for AIOrchestratorService.
+        # It calls _sample_visual_permissions and _normalize_metadata_text while assembling the payload or prompt text.
         payload = text_payload
         meta = metadata if isinstance(metadata, dict) else {}
         blueprint = sample_page_blueprint if isinstance(sample_page_blueprint, dict) else (
@@ -10020,6 +10541,8 @@ class AIOrchestratorService:
             or ("disclaimer" in str(prompt_text or "").casefold())
         )
         def count_int(key: str) -> int:
+            # Counts count int from key for AIOrchestratorService.
+            # The main branch stays readable while this function handles the local edge case.
             try:
                 return int(counts.get(key) or 0)
             except (TypeError, ValueError):
@@ -10201,6 +10724,8 @@ class AIOrchestratorService:
         )
 
         def asset_mentions_symbol(asset: Any) -> bool:
+            # Extracts asset mentions symbol from asset record for AIOrchestratorService.
+            # It calls _normalize_metadata_text to turn raw evidence into the structured signal the caller needs.
             if not isinstance(asset, dict):
                 return False
             fields = [
@@ -10253,6 +10778,8 @@ class AIOrchestratorService:
         cls,
         request: AIOrchestrationRequest,
     ) -> str:
+        # Builds content guide prompt section from request state for AIOrchestratorService.
+        # It calls _normalize_metadata_text and _normalize_metadata_list while assembling the payload or prompt text.
         guide = request.content_format_guide if isinstance(request.content_format_guide, dict) else {}
         if not guide:
             return ""
@@ -10285,6 +10812,8 @@ class AIOrchestratorService:
         cls,
         request: AIOrchestrationRequest,
     ) -> str:
+        # Builds live research verified facts prompt section from request state for AIOrchestratorService.
+        # It calls _data_list_surface_contract and _int_or_none while assembling the payload or prompt text.
         research = request.live_research if isinstance(request.live_research, dict) else {}
         fact_model = research.get("fact_model") if isinstance(research.get("fact_model"), dict) else research
         raw_fact_limit = cls._int_or_none(
@@ -10317,6 +10846,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _strip_blocked_compliance_phrases(value: str) -> str:
+        # Strips strip blocked compliance phrases from input value for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         text = str(value or "")
         text = re.sub(r"\bSEBI[-\s]*(?:regulated|licensed|registered|aware)?\b", "", text, flags=re.IGNORECASE)
         text = re.sub(r"\bregulated\b", "", text, flags=re.IGNORECASE)
@@ -10330,6 +10861,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _scrub_image_prompt_brand_mark_triggers(value: str, replacement: str = "empty space") -> str:
+        # Builds scrub image prompt brand mark triggers from input value and replacement for AIOrchestratorService.
+        # This keeps payload shape decisions close to the code that understands the inputs.
         text = str(value or "")
         safe_replacement = replacement.strip() or "empty space"
         substitutions = (
@@ -10429,6 +10962,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _visual_explanation_guidance(visual_plan: dict[str, Any] | None) -> str:
+        # Builds visual explanation guidance from visual plan for AIOrchestratorService.
+        # It calls _normalize_metadata_text while assembling the payload or prompt text.
         plan = visual_plan if isinstance(visual_plan, dict) else {}
         mode = str(plan.get("mode") or "minimal_brand_scene").strip().lower()
         need = str(plan.get("need") or "low").strip().lower()
@@ -10481,6 +11016,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest,
         compiled_context: dict[str, Any],
     ) -> CreativeDecisionPayload:
+        # Builds creative decision from raw, fallback payload, and request state for AIOrchestratorService.
+        # It calls _resolve_template_candidate_identifier and _coerce_mapping while assembling the payload or prompt text.
         payload = dict(fallback or {})
         if isinstance(raw, dict):
             payload.update(raw)
@@ -10627,6 +11164,8 @@ class AIOrchestratorService:
         raw: Any,
         fallback: dict[str, Any],
     ) -> MessageStrategyPayload:
+        # Builds message strategy from raw and fallback payload for AIOrchestratorService.
+        # It calls _normalize_metadata_list and _coerce_text_value while assembling the payload or prompt text.
         payload = dict(fallback or {})
         if isinstance(raw, dict):
             payload.update(raw)
@@ -10685,6 +11224,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest,
         compiled_context: dict[str, Any],
     ) -> bool:
+        # Checks use image led social from request state and compiled context for AIOrchestratorService.
+        # It reuses _request_requires_ai_final_render and _effective_template_surface_policy so related checks follow the same rule.
         ai_final_render_required = cls._request_requires_ai_final_render(request)
         if not cls._image_generation_requested(request) and not ai_final_render_required:
             return False
@@ -10722,6 +11263,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _image_generation_size(studio_panel: dict[str, Any]) -> str:
+        # Builds image generation size from studio settings for AIOrchestratorService.
+        # The returned payload is the compact contract consumed by the next branch.
         size = studio_panel.get("size") or {}
         width = int(size.get("width") or 1080)
         height = int(size.get("height") or 1080)
@@ -10733,6 +11276,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _canvas_fit_guidance(studio_panel: dict[str, Any]) -> str:
+        # Builds canvas fit guidance from studio settings for AIOrchestratorService.
+        # This keeps payload shape decisions close to the code that understands the inputs.
         size = studio_panel.get("size") or {}
         width = int(size.get("width") or 1080)
         height = int(size.get("height") or 1080)
@@ -10751,6 +11296,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _generation_to_export_fit_guidance(cls, studio_panel: dict[str, Any]) -> str:
+        # Builds generation export fit guidance from studio settings for AIOrchestratorService.
+        # It calls _requested_canvas_dimensions and _image_generation_size while assembling the payload or prompt text.
         target_width, target_height = cls._requested_canvas_dimensions(studio_panel)
         generation_size = cls._image_generation_size(studio_panel)
         try:
@@ -10777,6 +11324,8 @@ class AIOrchestratorService:
         generation_path: str,
         creative_decision: CreativeDecisionPayload,
     ) -> bool:
+        # Checks use ai final from request state, generation path, and creative decision for AIOrchestratorService.
+        # It reuses _effective_template_surface_policy and _request_requires_ai_final_render so related checks follow the same rule.
         if generation_path != "image_led_social":
             return False
         if cls._request_requires_ai_final_render(request) and cls._image_generation_requested(request):
@@ -10809,6 +11358,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _image_generation_requested(cls, request: AIOrchestrationRequest) -> bool:
+        # Builds image generation requested from request state for AIOrchestratorService.
+        # It calls _request_requires_ai_final_render while assembling the payload or prompt text.
         if not bool(request.generate_image):
             format_name = str(request.studio_panel.get("format") or "").strip().lower()
             template_context = request.template_context if isinstance(request.template_context, dict) else {}
@@ -10823,16 +11374,22 @@ class AIOrchestratorService:
 
     @classmethod
     def _request_requires_ai_final_render(cls, request: AIOrchestrationRequest) -> bool:
+        # Centralizes request requires ai final from request state for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         format_name = str(request.studio_panel.get("format") or "").strip().lower()
         file_type = str(request.studio_panel.get("file_type") or "").strip().lower()
         return format_name in cls.AI_FINAL_RENDER_FORMATS and file_type in {"png", "jpg", "pdf", "doc"}
 
     @staticmethod
     def _ai_final_render_failure_message() -> str:
+        # Centralizes ai final failure message for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         return "AI final render failed and backend fallback rendering is disabled for this format."
 
     @staticmethod
     def _resolve_logo_box(scene_graph: GenerationSceneGraph) -> tuple[float, float, float, float] | None:
+        # Resolves logo box from scene graph for AIOrchestratorService.
+        # The caller receives the canonical identifier/path/config value expected by the next step.
         for element in scene_graph.elements:
             if not element.visible or element.role != "logo":
                 continue
@@ -10860,6 +11417,8 @@ class AIOrchestratorService:
         width: int,
         height: int,
     ) -> bytes | None:
+        # Builds logo mask bytes from scene graph, width, and height for AIOrchestratorService.
+        # It calls _resolve_logo_box while assembling the payload or prompt text.
         box = cls._resolve_logo_box(scene_graph)
         if box is None:
             left, top, box_width, box_height = 0.76, 0.06, 0.18, 0.1
@@ -10893,6 +11452,8 @@ class AIOrchestratorService:
         trace_id: str | None,
         trace_label: str,
     ) -> tuple[dict[str, Any], bool]:
+        # Applies apply ai logo edit pass from image provider, tenant id, and brand space id for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if not logo_storage_path or not self.storage.exists(logo_storage_path):
             return base_asset_payload, False
         base_storage_path = str(base_asset_payload.get("storage_path") or "").strip()
@@ -10951,6 +11512,8 @@ class AIOrchestratorService:
         creative_decision: dict[str, Any],
         compiled_context: dict[str, Any],
     ) -> dict[str, Any]:
+        # Centralizes fallback image led scene graph from request state, copy payload, and creative decision for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         size = request.studio_panel.get("size") or BlueprintService.PRESET_DIMENSIONS.get(
             request.studio_panel.get("platform_preset", "instagram"),
             BlueprintService.PRESET_DIMENSIONS["instagram"],
@@ -11085,6 +11648,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _repair_element_slide_prefix(cls, element: dict[str, Any]) -> int | None:
+        # Repairs element slide prefix from element for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         raw_id = str(element.get("element_id") or "").strip().lower()
         if not raw_id:
             return None
@@ -11104,6 +11669,8 @@ class AIOrchestratorService:
         existing_elements: list[dict[str, Any]],
         repair_attempt: int,
     ) -> list[dict[str, Any]]:
+        # Centralizes filter multislide elements from repair elements, existing elements, and repair attempt for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         slide_prefixes = {
             prefix
             for element in repair_elements
@@ -11144,6 +11711,8 @@ class AIOrchestratorService:
         repair_scene_graph: dict[str, Any],
         repair_attempt: int,
     ) -> dict[str, Any]:
+        # Merges into scene graph from existing scene graph, repair scene graph, and repair attempt for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         """Merge repair response into existing scene graph instead of replacing it.
 
         LLM may return only the repaired elements, not the complete scene graph.
@@ -11282,6 +11851,8 @@ class AIOrchestratorService:
         compiled_context: dict[str, Any],
         allow_recovery: bool = True,
     ) -> GenerationSceneGraph:
+        # Builds scene graph from raw, fallback payload, and creative decision for AIOrchestratorService.
+        # It calls _coerce_mapping and _normalize_scene_graph_layers while assembling the payload or prompt text.
         payload = dict(fallback or {})
         if isinstance(raw, dict):
             payload.update(raw)
@@ -11487,6 +12058,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _clamp_normalized_scene_graph_bounds(cls, elements: Any) -> list[dict[str, Any]]:
+        # Centralizes clamp scene graph bounds from elements for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         clamped_elements: list[dict[str, Any]] = []
         for item in cls._coerce_list(elements):
             if not isinstance(item, dict):
@@ -11526,6 +12099,8 @@ class AIOrchestratorService:
         layers_source: Any,
         fallback_source: Any,
     ) -> list[dict[str, Any]]:
+        # Extracts scene graph source elements from elements source, layers source, and fallback source for AIOrchestratorService.
+        # It calls _sanitize_scene_element_name and _coerce_list to turn raw evidence into the structured signal the caller needs.
         if isinstance(elements_source, list) and elements_source:
             return [dict(item) for item in elements_source if isinstance(item, dict)]
 
@@ -11570,6 +12145,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _carousel_slide_index_from_element_id(cls, value: Any) -> int | None:
+        # Centralizes carousel slide index element id from input value for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         token = cls._sanitize_scene_element_name(value)
         if not token:
             return None
@@ -11583,6 +12160,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _geometry_frame_from_elements(cls, elements: list[dict[str, Any]]) -> dict[str, float] | None:
+        # Measures geometry frame elements from elements for AIOrchestratorService.
+        # It calls _coerce_mapping to turn raw evidence into the structured signal the caller needs.
         geometry_candidates: list[dict[str, float]] = []
         preferred_roles = {"content_card", "panel", "overlay_panel", "card"}
         for element in elements:
@@ -11618,6 +12197,8 @@ class AIOrchestratorService:
         geometry: dict[str, Any],
         frame: dict[str, float],
     ) -> dict[str, Any]:
+        # Measures localize geometry frame from geometry and frame for AIOrchestratorService.
+        # The measurement feeds layout, crop, overlap, or density decisions.
         localized = dict(geometry or {})
         try:
             x = float(localized.get("x"))
@@ -11646,6 +12227,8 @@ class AIOrchestratorService:
         *,
         request: AIOrchestrationRequest,
     ) -> dict[str, Any]:
+        # Centralizes collapse stacked carousel scene graph from payload and request state for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if str(request.studio_panel.get("format") or "").strip().lower() != "carousel":
             return payload
         elements = [dict(item) for item in cls._coerce_list(payload.get("elements")) if isinstance(item, dict)]
@@ -11696,10 +12279,14 @@ class AIOrchestratorService:
 
     @classmethod
     def _sanitize_scene_element_name(cls, value: Any) -> str:
+        # Sanitizes scene element name from input value for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         return re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().casefold()).strip("_")
 
     @classmethod
     def _infer_scene_element_role(cls, element: dict[str, Any], *, source_key: str = "") -> str:
+        # Centralizes infer scene element role from element and source key for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         candidate_values = [
             element.get("role"),
             source_key,
@@ -11744,6 +12331,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _normalize_scene_element_type(cls, value: Any) -> str:
+        # Normalizes scene element type from input value for AIOrchestratorService.
+        # It delegates shared cleanup to _sanitize_scene_element_name before returning the cleaned value.
         token = cls._sanitize_scene_element_name(value)
         if token in {"color_fill"}:
             return "background"
@@ -11759,6 +12348,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _normalize_scene_graph_layers(cls, value: Any) -> list[str]:
+        # Normalizes scene graph layers from input value for AIOrchestratorService.
+        # It delegates shared cleanup to _coerce_list before returning the cleaned value.
         normalized_layers: list[str] = []
         for item in cls._coerce_list(value):
             if isinstance(item, dict):
@@ -11772,6 +12363,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _normalize_scene_graph_assets(cls, value: Any) -> list[dict[str, Any]]:
+        # Normalizes scene graph assets from input value for AIOrchestratorService.
+        # It delegates shared cleanup to _coerce_mapping and _coerce_list before returning the cleaned value.
         if isinstance(value, dict):
             normalized_assets: list[dict[str, Any]] = []
             for key, item in value.items():
@@ -11789,6 +12382,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _parse_geometry_value(value: Any) -> float | int | None:
+        # Measures geometry from input value for AIOrchestratorService.
+        # The measurement feeds layout, crop, overlap, or density decisions.
         """Convert geometry values including percentage strings to numeric values"""
         if value is None:
             return None
@@ -11813,6 +12408,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _default_geometry_for_role(cls, role: str, anchor: str | None) -> dict[str, float]:
+        # Measures default geometry role from role and anchor for AIOrchestratorService.
+        # Keeping the math here avoids subtle differences between renderer-facing branches.
         """Provide safe default normalized geometry based on element role."""
         # Role-based defaults for common social media layouts
         defaults = {
@@ -11848,6 +12445,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _normalize_scene_element_geometry(cls, element: dict[str, Any]) -> dict[str, Any]:
+        # Normalizes scene element geometry from element for AIOrchestratorService.
+        # It delegates shared cleanup to _coerce_mapping and _default_geometry_for_role before returning the cleaned value.
         geometry = element.get("geometry")
         if isinstance(geometry, str):
             role = str(element.get("role") or "").strip().lower()
@@ -11998,6 +12597,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _normalize_scene_element_style(cls, element: dict[str, Any]) -> dict[str, Any]:
+        # Normalizes scene element style from element for AIOrchestratorService.
+        # It delegates shared cleanup to _coerce_mapping before returning the cleaned value.
         style = cls._coerce_mapping(element.get("style"))
         top_level_mappings = {
             "font_family": "font_family",
@@ -12022,6 +12623,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _normalize_scene_element_text(cls, element: dict[str, Any]) -> str | list[str] | None:
+        # Normalizes scene element text from element for AIOrchestratorService.
+        # It delegates shared cleanup to _repair_common_mojibake and _coerce_text_value before returning the cleaned value.
         raw_text = element.get("text")
         if raw_text is None:
             return None
@@ -12059,6 +12662,8 @@ class AIOrchestratorService:
         element: dict[str, Any],
         request: AIOrchestrationRequest,
     ) -> dict[str, Any] | None:
+        # Sanitizes scene element asset from asset payload, element, and request state for AIOrchestratorService.
+        # It delegates shared cleanup to _coerce_mapping and _catalog_asset_by_storage_path before returning the cleaned value.
         payload = cls._coerce_mapping(asset_payload)
         if not payload:
             return None
@@ -12104,6 +12709,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _default_scene_element_type(element: dict[str, Any]) -> str:
+        # Centralizes default scene element type from element for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         role = str(element.get("role") or "").strip().lower()
         asset_role = str(element.get("asset_role") or ((element.get("asset") or {}) if isinstance(element.get("asset"), dict) else {}).get("asset_role") or "").strip().lower()
         if role in {"headline", "supporting_line", "body", "proof_points", "cta", "footer", "legal", "section_label", "stat_highlights"}:
@@ -12129,6 +12736,8 @@ class AIOrchestratorService:
         creative_decision: CreativeDecisionPayload,
         scene_graph_payload: dict[str, Any],
     ) -> str:
+        # Measures logo position hint from request state, copy payload, and creative decision for AIOrchestratorService.
+        # It calls _effective_logo_position_hint to turn raw evidence into the structured signal the caller needs.
         return cls._effective_logo_position_hint(
             request=request,
             creative_decision=creative_decision,
@@ -12138,6 +12747,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _logo_variant_hint_from_decision(cls, creative_decision: CreativeDecisionPayload) -> str:
+        # Centralizes logo variant hint decision from creative decision for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         asset_strategy = creative_decision.asset_strategy or {}
         for candidate in (
             asset_strategy.get("logo_variant"),
@@ -12151,6 +12762,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _coerce_logo_geometry_tuple(cls, geometry: Any) -> tuple[float, float, float, float] | None:
+        # Coerces logo geometry tuple from geometry for AIOrchestratorService.
+        # It delegates shared cleanup to _coerce_mapping before returning the cleaned value.
         candidate = cls._coerce_mapping(geometry)
         if not candidate:
             return None
@@ -12175,6 +12788,8 @@ class AIOrchestratorService:
         *,
         request: AIOrchestrationRequest,
     ) -> tuple[float, float, float, float] | None:
+        # Coerces canvas geometry tuple from geometry and request state for AIOrchestratorService.
+        # It delegates shared cleanup to _coerce_mapping before returning the cleaned value.
         candidate = cls._coerce_mapping(geometry)
         if not candidate:
             return None
@@ -12204,6 +12819,8 @@ class AIOrchestratorService:
     def _extract_visual_hierarchy_for_element(
         element: dict[str, Any], visual_context: dict[str, Any]
     ) -> dict[str, Any]:
+        # Extracts visual hierarchy element from element and visual context for AIOrchestratorService.
+        # The extracted signal becomes prompt context, metadata, or ranking input.
         """🔥 PHASE 5: Extract visual hierarchy metadata for scene graph element"""
         role = element.get("role", "body")
 
@@ -12253,6 +12870,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _anchor_from_logo_geometry(cls, geometry: tuple[float, float, float, float]) -> str:
+        # Measures anchor logo geometry from geometry for AIOrchestratorService.
+        # Keeping the math here avoids subtle differences between renderer-facing branches.
         x, y, width, height = geometry
         center_x = x + (width / 2.0)
         center_y = y + (height / 2.0)
@@ -12267,6 +12886,8 @@ class AIOrchestratorService:
         *,
         gutter: float = 0.0,
     ) -> bool:
+        # Normalizes rects overlap from first, second, and gutter for AIOrchestratorService.
+        # This shields downstream matching from casing, whitespace, and empty-value noise.
         first_left, first_top, first_width, first_height = first
         second_left, second_top, second_width, second_height = second
         first_right = first_left + first_width
@@ -12288,6 +12909,8 @@ class AIOrchestratorService:
         logo_geometry: tuple[float, float, float, float],
         request: AIOrchestrationRequest,
     ) -> dict[str, Any]:
+        # Repairs text geometry logo safe zone from element, logo geometry, and request state for AIOrchestratorService.
+        # It delegates shared cleanup to _coerce_canvas_geometry_tuple and _coerce_mapping before returning the cleaned value.
         role = str(element.get("role") or "").strip().lower()
         if role not in {
             "headline",
@@ -12359,6 +12982,8 @@ class AIOrchestratorService:
         text_payload: dict[str, Any],
         creative_decision: CreativeDecisionPayload,
     ) -> list[dict[str, Any]]:
+        # Builds finalize logo scene policy from scene graph payload, elements, and request state for AIOrchestratorService.
+        # It calls _logo_position_hint_from_payload and _resolve_logo_background_tone while assembling the payload or prompt text.
         logo_position_hint = cls._logo_position_hint_from_payload(
             request=request,
             text_payload=text_payload,
@@ -12472,6 +13097,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest,
         canvas: dict[str, Any],
     ) -> list[dict[str, Any]]:
+        # Centralizes inject legal disclaimers from elements, request state, and canvas for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         """Inject legal disclaimers from brand assets as footer elements"""
         # Get brand legal assets from resolved context
         brand_assets = request.resolved_brand_context.get("brand_assets", {})
@@ -12545,6 +13172,8 @@ class AIOrchestratorService:
         )
 
         def normalized_box_value(value: Any, scale: int) -> float:
+            # Measures box from input value and scale for AIOrchestratorService.
+            # Keeping the math here avoids subtle differences between renderer-facing branches.
             try:
                 return round(max(float(value or 0), 0.0) / max(float(scale), 1.0), 4)
             except (TypeError, ValueError):
@@ -12600,6 +13229,8 @@ class AIOrchestratorService:
         elements: list[dict[str, Any]],
         request: AIOrchestrationRequest,
     ) -> list[dict[str, Any]]:
+        # Applies apply cta template styling from elements and request state for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         """Apply CTA template styling to CTA button elements"""
         # Get brand CTA templates from resolved context
         brand_assets = request.resolved_brand_context.get("brand_assets", {})
@@ -12664,6 +13295,8 @@ class AIOrchestratorService:
         elements: list[dict[str, Any]],
         request: AIOrchestrationRequest,
     ) -> list[dict[str, Any]]:
+        # Applies apply component motif patterns from elements and request state for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         """Apply component motif patterns from brand visual references (numbered badges, background boxes)"""
         # Get visual references from resolved context
         visual_identity = request.resolved_brand_context.get("visual_identity", {})
@@ -12774,6 +13407,8 @@ class AIOrchestratorService:
         compiled_context: dict[str, Any],
         planning_hints: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Derives remap template colors brand palette from scene graph, compiled context, and planning hints for AIOrchestratorService.
+        # It calls _extract_brand_color_system and _extract_template_colors to turn raw evidence into the structured signal the caller needs.
         """Remap template colors to brand palette using brand data (NO HARDCODED COLORS).
 
         Uses luminance-based semantic role analysis to map template colors to brand colors
@@ -12820,6 +13455,8 @@ class AIOrchestratorService:
         cls,
         palette_roles: dict[str, Any],
     ) -> dict[str, Any]:
+        # Normalizes palette roles color system from palette roles for AIOrchestratorService.
+        # This shields downstream matching from casing, whitespace, and empty-value noise.
         if not isinstance(palette_roles, dict):
             return {}
 
@@ -12875,6 +13512,8 @@ class AIOrchestratorService:
         *,
         planning_hints: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Extracts brand color system from compiled context and planning hints for AIOrchestratorService.
+        # It calls _coerce_mapping and _normalize_palette_roles_color_system to turn raw evidence into the structured signal the caller needs.
         """Extract brand color system with semantic roles from brand data."""
         brand_profile = compiled_context.get("brand_profile", {})
         colors = brand_profile.get("colors", {}) if isinstance(brand_profile, dict) else {}
@@ -12924,6 +13563,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _analyze_color_semantic_role(cls, color_hex: str) -> str:
+        # Derives analyze color semantic role from color hex for AIOrchestratorService.
+        # It calls _calculate_color_luminance to turn raw evidence into the structured signal the caller needs.
         """Analyze what semantic role a template color likely serves based on luminance."""
         try:
             luminance = cls._calculate_color_luminance(color_hex)
@@ -12946,6 +13587,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _calculate_color_luminance(cls, color_hex: str) -> float:
+        # Derives calculate color luminance from color hex for AIOrchestratorService.
+        # The derived signal gives the LLM explicit evidence instead of asking it to infer the same thing later.
         """Calculate relative luminance of a color (0.0 = black, 1.0 = white)."""
         # Remove # prefix
         hex_color = str(color_hex).lstrip("#").strip()
@@ -12960,6 +13603,8 @@ class AIOrchestratorService:
 
         # Calculate relative luminance using standard formula
         def linearize(channel):
+            # Centralizes linearize from channel for AIOrchestratorService.
+            # The helper owns a small rule that would distract from the surrounding flow.
             if channel <= 0.03928:
                 return channel / 12.92
             return ((channel + 0.055) / 1.055) ** 2.4
@@ -12972,6 +13617,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _get_brand_color_for_role(cls, semantic_role: str, brand_color_system: dict[str, Any]) -> str | None:
+        # Derives brand color role from semantic role and brand color system for AIOrchestratorService.
+        # The derived signal gives the LLM explicit evidence instead of asking it to infer the same thing later.
         """Get brand color for a semantic role, with fallbacks from brand data."""
         # Direct match
         if semantic_role in brand_color_system:
@@ -13013,6 +13660,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _extract_brand_palette(cls, compiled_context: dict[str, Any]) -> list[str]:
+        # Extracts brand palette from compiled context for AIOrchestratorService.
+        # Later planning can reuse the structured value instead of scanning the source again.
         """Extract validated brand colors from context."""
         brand_profile = compiled_context.get("brand_profile", {})
         if not isinstance(brand_profile, dict):
@@ -13037,6 +13686,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _extract_template_colors(cls, scene_graph: dict[str, Any]) -> set[str]:
+        # Extracts template colors from scene graph for AIOrchestratorService.
+        # The extracted signal becomes prompt context, metadata, or ranking input.
         """Extract all colors used in scene graph."""
         colors = set()
         for element in scene_graph.get("elements", []):
@@ -13057,6 +13708,8 @@ class AIOrchestratorService:
         scene_graph_payload: dict[str, Any],
         request: AIOrchestrationRequest,
     ) -> dict[str, Any]:
+        # Applies apply design system scene defaults from scene graph payload and request state for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         payload = dict(scene_graph_payload)
         visual_identity = request.resolved_brand_context.get("visual_identity", {})
         if not isinstance(visual_identity, dict):
@@ -13206,6 +13859,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _design_system_prompt_guidance(visual_identity: dict[str, Any]) -> dict[str, str]:
+        # Builds design system prompt guidance from visual identity for AIOrchestratorService.
+        # It calls _normalize_metadata_text while assembling the payload or prompt text.
         design_system = visual_identity.get("design_system", {}) if isinstance(visual_identity.get("design_system"), dict) else {}
         background_style = visual_identity.get("background_style") if isinstance(visual_identity.get("background_style"), dict) else (
             design_system.get("background_style", {}) if isinstance(design_system.get("background_style"), dict) else {}
@@ -13339,6 +13994,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _normalize_logo_variant_hint(variant_hint: Any) -> str:
+        # Normalizes logo variant hint from variant hint for AIOrchestratorService.
+        # This shields downstream matching from casing, whitespace, and empty-value noise.
         text = str(variant_hint or "").strip().casefold()
         if not text:
             return ""
@@ -13367,6 +14024,8 @@ class AIOrchestratorService:
         creative_decision: CreativeDecisionPayload,
         scene_graph: GenerationSceneGraph,
     ) -> str | None:
+        # Centralizes requested logo variant from creative decision and scene graph for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         asset_strategy = creative_decision.asset_strategy or {}
         candidate_values: list[Any] = [
             asset_strategy.get("logo_variant"),
@@ -13406,6 +14065,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _score_logo_candidate_for_hint(cls, candidate: dict[str, Any], variant_hint: str) -> int:
+        # Scores logo candidate hint from candidate and variant hint for AIOrchestratorService.
+        # It reuses _normalize_logo_variant_hint so related checks follow the same rule.
         normalized_hint = cls._normalize_logo_variant_hint(variant_hint)
         score = int(candidate.get("source_priority") or 0)
         traits = candidate.get("traits", {}) or {}
@@ -13444,6 +14105,8 @@ class AIOrchestratorService:
         creative_decision: CreativeDecisionPayload,
         scene_graph: GenerationSceneGraph,
     ) -> tuple[str | None, str | None]:
+        # Selects logo candidate from request state, creative decision, and scene graph for AIOrchestratorService.
+        # It reuses _requested_logo_variant and _score_logo_candidate_for_hint so related checks follow the same rule.
         candidates = list(request.logo_asset_candidates or [])
         if not candidates:
             fallback_path = str(request.logo_asset_path or "").strip() or None
@@ -13471,6 +14134,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _reference_image_limit(studio_panel: dict[str, Any]) -> int:
+        # Centralizes reference image limit from studio settings for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         format_name = str(studio_panel.get("format") or "static").strip().lower()
         if format_name == "carousel":
             return 4
@@ -13482,6 +14147,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _asset_label_text(asset: dict[str, Any]) -> str:
+        # Extracts asset label text from asset record for AIOrchestratorService.
+        # The extracted signal becomes prompt context, metadata, or ranking input.
         metadata = asset.get("metadata") if isinstance(asset, dict) else {}
         metadata = metadata if isinstance(metadata, dict) else {}
         parts = [
@@ -13497,6 +14164,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _reference_asset_display_label(cls, asset: dict[str, Any]) -> str:
+        # Extracts reference asset display label from asset record for AIOrchestratorService.
+        # It calls _asset_metadata and _normalize_metadata_text to turn raw evidence into the structured signal the caller needs.
         metadata = cls._asset_metadata(asset)
         storage_path = str(asset.get("storage_path") or "").strip()
         filename = storage_path.replace("\\", "/").rsplit("/", 1)[-1]
@@ -13515,6 +14184,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _reference_asset_is_visual_source(cls, asset: dict[str, Any]) -> bool:
+        # Extracts reference asset visual source from asset record for AIOrchestratorService.
+        # It calls _asset_label_text to turn raw evidence into the structured signal the caller needs.
         if not isinstance(asset, dict):
             return False
         mime_type = str(asset.get("mime_type") or "").strip().lower()
@@ -13533,6 +14204,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _reference_asset_topic_tokens(cls, asset: dict[str, Any]) -> set[str]:
+        # Extracts reference asset topic tokens from asset record for AIOrchestratorService.
+        # It calls _asset_metadata and _asset_label_text to turn raw evidence into the structured signal the caller needs.
         metadata = cls._asset_metadata(asset)
         editorial_dna = metadata.get("editorial_dna") if isinstance(metadata.get("editorial_dna"), dict) else {}
         subject_semantics = metadata.get("subject_semantics") if isinstance(metadata.get("subject_semantics"), dict) else {}
@@ -13560,6 +14233,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _topic_alias_tokens(cls, values: list[str]) -> set[str]:
+        # Centralizes topic alias tokens from values for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         aliases: set[str] = set()
         for value in values:
             ordered_tokens = [
@@ -13581,6 +14256,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _request_topic_tokens(cls, request: AIOrchestrationRequest | None) -> set[str]:
+        # Centralizes request topic tokens from request state for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if request is None:
             return set()
         parts = [
@@ -13627,6 +14304,8 @@ class AIOrchestratorService:
         *,
         limit: int = 6,
     ) -> list[str]:
+        # Extracts brand subject focus terms from request state and limit for AIOrchestratorService.
+        # It calls _normalized_prompt_tokens to turn raw evidence into the structured signal the caller needs.
         if request is None:
             return []
         visual_identity = (
@@ -13674,6 +14353,8 @@ class AIOrchestratorService:
         *,
         request: AIOrchestrationRequest | None,
     ) -> int:
+        # Extracts reference asset topic from asset record and request state for AIOrchestratorService.
+        # It calls _request_topic_tokens and _reference_asset_topic_tokens to turn raw evidence into the structured signal the caller needs.
         request_tokens = cls._request_topic_tokens(request)
         if not request_tokens:
             return 0
@@ -13709,6 +14390,8 @@ class AIOrchestratorService:
         source_assets: list[dict[str, Any]] | None = None,
         limit: int = 2,
     ) -> list[dict[str, Any]]:
+        # Extracts topic relevant reference assets from request state, creative decision, and source assets for AIOrchestratorService.
+        # It calls _reference_asset_topic_score and _reference_asset_is_visual_source to turn raw evidence into the structured signal the caller needs.
         if request is None:
             return []
         raw_assets = source_assets or request.asset_catalog or request.reference_assets or []
@@ -13752,6 +14435,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest,
         selected_reference_images: list[dict[str, Any]],
     ) -> str:
+        # Centralizes reference topic alignment issue from request state and selected reference images for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         selected_scores = [
             cls._reference_asset_topic_score(asset, request=request)
             for asset in selected_reference_images
@@ -13774,6 +14459,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _merge_reference_asset_lists(*groups: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+        # Merges reference asset lists for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         merged: list[dict[str, Any]] = []
         seen: set[str] = set()
         for group in groups:
@@ -13789,11 +14476,15 @@ class AIOrchestratorService:
 
     @classmethod
     def _asset_metadata(cls, asset: dict[str, Any]) -> dict[str, Any]:
+        # Extracts asset metadata from asset record for AIOrchestratorService.
+        # The extracted signal becomes prompt context, metadata, or ranking input.
         metadata = asset.get("metadata") if isinstance(asset, dict) else {}
         return metadata if isinstance(metadata, dict) else {}
 
     @classmethod
     def _reference_asset_format_family(cls, asset: dict[str, Any]) -> str:
+        # Extracts reference asset family from asset record for AIOrchestratorService.
+        # It calls _asset_metadata and _normalize_metadata_text to turn raw evidence into the structured signal the caller needs.
         metadata = cls._asset_metadata(asset)
         editorial_dna = metadata.get("editorial_dna") if isinstance(metadata.get("editorial_dna"), dict) else {}
         analysis = asset.get("analysis") if isinstance(asset.get("analysis"), dict) else {}
@@ -13818,6 +14509,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _requested_reference_format_family(cls, request: AIOrchestrationRequest | None) -> str:
+        # Centralizes requested reference family from request state for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         if request is None:
             return ""
         format_name = cls._normalize_metadata_text(
@@ -13828,6 +14521,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _reference_asset_sequence_family(cls, asset: dict[str, Any]) -> str:
+        # Extracts reference asset sequence family from asset record for AIOrchestratorService.
+        # It calls _asset_metadata and _normalize_metadata_text to turn raw evidence into the structured signal the caller needs.
         metadata = cls._asset_metadata(asset)
         editorial_dna = metadata.get("editorial_dna") if isinstance(metadata.get("editorial_dna"), dict) else {}
         for candidate in (
@@ -13852,6 +14547,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _reference_asset_sequence_position(cls, asset: dict[str, Any]) -> int | None:
+        # Measures reference asset sequence position from asset record for AIOrchestratorService.
+        # It calls _asset_metadata to turn raw evidence into the structured signal the caller needs.
         metadata = cls._asset_metadata(asset)
         for candidate in (
             asset.get("reference_slide_index"),
@@ -13883,6 +14580,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _reference_asset_is_carousel_native(cls, asset: dict[str, Any]) -> bool:
+        # Extracts reference asset carousel native from asset record for AIOrchestratorService.
+        # It calls _reference_asset_format_family and _asset_metadata to turn raw evidence into the structured signal the caller needs.
         if not isinstance(asset, dict):
             return False
         format_family = cls._reference_asset_format_family(asset)
@@ -13926,6 +14625,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _reference_asset_is_explicit_single_surface(cls, asset: dict[str, Any]) -> bool:
+        # Extracts reference asset explicit single surface from asset record for AIOrchestratorService.
+        # It calls _reference_asset_format_family and _asset_label_text to turn raw evidence into the structured signal the caller needs.
         format_family = cls._reference_asset_format_family(asset)
         if format_family in {"static", "infographic", "story", "poster"}:
             return True
@@ -13939,6 +14640,8 @@ class AIOrchestratorService:
         *,
         request: AIOrchestrationRequest | None,
     ) -> list[dict[str, Any]]:
+        # Extracts filter reference assets requested from assets and request state for AIOrchestratorService.
+        # It calls _requested_reference_format_family and _reference_asset_format_family to turn raw evidence into the structured signal the caller needs.
         requested_family = cls._requested_reference_format_family(request)
         if not requested_family:
             return [dict(asset) for asset in assets if isinstance(asset, dict)]
@@ -13978,6 +14681,8 @@ class AIOrchestratorService:
         *,
         request: AIOrchestrationRequest | None,
     ) -> int:
+        # Centralizes carousel reference family size from asset record and request state for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         family = cls._reference_asset_sequence_family(asset)
         if not family or request is None:
             return 0
@@ -14001,6 +14706,8 @@ class AIOrchestratorService:
         *,
         request: AIOrchestrationRequest | None,
     ) -> list[dict[str, Any]]:
+        # Extracts dominant carousel reference family assets from assets and request state for AIOrchestratorService.
+        # It calls _reference_asset_sequence_family and _reference_asset_topic_score to turn raw evidence into the structured signal the caller needs.
         family_groups: dict[str, list[dict[str, Any]]] = {}
         for asset in assets:
             if not isinstance(asset, dict):
@@ -14013,6 +14720,8 @@ class AIOrchestratorService:
             return [dict(asset) for asset in assets if isinstance(asset, dict)]
 
         def family_score(items: list[dict[str, Any]]) -> tuple[int, int, int]:
+            # Centralizes family from items for AIOrchestratorService.
+            # The helper owns a small rule that would distract from the surrounding flow.
             return (
                 len(items),
                 sum(cls._reference_asset_topic_score(item, request=request) for item in items) if request is not None else 0,
@@ -14033,6 +14742,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest | None,
         creative_decision: CreativeDecisionPayload | None,
     ) -> list[dict[str, Any]]:
+        # Selects selected carousel reference family assets from assets, request state, and creative decision for AIOrchestratorService.
+        # It reuses _normalize_template_lookup_key and _reference_asset_sequence_family so related checks follow the same rule.
         if request is None:
             return []
         target_candidates = [
@@ -14074,6 +14785,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _asset_logo_cue_text(cls, asset: dict[str, Any]) -> str:
+        # Extracts asset logo cue text from asset record for AIOrchestratorService.
+        # It calls _asset_metadata and _asset_label_text to turn raw evidence into the structured signal the caller needs.
         metadata = cls._asset_metadata(asset)
         parts: list[str] = [cls._asset_label_text(asset)]
         skip_value_keys = {
@@ -14095,6 +14808,8 @@ class AIOrchestratorService:
         }
 
         def collect(value: Any, *, key: str = "", depth: int = 0) -> None:
+            # Centralizes collect from input value, key, and depth for AIOrchestratorService.
+            # The helper owns a small rule that would distract from the surrounding flow.
             if depth > 4:
                 return
             if isinstance(value, dict):
@@ -14121,6 +14836,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _reference_image_has_logo_cue(cls, asset: dict[str, Any]) -> bool:
+        # Centralizes reference image logo cue from asset record for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         asset_role = str(asset.get("asset_role") or "").strip().casefold()
         if asset_role in {"logo", "logo_variant"}:
             return True
@@ -14184,6 +14901,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _reference_conditioning_surface_kind(cls, asset: dict[str, Any]) -> str:
+        # Centralizes reference conditioning surface kind from asset record for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         metadata = cls._asset_metadata(asset)
         normalized_metadata = metadata.get("normalized_metadata")
         normalized_metadata = normalized_metadata if isinstance(normalized_metadata, dict) else {}
@@ -14198,6 +14917,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _reference_conditioning_overlay_safe(cls, asset: dict[str, Any]) -> bool | None:
+        # Centralizes reference conditioning overlay safe from asset record for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         metadata = cls._asset_metadata(asset)
         normalized_metadata = metadata.get("normalized_metadata")
         normalized_metadata = normalized_metadata if isinstance(normalized_metadata, dict) else {}
@@ -14214,6 +14935,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _reference_text_surface_metadata_sources(cls, asset: dict[str, Any]) -> list[dict[str, Any]]:
+        # Extracts reference text surface metadata sources from asset record for AIOrchestratorService.
+        # It calls _asset_metadata to turn raw evidence into the structured signal the caller needs.
         metadata = cls._asset_metadata(asset)
         sources: list[dict[str, Any]] = []
         for candidate in (
@@ -14228,6 +14951,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _reference_asset_sample_blueprints(cls, asset: dict[str, Any]) -> list[dict[str, Any]]:
+        # Extracts reference asset sample blueprints from asset record for AIOrchestratorService.
+        # It calls _reference_text_surface_metadata_sources to turn raw evidence into the structured signal the caller needs.
         blueprints: list[dict[str, Any]] = []
         for source in cls._reference_text_surface_metadata_sources(asset):
             candidates: list[Any] = [
@@ -14250,6 +14975,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _reference_asset_text_surface_evidence(cls, asset: dict[str, Any]) -> str:
+        # Extracts reference asset text surface evidence from asset record for AIOrchestratorService.
+        # It calls _reference_text_surface_metadata_sources and _reference_asset_sample_blueprints to turn raw evidence into the structured signal the c.
         parts: list[str] = []
         ocr_sources: list[dict[str, Any]] = []
         for source in cls._reference_text_surface_metadata_sources(asset):
@@ -14298,6 +15025,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _reference_asset_readable_text_block_count(cls, asset: dict[str, Any]) -> int:
+        # Counts reference asset readable text block count from asset record for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         counts: list[int] = []
         for source in cls._reference_text_surface_metadata_sources(asset):
             ocr_candidates = (
@@ -14343,6 +15072,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _reference_asset_layout_text_module_count(cls, asset: dict[str, Any]) -> int:
+        # Counts reference asset layout text module count from asset record for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         counts: list[int] = []
         for blueprint in cls._reference_asset_sample_blueprints(asset):
             module_counts = blueprint.get("module_counts") if isinstance(blueprint.get("module_counts"), dict) else {}
@@ -14365,6 +15096,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _reference_asset_is_text_bearing_surface(cls, asset: dict[str, Any]) -> bool:
+        # Extracts reference asset text bearing surface from asset record for AIOrchestratorService.
+        # It calls _reference_asset_format_family and _reference_conditioning_surface_kind to turn raw evidence into the structured signal the caller ne.
         asset_role = str(asset.get("asset_role") or "").strip().lower()
         surface_role = asset_role in {"reference_creative", "template_preview", "template", "hero_image", "image", "photo"}
         format_family = cls._reference_asset_format_family(asset)
@@ -14401,6 +15134,8 @@ class AIOrchestratorService:
         *,
         request: AIOrchestrationRequest | None,
     ) -> bool:
+        # Centralizes reference tokens align request topic from reference tokens and request state for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         request_tokens = cls._request_topic_tokens(request)
         if not request_tokens or not reference_tokens:
             return False
@@ -14437,6 +15172,8 @@ class AIOrchestratorService:
         *,
         request: AIOrchestrationRequest | None,
     ) -> bool:
+        # Extracts reference text surface topic mismatch from asset record and request state for AIOrchestratorService.
+        # It calls _reference_asset_text_surface_evidence and _reference_asset_topic_tokens to turn raw evidence into the structured signal the caller n.
         if request is None or not cls._request_topic_tokens(request):
             return False
         evidence = cls._reference_asset_text_surface_evidence(asset)
@@ -14462,6 +15199,8 @@ class AIOrchestratorService:
         *,
         request: AIOrchestrationRequest | None,
     ) -> bool:
+        # Extracts reference asset mismatched text surface conditioning from asset record and request state for AIOrchestratorService.
+        # It calls _requested_reference_format_family and _reference_asset_format_family to turn raw evidence into the structured signal the caller needs.
         requested_family = cls._requested_reference_format_family(request)
         asset_family = cls._reference_asset_format_family(asset)
         return (
@@ -14472,6 +15211,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _reference_asset_has_layout_surface_metadata(cls, asset: dict[str, Any]) -> bool:
+        # Extracts reference asset layout surface metadata from asset record for AIOrchestratorService.
+        # It calls _reference_text_surface_metadata_sources and _reference_asset_sample_blueprints to turn raw evidence into the structured signal the c.
         layout_keys = {
             "sample_page_blueprint",
             "blueprint_payload",
@@ -14497,6 +15238,8 @@ class AIOrchestratorService:
         *,
         request: AIOrchestrationRequest | None,
     ) -> bool:
+        # Extracts reference asset layout only static infographic surface from asset record and request state for AIOrchestratorService.
+        # It calls _requested_reference_format_family and _reference_asset_format_family to turn raw evidence into the structured signal the caller needs.
         requested_family = cls._requested_reference_format_family(request)
         if requested_family not in {"static", "infographic"}:
             return False
@@ -14527,6 +15270,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _is_reference_image_asset(cls, asset: dict[str, Any]) -> bool:
+        # Checks reference image asset from asset record for AIOrchestratorService.
+        # It reuses _asset_label_text so related checks follow the same rule.
         if not isinstance(asset, dict):
             return False
         mime_type = str(asset.get("mime_type") or "").strip().lower()
@@ -14551,6 +15296,8 @@ class AIOrchestratorService:
         creative_decision: CreativeDecisionPayload,
         request: AIOrchestrationRequest | None = None,
     ) -> bool:
+        # Checks conditioning safe reference image asset from asset record, creative decision, and request state for AIOrchestratorService.
+        # It reuses _asset_metadata and _reference_conditioning_surface_kind so related checks follow the same rule.
         if not cls._reference_asset_is_visual_source(asset):
             return False
         metadata = cls._asset_metadata(asset)
@@ -14612,6 +15359,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest,
         creative_decision: CreativeDecisionPayload,
     ) -> int:
+        # Scores reference image candidate from asset record, request state, and creative decision for AIOrchestratorService.
+        # It reuses _asset_label_text and _preferred_sequence_reference_paths so related checks follow the same rule.
         asset_role = str(asset.get("asset_role") or "").strip().lower()
         trust_level = str(asset.get("trust_level") or "").strip().lower()
         label_text = cls._asset_label_text(asset)
@@ -14674,6 +15423,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest,
         creative_decision: CreativeDecisionPayload,
     ) -> list[dict[str, Any]]:
+        # Selects reference image assets from request state and creative decision for AIOrchestratorService.
+        # It reuses _preferred_sequence_reference_paths and _sequence_pack_style_reference_surface_paths so related checks follow the same rule.
         format_name = str(request.studio_panel.get("format") or "static").strip().lower()
         preferred_paths = cls._preferred_sequence_reference_paths(request, creative_decision=creative_decision)
         blocked_sequence_surface_paths = cls._sequence_pack_style_reference_surface_paths(
@@ -14817,6 +15568,8 @@ class AIOrchestratorService:
         creative_decision: CreativeDecisionPayload,
         request: AIOrchestrationRequest | None = None,
     ) -> list[dict[str, Any]]:
+        # Extracts conditioning reference image assets from reference assets, creative decision, and request state for AIOrchestratorService.
+        # It calls _is_conditioning_safe_reference_image_asset to turn raw evidence into the structured signal the caller needs.
         return [
             dict(asset)
             for asset in reference_assets
@@ -14831,6 +15584,8 @@ class AIOrchestratorService:
         *,
         request: AIOrchestrationRequest | None,
     ) -> list[dict[str, Any]]:
+        # Extracts layout analysis reference image assets from reference assets and request state for AIOrchestratorService.
+        # It calls _requested_reference_format_family and _reference_asset_is_layout_only_static_infographic_surface to turn raw evidence into the struc.
         assets = [dict(asset) for asset in reference_assets if isinstance(asset, dict)]
         if cls._requested_reference_format_family(request) not in {"static", "infographic"}:
             return assets
@@ -14848,6 +15603,8 @@ class AIOrchestratorService:
         cls,
         request: AIOrchestrationRequest | None,
     ) -> bool:
+        # Centralizes carousel sequence uses multiple reference images from request state for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if request is None:
             return False
         if str(request.studio_panel.get("format") or "").strip().lower() != "carousel":
@@ -14870,6 +15627,8 @@ class AIOrchestratorService:
         *,
         exact_logo_overlay_required: bool,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        # Centralizes filter logo bearing conditioning reference images from reference assets and exact logo overlay required for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         if not exact_logo_overlay_required:
             return [dict(asset) for asset in reference_assets if isinstance(asset, dict)], []
         allowed: list[dict[str, Any]] = []
@@ -14887,6 +15646,8 @@ class AIOrchestratorService:
         self,
         reference_assets: list[dict[str, Any]],
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        # Extracts filter available reference image assets from reference assets for AIOrchestratorService.
+        # Later planning can reuse the structured value instead of scanning the source again.
         available: list[dict[str, Any]] = []
         missing: list[dict[str, Any]] = []
         for asset in reference_assets:
@@ -14909,6 +15670,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest,
         cache: dict[str, str],
     ) -> str:
+        # Extracts reference asset conditioning storage path from asset record, request state, and cache for AIOrchestratorService.
+        # Later planning can reuse the structured value instead of scanning the source again.
         storage_path = str(asset.get("storage_path") or "").strip()
         if not storage_path or not self.storage.exists(storage_path):
             return ""
@@ -14964,6 +15727,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest,
         cache: dict[str, str],
     ) -> list[str]:
+        # Centralizes conditioning reference image paths from reference assets, request state, and cache for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         paths: list[str] = []
         seen: set[str] = set()
         for asset in reference_assets:
@@ -14987,6 +15752,8 @@ class AIOrchestratorService:
         slide_index: int | None = None,
         slide_count: int | None = None,
     ) -> dict[str, Any]:
+        # Resolves sample page blueprint image path from image path, slide index, and slide count for AIOrchestratorService.
+        # This hides source-specific naming and path quirks from the main flow.
         path = str(image_path or "").strip()
         if not path:
             return {}
@@ -15022,6 +15789,8 @@ class AIOrchestratorService:
         )
 
         def distance(pixel: tuple[int, int, int]) -> int:
+            # Centralizes distance from pixel for AIOrchestratorService.
+            # The main branch stays readable while this function handles the local edge case.
             return sum(abs(int(pixel[index]) - int(background[index])) for index in range(3))
 
         mask = [[False for _ in range(sw)] for _ in range(sh)]
@@ -15237,6 +16006,8 @@ class AIOrchestratorService:
         *,
         reference_image_paths: list[str],
     ) -> dict[str, Any]:
+        # Centralizes annotate slide sample page blueprint from slide and reference image paths for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if not reference_image_paths:
             return slide
         annotated = dict(slide)
@@ -15257,6 +16028,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _count_similarity(expected: int, actual: int, *, tolerance: int = 1) -> float:
+        # Counts count similarity from expected, actual, and tolerance for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         expected = max(int(expected or 0), 0)
         actual = max(int(actual or 0), 0)
         if expected == actual:
@@ -15268,6 +16041,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _layout_category_compatible(cls, expected: str, actual: str) -> bool:
+        # Checks layout category compatible from expected and actual for AIOrchestratorService.
+        # It reuses _normalize_metadata_text so related checks follow the same rule.
         expected = cls._normalize_metadata_text(expected, limit=80).casefold()
         actual = cls._normalize_metadata_text(actual, limit=80).casefold()
         if not expected or not actual:
@@ -15282,12 +16057,16 @@ class AIOrchestratorService:
 
     @classmethod
     def _blueprint_ocr_blocks(cls, blueprint: dict[str, Any]) -> list[dict[str, Any]]:
+        # Centralizes blueprint OCR blocks from blueprint for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         ocr = blueprint.get("ocr_structure") if isinstance(blueprint.get("ocr_structure"), dict) else {}
         blocks = ocr.get("block_summary")
         return [block for block in blocks if isinstance(block, dict)] if isinstance(blocks, list) else []
 
     @staticmethod
     def _similarity_float(value: Any, *, default: float = 0.0) -> float:
+        # Centralizes similarity float from input value and default for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         try:
             return float(value)
         except (TypeError, ValueError):
@@ -15295,6 +16074,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _text_looks_like_non_cta_label(cls, text: str) -> bool:
+        # Extracts text non cta label from text for AIOrchestratorService.
+        # It calls _text_has_cta_action and _normalize_metadata_text to turn raw evidence into the structured signal the caller needs.
         normalized = cls._normalize_metadata_text(text, limit=140).casefold()
         if not normalized:
             return True
@@ -15323,6 +16104,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _text_has_cta_action(cls, text: str) -> bool:
+        # Extracts text cta action from text for AIOrchestratorService.
+        # It calls _normalize_metadata_text to turn raw evidence into the structured signal the caller needs.
         normalized = cls._normalize_metadata_text(text, limit=140).casefold()
         action_terms = {
             "apply",
@@ -15360,6 +16143,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _blueprint_effective_cta_count(cls, blueprint: dict[str, Any]) -> int:
+        # Counts blueprint effective cta count from blueprint for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         blocks = cls._blueprint_ocr_blocks(blueprint)
         raw_layout_category = cls._normalize_metadata_text(blueprint.get("layout_category"), limit=80).casefold()
         product_or_closing_layouts = {
@@ -15407,6 +16192,8 @@ class AIOrchestratorService:
         exact_logo_overlay_deferred: bool = False,
         legal_footer_overlay_deferred: bool = False,
     ) -> dict[str, Any]:
+        # Centralizes sample output similarity report from sample blueprint, output blueprint, and exact logo overlay deferred for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         if not sample_blueprint or not output_blueprint:
             return {"score": 0.0, "issues": ["missing_blueprint"], "retry_recommended": False}
         sample_counts = sample_blueprint.get("module_counts") if isinstance(sample_blueprint.get("module_counts"), dict) else {}
@@ -15417,6 +16204,8 @@ class AIOrchestratorService:
         output_category = cls._normalize_metadata_text(output_blueprint.get("layout_category"), limit=80)
 
         def effective_layout_category(blueprint: dict[str, Any], raw_category: str) -> str:
+            # Centralizes effective layout category from blueprint and raw category for AIOrchestratorService.
+            # The main branch stays readable while this function handles the local edge case.
             raw = cls._normalize_metadata_text(raw_category, limit=80).casefold()
             if raw in {"closing_cta_or_product_surface", "dashboard_or_product_surface", "data_dashboard", "product_surface"}:
                 return raw_category
@@ -15669,6 +16458,8 @@ class AIOrchestratorService:
         exact_logo_overlay_deferred: bool = False,
         legal_footer_overlay_deferred: bool = False,
     ) -> dict[str, Any]:
+        # Centralizes sample output similarity paths from sample image path, output image path, and sample blueprint for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         sample = sample_blueprint if isinstance(sample_blueprint, dict) and sample_blueprint else cls._sample_page_blueprint_from_image_path(
             sample_image_path,
             slide_index=slide_index,
@@ -15696,6 +16487,8 @@ class AIOrchestratorService:
         *,
         similarity_report: dict[str, Any],
     ) -> str:
+        # Builds append sample similarity prompt from prompt text and similarity report for AIOrchestratorService.
+        # It calls _strip_leading_sample_similarity_repair_prompt and _scrub_image_prompt_brand_mark_triggers while assembling the payload or prompt text.
         prompt = cls._strip_leading_sample_similarity_repair_prompt(prompt)
         corrections = [
             cls._normalize_metadata_text(item, limit=220)
@@ -15745,6 +16538,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _strip_leading_sample_similarity_repair_prompt(cls, prompt: str) -> str:
+        # Strips strip leading sample similarity prompt from prompt text for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         text = str(prompt or "")
         stripped = text.lstrip()
         leading_whitespace = len(text) - len(stripped)
@@ -15760,6 +16555,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _sample_blueprint_layout_mode(cls, blueprint: dict[str, Any]) -> str:
+        # Centralizes sample blueprint layout mode from blueprint for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if not isinstance(blueprint, dict) or not blueprint:
             return ""
         layout_category = cls._normalize_metadata_text(blueprint.get("layout_category"), limit=80).casefold()
@@ -15828,6 +16625,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _sample_blueprint_layout_instruction(cls, blueprint: dict[str, Any]) -> str:
+        # Centralizes sample blueprint layout instruction from blueprint for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if not isinstance(blueprint, dict) or not blueprint:
             return ""
         blueprint = cls._sample_blueprint_without_rendered_footer_text(blueprint)
@@ -15906,11 +16705,15 @@ class AIOrchestratorService:
 
     @classmethod
     def _sample_blueprint_without_rendered_footer_text(cls, blueprint: dict[str, Any]) -> dict[str, Any]:
+        # Extracts sample blueprint without rendered footer text from blueprint for AIOrchestratorService.
+        # It calls _normalize_metadata_text to turn raw evidence into the structured signal the caller needs.
         if not isinstance(blueprint, dict) or not blueprint:
             return {}
         cleaned = dict(blueprint)
 
         def footer_like(value: Any) -> bool:
+            # Centralizes footer from input value for AIOrchestratorService.
+            # The helper owns a small rule that would distract from the surrounding flow.
             text = cls._normalize_metadata_text(value, limit=180).casefold()
             return any(token in text for token in ("footer", "legal", "disclaimer", "fine print"))
 
@@ -15958,10 +16761,14 @@ class AIOrchestratorService:
         content_metadata: dict[str, Any],
         limit: int,
     ) -> list[str]:
+        # Extracts sample adaptation fact lines from slide, content metadata, and limit for AIOrchestratorService.
+        # It calls _claim_evidence_pair_lines and _normalize_metadata_text to turn raw evidence into the structured signal the caller needs.
         row_lines: list[str] = []
         seen_lines: set[str] = set()
 
         def add_line(value: Any, *, text_limit: int = 150) -> None:
+            # Extracts add line from input value and text limit for AIOrchestratorService.
+            # It calls _normalize_metadata_text to turn raw evidence into the structured signal the caller needs.
             text = cls._normalize_metadata_text(value, limit=text_limit)
             key = re.sub(r"[^a-z0-9]+", " ", text.casefold()).strip()
             if not text or not key or key in seen_lines:
@@ -15991,6 +16798,8 @@ class AIOrchestratorService:
         *,
         content_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Centralizes adapt slide copy sample blueprint from slide and content metadata for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         metadata = slide.get("metadata") if isinstance(slide.get("metadata"), dict) else {}
         content_metadata = content_metadata if isinstance(content_metadata, dict) else {}
         blueprint = metadata.get("sample_page_blueprint") if isinstance(metadata.get("sample_page_blueprint"), dict) else {}
@@ -16094,6 +16903,8 @@ class AIOrchestratorService:
         base_blueprint: dict[str, Any],
         vision_analysis: dict[str, Any],
     ) -> dict[str, Any]:
+        # Merges vision page blueprint from base blueprint and vision analysis for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         merged = dict(base_blueprint or {})
         page_blueprint = (
             vision_analysis.get("page_blueprint")
@@ -16162,6 +16973,8 @@ class AIOrchestratorService:
         image_path: str,
         base_blueprint: dict[str, Any],
     ) -> dict[str, Any]:
+        # Centralizes vision enhance page blueprint from image path and base blueprint for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if not image_path or not isinstance(base_blueprint, dict):
             return base_blueprint or {}
         if not getattr(self.template_vision, "client", None):
@@ -16197,6 +17010,8 @@ class AIOrchestratorService:
         exact_logo_overlay_deferred: bool = False,
         legal_footer_overlay_deferred: bool = False,
     ) -> dict[str, Any]:
+        # Centralizes sample output similarity paths vision from sample image path, output image path, and sample blueprint for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         sample = sample_blueprint if isinstance(sample_blueprint, dict) and sample_blueprint else self._sample_page_blueprint_from_image_path(
             sample_image_path,
             slide_index=slide_index,
@@ -16237,6 +17052,8 @@ class AIOrchestratorService:
         *,
         request: AIOrchestrationRequest,
     ) -> list[dict[str, Any]]:
+        # Extracts scene graph explicit reference assets from scene graph and request state for AIOrchestratorService.
+        # It calls _reference_asset_by_storage_path and _scene_graph_element_is_visual_image_like to turn raw evidence into the structured signal the ca.
         assets: list[dict[str, Any]] = []
         seen_paths: set[str] = set()
         for element in scene_graph.elements:
@@ -16257,6 +17074,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _is_literal_reference_surface_role(asset_role: str | None) -> bool:
+        # Checks literal reference surface role from asset role for AIOrchestratorService.
+        # The boolean result controls the nearby policy or validation branch.
         normalized = str(asset_role or "").strip().casefold()
         return normalized in {
             "reference_creative",
@@ -16266,6 +17085,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _asset_allows_literal_scene_binding(cls, asset: dict[str, Any]) -> bool:
+        # Extracts asset allows literal scene binding from asset record for AIOrchestratorService.
+        # Later planning can reuse the structured value instead of scanning the source again.
         metadata = asset.get("metadata")
         if not isinstance(metadata, dict):
             metadata = {}
@@ -16281,6 +17102,8 @@ class AIOrchestratorService:
         scene_graph: GenerationSceneGraph,
         asset: dict[str, Any],
     ) -> bool:
+        # Checks skip literal reference binding from scene graph and asset record for AIOrchestratorService.
+        # It reuses _is_literal_reference_surface_role and _asset_allows_literal_scene_binding so related checks follow the same rule.
         validation_hints = scene_graph.validation_hints if isinstance(scene_graph.validation_hints, dict) else {}
         template_surface_policy = str(validation_hints.get("template_surface_policy") or "").strip().lower()
         return (
@@ -16297,6 +17120,8 @@ class AIOrchestratorService:
         scene_graph: GenerationSceneGraph,
         reference_assets: list[dict[str, Any]],
     ) -> GenerationSceneGraph:
+        # Extracts bind reference assets from scene graph and reference assets for AIOrchestratorService.
+        # It calls _should_skip_literal_reference_binding and _scene_graph_element_is_visual_image_like to turn raw evidence into the structured signal.
         if not reference_assets:
             return scene_graph
         scene_graph_data = scene_graph.model_dump(mode="json")
@@ -16360,6 +17185,8 @@ class AIOrchestratorService:
         used_support_fallback: bool,
         compiled_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Checks assess creative quality from scene graph, creative decision, and validation report for AIOrchestratorService.
+        # It reuses _follow_up_mode and _prior_layout_archetype so related checks follow the same rule.
         score = 0.92
         issues: list[str] = []
         issue_lookup = {issue.rule_id for issue in validation_report.issues}
@@ -16481,6 +17308,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _quality_report_from_assessment(assessment: dict[str, Any]) -> SceneGraphValidationReport:
+        # Checks quality report assessment from assessment for AIOrchestratorService.
+        # The boolean result controls the nearby policy or validation branch.
         issue_map = {
             "support_fallback_used": (
                 "support_fallback_used",
@@ -16602,6 +17431,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _allowed_palette_values(compiled_context: dict[str, Any]) -> set[str]:
+        # Derives allowed palette from compiled context for AIOrchestratorService.
+        # This turns source evidence into a stable planning hint.
         palette_roles = (compiled_context.get("brand_visual_brief", {}) or {}).get("palette_roles", {}) or {}
         allowed = {
             normalized.casefold()
@@ -16613,6 +17444,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _style_color_is_palette_safe(value: Any, allowed_palette: set[str]) -> bool:
+        # Derives style color palette safe from input value and allowed palette for AIOrchestratorService.
+        # This turns source evidence into a stable planning hint.
         normalized = normalize_hex(value)
         if not normalized:
             return True
@@ -16635,6 +17468,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _normalize_topic_anchor_token(cls, token: str) -> str:
+        # Normalizes topic anchor token from token for AIOrchestratorService.
+        # Later prompt and metadata code can compare the cleaned value directly.
         text = str(token or "").strip().casefold()
         text = re.sub(r"^[^a-z0-9]+|[^a-z0-9]+$", "", text)
         if len(text) <= 3:
@@ -16651,6 +17486,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _topic_anchor_keywords(cls, value: Any, *, limit: int = 8) -> set[str]:
+        # Centralizes topic anchor keywords from input value and limit for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         words = re.findall(r"[A-Za-z][A-Za-z0-9]{2,}", cls._coerce_text_value(value))
         keywords: list[str] = []
         for word in words:
@@ -16664,9 +17501,13 @@ class AIOrchestratorService:
 
     @classmethod
     def _scene_graph_text_blob(cls, scene_graph: GenerationSceneGraph) -> str:
+        # Extracts scene graph text blob from scene graph for AIOrchestratorService.
+        # It calls _coerce_text_value to turn raw evidence into the structured signal the caller needs.
         parts: list[str] = []
 
         def collect(element: Any) -> None:
+            # Centralizes collect from element for AIOrchestratorService.
+            # The helper owns a small rule that would distract from the surrounding flow.
             if getattr(element, "text", None):
                 parts.append(cls._coerce_text_value(element.text))
             if getattr(element, "content", None):
@@ -16686,6 +17527,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest,
         compiled_context: dict[str, Any],
     ) -> SceneGraphValidationReport:
+        # Centralizes scene graph from scene graph, creative decision, and request state for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         issues: list[SceneGraphValidationIssue] = []
         allowed_palette = self._allowed_palette_values(compiled_context)
         allowed_fonts = {
@@ -17132,6 +17975,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _needs_generated_image(scene_graph: GenerationSceneGraph, creative_decision: CreativeDecisionPayload) -> bool:
+        # Centralizes needs generated image from scene graph and creative decision for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if not creative_decision.asset_strategy.get("use_generated_image", True):
             return False
         return any(
@@ -17146,6 +17991,8 @@ class AIOrchestratorService:
         scene_graph: GenerationSceneGraph,
         creative_decision: CreativeDecisionPayload,
     ) -> bool:
+        # Centralizes needs generated image storage from scene graph and creative decision for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if not creative_decision.asset_strategy.get("use_generated_image", True):
             return False
         for element in scene_graph.elements:
@@ -17168,6 +18015,8 @@ class AIOrchestratorService:
         scene_graph: GenerationSceneGraph,
         generated_assets: list[GeneratedImageAsset],
     ) -> GenerationSceneGraph:
+        # Extracts bind generated assets from scene graph and generated assets for AIOrchestratorService.
+        # Later planning can reuse the structured value instead of scanning the source again.
         if not generated_assets:
             return scene_graph
         scene_graph_data = scene_graph.model_dump(mode="json")
@@ -17205,6 +18054,8 @@ class AIOrchestratorService:
         trace_id: str | None,
         trace_label: str,
     ) -> dict[str, Any]:
+        # Centralizes image retries from image provider, tenant id, and brand space id for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         last_error: Exception | None = None
         for attempt in range(1, max(int(self.settings.image_retry_attempts or 1), 1) + 1):
             try:
@@ -17253,6 +18104,8 @@ class AIOrchestratorService:
         trace_id: str | None,
         trace_label: str,
     ) -> dict[str, Any]:
+        # Edits edit image retries from image provider, tenant id, and brand space id for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         last_error: Exception | None = None
         for attempt in range(1, max(int(self.settings.image_retry_attempts or 1), 1) + 1):
             try:
@@ -17292,6 +18145,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _requested_canvas_dimensions(studio_panel: dict[str, Any] | None) -> tuple[int, int]:
+        # Measures requested canvas dimensions from studio settings for AIOrchestratorService.
+        # The measurement feeds layout, crop, overlap, or density decisions.
         size = (studio_panel or {}).get("size") if isinstance(studio_panel, dict) else {}
         if not isinstance(size, dict):
             size = {}
@@ -17304,6 +18159,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _final_render_subject_tokens(cls, value: Any) -> set[str]:
+        # Centralizes final subject tokens from input value for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         empty_subject_tokens = {"none", "null", "unknown", "unspecified"}
         return {
             token
@@ -17317,6 +18174,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _final_render_request_topic_tokens(cls, request: AIOrchestrationRequest | None) -> set[str]:
+        # Centralizes final request topic tokens from request state for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if request is None:
             return set()
         return cls._final_render_subject_tokens(getattr(request, "prompt", ""))
@@ -17328,6 +18187,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest,
         subject_blob: str,
     ) -> dict[str, Any]:
+        # Centralizes final topic alignment report from request state and subject blob for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         request_tokens = cls._final_render_request_topic_tokens(request)
         subject_tokens = cls._final_render_subject_tokens(subject_blob)
         overlap = request_tokens & subject_tokens
@@ -17355,6 +18216,8 @@ class AIOrchestratorService:
         ocr_structure: dict[str, Any],
         approved_text_payload: Any | None = None,
     ) -> dict[str, Any]:
+        # Centralizes final visible claim hallucination report from request state, ocr structure, and approved text payload for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         if not isinstance(ocr_structure, dict) or not ocr_structure:
             return {}
         visible_parts: list[str] = []
@@ -17492,12 +18355,16 @@ class AIOrchestratorService:
 
     @classmethod
     def _final_render_approved_text_claim_parts(cls, approved_text_payload: Any | None) -> list[str]:
+        # Extracts final approved text claim parts from approved text payload for AIOrchestratorService.
+        # It calls _normalize_metadata_text to turn raw evidence into the structured signal the caller needs.
         if approved_text_payload is None:
             return []
 
         parts: list[str] = []
 
         def add_value(value: Any) -> None:
+            # Centralizes add from input value for AIOrchestratorService.
+            # The main branch stays readable while this function handles the local edge case.
             if value is None:
                 return
             if isinstance(value, str):
@@ -17543,6 +18410,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest,
         format_name: str,
     ) -> str:
+        # Builds final topic fit contract from request state and format name for AIOrchestratorService.
+        # It calls _normalize_metadata_text and _explicit_top_n_item_count while assembling the payload or prompt text.
         if not cls._llm_led_static_infographic_format(format_name):
             return ""
         topic_anchors = sorted(cls._final_render_request_topic_tokens(request))[:10]
@@ -17575,6 +18444,8 @@ class AIOrchestratorService:
         module_counts: dict[str, Any],
         visual_permissions: dict[str, Any],
     ) -> dict[str, Any]:
+        # Centralizes final requested structure report from request state, module counts, and visual permissions for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         prompt_text = cls._coerce_text_value(getattr(request, "prompt", ""))
         requested_count = cls._explicit_top_n_item_count(prompt_text)
         if not requested_count:
@@ -17584,6 +18455,8 @@ class AIOrchestratorService:
             return {}
 
         def count_value(*keys: str) -> int:
+            # Counts count for AIOrchestratorService.
+            # The helper owns a small rule that would distract from the surrounding flow.
             values: list[int] = []
             for key in keys:
                 try:
@@ -17630,6 +18503,8 @@ class AIOrchestratorService:
         module_counts: dict[str, Any],
         visual_permissions: dict[str, Any],
     ) -> dict[str, Any]:
+        # Centralizes final surface report from request state, format name, and module counts for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         normalized_format = str(format_name or "").strip().casefold()
         if normalized_format not in {"static", "infographic"}:
             return {}
@@ -17642,6 +18517,8 @@ class AIOrchestratorService:
         lowered_prompt = prompt_text.casefold()
 
         def count_value(*keys: str) -> int:
+            # Counts count for AIOrchestratorService.
+            # The helper owns a small rule that would distract from the surrounding flow.
             values: list[int] = []
             for key in keys:
                 try:
@@ -17701,11 +18578,15 @@ class AIOrchestratorService:
         subject_semantics: dict[str, Any],
         ocr_structure: dict[str, Any],
     ) -> dict[str, Any]:
+        # Centralizes final content visual balance report from request state, format name, and module counts for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         normalized_format = str(format_name or "").strip().casefold()
         if normalized_format not in {"static", "infographic"}:
             return {}
 
         def count_value(*keys: str) -> int:
+            # Counts count for AIOrchestratorService.
+            # The helper owns a small rule that would distract from the surrounding flow.
             values: list[int] = []
             for key in keys:
                 try:
@@ -17777,6 +18658,8 @@ class AIOrchestratorService:
         subject_blob: str,
         data_surface: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Centralizes final visual metaphor report from request state, subject blob, and data surface for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         prompt_text = cls._coerce_text_value(getattr(request, "prompt", ""))
         data_surface = data_surface if isinstance(data_surface, dict) else {}
         if not (
@@ -17872,6 +18755,8 @@ class AIOrchestratorService:
         image_size: str | None,
         approved_text_payload: Any | None = None,
     ) -> dict[str, Any] | None:
+        # Centralizes assess final output image from request state, asset record, and image size for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         format_name = str((request.studio_panel or {}).get("format") or "").strip().lower()
         if format_name not in {"static", "infographic"}:
             return None
@@ -17960,6 +18845,8 @@ class AIOrchestratorService:
                 page_permissions = vision_blueprint.get("visual_permissions") if isinstance(vision_blueprint.get("visual_permissions"), dict) else {}
 
                 def _quality_value(key: str) -> float | None:
+                    # Checks quality from key for AIOrchestratorService.
+                    # This keeps the allowed/blocked rule in one place.
                     raw = premium_quality.get(key)
                     try:
                         value = float(raw)
@@ -18157,6 +19044,8 @@ class AIOrchestratorService:
         quality_report: dict[str, Any],
         request: AIOrchestrationRequest | None = None,
     ) -> str:
+        # Builds append final output quality prompt from prompt text, quality report, and request state for AIOrchestratorService.
+        # It calls _strip_leading_final_render_output_quality_repair_prompt and _llm_led_static_infographic_format while assembling the payload or promp.
         prompt = cls._strip_leading_final_render_output_quality_repair_prompt(prompt)
         format_name = cls._format_name_from_request(request) if request is not None else ""
         llm_led_static_infographic = cls._llm_led_static_infographic_format(format_name)
@@ -18376,6 +19265,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _strip_leading_final_render_output_quality_repair_prompt(cls, prompt: str) -> str:
+        # Strips strip leading final output quality prompt from prompt text for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         text = str(prompt or "")
         stripped = text.lstrip()
         leading_whitespace = len(text) - len(stripped)
@@ -18391,6 +19282,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _final_render_output_quality_blocking_issues(cls, report: dict[str, Any] | None) -> set[str]:
+        # Checks final output quality blocking issues from report for AIOrchestratorService.
+        # It reuses _normalize_metadata_text so related checks follow the same rule.
         if not isinstance(report, dict):
             return set()
         issues = {
@@ -18417,6 +19310,8 @@ class AIOrchestratorService:
         report: dict[str, Any],
         retry_attempts: int,
     ) -> dict[str, Any]:
+        # Checks mark final output quality visible warning from asset record, report, and retry attempts for AIOrchestratorService.
+        # It reuses _final_render_output_quality_blocking_issues so related checks follow the same rule.
         blocking_issues = sorted(cls._final_render_output_quality_blocking_issues(report))
         asset["output_quality_assessment"] = report
         asset["output_quality_retry_attempts"] = retry_attempts
@@ -18445,6 +19340,8 @@ class AIOrchestratorService:
         legal_footer_overlay_deferred: bool = False,
         sample_reference_image_paths: list[str] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any] | None, int, str]:
+        # Centralizes final image sample guard from image provider, request state, and prompt text for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         current_prompt = prompt
         similarity_report: dict[str, Any] | None = None
         similarity_retry_attempts = 0
@@ -18738,6 +19635,8 @@ class AIOrchestratorService:
         quality_retry_attempts: int = 0,
         fresh_replan_attempted: bool = False,
     ) -> tuple[list[GeneratedImageAsset], GeneratedImageAsset | None, StructuredTextPayload, GenerationSceneGraph]:
+        # Extracts final assets only from request state, copy payload, and creative decision for AIOrchestratorService.
+        # It calls _should_ignore_scene_graph_for_final_render and _visual_explanation_plan to turn raw evidence into the structured signal the caller n.
         trace_id = request.generation_trace_id
         image_provider = self.providers.get_image_provider()
         generation_path = str(generation_path or "image_led_social").strip().lower() or "image_led_social"
@@ -18949,6 +19848,7 @@ class AIOrchestratorService:
             conditioning_reference_images,
             exact_logo_overlay_required=exact_logo_overlay_required,
         )
+        # If the logo will be overlaid exactly, logo-bearing references are prompt context only, not conditioning inputs.
         topic_reference_images = self._topic_relevant_reference_assets(
             request,
             creative_decision=creative_decision,
@@ -19034,6 +19934,7 @@ class AIOrchestratorService:
                     request=request,
                     creative_decision=creative_decision,
                 )
+                # Prompt references explain intent; conditioning references are stricter because the image model sees them directly.
                 slide_conditioning_reference_images = (
                     self._slide_reference_images(
                         slide,
@@ -19105,6 +20006,7 @@ class AIOrchestratorService:
                     reference_images=layout_analysis_reference_images,
                 )
                 if reference_layout_adaptation_active:
+                    # Feature 1 layout adaptation attaches the selected sample blueprint before prompt construction.
                     slide = self._annotate_slide_with_sample_page_blueprint(
                         slide,
                         reference_image_paths=layout_reference_image_paths,
@@ -19123,6 +20025,7 @@ class AIOrchestratorService:
                         slide,
                         content_metadata=text_payload.metadata if isinstance(text_payload.metadata, dict) else {},
                     )
+                    # Copy may change to fit the sample density, so refresh metadata before building the render prompt.
                     slide_metadata = slide.get("metadata") if isinstance(slide.get("metadata"), dict) else {}
                 if is_carousel_render:
                     final_render_prompt = self.build_carousel_slide_render_prompt(
@@ -19164,6 +20067,7 @@ class AIOrchestratorService:
                     creative_decision=creative_decision,
                     metadata=slide.get("metadata") if isinstance(slide.get("metadata"), dict) else {},
                 )
+                # Tracing stores the exact prompt and routing metadata used for this render attempt.
                 self._trace_payload(
                     trace_id,
                     self.trace,
@@ -19385,6 +20289,8 @@ class AIOrchestratorService:
         slide_indexes: list[int] | None = None,
         slide_targets: list[str] | None = None,
     ) -> dict[str, Any]:
+        # Centralizes clean content semantic issue from code, message, and targeted fields for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         return {
             "code": cls._normalize_metadata_text(code, limit=64),
             "message": cls._normalize_metadata_text(message, limit=240),
@@ -19403,20 +20309,28 @@ class AIOrchestratorService:
 
     @classmethod
     def _format_name_from_request(cls, request: AIOrchestrationRequest) -> str:
+        # Formats name request from request state for AIOrchestratorService.
+        # It calls _normalize_metadata_text while assembling the payload or prompt text.
         return cls._normalize_metadata_text(request.studio_panel.get("format"), limit=32).casefold()
 
     @classmethod
     def _llm_led_static_infographic_format(cls, format_name: Any) -> bool:
+        # Centralizes llm led static infographic from format name for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         return cls._normalize_metadata_text(format_name, limit=32).casefold() in {"static", "infographic"}
 
     @classmethod
     def _needs_content_semantic_validation(cls, request: AIOrchestrationRequest) -> bool:
+        # Centralizes needs content semantic validation from request state for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         return cls._format_name_from_request(request) in {"carousel", "infographic", "static"}
 
     DATA_SURFACE_BLOCKING_ISSUE_CODES: set[str] = set()
 
     @classmethod
     def _unresolved_data_surface_issue_codes(cls, report: dict[str, Any] | None) -> set[str]:
+        # Centralizes unresolved surface issue codes from report for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if not isinstance(report, dict) or str(report.get("status") or "").casefold() == "clean":
             return set()
         return {
@@ -19436,6 +20350,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest,
         text_payload: StructuredTextPayload,
     ) -> bool:
+        # Builds surface contract active from request state and copy payload for AIOrchestratorService.
+        # It calls _data_list_surface_contract and _format_name_from_request while assembling the payload or prompt text.
         return bool(
             cls._data_list_surface_contract(
                 prompt=request.prompt,
@@ -19453,6 +20369,8 @@ class AIOrchestratorService:
         text_payload: StructuredTextPayload,
         validation_report: SceneGraphValidationReport,
         ) -> bool:
+        # Checks defer surface layout validation from request state, copy payload, and validation report for AIOrchestratorService.
+        # It reuses _data_surface_contract_active and _format_name_from_request so related checks follow the same rule.
         if validation_report.status == "clean":
             return False
         if cls._format_name_from_request(request) not in {"static", "infographic"}:
@@ -19467,12 +20385,16 @@ class AIOrchestratorService:
         generation_path: str | None,
         creative_decision: CreativeDecisionPayload | None = None,
     ) -> bool:
+        # Checks defer low quality plan LLM final from request state, generation path, and creative decision for AIOrchestratorService.
+        # It reuses _should_use_ai_final_render and _llm_led_static_infographic_format so related checks follow the same rule.
         if not cls._llm_led_static_infographic_format(cls._format_name_from_request(request)):
             return False
         return cls._should_use_ai_final_render(request, generation_path, creative_decision)
 
     @classmethod
     def _final_render_quality_improvement_note(cls, quality_assessment: dict[str, Any] | None) -> str:
+        # Checks final quality improvement note from quality assessment for AIOrchestratorService.
+        # It reuses _normalize_metadata_text so related checks follow the same rule.
         assessment = quality_assessment if isinstance(quality_assessment, dict) else {}
         try:
             score = float(assessment.get("score") or 0.0)
@@ -19498,6 +20420,8 @@ class AIOrchestratorService:
         report: dict[str, Any],
         reason_code: str = "data_surface_content_unresolved",
     ) -> GenerationFailureError:
+        # Centralizes surface generation failure from report and reason code for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         issue_codes = sorted(cls._unresolved_data_surface_issue_codes(report))
         summary = (
             "Data/ranking surface generation blocked because exact values or claims are unresolved; "
@@ -19524,6 +20448,8 @@ class AIOrchestratorService:
         format_name: str,
         issues: list[dict[str, Any]],
     ) -> str:
+        # Builds content semantic rewrite instruction from format name and issues for AIOrchestratorService.
+        # It calls _normalize_metadata_text while assembling the payload or prompt text.
         issue_messages = [
             cls._normalize_metadata_text(issue.get("message"), limit=220)
             for issue in issues
@@ -19588,6 +20514,8 @@ class AIOrchestratorService:
         *,
         issues: list[dict[str, Any]],
     ) -> dict[str, Any]:
+        # Centralizes content semantic revision scope from issues for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         targeted_fields = sorted(
             {
                 field
@@ -19639,6 +20567,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest | None = None,
         creative_decision: CreativeDecisionPayload | None = None,
     ) -> dict[str, Any]:
+        # Builds content semantic rewrite field plan from copy payload, issues, and format name for AIOrchestratorService.
+        # It calls _build_carousel_slide_specs and _normalize_metadata_text while assembling the payload or prompt text.
         metadata = text_payload.metadata or {}
         plan = {
             "format": format_name,
@@ -19699,6 +20629,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _carousel_topic_label(cls, request: AIOrchestrationRequest, *, limit: int = 76) -> str:
+        # Extracts carousel topic label from request state and limit for AIOrchestratorService.
+        # It calls _normalize_metadata_text and _content_topic_tokens to turn raw evidence into the structured signal the caller needs.
         prompt = " ".join(str(request.prompt or "").split())
         topic = prompt
         for marker in (" on ", " about ", " regarding "):
@@ -19725,6 +20657,8 @@ class AIOrchestratorService:
         index: int,
         slide_count: int,
     ) -> dict[str, Any]:
+        # Builds sample editorial contract slide from request state, index, and slide count for AIOrchestratorService.
+        # It calls _template_sequence_pack and _proportional_sequence_reference_index while assembling the payload or prompt text.
         sequence_pack = cls._template_sequence_pack(request)
         if not isinstance(sequence_pack, dict):
             return {}
@@ -19748,6 +20682,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest,
         compiled_context: dict[str, Any] | None = None,
     ) -> bool:
+        # Centralizes sample editorial overlaps request from sample contract, request state, and compiled context for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         sample_text = " ".join(
             cls._coerce_text_value(sample_contract.get(key))
             for key in (
@@ -19795,6 +20731,8 @@ class AIOrchestratorService:
         role: str,
         sample_contract: dict[str, Any],
     ) -> str:
+        # Centralizes topic specific headline sample behavior from topic, role, and sample contract for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         behavior = cls._normalize_metadata_text(sample_contract.get("sample_page_copy_behavior"), limit=48).casefold()
         editorial_role = cls._normalize_metadata_text(sample_contract.get("sample_page_editorial_role"), limit=48).casefold()
         has_question = bool(sample_contract.get("sample_page_has_question_hook"))
@@ -19823,6 +20761,8 @@ class AIOrchestratorService:
         slide_count: int,
         compiled_context: dict[str, Any] | None = None,
     ) -> str:
+        # Centralizes sample aware headline slide from request state, slide, and index for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         topic = cls._carousel_topic_label(request)
         role = cls._normalize_metadata_text(
             slide.get("slide_role") or slide.get("role"),
@@ -19864,12 +20804,16 @@ class AIOrchestratorService:
 
     @classmethod
     def _text_contains_unsupported_marker(cls, value: Any, unsupported_markers: set[str]) -> bool:
+        # Extracts text contains unsupported marker from input value and unsupported markers for AIOrchestratorService.
+        # It calls _exact_claim_markers to turn raw evidence into the structured signal the caller needs.
         if not unsupported_markers:
             return False
         return bool(cls._exact_claim_markers(value).intersection(unsupported_markers))
 
     @classmethod
     def _data_visualization_visual_focus(cls, value: Any) -> bool:
+        # Centralizes visualization visual focus from input value for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         text = cls._normalize_metadata_text(value, limit=420).casefold()
         return any(
             marker in text
@@ -19895,6 +20839,8 @@ class AIOrchestratorService:
         value: Any,
         unsupported_markers: set[str],
     ) -> str:
+        # Extracts remove unsupported exact claim lines from input value and unsupported markers for AIOrchestratorService.
+        # It calls _coerce_text_value and _text_contains_unsupported_marker to turn raw evidence into the structured signal the caller needs.
         text = cls._coerce_text_value(value)
         if not text or not unsupported_markers:
             return text
@@ -19914,6 +20860,8 @@ class AIOrchestratorService:
         *,
         limit: int = 10,
     ) -> list[str]:
+        # Extracts filter unsupported exact claim items from input value, unsupported markers, and limit for AIOrchestratorService.
+        # It calls _normalize_metadata_list and _text_contains_unsupported_marker to turn raw evidence into the structured signal the caller needs.
         values = cls._normalize_metadata_list(value, limit=limit)
         if not unsupported_markers:
             return values
@@ -19931,6 +20879,8 @@ class AIOrchestratorService:
         *,
         limit: int = 10,
     ) -> list[dict[str, str]]:
+        # Centralizes filter unsupported claim evidence pairs from input value, unsupported markers, and limit for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         pairs = cls._normalize_claim_evidence_pairs(value, limit=limit)
         if not unsupported_markers:
             return pairs
@@ -19955,6 +20905,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest,
         format_name: str,
     ) -> str:
+        # Centralizes qualitative surface visual focus from request state and format name for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         requested_count = cls._explicit_top_n_item_count(request.prompt)
         count_phrase = f"{requested_count} clear slots" if requested_count else "clear grouped slots"
         surface = "sectioned explainer" if format_name == "infographic" else "single-panel creative"
@@ -19969,6 +20921,8 @@ class AIOrchestratorService:
         value: Any,
         unsupported_markers: set[str],
     ) -> tuple[Any, bool]:
+        # Sanitizes structured visual anchors from input value and unsupported markers for AIOrchestratorService.
+        # It delegates shared cleanup to _text_contains_unsupported_marker before returning the cleaned value.
         if not isinstance(value, dict) or not isinstance(value.get("data_anchors"), list):
             return value, False
         cleaned = dict(value)
@@ -19994,6 +20948,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _line_is_research_process_filler(cls, value: Any) -> bool:
+        # Extracts line research process filler from input value for AIOrchestratorService.
+        # It calls _normalize_metadata_text to turn raw evidence into the structured signal the caller needs.
         text = cls._normalize_metadata_text(value, limit=220).casefold()
         if not text:
             return False
@@ -20011,6 +20967,8 @@ class AIOrchestratorService:
         *,
         sample_allows_source_labels: bool,
     ) -> Any:
+        # Strips strip research process filler lines from input value and sample allows source labels for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         if sample_allows_source_labels:
             return value
         if isinstance(value, (list, tuple, set)):
@@ -20032,6 +20990,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _sample_contract_expected_module_min(cls, sample_contract: dict[str, Any]) -> int:
+        # Builds sample contract expected module min from sample contract for AIOrchestratorService.
+        # It calls _normalize_metadata_text while assembling the payload or prompt text.
         if not sample_contract:
             return 0
         copy_density = cls._normalize_metadata_text(
@@ -20060,6 +21020,8 @@ class AIOrchestratorService:
         sample_contract: dict[str, Any],
         limit: int,
     ) -> list[str]:
+        # Selects sample density module candidate lines from slide, metadata, and copy payload for AIOrchestratorService.
+        # It reuses _carousel_topic_label and _dedupe_metadata_collection so related checks follow the same rule.
         candidates: list[str] = []
         for key in ("proof_points", "body_points", "stat_highlights"):
             candidates.extend(cls._normalize_metadata_list(slide.get(key), limit=8))
@@ -20136,6 +21098,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _sample_contract_allows_product_cta(cls, sample_contract: dict[str, Any]) -> bool:
+        # Builds sample contract allows product cta from sample contract for AIOrchestratorService.
+        # It calls _normalize_metadata_text while assembling the payload or prompt text.
         if not sample_contract:
             return True
         closing_grammar = cls._normalize_metadata_text(sample_contract.get("sample_page_closing_grammar"), limit=40).casefold()
@@ -20152,6 +21116,8 @@ class AIOrchestratorService:
         *,
         request: AIOrchestrationRequest | None = None,
     ) -> bool:
+        # Checks product cta line from input value and request state for AIOrchestratorService.
+        # It reuses _normalize_metadata_text and _is_promotional_line so related checks follow the same rule.
         text = cls._normalize_metadata_text(value, limit=220)
         if not text:
             return False
@@ -20176,6 +21142,8 @@ class AIOrchestratorService:
         compiled_context: dict[str, Any] | None,
         format_name: str,
     ) -> StructuredTextPayload:
+        # Derives preflight static infographic text semantics from request state, copy payload, and compiled context for AIOrchestratorService.
+        # It calls _unsupported_exact_claim_markers and _coerce_text_value to turn raw evidence into the structured signal the caller needs.
         payload = text_payload.model_dump(mode="json")
         metadata = deepcopy(payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {})
         unsupported_markers = cls._unsupported_exact_claim_markers(
@@ -20224,6 +21192,8 @@ class AIOrchestratorService:
             changed = True
 
         def sanitize_surface_container(container: dict[str, Any]) -> bool:
+            # Centralizes surface container from container for AIOrchestratorService.
+            # The helper owns a small rule that would distract from the surrounding flow.
             local_changed = False
             for key in ("body", "supporting_line", "dominant_message"):
                 if key not in container:
@@ -20338,6 +21308,8 @@ class AIOrchestratorService:
         text_payload: StructuredTextPayload,
         compiled_context: dict[str, Any] | None,
     ) -> StructuredTextPayload:
+        # Derives preflight text semantics from request state, copy payload, and compiled context for AIOrchestratorService.
+        # It calls _format_name_from_request and _effective_template_surface_policy to turn raw evidence into the structured signal the caller needs.
         format_name = cls._format_name_from_request(request)
         if format_name in {"static", "infographic"}:
             return cls._preflight_static_infographic_text_payload_semantics(
@@ -20541,6 +21513,8 @@ class AIOrchestratorService:
         rewritten_payload: dict[str, Any],
         revision_scope: dict[str, Any],
     ) -> dict[str, Any]:
+        # Merges targeted carousel rewrite from previous payload, rewritten payload, and revision scope for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if not isinstance(rewritten_payload, dict):
             return rewritten_payload
         if not bool(revision_scope.get("only_targeted")):
@@ -20622,6 +21596,8 @@ class AIOrchestratorService:
         rewritten_payload: dict[str, Any],
         rewritten_slides: list[dict[str, Any]],
     ) -> dict[str, Any]:
+        # Centralizes preserve carousel rewrite exact claims from previous slides, rewritten payload, and rewritten slides for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         previous_by_number: dict[int, dict[str, Any]] = {}
         for index, slide in enumerate(previous_slides, start=1):
             slide_number = cls._int_or_none(slide.get("slide_number")) or cls._int_or_none(slide.get("slide_index")) or index
@@ -20667,6 +21643,8 @@ class AIOrchestratorService:
         previous_slide: dict[str, Any],
         rewritten_slide: dict[str, Any],
     ) -> dict[str, Any]:
+        # Centralizes preserve carousel slide exact claims from previous slide and rewritten slide for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if not previous_slide:
             return dict(rewritten_slide)
         preserved = dict(rewritten_slide)
@@ -20706,6 +21684,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _restore_corrupted_currency_claims(cls, *, previous_source: Any, rewritten_value: Any) -> Any:
+        # Centralizes restore corrupted currency claims from previous source and rewritten value for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         currency_map = cls._currency_amount_display_map(previous_source)
         if not currency_map:
             return rewritten_value
@@ -20728,6 +21708,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _currency_amount_display_map(cls, value: Any) -> dict[str, str]:
+        # Centralizes currency amount display map from input value for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         text = cls._raw_text_for_exact_claims(value)
         if not text:
             return {}
@@ -20745,10 +21727,14 @@ class AIOrchestratorService:
 
     @classmethod
     def _restore_corrupted_currency_text(cls, text: str, *, currency_map: dict[str, str]) -> str:
+        # Extracts restore corrupted currency text from text and currency map for AIOrchestratorService.
+        # The extracted signal becomes prompt context, metadata, or ranking input.
         if not text or not currency_map:
             return text
 
         def replace(match: re.Match[str]) -> str:
+            # Centralizes replace from match for AIOrchestratorService.
+            # The helper owns a small rule that would distract from the surrounding flow.
             raw = match.group(0)
             digits = re.sub(r"[^\d.]", "", raw)
             if not digits.startswith("9") or len(digits) <= 1:
@@ -20765,6 +21751,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _preserve_rewrite_exact_claim_value(cls, *, previous_value: Any, rewritten_value: Any) -> Any:
+        # Centralizes preserve rewrite exact claim from previous value and rewritten value for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         previous_markers = cls._exact_claim_markers(previous_value)
         if not previous_markers:
             return rewritten_value
@@ -20782,6 +21770,8 @@ class AIOrchestratorService:
         compiled_context: dict[str, Any] | None = None,
         creative_decision: CreativeDecisionPayload | None = None,
     ) -> dict[str, Any]:
+        # Validates content semantics from request state, copy payload, and compiled context for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         format_name = cls._format_name_from_request(request)
         if format_name not in {"carousel", "infographic", "static"}:
             return {
@@ -20803,6 +21793,7 @@ class AIOrchestratorService:
                 metadata.get("claim_evidence_pairs"),
                 limit=6,
             )
+            # Carousel copy needs an explicit hook strategy so repair prompts can ask for a sharper narrative opening.
             if not hook_type:
                 issues.append(
                     cls._clean_content_semantic_issue(
@@ -20815,6 +21806,7 @@ class AIOrchestratorService:
                 request=request,
                 compiled_context=compiled_context,
             )
+            # If verified facts exist, claims must be paired with evidence rather than left as unsupported marketing copy.
             if not claim_evidence_pairs and has_research_fact_context:
                 issues.append(
                     cls._clean_content_semantic_issue(
@@ -20837,6 +21829,7 @@ class AIOrchestratorService:
                 compiled_context=compiled_context,
             )
             if unsupported_global_markers:
+                # Exact numbers and dates are high-risk, so unsupported markers trigger repair before image generation.
                 issues.append(
                     cls._clean_content_semantic_issue(
                         code="carousel_unsupported_exact_claim",
@@ -20866,6 +21859,7 @@ class AIOrchestratorService:
                 if isinstance(sequence_pack, dict)
                 else 0
             )
+            # Style-reference carousels map one generated slide to one sample page unless the user asked for a different count.
             raw_sequence_count_matches_sample = not (
                 template_surface_policy == "style_reference_only"
                 and sequence_pack_slide_count
@@ -20901,6 +21895,7 @@ class AIOrchestratorService:
                 if isinstance(slide, dict)
             }
             raw_seen_supports: set[str] = set()
+            # Raw slide checks catch model output problems before normalization hides or repairs them.
             for index, raw_slide in enumerate(raw_structured_slides, start=1):
                 normalized_slide = normalized_slide_by_index.get(index) or {}
                 raw_sample_contract = cls._sample_editorial_contract_for_slide(
@@ -20947,6 +21942,7 @@ class AIOrchestratorService:
                     limit=8,
                 )
                 if index < len(raw_structured_slides) and raw_cta and normalized_cta:
+                    # Interior CTAs break the carousel arc; only the final slide should close or convert.
                     issues.append(
                         cls._clean_content_semantic_issue(
                             code="carousel_raw_interior_cta",
@@ -21030,6 +22026,7 @@ class AIOrchestratorService:
                     and raw_story_role not in {"hook", "cover", "opening"}
                     and len(raw_module_lines) < raw_expected_module_min
                 ):
+                    # Sample-led slides must preserve the sample's density so adapted pages do not collapse into sparse posters.
                     issues.append(
                         cls._clean_content_semantic_issue(
                             code="carousel_raw_sample_density_drift",
@@ -21079,6 +22076,7 @@ class AIOrchestratorService:
                 request=request,
                 creative_decision=creative_decision,
             )
+            # Normalized slides are checked after raw checks because this is the sequence the renderer will actually consume.
             if len(slides) < 3:
                 issues.append(
                     cls._clean_content_semantic_issue(
@@ -21100,6 +22098,7 @@ class AIOrchestratorService:
                 ).casefold().replace(" ", "_")
                 for slide in slides
             ]
+            # Expected roles ensure the generated sequence has a real campaign progression, not repeated standalone panels.
             for normalized_role in [
                 cls._normalize_metadata_text(role, limit=48).casefold().replace(" ", "_")
                 for role in expected_roles
@@ -21699,6 +22698,8 @@ class AIOrchestratorService:
         brand_name: str,
         trace_id: str,
     ) -> tuple[StructuredTextPayload, dict[str, Any], int]:
+        # Repairs text semantics if needed from request state, generation provider, and copy payload for AIOrchestratorService.
+        # It delegates shared cleanup to _preflight_text_payload_semantics and _validate_content_semantics before returning the cleaned value.
         text_payload = self._preflight_text_payload_semantics(
             request=request,
             text_payload=text_payload,
@@ -21789,6 +22790,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _request_has_sample_creative(cls, request: AIOrchestrationRequest) -> bool:
+        # Centralizes request sample creative from request state for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         reference_sources = [
             *(request.reference_assets or []),
             *(request.asset_catalog or []),
@@ -21832,6 +22835,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _request_has_template(cls, request: AIOrchestrationRequest) -> bool:
+        # Centralizes request template from request state for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         studio_panel = request.studio_panel if isinstance(request.studio_panel, dict) else {}
         layout_decision = request.layout_decision if isinstance(request.layout_decision, dict) else {}
         template_context = request.template_context if isinstance(request.template_context, dict) else {}
@@ -21849,6 +22854,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _request_uses_pinned_template(cls, request: AIOrchestrationRequest) -> bool:
+        # Centralizes request uses pinned template from request state for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         studio_panel = request.studio_panel if isinstance(request.studio_panel, dict) else {}
         if str(studio_panel.get("pinned_template_id") or "").strip():
             return True
@@ -21866,12 +22873,16 @@ class AIOrchestratorService:
 
     @classmethod
     def _request_uses_auto_template_selection(cls, request: AIOrchestrationRequest) -> bool:
+        # Centralizes request uses auto template selection from request state for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         if cls._request_uses_pinned_template(request):
             return False
         return cls._request_has_template(request)
 
     @classmethod
     def _select_generation_strategy_for_request(cls, request: AIOrchestrationRequest) -> GenerationStrategy:
+        # Selects generation strategy request from request state for AIOrchestratorService.
+        # It reuses _request_uses_pinned_template and _request_uses_auto_template_selection so related checks follow the same rule.
         studio_panel = request.studio_panel if isinstance(request.studio_panel, dict) else {}
         return select_generation_engine(
             studio_panel.get("format"),
@@ -21883,12 +22894,16 @@ class AIOrchestratorService:
 
     @classmethod
     def _request_uses_template_adaptance(cls, request: AIOrchestrationRequest | None) -> bool:
+        # Centralizes request uses template adaptance from request state for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         if request is None:
             return False
         return cls._select_generation_strategy_for_request(request) == GenerationStrategy.TEMPLATE_ADAPTANCE
 
     @classmethod
     def _request_uses_content_intelligence(cls, request: AIOrchestrationRequest | None) -> bool:
+        # Centralizes request uses content intelligence from request state for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if request is None:
             return False
         studio_panel = request.studio_panel if isinstance(request.studio_panel, dict) else {}
@@ -21900,6 +22915,8 @@ class AIOrchestratorService:
         )
 
     def generate(self, request: AIOrchestrationRequest) -> AIOrchestrationResponse:
+        # Generates generate from request state for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         strategy = self._select_generation_strategy_for_request(request)
         self._trace_payload(
             request.generation_trace_id,
@@ -21921,6 +22938,8 @@ class AIOrchestratorService:
         strategy: GenerationStrategy,
         request: AIOrchestrationRequest,
     ) -> AIOrchestrationResponse:
+        # Centralizes dispatch generation strategy from strategy and request state for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if strategy == GenerationStrategy.STATIC_INFOGRAPHIC_REFERENCE:
             # static/infographic behavior is integrated in the guarded main pipeline.
             return self._generate_main_ai(request)
@@ -21936,6 +22955,8 @@ class AIOrchestratorService:
         return self._generate_main_ai(request)
 
     def _generate_template_adaptance(self, request: AIOrchestrationRequest) -> AIOrchestrationResponse:
+        # Centralizes template adaptance from request state for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if not self._request_uses_template_adaptance(request):
             return self._generate_main_ai(request)
         content_plan = deepcopy(request.content_plan if isinstance(request.content_plan, dict) else {})
@@ -21947,6 +22968,8 @@ class AIOrchestratorService:
         return self._generate_main_ai(request.model_copy(update={"content_plan": content_plan}))
 
     def _generate_content_intelligence(self, request: AIOrchestrationRequest) -> AIOrchestrationResponse:
+        # Centralizes content intelligence from request state for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         if not self._request_uses_content_intelligence(request):
             return self._generate_main_ai(request)
         format_family_plan = deepcopy(request.format_family_plan if isinstance(request.format_family_plan, dict) else {})
@@ -21981,9 +23004,13 @@ class AIOrchestratorService:
         return self._generate_main_ai(request.model_copy(update={"content_plan": content_plan}))
 
     def _generate_main_ai(self, request: AIOrchestrationRequest) -> AIOrchestrationResponse:
+        # Centralizes main ai from request state for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
+        # This is the full request pipeline; every later helper feeds back into this response-building flow.
         started_at = perf_counter()
         latency_ms: dict[str, float] = {}
         trace_id = request.generation_trace_id
+        # Trace the raw request first so failures can be debugged even if a later provider or renderer branch stops early.
         self._trace_payload(
             trace_id,
             self.trace,
@@ -22020,6 +23047,7 @@ class AIOrchestratorService:
         )
         self._trace_event(trace_id, self.trace, "orchestrator.generate.start", {"brand_space_id": str(request.brand_space_id)})
         input_access_tracker = request.input_access_tracker if isinstance(request.input_access_tracker, InputAccessTracker) else InputAccessTracker()
+        # Wrap source dictionaries so later debug traces can show which inputs were actually read by the pipeline.
         request.resolved_brand_context = input_access_tracker.wrap_source("brand_context", request.resolved_brand_context)
         request.persona_context = input_access_tracker.wrap_source("persona_context", request.persona_context)
         request.objective_context = input_access_tracker.wrap_source("objective_context", request.objective_context)
@@ -22040,6 +23068,8 @@ class AIOrchestratorService:
         request.live_research = input_access_tracker.wrap_source("live_research", request.live_research or {})
         self.guardrails.validate_prompt(request.prompt, request.resolved_brand_context.get("guardrails", {}))
         plan_started_at = perf_counter()
+        # Phase 1 resolves source priority: brand and explicit request data win before retrieved knowledge or memory can contribute.
+        # Resolution establishes source priority before compilation so lower-priority RAG never overrides brand rules.
         plan = self.resolution.build_plan(
             brand_context=request.resolved_brand_context,
             persona_context=request.persona_context,
@@ -22047,6 +23077,7 @@ class AIOrchestratorService:
             retrieved_knowledge=request.retrieved_knowledge,
         )
         latency_ms["resolution_ms"] = round((perf_counter() - plan_started_at) * 1000, 2)
+        # Providers are resolved once up front so the rest of the flow can call capability interfaces, not vendor classes.
         research_provider = self.providers.get_text_provider("research")
         generation_provider = self.providers.get_text_provider("generation")
         image_provider = self.providers.get_image_provider()
@@ -22066,6 +23097,8 @@ class AIOrchestratorService:
         )
 
         compile_started_at = perf_counter()
+        # Phase 2 compiles all resolved context into one bounded object that every LLM prompt reads from.
+        # Compile all raw brand/RAG/template/session inputs into the compact context used by every prompt stage.
         compiled_context = self.compiler.compile(
             prompt=request.prompt,
             brand_context=request.resolved_brand_context,
@@ -22090,6 +23123,7 @@ class AIOrchestratorService:
         )
         if not request.live_research and hasattr(self, "live_research"):
             try:
+                # Live research is gathered after the first compile because it needs the already-resolved brand/context brief.
                 gathered_live_research = self.live_research.gather_sync(
                     prompt=request.prompt,
                     studio_panel=request.studio_panel,
@@ -22111,6 +23145,7 @@ class AIOrchestratorService:
                             "queries": gathered_live_research.get("queries", []),
                         },
                     )
+                # Recompile after live research so verified facts join the same prompt context as saved brand inputs.
                 compiled_context = self.compiler.compile(
                     prompt=request.prompt,
                     brand_context=request.resolved_brand_context,
@@ -22136,6 +23171,7 @@ class AIOrchestratorService:
         latency_ms["context_compile_ms"] = round((perf_counter() - compile_started_at) * 1000, 2)
 
         research_started_at = perf_counter()
+        # Phase 3 asks for a compact research memo so generation sees a human-readable summary, not scattered raw evidence.
         research_prompt_context = self.compiler.compact_generation_prompt_context(compiled_context)
         research_context_payload = {
             "brand_copy_brief": research_prompt_context.get("brand_copy_brief", {}),
@@ -22199,6 +23235,7 @@ class AIOrchestratorService:
             )
         latency_ms["research_ms"] = round((perf_counter() - research_started_at) * 1000, 2)
         compiled_context["research_summary"] = research_summary
+        # Compact prompt context is the token-budgeted version of compiled_context used by LLM prompt builders.
         generation_prompt_context = self.compiler.compact_generation_prompt_context(compiled_context)
         generation_context_budget = self.compiler.generation_context_budget_report(
             full_context=compiled_context,
@@ -22299,6 +23336,7 @@ class AIOrchestratorService:
             *audience_comparison_points,
             *audience_research_highlights,
         ]
+        # Fallback evidence pairs keep deterministic copy persuasive when the LLM returns weak or unusable content.
         fallback_claim_sources = audience_desired_outcomes or [fallback_message_strategy.get("key_value_proposition")]
         fallback_claim_evidence_pairs = self._normalize_claim_evidence_pairs(
             [
@@ -22405,6 +23443,7 @@ class AIOrchestratorService:
             "design_style": "editorial brand campaign creative" if format_name != "infographic" else "structured premium infographic",
             "image_prompt": "Premium brand campaign visual with no text, built around the concrete idea in the user prompt.",
         }
+        # This fallback payload is not just an error fallback; it also anchors normalization and repair defaults.
         fallback_text = {
             "headline": fallback_headline,
             "body": fallback_body,
@@ -22416,7 +23455,9 @@ class AIOrchestratorService:
         generation_path = "image_led_social" if use_image_led_social else "scene_graph_social"
         message_strategy = MessageStrategyPayload.model_validate(fallback_message_strategy)
         fallback_creative_decision = self._fallback_creative_decision(request, compiled_context)
+        # Phase 4 chooses the planning route: image-led treats the image model as designer, scene-graph keeps backend geometry central.
         if use_image_led_social:
+            # Image-led generation uses the final image model as the composition authority, so templates become style references.
             fallback_creative_decision = {
                 **fallback_creative_decision,
                 "layout_mode": "synthesized_layout" if not fallback_creative_decision.get("selected_template_id") else "adapted_template",
@@ -22433,6 +23474,7 @@ class AIOrchestratorService:
                 },
             }
             message_strategy_started_at = perf_counter()
+            # Message strategy is generated separately so the image-led path has a campaign idea before visual planning.
             message_strategy_envelope = self.prompts.compose_message_strategy_envelope(
                 user_prompt=request.prompt,
                 compiled_context=generation_prompt_context,
@@ -22483,6 +23525,7 @@ class AIOrchestratorService:
                 message_strategy_response,
                 fallback_message_strategy,
             )
+            # The fallback scene graph still matters in image-led mode because validation and tracing expect a graph shape.
             fallback_scene_graph = self._fallback_image_led_scene_graph(
                 request=request,
                 text_payload=fallback_text,
@@ -22497,6 +23540,7 @@ class AIOrchestratorService:
                 validation_report=request.validation_report,
             )
         else:
+            # Scene-graph social keeps layout decisions in the planning response and renderer validation loop.
             fallback_scene_graph = self._fallback_scene_graph(
                 request=request,
                 text_payload=fallback_text,
@@ -22529,6 +23573,7 @@ class AIOrchestratorService:
             },
         )
         text_started_at = perf_counter()
+        # Phase 5 asks the generation provider for the first complete creative plan, copy payload, and scene graph.
         planning_response = generation_provider.generate_structured_json(
             planning_envelope,
             fallback={
@@ -22562,6 +23607,7 @@ class AIOrchestratorService:
             compiled_context=compiled_context,
             prompt=request.prompt,
         )
+        # Normalize before model construction so missing/invalid LLM fields are repaired into the shared payload shape.
         text_payload = StructuredTextPayload(**text_dict)
         text_payload = self._repair_prompt_echo_text_payload(text_payload, prompt=request.prompt)
         latency_ms["text_generation_ms"] = round((perf_counter() - text_started_at) * 1000, 2)
@@ -22578,6 +23624,7 @@ class AIOrchestratorService:
         )
 
         # Update generation trace with layout decision
+        # The trace translates creative decisions into human-readable provenance for debugging generated outputs.
         if creative_decision.layout_mode == "exact_template":
             generation_trace.layout_source = "brand_design_system"
             generation_trace.layout_reason = f"Using exact template: {creative_decision.selected_template_id or 'unknown'}"
@@ -22610,6 +23657,7 @@ class AIOrchestratorService:
         }
         content_semantic_repair_attempts = 0
         if self._needs_content_semantic_validation(request):
+            # Data-heavy and research-led formats get a semantic preflight before visual rendering can proceed.
             text_payload, content_semantic_report, content_semantic_repair_attempts = self._repair_text_payload_semantics_if_needed(
                 request=request,
                 generation_provider=generation_provider,
@@ -22622,6 +23670,7 @@ class AIOrchestratorService:
             )
             unresolved_data_surface_codes = self._unresolved_data_surface_issue_codes(content_semantic_report)
             if unresolved_data_surface_codes:
+                # Bad table/chart/list semantics are generation blockers because later render stages would amplify them.
                 self._trace_payload(
                     trace_id,
                     self.trace,
@@ -22633,6 +23682,7 @@ class AIOrchestratorService:
                     },
                 )
                 raise self._data_surface_generation_failure(report=content_semantic_report)
+        # The scene graph is normalized after text repair so text, geometry, and creative decision agree.
         scene_graph = self.normalize_scene_graph_payload(
             planning_response.get("scene_graph"),
             fallback=fallback_scene_graph,
@@ -22672,6 +23722,7 @@ class AIOrchestratorService:
             request=request,
             compiled_context=compiled_context,
         )
+        # Phase 6 validates the planned geometry, but some final-render routes intentionally defer layout authority to images.
         style_reference_final_render_active = (
             self._style_reference_only_carousel_active(request, creative_decision)
             and self._should_use_ai_final_render(request, generation_path, creative_decision)
@@ -22682,6 +23733,7 @@ class AIOrchestratorService:
             and self._should_use_ai_final_render(request, generation_path, creative_decision)
         )
         if style_reference_final_render_active and validation_report.status != "clean":
+            # Style-reference carousel layout is judged against the selected sample during final render, not this advisory graph.
             self._trace_payload(
                 trace_id,
                 self.trace,
@@ -22704,6 +23756,7 @@ class AIOrchestratorService:
             and bool(getattr(self.settings, "ai_final_render_skip_advisory_scene_repairs", True))
             and validation_report.status != "clean"
         ):
+            # LLM-led static/infographic output is validated after image generation, so graph repairs are deferred here.
             self._trace_payload(
                 trace_id,
                 self.trace,
@@ -22737,6 +23790,7 @@ class AIOrchestratorService:
         logger.info(f"Initial quality score before repairs: {initial_quality['score']}")
 
         repair_attempts = 0
+        # Phase 7 tries surgical scene-graph repair before giving up or asking for a fresh replan.
         while (
             validation_report.status != "clean"
             and validation_report.repairable
@@ -22745,6 +23799,7 @@ class AIOrchestratorService:
             repair_attempts += 1
 
             # Cache current state before repair attempt for potential rollback
+            # Repair prompts can be partial, so every attempt keeps a known-good graph/decision snapshot.
             previous_scene_graph = scene_graph.model_copy(deep=True)
             previous_creative_decision = creative_decision.model_copy(deep=True)
 
@@ -22853,6 +23908,7 @@ class AIOrchestratorService:
         ):
             fresh_replan_attempted = True
             replan_note = self._fresh_replan_note(validation_report)
+            # Fresh replan is used when patch-style repairs are unlikely to fix the shape of the graph.
             if generation_path == "image_led_social":
                 fresh_replan_envelope = self.prompts.compose_image_led_social_envelope(
                     user_prompt=request.prompt,
@@ -22915,6 +23971,7 @@ class AIOrchestratorService:
                 compiled_context=compiled_context,
             )
             if self._needs_content_semantic_validation(request):
+                # Replanned copy still goes through semantic validation because table/list facts may have changed.
                 text_payload, content_semantic_report, extra_semantic_attempts = self._repair_text_payload_semantics_if_needed(
                     request=request,
                     generation_provider=generation_provider,
@@ -22960,6 +24017,7 @@ class AIOrchestratorService:
                 text_payload=text_payload,
                 validation_report=validation_report,
             ):
+                # Some data layouts are enforced by the final render prompt, but unsupported exact values stay blocked earlier.
                 self._trace_payload(
                     trace_id,
                     self.trace,
@@ -22979,6 +24037,7 @@ class AIOrchestratorService:
                     repairable=False,
                 )
             else:
+                # Data/ranking prompts are intentionally not allowed to fall back to generic imagery.
                 self._trace_payload(
                     trace_id,
                     self.trace,
@@ -23004,6 +24063,7 @@ class AIOrchestratorService:
                 )
         used_support_fallback = False
         if self._should_apply_support_fallback(scene_graph=scene_graph, validation_report=validation_report):
+            # Validation is advisory for some creative routes, but unresolved issues are still traced for debugging.
             issues = [issue.rule_id for issue in validation_report.issues]
             logger.warning(
                 "orchestrator.generate.unresolved_scene_graph brand_space_id=%s issues=%s",
@@ -23029,6 +24089,8 @@ class AIOrchestratorService:
                     "note": "Application-side validation remained unresolved, but AI rendering will continue because validation is advisory for generation.",
                 },
             )
+        # Reference selection happens after repairs so asset strategy and scene graph requests are both up to date.
+        # Phase 8 resolves the concrete reference images that later prompts or backend rendering may use.
         selected_reference_images = self._select_reference_image_assets(
             request=request,
             creative_decision=creative_decision,
@@ -23057,6 +24119,7 @@ class AIOrchestratorService:
             if self._should_use_ai_final_render(request, generation_path, creative_decision)
             else selected_reference_images
         )
+        # AI final render gets stricter conditioning assets; backend rendering can bind the broader selected set.
         if missing_reference_images:
             missing_paths = [
                 str(asset.get("storage_path") or "").strip()
@@ -23092,6 +24155,7 @@ class AIOrchestratorService:
             and bool(getattr(self.settings, "ai_final_render_skip_pre_image_quality_retries", True))
         )
         if skip_pre_image_quality_retries and float(quality_assessment.get("score") or 0.0) < float(self.settings.image_quality_min_score or self.IMAGE_QUALITY_MIN_SCORE):
+            # LLM-led final renders get their quality pass after image generation, so pre-image retries are skipped.
             self._trace_payload(
                 trace_id,
                 self.trace,
@@ -23109,6 +24173,7 @@ class AIOrchestratorService:
             and quality_retry_attempts < max(int(self.settings.image_quality_retry_attempts or 1), 0)
         ):
             quality_retry_attempts += 1
+            # Quality retry reuses the repair prompt but is driven by premium-quality assessment, not hard validation.
             quality_report = self._quality_report_from_assessment(quality_assessment)
             repair_envelope = self.prompts.compose_scene_graph_repair_envelope(
                 user_prompt=request.prompt,
@@ -23215,6 +24280,7 @@ class AIOrchestratorService:
             request.resolved_brand_context.get("guardrails", {}),
         )
 
+        # Phase 9 decides whether final image generation should trust the repaired graph or restart from a safer fallback graph.
         scene_graph_ignored_for_final_render = self._should_ignore_scene_graph_for_final_render(
             generation_path=generation_path,
             fresh_replan_attempted=fresh_replan_attempted,
@@ -23227,6 +24293,7 @@ class AIOrchestratorService:
         final_render_scene_graph = scene_graph
         final_render_retry_note: str | None = None
         if scene_graph_ignored_for_final_render:
+            # When the graph remains unreliable, final render receives a clean fallback graph plus an explicit retry note.
             final_render_retry_note = self._final_render_ignore_note(validation_report)
             final_render_scene_graph_payload = self._fallback_image_led_scene_graph(
                 request=request,
@@ -23261,6 +24328,7 @@ class AIOrchestratorService:
             selected_reference_images,
             message_strategy,
         )
+        # The visual explanation plan bridges copy strategy into image prompt language and metadata.
         low_quality_plan_deferred_to_final_render = (
             request.generate_image
             and not scene_graph_ignored_for_final_render
@@ -23323,6 +24391,7 @@ class AIOrchestratorService:
         )
 
         tone_started_at = perf_counter()
+        # Tone evaluation runs after visual planning so rewrite guidance can include the final message strategy.
         tone_analysis = self.tone.evaluate(
             content=f"{text_payload.headline}. {text_payload.body}. {text_payload.cta}",
             brand_context=request.resolved_brand_context,
@@ -23334,6 +24403,7 @@ class AIOrchestratorService:
         latency_ms["tone_ms"] = round((perf_counter() - tone_started_at) * 1000, 2)
 
         blueprint_started_at = perf_counter()
+        # Blueprint converts the selected scene graph into deterministic render zones for the response contract.
         blueprint = self.blueprints.from_scene_graph(
             scene_graph=final_render_scene_graph if scene_graph_ignored_for_final_render else scene_graph,
             studio_panel=request.studio_panel,
@@ -23347,6 +24417,7 @@ class AIOrchestratorService:
         final_render_asset: GeneratedImageAsset | None = None
         render_authority = "backend"
         image_generation_error: str | None = None
+        # Phase 10 either lets AI render final assets or keeps backend rendering as the authority for the response.
         image_size = self._image_generation_size(request.studio_panel)
         final_render_format_name = str(request.studio_panel.get("format") or "").strip().lower()
         is_carousel_render = final_render_format_name == "carousel"
@@ -23360,6 +24431,7 @@ class AIOrchestratorService:
             else []
         )
         if carousel_slide_specs:
+            # Store normalized carousel specs back into metadata so render/export paths use the same slide contract.
             text_payload = text_payload.model_copy(
                 update={
                     "metadata": {
@@ -23372,6 +24444,8 @@ class AIOrchestratorService:
         if ai_final_render_required:
             try:
                 final_render_started_at = perf_counter()
+                # Final render loops per slide so carousel pages can each carry their own prompt, sample, and overlay metadata.
+                # Non-carousel renders are treated as a one-slide sequence so final render code can stay unified.
                 slide_specs = (
                     carousel_slide_specs
                     if is_carousel_render
@@ -23394,6 +24468,7 @@ class AIOrchestratorService:
                 )
                 exact_logo_overlay_required = bool(logo_storage_path and self.storage.exists(logo_storage_path))
                 layout_prompt_reference_images = selected_reference_images if final_render_format_name in {"static", "infographic"} else []
+                # Prompt references may include layout context, while conditioning references must be safe for direct image input.
                 prompt_reference_images = self._merge_reference_asset_lists(
                     conditioning_reference_images,
                     layout_prompt_reference_images,
@@ -23413,6 +24488,7 @@ class AIOrchestratorService:
                     compiled_context=compiled_context,
                     reference_images=conditioning_reference_images,
                 ):
+                    # When adapting to a reference layout, topic references are suppressed to avoid competing structures.
                     topic_reference_images = []
                 if topic_reference_images:
                     prompt_reference_images = self._merge_reference_asset_lists(topic_reference_images, prompt_reference_images)
@@ -23503,6 +24579,7 @@ class AIOrchestratorService:
                     slide_metadata = slide.get("metadata") if isinstance(slide.get("metadata"), dict) else {}
                     desired_reference_path = str(slide_metadata.get("reference_asset_path") or "").strip()
                     if desired_reference_path and not slide_prompt_reference_images:
+                        # Slide metadata can pin a specific reference asset even if generic selection returned nothing.
                         matched_reference_asset = self._reference_asset_by_storage_path(request, desired_reference_path)
                         if matched_reference_asset is not None:
                             slide_prompt_reference_images = [matched_reference_asset]
@@ -23530,6 +24607,7 @@ class AIOrchestratorService:
                         request=request,
                         cache=pdf_reference_conditioning_cache,
                     )
+                    # Layout analysis can use prompt plus conditioning references to build or enhance sample blueprints.
                     layout_analysis_reference_images = (
                         self._layout_analysis_reference_image_assets(
                             self._merge_reference_asset_lists(
@@ -23554,6 +24632,7 @@ class AIOrchestratorService:
                         reference_images=layout_analysis_reference_images,
                     )
                     if reference_layout_adaptation_active:
+                        # Feature 1 adapts slide layout/copy to the selected sample before render prompt creation.
                         slide = self._annotate_slide_with_sample_page_blueprint(
                             slide,
                             reference_image_paths=layout_reference_image_paths,
@@ -23574,6 +24653,8 @@ class AIOrchestratorService:
                         )
                         slide_metadata = slide.get("metadata") if isinstance(slide.get("metadata"), dict) else {}
                     if is_carousel_render:
+                        # Carousel flow: this branch returns one prompt per slide because each page has its own role, copy, and reference sample.
+                        # Carousel slides get slide-specific prompts because copy, role, and reference image can differ.
                         final_render_prompt = self.build_carousel_slide_render_prompt(
                             request=request,
                             creative_decision=creative_decision,
@@ -23586,8 +24667,10 @@ class AIOrchestratorService:
                             compiled_context=compiled_context,
                         )
                     else:
+                        # Static/infographic flow: this branch returns one whole-canvas prompt, with metadata controlling poster vs modular explainer behavior.
                         prompt_text_payload = text_payload
                         if slide_metadata:
+                            # Single-frame prompts merge slide metadata so sample/layout signals stay visible.
                             prompt_text_payload = text_payload.model_copy(
                                 update={
                                     "metadata": {
@@ -23634,6 +24717,7 @@ class AIOrchestratorService:
                         else None
                     )
                     legal_footer_text = self._scene_graph_legal_footer_text(final_render_scene_graph)
+                    # The sample guard retries image generation when output drifts too far from the selected reference.
                     asset, sample_similarity_report, sample_similarity_retry_attempts, final_render_prompt = (
                         self._generate_final_render_image_with_sample_guard(
                             image_provider=image_provider,
@@ -23703,6 +24787,7 @@ class AIOrchestratorService:
                         },
                     )
                     final_asset_payload = asset
+                    # Metadata here is the export-time authority for overlays, references, QA, and sample alignment.
                     final_asset_metadata = {
                         "render_source": "ai",
                         "generation_stage": "final_render",
@@ -23742,6 +24827,7 @@ class AIOrchestratorService:
                         "carousel_role": slide.get("role"),
                     }
                     if use_backend_text_overlay:
+                        # Backend overlay keeps exact approved text out of the image model when that strategy is selected.
                         filtered_scene = final_render_scene_graph.model_copy(deep=True)
                         if final_render_format_name not in self.BACKEND_TEXT_OVERLAY_SCENE_GRAPH_FORMATS:
                             filtered_scene.elements = [e for e in filtered_scene.elements if e.role in ("legal", "footer", "disclaimer")]
@@ -23760,6 +24846,7 @@ class AIOrchestratorService:
                     if requested_logo_variant:
                         final_asset_metadata["requested_logo_variant"] = requested_logo_variant
                     if logo_storage_path and self.storage.exists(logo_storage_path):
+                        # Exact logos are deferred to export so the image model cannot redraw or distort them.
                         final_asset_metadata["logo_source_storage_path"] = logo_storage_path
                         final_asset_metadata["logo_overlay_strategy"] = "exact_asset_overlay"
                         self._trace_payload(
@@ -23831,6 +24918,7 @@ class AIOrchestratorService:
         ):
             try:
                 image_started_at = perf_counter()
+                # This path creates supporting generated assets for backend-rendered layouts, not final AI composites.
                 image_prompt = self.build_image_prompt(
                     request,
                     text_payload,
@@ -23888,6 +24976,7 @@ class AIOrchestratorService:
                 )
                 self._trace_payload(trace_id, self.trace, "image_generation_error", {"error": image_generation_error})
         scene_graph = self.bind_generated_assets(scene_graph, generated_assets)
+        # Rebuild the blueprint after generated assets are bound so the returned contract matches final graph state.
         blueprint = self.blueprints.from_scene_graph(
             scene_graph=scene_graph,
             studio_panel=request.studio_panel,
@@ -23974,6 +25063,8 @@ class AIOrchestratorService:
             explainability["final_render_assets"] = [
                 asset.model_dump(mode="json") for asset in final_render_assets
             ]
+        # The response is the final pipeline handoff: API/worker code persists it and render/export code reads its contracts.
+        # Static/infographic usually return one final_render_asset; carousel may return one final_render_asset plus all slide assets.
         self._trace_payload(
             trace_id,
             self.trace,
@@ -23999,6 +25090,8 @@ class AIOrchestratorService:
         if cost_estimation:
             explainability["cost_estimation"] = cost_estimation
             self._trace_payload(trace_id, self.trace, "cost_estimation", cost_estimation)
+        # This is why the method returns AIOrchestrationResponse: it carries the common output contract for all formats.
+        # Static/infographic consumers usually read final_render_asset; carousel consumers can read final_render_assets per slide.
         return AIOrchestrationResponse(
             message_strategy=message_strategy,
             text=text_payload,
@@ -24023,6 +25116,8 @@ class AIOrchestratorService:
         studio_panel: dict[str, Any] | None = None,
         compiled_context: dict[str, Any] | None = None,
     ) -> StructuredTextPayload:
+        # Builds structure text layout from copy payload, studio settings, and compiled context for AIOrchestratorService.
+        # It calls _strip_blocked_compliance_phrases and _dedupe_metadata_collection while assembling the payload or prompt text.
         studio_panel = studio_panel if isinstance(studio_panel, dict) else {}
         context = dict(compiled_context or {})
         format_name = str(studio_panel.get("format") or "").strip().casefold() or "static"
@@ -24051,6 +25146,8 @@ class AIOrchestratorService:
         )
 
         def strip_text(value: Any, *, limit: int = 260) -> str:
+            # Extracts strip text from input value and limit for AIOrchestratorService.
+            # It calls _normalize_metadata_text and _strip_blocked_compliance_phrases to turn raw evidence into the structured signal the caller needs.
             return AIOrchestratorService._normalize_metadata_text(
                 AIOrchestratorService._strip_blocked_compliance_phrases(
                     AIOrchestratorService._coerce_text_value(value)
@@ -24172,6 +25269,8 @@ class AIOrchestratorService:
         compiled_context: dict[str, Any] | None = None,
         prompt: str | None = None,
     ) -> dict:
+        # Builds text from text dict, fallback payload, and brand name for AIOrchestratorService.
+        # It calls _coerce_text_value while assembling the payload or prompt text.
         normalized = dict(fallback)
         normalized.update(text_dict or {})
 
@@ -24216,10 +25315,14 @@ class AIOrchestratorService:
             brief=research_editorial_brief,
         )
 
+        # Returns the common text payload shape used by static, carousel, and infographic flows before format-specific rendering.
+        # Later branches read metadata to decide slide specs, infographic sections, static panels, proof points, and visual focus.
         return normalized
 
     @staticmethod
     def _int_or_none(value: Any) -> int | None:
+        # Centralizes int none from input value for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if isinstance(value, bool):
             return None
         if isinstance(value, int):
@@ -24229,6 +25332,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _rough_collection_length(cls, value: Any) -> int:
+        # Centralizes rough collection length from input value for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         if value is None:
             return 0
         if isinstance(value, str):
@@ -24261,6 +25366,8 @@ class AIOrchestratorService:
         compiled_context: dict[str, Any] | None = None,
         prompt: str | None = None,
     ) -> dict[str, int]:
+        # Centralizes dynamic metadata limits from metadata, body, and compiled context for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         content_format_brief = (
             compiled_context.get("content_format_brief")
             if isinstance(compiled_context, dict) and isinstance(compiled_context.get("content_format_brief"), dict)
@@ -24329,6 +25436,8 @@ class AIOrchestratorService:
         compiled_context: dict[str, Any] | None = None,
         prompt: str | None = None,
     ) -> dict[str, Any]:
+        # Builds metadata from metadata, fallback payload, and body for AIOrchestratorService.
+        # It calls _dynamic_metadata_limits and _normalize_metadata_list while assembling the payload or prompt text.
         base = dict(fallback or {})
         if isinstance(metadata, dict):
             merged_metadata = dict(metadata)
@@ -24467,6 +25576,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _normalized_output_format_name(compiled_context: dict[str, Any] | None) -> str:
+        # Normalizes output name from compiled context for AIOrchestratorService.
+        # Later prompt and metadata code can compare the cleaned value directly.
         content_format_brief = (compiled_context or {}).get("content_format_brief")
         if isinstance(content_format_brief, dict):
             format_name = str(content_format_brief.get("format") or "").strip().casefold()
@@ -24487,6 +25598,8 @@ class AIOrchestratorService:
         blocked_texts: list[str],
         limit: int,
     ) -> list[str]:
+        # Deduplicates dedupe metadata collection from items, blocked texts, and limit for AIOrchestratorService.
+        # It delegates shared cleanup to _normalize_metadata_text before returning the cleaned value.
         blocked = {
             cls._normalize_metadata_text(text, limit=180).casefold()
             for text in blocked_texts
@@ -24521,6 +25634,8 @@ class AIOrchestratorService:
         body: str,
         surface_contract: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Normalizes static panel spec from input value, headline, and supporting line for AIOrchestratorService.
+        # It delegates shared cleanup to _normalize_metadata_text and _int_or_none before returning the cleaned value.
         raw = value if isinstance(value, dict) else {}
         contract = surface_contract if isinstance(surface_contract, dict) else {}
         module_limit = cls._int_or_none(contract.get("module_count")) or 2
@@ -24566,6 +25681,8 @@ class AIOrchestratorService:
         section_limit: int = 4,
         data_list_surface: bool = False,
     ) -> list[dict[str, Any]]:
+        # Normalizes infographic section specs from input value, headline, and supporting line for AIOrchestratorService.
+        # It delegates shared cleanup to _sentences and _claim_evidence_pair_lines before returning the cleaned value.
         section_limit = max(1, min(int(section_limit or 4), 10))
         raw_sections = [dict(item) for item in value if isinstance(item, dict)] if isinstance(value, list) else []
         normalized_sections: list[dict[str, Any]] = []
@@ -24677,6 +25794,8 @@ class AIOrchestratorService:
         body: str,
         prompt: str | None = None,
     ) -> dict[str, Any]:
+        # Repairs static metadata semantics from metadata, body, and prompt text for AIOrchestratorService.
+        # It delegates shared cleanup to _data_list_surface_contract and _sentences before returning the cleaned value.
         repaired = dict(metadata or {})
         surface_contract = cls._data_list_surface_contract(
             prompt=prompt or body,
@@ -24790,6 +25909,8 @@ class AIOrchestratorService:
         body: str,
         prompt: str | None = None,
     ) -> dict[str, Any]:
+        # Repairs infographic metadata semantics from metadata, body, and prompt text for AIOrchestratorService.
+        # It delegates shared cleanup to _data_list_surface_contract and _sentences before returning the cleaned value.
         repaired = dict(metadata or {})
         surface_contract = cls._data_list_surface_contract(
             prompt=prompt or body,
@@ -24889,6 +26010,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _visual_metadata_keywords(cls, value: Any, *, limit: int = 12) -> set[str]:
+        # Centralizes visual metadata keywords from input value and limit for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         keywords: list[str] = []
         for word in re.findall(r"[A-Za-z][A-Za-z0-9'-]{2,}", cls._coerce_text_value(value).casefold()):
             normalized = word.rstrip("'")
@@ -24908,6 +26031,8 @@ class AIOrchestratorService:
         brief: dict[str, Any],
         compiled_context: dict[str, Any] | None = None,
     ) -> set[str]:
+        # Centralizes visual metadata evidence keywords from brief and compiled context for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         evidence_keywords: set[str] = set()
         evidence_texts: list[Any] = [brief.get("summary"), (compiled_context or {}).get("brand_visual_brief")]
         for item in (brief.get("items") or [])[:5]:
@@ -24924,6 +26049,8 @@ class AIOrchestratorService:
         *,
         compiled_context: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], list[str]]:
+        # Sanitizes visual metadata fields from metadata and compiled context for AIOrchestratorService.
+        # It delegates shared cleanup to _visual_metadata_evidence_keywords and _normalize_metadata_text before returning the cleaned value.
         cleaned = dict(metadata or {})
         if not cleaned or not compiled_context:
             return cleaned, []
@@ -24966,6 +26093,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _normalize_metadata_text(value: Any, limit: int) -> str:
+        # Normalizes metadata text from input value and limit for AIOrchestratorService.
+        # It delegates shared cleanup to _coerce_text_value and _sentences before returning the cleaned value.
         text = AIOrchestratorService._coerce_text_value(value)
         text = " ".join(text.strip().split())
         if not text:
@@ -24991,6 +26120,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _normalize_metadata_list(value: Any, limit: int) -> list[str]:
+        # Normalizes metadata from input value and limit for AIOrchestratorService.
+        # It delegates shared cleanup to _sanitize_text_for_canvas and _normalize_metadata_text before returning the cleaned value.
         if value is None:
             return []
 
@@ -25029,6 +26160,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _normalize_carousel_proof_lines(cls, value: Any, *, limit: int, item_limit: int = 180) -> list[str]:
+        # Normalizes carousel proof lines from input value, limit, and item limit for AIOrchestratorService.
+        # It delegates shared cleanup to _sanitize_text_for_canvas and _normalize_metadata_text before returning the cleaned value.
         if value is None:
             return []
         raw_items: list[str] = []
@@ -25063,6 +26196,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _normalize_claim_evidence_pairs(cls, value: Any, limit: int) -> list[dict[str, str]]:
+        # Normalizes claim evidence pairs from input value and limit for AIOrchestratorService.
+        # It delegates shared cleanup to _coerce_list and _normalize_metadata_text before returning the cleaned value.
         items = cls._coerce_list(value)
         pairs: list[dict[str, str]] = []
         seen: set[str] = set()
@@ -25114,6 +26249,8 @@ class AIOrchestratorService:
         *,
         limit: int,
     ) -> list[dict[str, str]]:
+        # Centralizes claim evidence pairs research brief from brief and limit for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         if not isinstance(brief, dict):
             return []
         candidates: list[dict[str, str]] = []
@@ -25156,6 +26293,8 @@ class AIOrchestratorService:
         *,
         limit: int,
     ) -> list[dict[str, str]]:
+        # Merges claim evidence pairs from primary, secondary, and limit for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         return cls._normalize_claim_evidence_pairs(
             [*cls._coerce_list(primary), *cls._coerce_list(secondary)],
             limit=limit,
@@ -25163,6 +26302,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _claim_evidence_pair_lines(cls, pairs: list[dict[str, str]], limit: int) -> list[str]:
+        # Extracts claim evidence pair lines from pairs and limit for AIOrchestratorService.
+        # It calls _normalize_metadata_text to turn raw evidence into the structured signal the caller needs.
         lines: list[str] = []
         for pair in pairs[:limit]:
             if not isinstance(pair, dict):
@@ -25180,6 +26321,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _content_allocation_keywords(cls, *values: Any, limit: int = 18) -> set[str]:
+        # Centralizes content allocation keywords from limit for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         keywords: list[str] = []
         for value in values:
             for word in re.findall(r"[A-Za-z][A-Za-z0-9'-]{2,}", cls._coerce_text_value(value).casefold()):
@@ -25195,6 +26338,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _claim_evidence_slot_capacity(cls, role: str, *, format_family: str) -> int:
+        # Centralizes claim evidence slot capacity from role and format family for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         normalized = cls._normalize_metadata_text(role, limit=48).casefold().replace(" ", "_")
         if format_family == "static":
             return 1
@@ -25214,6 +26359,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _claim_evidence_slot_priority(cls, role: str, *, format_family: str) -> int:
+        # Selects claim evidence slot priority from role and format family for AIOrchestratorService.
+        # It reuses _normalize_metadata_text so related checks follow the same rule.
         normalized = cls._normalize_metadata_text(role, limit=48).casefold().replace(" ", "_")
         if format_family == "static":
             return 5
@@ -25231,6 +26378,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _claim_evidence_pair_role_hint(cls, pair: dict[str, str]) -> str:
+        # Centralizes claim evidence pair role hint from pair for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         text = " ".join(
             part
             for part in [
@@ -25255,6 +26404,8 @@ class AIOrchestratorService:
         role: str,
         slot_texts: list[Any],
     ) -> int:
+        # Scores claim evidence pair slot from pair, role, and slot texts for AIOrchestratorService.
+        # It reuses _normalize_metadata_text and _content_allocation_keywords so related checks follow the same rule.
         claim = cls._normalize_metadata_text(pair.get("claim"), limit=96)
         evidence = cls._normalize_metadata_text(pair.get("evidence"), limit=160)
         pair_text = " ".join(part for part in [claim, evidence] if part).strip()
@@ -25305,6 +26456,8 @@ class AIOrchestratorService:
         claim_evidence_pairs: list[dict[str, str]],
         format_family: str,
     ) -> list[list[dict[str, str]]]:
+        # Centralizes allocate claim evidence pairs slots from slots, claim evidence pairs, and format family for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         allocations: list[list[dict[str, str]]] = [[] for _ in slots]
         if not slots or not claim_evidence_pairs:
             return allocations
@@ -25385,6 +26538,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _sentences(value: Any) -> list[str]:
+        # Centralizes sentences from input value for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         structured_items = AIOrchestratorService._structured_list_items(value)
         if structured_items:
             return structured_items
@@ -25399,6 +26554,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _coerce_text_value(value: Any, fallback: str = "") -> str:
+        # Coerces text from input value and fallback payload for AIOrchestratorService.
+        # It delegates shared cleanup to _sanitize_text_for_canvas before returning the cleaned value.
         if value is None:
             return fallback
         if isinstance(value, str):
@@ -25420,6 +26577,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _compact_infographic_section_specs(value: Any, *, section_limit: int = 4, item_limit: int = 2) -> str:
+        # Compacts infographic section specs from input value, section limit, and item limit for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if not isinstance(value, list):
             return ""
         section_limit = max(1, min(int(section_limit or 4), 10))
@@ -25449,6 +26608,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _compact_static_panel_spec(value: Any, *, item_limit: int = 2) -> str:
+        # Compacts static panel spec from input value and item limit for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         if not isinstance(value, dict):
             return ""
         item_limit = max(1, min(int(item_limit or 2), 12))
@@ -25476,6 +26637,8 @@ class AIOrchestratorService:
         use_backend_text_overlay: bool,
         visual_plan: dict[str, Any] | None = None,
     ) -> str:
+        # Builds surface prompt section from request state, copy payload, and metadata for AIOrchestratorService.
+        # It calls _data_list_surface_contract and _int_or_none while assembling the payload or prompt text.
         contract = metadata.get("data_list_surface_contract") if isinstance(metadata.get("data_list_surface_contract"), dict) else None
         if not contract:
             contract = cls._data_list_surface_contract(
@@ -25523,6 +26686,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _disclaimer_overlay_guidance(request: AIOrchestrationRequest) -> str:
+        # Builds disclaimer overlay guidance from request state for AIOrchestratorService.
+        # It calls _normalize_metadata_text while assembling the payload or prompt text.
         request_brief = getattr(request, "research_editorial_brief", None)
         brief = request_brief if isinstance(request_brief, dict) else {}
         request_brief = getattr(request, "research_editorial_brief", None)
@@ -25554,6 +26719,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _brand_legal_footer_text_for_format(cls, request: AIOrchestrationRequest) -> str:
+        # Extracts brand legal footer text from request state for AIOrchestratorService.
+        # It calls _normalize_metadata_text to turn raw evidence into the structured signal the caller needs.
         brand_context = getattr(request, "resolved_brand_context", {}) if request is not None else {}
         brand_context = brand_context if isinstance(brand_context, dict) else {}
         brand_assets = brand_context.get("brand_assets") if isinstance(brand_context.get("brand_assets"), dict) else {}
@@ -25606,6 +26773,8 @@ class AIOrchestratorService:
         *,
         legal_footer_text: Any = "",
     ) -> bool:
+        # Centralizes bottom footer overlay requested from request state and legal footer text for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if cls._normalize_metadata_text(legal_footer_text, limit=420):
             return True
         brief = getattr(request, "research_editorial_brief", {}) if request is not None else {}
@@ -25627,6 +26796,8 @@ class AIOrchestratorService:
         footer_requested: bool,
         footer_safe_area: dict[str, Any] | None = None,
     ) -> str:
+        # Builds infographic footer safe layout contract from format name, footer requested, and footer safe area for AIOrchestratorService.
+        # It calls _normalize_metadata_text while assembling the payload or prompt text.
         if not footer_requested:
             return ""
         normalized_format = cls._normalize_metadata_text(format_name, limit=32).casefold()
@@ -25660,6 +26831,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _image_text_containment_contract(*, format_name: str) -> list[str]:
+        # Builds image text containment contract from format name for AIOrchestratorService.
+        # This keeps payload shape decisions close to the code that understands the inputs.
         normalized_format = str(format_name or "").strip().casefold()
         if normalized_format == "carousel":
             surface = "carousel slide"
@@ -25686,6 +26859,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _ad_post_visual_quality_contract(format_name: str) -> str:
+        # Builds ad post visual quality contract from format name for AIOrchestratorService.
+        # This keeps payload shape decisions close to the code that understands the inputs.
         normalized_format = str(format_name or "").strip().casefold()
         if normalized_format not in {"static", "story", "poster", "infographic", "carousel"}:
             return ""
@@ -25717,6 +26892,8 @@ class AIOrchestratorService:
         slide_role: Any = "",
         proof_points_limit: int = 3,
     ) -> list[str]:
+        # Builds text overlay substrate contract from headline, supporting line, and body for AIOrchestratorService.
+        # It calls _normalize_metadata_text and _normalize_metadata_list while assembling the payload or prompt text.
         normalized_headline = AIOrchestratorService._normalize_metadata_text(headline, limit=180)
         normalized_supporting = AIOrchestratorService._normalize_metadata_text(supporting_line, limit=220)
         normalized_body = AIOrchestratorService._normalize_metadata_text(body, limit=260)
@@ -25766,6 +26943,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _brand_color_text_overlay_preparation_contract() -> str:
+        # Derives brand color text overlay preparation contract for AIOrchestratorService.
+        # This turns source evidence into a stable planning hint.
         return (
             "Brand-color text overlay preparation rule: reserve high-contrast blank surfaces suitable for backend-rendered headline keywords and key phrases in approved brand primary/accent colors. "
             "Do not render, color, highlight, outline, shadow, or invent any readable words, letters, numbers, labels, keyword chips, underlines, or pseudo-text yourself; only prepare the empty surfaces."
@@ -25773,6 +26952,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _brand_color_final_text_emphasis_contract() -> str:
+        # Derives brand color final text emphasis contract for AIOrchestratorService.
+        # This turns source evidence into a stable planning hint.
         return (
             "Brand-color approved-copy emphasis rule: use approved brand primary/accent colors only to emphasize important words already present in the exact approved headline, proof, or CTA copy below. "
             "Do not add, recolor, highlight, underline, outline, shadow, or invent any extra words, numbers, labels, keyword chips, badges, or pseudo-text."
@@ -25784,6 +26965,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest,
         creative_decision: CreativeDecisionPayload | None = None,
     ) -> bool:
+        # Checks use backend text overlay ai final from request state and creative decision for AIOrchestratorService.
+        # It reuses _effective_template_surface_policy so related checks follow the same rule.
         format_name = str((request.studio_panel or {}).get("format") or "").strip().lower()
         if format_name in {"static", "infographic"}:
             return False
@@ -25801,6 +26984,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest,
         creative_decision: CreativeDecisionPayload | None = None,
     ) -> str:
+        # Extracts ai final text strategy from request state and creative decision for AIOrchestratorService.
+        # It calls _should_use_backend_text_overlay_for_ai_final_render to turn raw evidence into the structured signal the caller needs.
         if cls._should_use_backend_text_overlay_for_ai_final_render(request, creative_decision):
             return "backend_exact_text_on_ai_text_safe_substrate"
         return "ai_renders_finished_slide_with_exact_copy"
@@ -25818,6 +27003,8 @@ class AIOrchestratorService:
         legal_footer: Any = "",
         proof_points_limit: int = 3,
     ) -> list[str]:
+        # Builds final text contract from headline, supporting line, and body for AIOrchestratorService.
+        # It calls _normalize_metadata_text and _normalize_metadata_list while assembling the payload or prompt text.
         normalized_headline = AIOrchestratorService._normalize_metadata_text(headline, limit=180)
         normalized_supporting = AIOrchestratorService._normalize_metadata_text(supporting_line, limit=220)
         normalized_body = AIOrchestratorService._normalize_metadata_text(body, limit=260)
@@ -25885,6 +27072,8 @@ class AIOrchestratorService:
         *,
         limit: int,
     ) -> list[str]:
+        # Extracts carousel slide visible module lines from slide and limit for AIOrchestratorService.
+        # It calls _dedupe_metadata_collection and _claim_evidence_pair_lines to turn raw evidence into the structured signal the caller needs.
         normalized_limit = max(1, min(int(limit or 3), 8))
         approved_lines: list[str] = []
         for key, item_limit in (
@@ -25912,6 +27101,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _scene_graph_legal_footer_text(scene_graph: GenerationSceneGraph) -> str:
+        # Extracts scene graph legal footer text from scene graph for AIOrchestratorService.
+        # It calls _normalize_metadata_text to turn raw evidence into the structured signal the caller needs.
         for element in scene_graph.elements:
             role = str(element.role or "").strip().casefold()
             if role not in {"legal", "footer", "disclaimer"}:
@@ -25923,6 +27114,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _dedupe_prompt_sections(sections: list[str]) -> list[str]:
+        # Deduplicates dedupe prompt sections from sections for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         cleaned: list[str] = []
         seen: set[str] = set()
         for section in sections:
@@ -25943,6 +27136,8 @@ class AIOrchestratorService:
         optional_sections: list[str],
         limit: int,
     ) -> str:
+        # Composes compose prompt sections from required sections, optional sections, and limit for AIOrchestratorService.
+        # It calls _dedupe_prompt_sections and _trim_prompt while assembling the payload or prompt text.
         parts: list[str] = []
         current_length = 0
         required = AIOrchestratorService._dedupe_prompt_sections(required_sections)
@@ -25997,6 +27192,8 @@ class AIOrchestratorService:
         visual_explanation_plan: dict[str, Any] | None = None,
         compiled_context: dict[str, Any] | None = None,
     ) -> str:
+        # Builds final prompt from request state, copy payload, and creative decision for AIOrchestratorService.
+        # It calls _design_system_prompt_guidance and _compact_palette_summary while assembling the payload or prompt text.
         compiled_context = dict(compiled_context or {})
         metadata = text_payload.metadata or {}
         visual_identity = request.resolved_brand_context.get("visual_identity", {}) or {}
@@ -26023,6 +27220,7 @@ class AIOrchestratorService:
             if isinstance(data_list_surface_contract, dict)
             else None
         ) or 0
+        # Data-list content controls how many proof points and sections are allowed into the final image prompt.
         proof_points = AIOrchestratorService._strip_blocked_compliance_phrases(
             AIOrchestratorService._compact_named_items(metadata.get("proof_points"), limit=max(4, data_list_module_count))
         )
@@ -26079,6 +27277,7 @@ class AIOrchestratorService:
             legal_footer_text=legal_footer_text,
         )
         canvas = getattr(scene_graph, "canvas", None)
+        # Footer geometry is calculated before prompt assembly so the image model leaves enough empty space for backend overlay.
         footer_safe_area = (
             calculate_footer_safe_area(
                 canvas_width=int(getattr(canvas, "width", 0) or 1),
@@ -26130,6 +27329,8 @@ class AIOrchestratorService:
         )
         normalized_format_name = AIOrchestratorService._normalize_metadata_text(format_name, limit=32).casefold()
         llm_led_static_infographic = AIOrchestratorService._llm_led_static_infographic_format(normalized_format_name)
+        # Static and infographic share this final-render builder; this flag decides when the image model owns layout/content composition.
+        # LLM-led static/infographic renders deliberately drop old template geometry and let the current prompt drive layout.
         scene_graph_text_region_count = sum(
             bool(getattr(element, "visible", True)) and AIOrchestratorService._scene_graph_text_like_element(element)
             for element in (scene_graph.elements or [])
@@ -26143,6 +27344,7 @@ class AIOrchestratorService:
             "static",
             "infographic",
         } and not llm_led_static_infographic
+        # The content budget is the bridge between text payload size, sample layout, logo space, and footer/disclaimer space.
         final_render_layout_content_budget = AIOrchestratorService._dynamic_layout_content_budget(
             request=request,
             format_name=format_name,
@@ -26159,6 +27361,7 @@ class AIOrchestratorService:
             if use_backend_text_overlay
             else "Treat this as one finished branded social image."
         )
+        # Format guidance is the main common-vs-independent split inside this prompt: carousel panels, infographic modules, or static social art.
         format_guidance = {
             "carousel": (
                 "Treat this as a premium carousel panel or cover image with strong sectioning, "
@@ -26171,6 +27374,7 @@ class AIOrchestratorService:
             ),
         }.get(format_name, default_format_guidance)
         if llm_led_static_infographic:
+            # Static/infographic LLM-led flow returns a prompt that asks the image model to design the full creative, not just fill a slot.
             format_guidance = (
                 "Treat this as a finished static/infographic social creative. Let the image model choose the composition, module count, visual metaphor, table/list/ranking treatment, and content hierarchy required by the current prompt while keeping only the logo-safe corner and footer/disclaimer strip reserved."
                 + (
@@ -26188,6 +27392,7 @@ class AIOrchestratorService:
             reference_assets=reference_images,
         )
         if llm_led_static_infographic:
+            # In LLM-led mode, old reference grounding is cleared so stale template subjects do not leak into the final ad.
             grounding_sections = []
             reference_summary = "None"
         research_quality_section = AIOrchestratorService._research_editorial_prompt_section(
@@ -26228,6 +27433,7 @@ class AIOrchestratorService:
                 sample_page_blueprint=active_sample_page_blueprint,
             )
         )
+        # Reference/template sections are kept out of LLM-led mode to avoid leaking stale sample structure.
         visual_style_policy_sections = AIOrchestratorService._visual_style_policy_prompt_sections(
             compiled_context,
             format_name=format_name,
@@ -26245,6 +27451,7 @@ class AIOrchestratorService:
             reference_images,
             message_strategy,
         )
+        # The visual plan summarizes how the content should become imagery before all guardrail sections are composed.
         infographic_surface_enforcement = (
             ""
             if llm_led_static_infographic
@@ -26343,6 +27550,7 @@ class AIOrchestratorService:
             else ""
         )
         llm_led_text_contract = [
+            # These rules prevent static infographic renders from inventing facts while still allowing rewritten visual copy.
             "Static/infographic content authority: render topic-correct main content directly in the image. Use upstream headline, body, proof points, CTA, and metadata only as optional semantic hints; if they conflict with the current user prompt, rewrite them to match the current prompt.",
             "Do not carry over unrelated previous-request topics, sample headlines, template copy, sample labels, old section titles, placeholder rows, or stale visual objects.",
             "Do not invent exact dates, percentages, currency amounts, rankings, table values, regulatory claims, or source attributions unless they are present in the current user prompt, approved text payload, retrieved verified facts, or live-research facts. If exact values are unavailable, use qualitative comparison/ranking language instead of fake numbers.",
@@ -26810,10 +28018,14 @@ class AIOrchestratorService:
         )
         prompt = AIOrchestratorService._strip_blocked_compliance_phrases(prompt)
         prompt = AIOrchestratorService._scrub_image_prompt_brand_mark_triggers(prompt)
+        # Returns the exact string sent to the image provider for one static/infographic canvas or one non-carousel final render.
+        # The orchestrator stores prompt metrics in asset metadata so export/debug code can trace what produced the image.
         return AIOrchestratorService._trim_prompt(prompt, AIOrchestratorService.IMAGE_PROMPT_MAX_LENGTH)
 
     @classmethod
     def _collapse_carousel_segments(cls, segments: list[str], max_slides: int) -> list[str]:
+        # Centralizes collapse carousel segments from segments and max slides for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         cleaned: list[str] = []
         seen: set[str] = set()
         for segment in segments:
@@ -26835,6 +28047,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _carousel_semantic_tokens(cls, *values: Any) -> set[str]:
+        # Centralizes carousel semantic tokens for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         combined = " ".join(
             cls._normalize_metadata_text(value, limit=260)
             for value in values
@@ -26885,6 +28099,8 @@ class AIOrchestratorService:
         first: dict[str, Any],
         second: dict[str, Any],
     ) -> bool:
+        # Centralizes carousel slides semantically overlap from first and second for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         first_headline = cls._normalize_metadata_text(first.get("headline"), limit=140)
         second_headline = cls._normalize_metadata_text(second.get("headline"), limit=140)
         first_support = cls._normalize_metadata_text(first.get("supporting_line"), limit=220)
@@ -26916,6 +28132,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _carousel_headline_subject(cls, headline: str) -> str:
+        # Centralizes carousel headline subject from headline for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         text = cls._normalize_metadata_text(headline, limit=160)
         if not text:
             return ""
@@ -26945,6 +28163,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _carousel_contextual_role_title(cls, role: str, *, headline: str, cta: str) -> str:
+        # Centralizes carousel contextual role title from role, headline, and cta for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         normalized_role = str(role or "").strip().casefold().replace(" ", "_")
         subject = cls._carousel_headline_subject(headline)
         if not subject:
@@ -26963,6 +28183,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _carousel_role_title(cls, role: str, *, headline: str, cta: str) -> str:
+        # Centralizes carousel role title from role, headline, and cta for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         normalized_role = str(role or "").strip().casefold().replace(" ", "_")
         contextual_title = cls._carousel_contextual_role_title(normalized_role, headline=headline, cta=cta)
         if normalized_role in {"hook", "cover", "opening", "title"}:
@@ -26999,6 +28221,8 @@ class AIOrchestratorService:
         headline: str = "",
         supporting_line: str = "",
     ) -> str:
+        # Extracts clean carousel cta text from input value, headline, and supporting line for AIOrchestratorService.
+        # It calls _normalize_metadata_text to turn raw evidence into the structured signal the caller needs.
         text = cls._normalize_metadata_text(value, limit=90).rstrip(" .")
         text = re.sub(r"\s*(?:\.{2,}|…)\s*$", "", text).strip()
         if not text:
@@ -27031,6 +28255,8 @@ class AIOrchestratorService:
         slide_count: int,
         has_cta: bool = False,
     ) -> str:
+        # Centralizes carousel story role from role, index, and slide count for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         normalized = cls._normalize_metadata_text(role, limit=40).casefold().replace(" ", "_")
         if normalized in {"hook", "cover", "opening", "title"}:
             return "hook" if index == 1 else "cover"
@@ -27046,10 +28272,14 @@ class AIOrchestratorService:
 
     @classmethod
     def _carousel_story_role_token(cls, story_role: Any) -> str:
+        # Extracts carousel story role token from story role for AIOrchestratorService.
+        # It calls _normalize_metadata_text to turn raw evidence into the structured signal the caller needs.
         return cls._normalize_metadata_text(story_role, limit=48).casefold().replace(" ", "_")
 
     @staticmethod
     def _carousel_generic_story_roles() -> set[str]:
+        # Centralizes carousel generic story roles for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         return {"", "detail", "details", "intro", "context", "setup"}
 
     @classmethod
@@ -27059,6 +28289,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest | None,
         metadata: dict[str, Any],
     ) -> str:
+        # Centralizes carousel infer archetype from request state and metadata for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         if isinstance(metadata.get("carousel_archetype"), str) and str(metadata.get("carousel_archetype") or "").strip():
             return str(metadata.get("carousel_archetype") or "").strip().casefold()
         content_plan = getattr(request, "content_plan", {}) if request is not None else {}
@@ -27134,6 +28366,8 @@ class AIOrchestratorService:
         *,
         slide_count: int,
     ) -> list[str]:
+        # Centralizes carousel archetype role sequence from archetype and slide count for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         normalized = str(archetype or "").strip().casefold()
         if slide_count <= 0:
             return []
@@ -27176,6 +28410,8 @@ class AIOrchestratorService:
         *,
         slide_count: int,
     ) -> list[dict[str, Any]]:
+        # Centralizes carousel archetype outline from archetype and slide count for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         roles = cls._carousel_archetype_role_sequence(archetype, slide_count=slide_count)
         outline: list[dict[str, Any]] = []
         for role in roles:
@@ -27197,6 +28433,8 @@ class AIOrchestratorService:
         index: int,
         slide_count: int,
     ) -> str:
+        # Centralizes carousel role archetype from explicit role, archetype, and index for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         normalized_explicit = cls._carousel_story_role_token(explicit_role)
         role_sequence = cls._carousel_archetype_role_sequence(archetype, slide_count=slide_count)
         archetype_role = role_sequence[index - 1] if index - 1 < len(role_sequence) else ""
@@ -27211,6 +28449,8 @@ class AIOrchestratorService:
         *,
         is_final_slide: bool = False,
     ) -> int:
+        # Centralizes carousel body point budget from story role and is final slide for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         normalized = cls._carousel_story_role_token(story_role)
         if normalized in {"hook", "cover", "opening", "title"}:
             return 0
@@ -27231,6 +28471,8 @@ class AIOrchestratorService:
         *,
         is_final_slide: bool = False,
     ) -> int:
+        # Centralizes carousel role point budget from story role and is final slide for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         normalized = cls._carousel_story_role_token(story_role)
         if normalized in {"hook", "cover", "opening", "title"}:
             return 0
@@ -27258,6 +28500,8 @@ class AIOrchestratorService:
         story_role: Any,
         text: Any,
     ) -> int:
+        # Centralizes carousel support from story role and text for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         normalized_role = cls._carousel_story_role_token(story_role)
         lowered = cls._normalize_metadata_text(text, limit=220).casefold()
         if not lowered:
@@ -27332,6 +28576,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _carousel_bullet_lines(cls, value: Any, *, limit: int = 4) -> list[str]:
+        # Extracts carousel bullet lines from input value and limit for AIOrchestratorService.
+        # It calls _normalize_metadata_text and _normalize_metadata_list to turn raw evidence into the structured signal the caller needs.
         if isinstance(value, list):
             return cls._normalize_metadata_list(value, limit=limit)
         text = cls._normalize_metadata_text(value, limit=600)
@@ -27349,6 +28595,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _looks_like_carousel_instruction_text(value: Any) -> bool:
+        # Checks carousel instruction text from input value for AIOrchestratorService.
+        # It reuses _coerce_text_value so related checks follow the same rule.
         text = AIOrchestratorService._coerce_text_value(value).casefold()
         if not text:
             return False
@@ -27371,6 +28619,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest | None,
         metadata: dict[str, Any],
     ) -> list[dict[str, Any]]:
+        # Centralizes carousel explicit outline candidates from request state and metadata for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         candidate_lists: list[Any] = [
             metadata.get("carousel_outline"),
             metadata.get("outline"),
@@ -27420,6 +28670,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest | None,
         metadata: dict[str, Any],
     ) -> list[dict[str, Any]]:
+        # Centralizes carousel outline candidates from request state and metadata for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         explicit_outline = cls._carousel_explicit_outline_candidates(request, metadata)
         if explicit_outline:
             return explicit_outline
@@ -27443,11 +28695,15 @@ class AIOrchestratorService:
 
     @staticmethod
     def _metadata_text_has_truncation_marker(value: Any) -> bool:
+        # Extracts metadata text truncation marker from input value for AIOrchestratorService.
+        # It calls _coerce_text_value to turn raw evidence into the structured signal the caller needs.
         text = AIOrchestratorService._coerce_text_value(value)
         return "..." in text or "…" in text
 
     @classmethod
     def _metadata_text_without_truncation_marker(cls, value: Any, *, limit: int) -> str:
+        # Extracts metadata text without truncation marker from input value and limit for AIOrchestratorService.
+        # It calls _normalize_metadata_text and _metadata_text_has_truncation_marker to turn raw evidence into the structured signal the caller needs.
         text = cls._normalize_metadata_text(value, limit=limit)
         if not cls._metadata_text_has_truncation_marker(text):
             return text
@@ -27456,6 +28712,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _carousel_texts_semantically_overlap(cls, first: Any, second: Any) -> bool:
+        # Centralizes carousel texts semantically overlap from first and second for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         first_tokens = cls._carousel_semantic_tokens(first)
         second_tokens = cls._carousel_semantic_tokens(second)
         if not first_tokens or not second_tokens:
@@ -27473,6 +28731,8 @@ class AIOrchestratorService:
         *,
         request: AIOrchestrationRequest | None = None,
     ) -> list[dict[str, Any]]:
+        # Sanitizes carousel slide specs from slides and request state for AIOrchestratorService.
+        # It delegates shared cleanup to _normalize_metadata_text and _brand_subject_focus_terms before returning the cleaned value.
         sanitized: list[dict[str, Any]] = []
         prompt_topic = cls._normalize_metadata_text((request.prompt if request is not None else ""), limit=180)
         request_topic_tokens = cls._request_topic_tokens(request) if request is not None else set()
@@ -27679,6 +28939,8 @@ class AIOrchestratorService:
         carousel_archetype: str = "",
         include_sample_copy_authority: bool = True,
     ) -> list[dict[str, Any]]:
+        # Applies apply sequence pack slide metadata from slides, sequence pack slides, and carousel archetype for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         if not slides or not sequence_pack_slides:
             return [dict(slide) for slide in slides if isinstance(slide, dict)]
         enriched: list[dict[str, Any]] = []
@@ -27752,6 +29014,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _slide_sample_editorial_contract(cls, slide: dict[str, Any]) -> dict[str, Any]:
+        # Builds slide sample editorial contract from slide for AIOrchestratorService.
+        # The returned payload is the compact contract consumed by the next branch.
         metadata = slide.get("metadata") if isinstance(slide.get("metadata"), dict) else {}
         return {
             "sample_page_headline": metadata.get("sample_page_headline"),
@@ -27767,6 +29031,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _sample_page_visualizes_data_or_product(cls, slide: dict[str, Any]) -> bool:
+        # Centralizes sample page visualizes product from slide for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         metadata = slide.get("metadata") if isinstance(slide.get("metadata"), dict) else {}
         blueprint = metadata.get("sample_page_blueprint") if isinstance(metadata.get("sample_page_blueprint"), dict) else {}
         category = cls._normalize_metadata_text(
@@ -27805,6 +29071,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest | None = None,
         sample_allows_data_or_product: bool,
     ) -> bool:
+        # Derives style reference visual focus needs sample reset from visual focus, request state, and sample allows data or product for AIOrchestrator.
+        # It calls _data_visualization_requested and _normalize_metadata_text to turn raw evidence into the structured signal the caller needs.
         focus = cls._normalize_metadata_text(visual_focus, limit=520).casefold()
         if not focus:
             return True
@@ -27833,6 +29101,8 @@ class AIOrchestratorService:
         *,
         request: AIOrchestrationRequest | None = None,
     ) -> str:
+        # Centralizes sample matched visual focus from slide and request state for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         metadata = slide.get("metadata") if isinstance(slide.get("metadata"), dict) else {}
         sample_contract = cls._slide_sample_editorial_contract(slide)
         role = cls._normalize_metadata_text(
@@ -27907,6 +29177,8 @@ class AIOrchestratorService:
         *,
         request: AIOrchestrationRequest | None = None,
     ) -> list[dict[str, Any]]:
+        # Sanitizes style reference sample slide specs from slides and request state for AIOrchestratorService.
+        # It delegates shared cleanup to _slide_sample_editorial_contract and _sample_page_visualizes_data_or_product before returning the cleaned value.
         if not slides:
             return []
         sanitized: list[dict[str, Any]] = []
@@ -27947,6 +29219,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest | None = None,
         creative_decision: CreativeDecisionPayload | None = None,
     ) -> list[dict[str, Any]]:
+        # Aligns align carousel slide specs selected references from slides, request state, and creative decision for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if request is None or not slides:
             return [dict(slide) for slide in slides if isinstance(slide, dict)]
         if str(request.studio_panel.get("format") or "").strip().lower() != "carousel":
@@ -28042,6 +29316,8 @@ class AIOrchestratorService:
         fallback_slides: list[dict[str, Any]],
         carousel_archetype: str = "",
     ) -> list[dict[str, Any]]:
+        # Normalizes structured carousel slides from raw slides, headline, and supporting line for AIOrchestratorService.
+        # It delegates shared cleanup to _normalize_metadata_text and _normalize_carousel_proof_lines before returning the cleaned value.
         normalized_slides: list[dict[str, Any]] = []
         fallback_count = len(fallback_slides)
         slide_count_hint = target_slide_count or len(raw_slides) or fallback_count
@@ -28252,6 +29528,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _overlay_prompt_safe_visual_focus(cls, slide: dict[str, Any]) -> str:
+        # Builds overlay prompt safe visual focus from slide for AIOrchestratorService.
+        # It calls _normalize_metadata_text while assembling the payload or prompt text.
         raw_focus = cls._normalize_metadata_text(slide.get("visual_focus"), limit=420)
         if not raw_focus:
             return ""
@@ -28288,6 +29566,8 @@ class AIOrchestratorService:
         target_slide_count: int,
         carousel_archetype: str = "",
     ) -> list[dict[str, Any]]:
+        # Centralizes outline carousel slides from outline, headline, and supporting line for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         if not outline:
             return []
         insight_hierarchy = []
@@ -28487,6 +29767,8 @@ class AIOrchestratorService:
         *,
         fallback_text: str = "",
     ) -> str:
+        # Extracts carousel slide body text from slide and fallback text for AIOrchestratorService.
+        # It calls _normalize_metadata_list and _normalize_metadata_text to turn raw evidence into the structured signal the caller needs.
         for key in ("body", "detail", "summary", "description", "narrative"):
             text = cls._normalize_metadata_text(slide.get(key), limit=320)
             if text:
@@ -28513,6 +29795,8 @@ class AIOrchestratorService:
         fallback_slides: list[dict[str, Any]],
         slide_count: int,
     ) -> list[str]:
+        # Centralizes carousel expected story roles from request state, metadata, and fallback slides for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         carousel_archetype = cls._carousel_infer_archetype(request=request, metadata=metadata)
         archetype_roles = cls._carousel_archetype_role_sequence(
             carousel_archetype,
@@ -28560,6 +29844,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _carousel_story_role_guidance(cls, story_role: str) -> str:
+        # Builds carousel story role guidance from story role for AIOrchestratorService.
+        # It calls _normalize_metadata_text while assembling the payload or prompt text.
         normalized = cls._normalize_metadata_text(story_role, limit=48).casefold().replace(" ", "_")
         if normalized in {"hook", "cover", "opening", "title"}:
             return "This slide must hook the reader immediately with the hidden angle, not recap the entire story."
@@ -28589,6 +29875,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _carousel_is_editorial_close_role(cls, story_role: str) -> bool:
+        # Centralizes carousel editorial close role from story role for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         normalized = cls._normalize_metadata_text(story_role, limit=48).casefold().replace(" ", "_")
         return normalized not in {"", "takeaway", "close", "closing", "cta", "final"}
 
@@ -28604,6 +29892,8 @@ class AIOrchestratorService:
         supporting_line: str,
         cta: str,
     ) -> list[dict[str, Any]]:
+        # Centralizes enforce carousel editorial progression from slides, request state, and metadata for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         if not slides:
             return []
         repaired = [deepcopy(slide) for slide in slides]
@@ -28700,6 +29990,8 @@ class AIOrchestratorService:
         supporting_line: str,
         cta: str,
     ) -> list[dict[str, Any]]:
+        # Validates carousel semantic progression from slides, request state, and metadata for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if not slides:
             return []
         repaired = [deepcopy(slide) for slide in slides]
@@ -28841,6 +30133,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _carousel_story_role_label(story_role: str) -> str:
+        # Extracts carousel story role label from story role for AIOrchestratorService.
+        # It calls _normalize_metadata_text to turn raw evidence into the structured signal the caller needs.
         normalized = AIOrchestratorService._normalize_metadata_text(story_role, limit=48).casefold().replace(" ", "_")
         if normalized in {"hook", "cover", "opening", "title"}:
             return "opening hook"
@@ -28856,6 +30150,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _carousel_slide_text_pressure(slide: dict[str, Any]) -> str:
+        # Extracts carousel slide text pressure from slide for AIOrchestratorService.
+        # It calls _normalize_metadata_text and _carousel_slide_body_text to turn raw evidence into the structured signal the caller needs.
         supporting_line = AIOrchestratorService._normalize_metadata_text(
             slide.get("supporting_line"),
             limit=240,
@@ -28886,10 +30182,14 @@ class AIOrchestratorService:
 
     @staticmethod
     def _word_count(value: Any) -> int:
+        # Counts word count from input value for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         return len(re.findall(r"\b[\w%$./+-]+\b", str(value or "")))
 
     @classmethod
     def _truncate_to_words(cls, value: Any, *, max_words: int, min_words: int = 5) -> str:
+        # Shortens truncate words from input value, max words, and min words for AIOrchestratorService.
+        # It delegates shared cleanup to _normalize_metadata_text and _sentences before returning the cleaned value.
         text = cls._normalize_metadata_text(value, limit=360)
         if not text:
             return ""
@@ -28931,6 +30231,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _compact_carousel_metric_line(cls, value: Any, *, max_words: int) -> str:
+        # Compacts carousel metric line from input value and max words for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         text = cls._normalize_metadata_text(value, limit=220)
         if not text:
             return ""
@@ -28946,6 +30248,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _carousel_slide_needs_comparison_structure(cls, slide: dict[str, Any]) -> bool:
+        # Centralizes carousel slide needs comparison structure from slide for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         fields: list[Any] = [
             slide.get("headline"),
             slide.get("supporting_line"),
@@ -28975,10 +30279,14 @@ class AIOrchestratorService:
 
     @classmethod
     def _restore_compacted_currency_claims(cls, *, source: Any, value: Any) -> Any:
+        # Centralizes restore compacted currency claims from source and input value for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         return cls._restore_corrupted_currency_claims(previous_source=source, rewritten_value=value)
 
     @classmethod
     def _compact_comparison_gap_line(cls, value: Any) -> str:
+        # Compacts comparison gap line from input value for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         text = cls._normalize_metadata_text(value, limit=160)
         if not text:
             return ""
@@ -28994,8 +30302,12 @@ class AIOrchestratorService:
 
     @classmethod
     def _repair_missing_indian_currency_markers(cls, value: Any) -> Any:
+        # Repairs missing indian currency markers from input value for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if isinstance(value, str):
             def replace(match: re.Match[str]) -> str:
+                # Centralizes replace from match for AIOrchestratorService.
+                # The helper owns a small rule that would distract from the surrounding flow.
                 prefix = match.group("prefix") or ""
                 amount = match.group("amount") or ""
                 unit = match.group("unit") or ""
@@ -29017,6 +30329,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _carousel_visible_text_word_count(cls, slide: dict[str, Any]) -> int:
+        # Counts carousel visible text word count from slide for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         fields: list[Any] = [
             slide.get("headline"),
             slide.get("supporting_line"),
@@ -29035,6 +30349,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _mobile_carousel_copy_budget(cls, slide: dict[str, Any], *, slide_index: int, slide_count: int) -> dict[str, int]:
+        # Centralizes mobile carousel copy budget from slide, slide index, and slide count for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         metadata = slide.get("metadata") if isinstance(slide.get("metadata"), dict) else {}
         story_role = cls._normalize_metadata_text(
             metadata.get("story_role") or slide.get("role") or slide.get("slide_role"),
@@ -29066,6 +30382,8 @@ class AIOrchestratorService:
         slide_index: int,
         slide_count: int,
     ) -> dict[str, Any]:
+        # Compacts carousel slide mobile from slide, slide index, and slide count for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         compacted = dict(slide)
         metadata = dict(compacted.get("metadata") if isinstance(compacted.get("metadata"), dict) else {})
         original_snapshot = {
@@ -29209,6 +30527,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _same_income_comparison_requested(cls, request: AIOrchestrationRequest | None) -> bool:
+        # Centralizes same income comparison requested from request state for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         prompt = cls._normalize_metadata_text(getattr(request, "prompt", "") if request is not None else "", limit=260).casefold()
         return bool(
             prompt
@@ -29224,11 +30544,15 @@ class AIOrchestratorService:
         slides: list[dict[str, Any]],
         source_slides: list[dict[str, Any]] | None = None,
     ) -> dict[str, str]:
+        # Extracts same income comparison amounts from slides and source slides for AIOrchestratorService.
+        # It calls _repair_missing_indian_currency_markers and _normalize_metadata_text to turn raw evidence into the structured signal the caller needs.
         source = source_slides if source_slides else slides
         raw_text = json.dumps(source, ensure_ascii=False).replace("\\n", "\n")
         repaired_text = cls._repair_missing_indian_currency_markers(raw_text)
 
         def amount_after(pattern: str) -> str:
+            # Centralizes amount after from pattern for AIOrchestratorService.
+            # The helper owns a small rule that would distract from the surrounding flow.
             match = re.search(pattern, repaired_text, flags=re.IGNORECASE | re.DOTALL)
             return cls._normalize_metadata_text(match.group("amount"), limit=40).rstrip(" ,.;:-") if match else ""
 
@@ -29258,6 +30582,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest | None,
         source_slides: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
+        # Applies apply same income comparison story contract from slides, request state, and source slides for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if not slides or not cls._same_income_comparison_requested(request):
             return slides
         amounts = cls._extract_same_income_comparison_amounts(slides=slides, source_slides=source_slides)
@@ -29266,6 +30592,8 @@ class AIOrchestratorService:
             return slides
 
         def update_slide(index: int, *, headline: str, supporting_line: str, body: str = "", body_points: list[str] | None = None, proof_points: list[str] | None = None, cta: str | None = None) -> None:
+            # Centralizes update slide from index, headline, and supporting line for AIOrchestratorService.
+            # The helper owns a small rule that would distract from the surrounding flow.
             if index >= len(repaired):
                 return
             slide = dict(repaired[index])
@@ -29340,6 +30668,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _compact_carousel_slides_for_mobile(cls, slides: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        # Compacts carousel slides mobile from slides for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         slide_count = len([slide for slide in slides if isinstance(slide, dict)])
         compacted: list[dict[str, Any]] = []
         for index, slide in enumerate(slides, start=1):
@@ -29356,6 +30686,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _carousel_sequence_position(index: int, slide_count: int) -> str:
+        # Measures carousel sequence position from index and slide count for AIOrchestratorService.
+        # The measurement feeds layout, crop, overlap, or density decisions.
         if slide_count <= 1 or index <= 1:
             return "opening"
         if index >= slide_count:
@@ -29379,6 +30711,8 @@ class AIOrchestratorService:
         previous_story_role: str,
         next_story_role: str,
     ) -> dict[str, str]:
+        # Builds carousel continuity profile from slide, slide index, and slide count for AIOrchestratorService.
+        # It calls _carousel_sequence_position and _carousel_slide_text_pressure while assembling the payload or prompt text.
         slide_metadata = slide.get("metadata") if isinstance(slide.get("metadata"), dict) else {}
         story_role = cls._normalize_metadata_text(
             slide_metadata.get("story_role") or slide.get("role"),
@@ -29472,6 +30806,8 @@ class AIOrchestratorService:
         cls,
         slides: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
+        # Applies apply carousel continuity contract from slides for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if not slides:
             return []
         repaired = [deepcopy(slide) for slide in slides]
@@ -29506,6 +30842,8 @@ class AIOrchestratorService:
         *,
         claim_evidence_pairs: list[dict[str, str]],
     ) -> list[dict[str, Any]]:
+        # Applies apply claim evidence carousel slides from slides and claim evidence pairs for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if not slides or not claim_evidence_pairs:
             return slides
         repaired = [deepcopy(slide) for slide in slides]
@@ -29608,6 +30946,8 @@ class AIOrchestratorService:
         target_slide_count: int,
         sequence_pack_slides: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
+        # Centralizes fallback carousel slide specs from copy payload, request state, and creative decision for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         mistake_style = cls._has_mistake_carousel_signals(
             headline,
             supporting_line,
@@ -29617,6 +30957,7 @@ class AIOrchestratorService:
             *stat_highlights,
         )
         if mistake_style:
+            # Mistake carousels need a different rhythm: cover, one or more mistake/fix details, then a closing slide.
             wants_multiple = cls._prefers_multiple_mistake_slides(
                 headline,
                 supporting_line,
@@ -29637,6 +30978,7 @@ class AIOrchestratorService:
                 if target_slide_count
                 else max(len(mistake_groups), minimum_detail_count)
             )
+            # Fill missing mistake groups from the available proof lines so the carousel still has enough middle slides.
             while len(mistake_groups) < detail_slot_count:
                 fallback_index = len(mistake_groups) + 1
                 fallback_focus = (
@@ -29679,6 +31021,7 @@ class AIOrchestratorService:
                 points = cls._normalize_metadata_list(group.get("proof_points"), limit=3)
                 impact_lines = [point for point in points if cls.IMPACT_LINE_PATTERN.match(point)]
                 fix_lines = [point for point in points if cls.FIX_LINE_PATTERN.match(point)]
+                # Impact/fix lines are prioritized because they make each mistake slide actionable instead of just descriptive.
                 if not impact_lines:
                     inferred_impact = next(
                         (
@@ -29758,6 +31101,7 @@ class AIOrchestratorService:
             carousel_archetype=cls._carousel_infer_archetype(request=request, metadata=metadata),
         )
         if outline_slides:
+            # User or model-supplied outlines are respected first because they carry intentional slide ordering.
             return outline_slides
 
         detail_segments = cls._collapse_carousel_segments(
@@ -29765,6 +31109,7 @@ class AIOrchestratorService:
             max_slides=max(target_slide_count - 2, 1) if target_slide_count else max(len(body_sentences), 1),
         )
         if not detail_segments:
+            # Proof points become the fallback middle-slide source when the body has no usable sentence structure.
             detail_segments = cls._collapse_carousel_segments(proof_points, max_slides=max(target_slide_count - 2, 1) if target_slide_count else max(len(proof_points), 1))
         unique_support_candidates = cls._normalize_metadata_list(
             [
@@ -29780,6 +31125,7 @@ class AIOrchestratorService:
             (target_slide_count and target_slide_count >= 5)
             or (len(stat_highlights) > 1 and len(detail_segments) > 2)
         )
+        # Longer, evidence-heavy carousels get an intro slide to set context before the detail sequence starts.
         detail_slot_count = (
             max(target_slide_count - (3 if include_intro_slide else 2), len(detail_segments), 1)
             if target_slide_count
@@ -29935,6 +31281,8 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest | None = None,
         slide_count: int = 0,
     ) -> list[dict[str, Any]]:
+        # Centralizes carousel semantic slide contracts from compiled context, request state, and slide count for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         content_plan = (
             compiled_context.get("content_plan")
             if isinstance(compiled_context, dict) and isinstance(compiled_context.get("content_plan"), dict)
@@ -29974,6 +31322,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _carousel_required_concepts_from_contract(cls, contract: dict[str, Any]) -> list[str]:
+        # Builds carousel required concepts contract from contract for AIOrchestratorService.
+        # It calls _dedupe_metadata_collection and _normalize_metadata_text while assembling the payload or prompt text.
         concepts: list[str] = []
         for value in (contract.get("section_focus"), contract.get("purpose"), contract.get("notes")):
             text = cls._normalize_metadata_text(value, limit=140)
@@ -29987,6 +31337,8 @@ class AIOrchestratorService:
         slide: dict[str, Any],
         required_concepts: list[str],
     ) -> tuple[list[str], list[str]]:
+        # Centralizes slide preserved required concepts from slide and required concepts for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         visible_text = " ".join(
             [
                 cls._normalize_metadata_text(slide.get("headline"), limit=140),
@@ -30013,6 +31365,8 @@ class AIOrchestratorService:
         *,
         story_contracts: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
+        # Centralizes attach carousel story contracts from slides and story contracts for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if not story_contracts:
             return [dict(slide) for slide in slides if isinstance(slide, dict)]
         attached: list[dict[str, Any]] = []
@@ -30051,6 +31405,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _repair_carousel_story_contract_concept_gaps(cls, slides: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        # Repairs carousel story contract concept gaps from slides for AIOrchestratorService.
+        # It delegates shared cleanup to _normalize_metadata_list and _carousel_texts_semantically_overlap before returning the cleaned value.
         repaired: list[dict[str, Any]] = []
         for slide in slides:
             if not isinstance(slide, dict):
@@ -30078,6 +31434,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _restore_planner_intent_in_carousel_slides(cls, slides: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        # Centralizes restore planner intent in carousel slides from slides for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         restored: list[dict[str, Any]] = []
         for slide in slides:
             if not isinstance(slide, dict):
@@ -30105,6 +31463,8 @@ class AIOrchestratorService:
         outline_slide_count: int,
         sequence_pack_slide_count: int,
     ) -> dict[str, Any]:
+        # Centralizes carousel story pacing resolution from story contracts, prompt requested slide count, and preferred slide count for AIOrchestratorS.
+        # The helper owns a small rule that would distract from the surrounding flow.
         contract_slide_count = len([item for item in story_contracts if isinstance(item, dict)])
         required_slide_count = max(
             contract_slide_count,
@@ -30129,6 +31489,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _apply_carousel_sequence_label_contracts(cls, slides: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        # Applies apply carousel sequence label contracts from slides for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         repaired: list[dict[str, Any]] = []
         slide_count = len([slide for slide in slides if isinstance(slide, dict)])
         for index, slide in enumerate(slides, start=1):
@@ -30152,6 +31514,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _carousel_sequence_coherence_report(cls, slides: list[dict[str, Any]]) -> dict[str, Any]:
+        # Centralizes carousel sequence coherence report from slides for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         roles: list[str] = []
         repeated: list[str] = []
         for slide in slides:
@@ -30178,6 +31542,8 @@ class AIOrchestratorService:
         *,
         request: AIOrchestrationRequest | None = None,
     ) -> dict[str, Any]:
+        # Builds carousel slide representation plan from slide and request state for AIOrchestratorService.
+        # It calls _carousel_story_role_token and _normalize_metadata_text while assembling the payload or prompt text.
         metadata = slide.get("metadata") if isinstance(slide.get("metadata"), dict) else {}
         local_text = " ".join(
             [
@@ -30233,6 +31599,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _representation_hint_matches_visual_focus(cls, representation_hint: Any, visual_focus: Any) -> bool:
+        # Centralizes representation hint visual focus from representation hint and visual focus for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         hint = cls._normalize_metadata_text(representation_hint, limit=48).casefold().replace(" ", "_")
         focus = cls._normalize_metadata_text(visual_focus, limit=320).casefold()
         if not hint or not focus:
@@ -30249,6 +31617,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _carousel_visual_systems_for_representation(cls, representation: str, *, story_role: str = "") -> list[str]:
+        # Centralizes carousel visual systems representation from representation and story role for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         selected = cls._normalize_metadata_text(representation, limit=64).casefold() or "editorial_explainer"
         systems_by_representation = {
             "hero_metaphor": ["dominant hero object", "headline-safe negative space"],
@@ -30273,6 +31643,8 @@ class AIOrchestratorService:
         *,
         request: AIOrchestrationRequest | None = None,
     ) -> dict[str, Any]:
+        # Builds carousel slide visual execution contract from slide and request state for AIOrchestratorService.
+        # It calls _carousel_story_role_token and _carousel_slide_representation_plan while assembling the payload or prompt text.
         metadata = slide.get("metadata") if isinstance(slide.get("metadata"), dict) else {}
         representation_plan = metadata.get("representation_plan") if isinstance(metadata.get("representation_plan"), dict) else cls._carousel_slide_representation_plan(slide, request=request)
         story_role = cls._carousel_story_role_token(metadata.get("story_role") or slide.get("role"))
@@ -30297,6 +31669,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _attach_carousel_visual_execution_contracts(cls, slides: list[dict[str, Any]], *, request: AIOrchestrationRequest | None = None) -> list[dict[str, Any]]:
+        # Centralizes attach carousel visual execution contracts from slides and request state for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         attached: list[dict[str, Any]] = []
         for slide in slides:
             if not isinstance(slide, dict):
@@ -30314,6 +31688,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _carousel_render_execution_contract(cls, slide: dict[str, Any]) -> dict[str, Any]:
+        # Builds carousel execution contract from slide for AIOrchestratorService.
+        # It calls _normalize_metadata_text and _normalize_metadata_list while assembling the payload or prompt text.
         metadata = slide.get("metadata") if isinstance(slide.get("metadata"), dict) else {}
         visible_copy = {
             key: value
@@ -30349,6 +31725,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _attach_carousel_render_execution_contracts(cls, slides: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        # Centralizes attach carousel execution contracts from slides for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         attached: list[dict[str, Any]] = []
         for slide in slides:
             if not isinstance(slide, dict):
@@ -30369,6 +31747,8 @@ class AIOrchestratorService:
         story_contracts: list[dict[str, Any]],
         pacing_resolution: dict[str, Any],
     ) -> list[dict[str, Any]]:
+        # Applies apply content intelligence carousel contracts from slides, request state, and story contracts for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         contracted = cls._attach_carousel_story_contracts(slides, story_contracts=story_contracts)
         contracted = cls._repair_carousel_story_contract_concept_gaps(contracted)
         contracted = cls._restore_planner_intent_in_carousel_slides(contracted)
@@ -30389,6 +31769,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _pinned_template_subject_anchor(cls, *values: Any) -> str:
+        # Centralizes pinned template subject anchor for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         for value in values:
             text = cls._normalize_metadata_text(value, limit=180).strip(" .")
             if not text:
@@ -30416,6 +31798,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _pinned_template_headline_needs_story_hook(cls, value: Any, *, source_headline: str = "") -> bool:
+        # Centralizes pinned template headline needs story hook from input value and source headline for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         text = cls._normalize_metadata_text(value, limit=140)
         if not text:
             return True
@@ -30449,6 +31833,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _carousel_visual_focus_is_generic(cls, value: Any) -> bool:
+        # Centralizes carousel visual focus generic from input value for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         text = cls._normalize_metadata_text(value, limit=260).casefold()
         if not text:
             return True
@@ -30476,6 +31862,8 @@ class AIOrchestratorService:
         proof_points: list[str],
         stat_highlights: list[str],
     ) -> str:
+        # Centralizes dynamic pinned template hook headline from headline, supporting line, and prompt text for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         subject = cls._pinned_template_subject_anchor(headline, prompt, supporting_line)
         combined = " ".join([headline, supporting_line, prompt, *proof_points[:2], *stat_highlights[:2]]).casefold()
         if not subject:
@@ -30501,6 +31889,8 @@ class AIOrchestratorService:
         prompt: str,
         cta: str,
     ) -> str:
+        # Centralizes dynamic pinned template closing headline from headline, supporting line, and prompt text for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         subject = cls._pinned_template_subject_anchor(headline, prompt, supporting_line)
         if cta:
             return "The next move is the point"
@@ -30510,6 +31900,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _pinned_template_story_roles(cls, slide_count: int) -> list[str]:
+        # Centralizes pinned template story roles from slide count for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if slide_count <= 0:
             return []
         if slide_count == 1:
@@ -30532,6 +31924,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _derive_pinned_template_adaptation_profile(cls, slides: list[dict[str, Any]]) -> dict[str, Any]:
+        # Derives pinned template adaptation profile from slides for AIOrchestratorService.
+        # It calls _normalize_metadata_text and _sample_blueprint_layout_mode to turn raw evidence into the structured signal the caller needs.
         if not slides:
             return {}
         craft_fragments: list[str] = []
@@ -30628,6 +32022,8 @@ class AIOrchestratorService:
         profile: dict[str, Any],
         story_role: str,
     ) -> str:
+        # Centralizes pinned template content visual focus from slide, profile, and story role for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         headline = cls._normalize_metadata_text(slide.get("headline"), limit=140)
         support = cls._normalize_metadata_text(slide.get("supporting_line") or slide.get("body"), limit=180)
         proof = cls._normalize_metadata_list(slide.get("proof_points"), limit=2)
@@ -30660,6 +32056,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _pinned_template_adaptation_profile_prompt_section(cls, profile: Any) -> str:
+        # Builds pinned template adaptation profile prompt section from profile for AIOrchestratorService.
+        # The returned payload is the compact contract consumed by the next branch.
         if not isinstance(profile, dict) or not profile:
             return ""
         compact = json.dumps(profile, ensure_ascii=True, separators=(",", ":"))
@@ -30681,6 +32079,8 @@ class AIOrchestratorService:
         proof_points: list[str],
         stat_highlights: list[str],
     ) -> list[dict[str, Any]]:
+        # Applies apply pinned template storytelling contract from slides, request state, and headline for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if not slides or not cls._request_uses_template_adaptance(request):
             return slides
         repaired = [deepcopy(slide) for slide in slides if isinstance(slide, dict)]
@@ -30756,6 +32156,8 @@ class AIOrchestratorService:
         creative_decision: CreativeDecisionPayload | None = None,
         enable_content_intelligence: bool = False,
     ) -> list[dict[str, Any]]:
+        # Builds carousel slide specs from copy payload, request state, and creative decision for AIOrchestratorService.
+        # It calls _normalize_metadata_text and _sentences while assembling the payload or prompt text.
         metadata = text_payload.metadata or {}
         if (
             not enable_content_intelligence
@@ -30837,6 +32239,7 @@ class AIOrchestratorService:
             or ((request.content_plan or {}).get("preferred_slide_count") if request and isinstance(request.content_plan, dict) else None)
             or ((request.research_editorial_brief or {}).get("preferred_slide_count") if request and isinstance(request.research_editorial_brief, dict) else None)
         )
+        # Slide count is resolved from the strongest authority first: forced sequence, prompt, structured specs, then fallback plans.
         if (force_sequence_pack or explicit_style_reference_policy) and sequence_pack_slide_count:
             raw_target_slide_count = sequence_pack_slide_count
         elif template_surface_policy == "style_reference_only":
@@ -30889,6 +32292,7 @@ class AIOrchestratorService:
             sequence_pack_slides=sequence_pack_slides,
         )
         if isinstance(structured_source, list) and structured_source:
+            # Structured slide specs are respected, then repaired/sanitized against the same fallback story arc.
             structured_fallback_slides = fallback_slides if explicit_outline_candidates else []
             normalized_slides = cls._normalize_structured_carousel_slides(
                 structured_source,
@@ -30906,6 +32310,7 @@ class AIOrchestratorService:
             normalized_slides = [dict(slide) for slide in fallback_slides]
 
         if len(normalized_slides) < 3:
+            # Carousels need at least a cover/detail/close rhythm; insert a middle beat when upstream data is too thin.
             normalized_slides.insert(
                 1,
                 {
@@ -30953,6 +32358,7 @@ class AIOrchestratorService:
             request=request,
         )
         if target_slide_count and len(normalized_slides) < target_slide_count:
+            # Fill short sequences from fallback slides without duplicating the same slide index/headline pair.
             for fallback_slide in fallback_slides:
                 candidate = dict(fallback_slide)
                 if any(
@@ -30969,6 +32375,7 @@ class AIOrchestratorService:
                 if len(normalized_slides) >= target_slide_count:
                     break
         if should_enforce_target_slide_count and target_slide_count and len(normalized_slides) > target_slide_count:
+            # Downsampling uses proportional positions so long reference sequences keep their beginning/middle/end rhythm.
             selected_positions = {
                 cls._proportional_sequence_reference_index(
                     output_index,
@@ -30983,6 +32390,7 @@ class AIOrchestratorService:
                 if source_index in selected_positions
             ][:target_slide_count]
         if template_surface_policy == "style_reference_only" and len(normalized_slides) > 1:
+            # In style-reference carousels, only the final slide should carry the CTA grammar.
             closing_index: int | None = None
             for index, slide in enumerate(normalized_slides):
                 slide_metadata = slide.get("metadata") if isinstance(slide.get("metadata"), dict) else {}
@@ -31033,6 +32441,7 @@ class AIOrchestratorService:
                 "carousel_archetype": slide_metadata.get("carousel_archetype") or carousel_archetype,
             }
         if enable_content_intelligence:
+            # Content intelligence adds semantic contracts after structural cleanup so it works with final slide count.
             compiled_context = {
                 "content_plan": request.content_plan if request is not None and isinstance(request.content_plan, dict) else {},
                 "research_editorial_brief": request.research_editorial_brief if request is not None and isinstance(request.research_editorial_brief, dict) else {},
@@ -31063,10 +32472,14 @@ class AIOrchestratorService:
             source_slides=structured_source if isinstance(structured_source, list) else [],
         )
         normalized_slides = cls._compact_carousel_slides_for_mobile(normalized_slides)
+        # Returns the carousel's per-slide execution contract consumed by validation, slide prompts, metadata, and export.
+        # Static and infographic flows do not use this list; they rely on static_panel_spec or infographic_section_specs instead.
         return normalized_slides
 
     @staticmethod
     def _carousel_continuity_prompt_sections(slide: dict[str, Any]) -> list[str]:
+        # Builds carousel continuity prompt sections from slide for AIOrchestratorService.
+        # It calls _normalize_metadata_text while assembling the payload or prompt text.
         slide_metadata = slide.get("metadata") if isinstance(slide.get("metadata"), dict) else {}
         sequence_position = AIOrchestratorService._normalize_metadata_text(
             slide_metadata.get("sequence_position"),
@@ -31157,8 +32570,11 @@ class AIOrchestratorService:
         visual_explanation_plan: dict[str, Any] | None = None,
         compiled_context: dict[str, Any] | None = None,
     ) -> str:
+        # Builds carousel slide prompt from request state, creative decision, and message strategy for AIOrchestratorService.
+        # It calls _design_system_prompt_guidance and _compact_palette_summary while assembling the payload or prompt text.
         compiled_context = dict(compiled_context or {})
         if scene_graph is None:
+            # A minimal scene graph keeps prompt helpers working even when carousel final render is sample-led.
             size = request.studio_panel.get("size") if isinstance(request.studio_panel.get("size"), dict) else {}
             scene_graph = GenerationSceneGraph.model_validate(
                 {
@@ -31204,6 +32620,7 @@ class AIOrchestratorService:
             creative_decision=creative_decision,
             metadata=slide_metadata,
         )
+        # Contamination checks prevent stale reference metadata from overruling the selected sample image.
         sample_metadata_contaminated = AIOrchestratorService._slide_sample_metadata_semantically_contaminated(
             slide,
             request=request,
@@ -31231,6 +32648,7 @@ class AIOrchestratorService:
             if template_surface_policy == "style_reference_only" and (sample_metadata_contaminated or has_sample_page_blueprint)
             else AIOrchestratorService._compact_slide_geometry_contract(slide, scene_graph)
         )
+        # Style-reference samples use sample blueprints instead of scene-graph geometry when those conflict.
         reference_zone_guidance = (
             ""
             if template_surface_policy == "style_reference_only" and sample_metadata_contaminated
@@ -31242,6 +32660,7 @@ class AIOrchestratorService:
             else AIOrchestratorService._compact_layout_dna_contract(compiled_context)
         )
         if layout_dna_contract:
+            # Layout DNA is useful for spacing and rhythm, but logo trigger words are scrubbed before image prompts.
             layout_dna_contract = AIOrchestratorService._scrub_image_prompt_brand_mark_triggers(layout_dna_contract)
         logo_position_hint = AIOrchestratorService._effective_logo_position_hint(
             request=request,
@@ -31253,6 +32672,7 @@ class AIOrchestratorService:
                 "metadata": slide_metadata,
             },
         )
+        # Logo guidance reserves an empty corner because the exact logo asset is handled outside the image model.
         logo_safe_zone_guidance = AIOrchestratorService._logo_safe_zone_guidance(
             request,
             hint=logo_position_hint,
@@ -31309,6 +32729,7 @@ class AIOrchestratorService:
                 **slide_metadata,
             },
         )
+        # Convert the slide dict into the same payload shape used by final-render helper contracts.
         visual_plan = visual_explanation_plan or AIOrchestratorService._visual_explanation_plan(
             request,
             slide_text_payload,
@@ -31316,6 +32737,7 @@ class AIOrchestratorService:
             reference_images,
             message_strategy,
         )
+        # Grounding sections carry approved brand/reference evidence into the prompt without exposing raw asset payloads.
         grounding_sections = AIOrchestratorService._final_render_grounding_sections(
             request=request,
             creative_decision=creative_decision,
@@ -31380,6 +32802,7 @@ class AIOrchestratorService:
             scene_graph=scene_graph,
         )
         if thin_sample_conditioning_contract:
+            # The thin contract gives the image model just enough sample geometry when full metadata would be noisy.
             thin_sample_conditioning_contract = AIOrchestratorService._scrub_image_prompt_brand_mark_triggers(thin_sample_conditioning_contract)
         visual_plan_guidance = AIOrchestratorService._visual_explanation_guidance(visual_plan)
         disclaimer_overlay_guidance = AIOrchestratorService._disclaimer_overlay_guidance(request)
@@ -31396,6 +32819,7 @@ class AIOrchestratorService:
             disclaimer_guidance=disclaimer_overlay_guidance,
             logo_position_hint=logo_position_hint,
         )
+        # Layout budget decides which text is safe to ask the image model to render for this sample/page density.
         prompt_slide = AIOrchestratorService._prompt_visible_slide_from_layout_budget(slide, layout_content_budget)
         prompt_slide_metadata = {
             **slide_text_payload.metadata,
@@ -31411,6 +32835,7 @@ class AIOrchestratorService:
             hashtags=list(slide_text_payload.hashtags or []),
             metadata=prompt_slide_metadata,
         )
+        # Palette and role execution guidance is built after budget trimming so CTA/footer requirements are accurate.
         palette_execution_contract = AIOrchestratorService._palette_role_execution_contract(
             visual_identity,
             has_cta=bool(AIOrchestratorService._normalize_metadata_text(prompt_slide.get("cta"), limit=80)),
@@ -31425,6 +32850,7 @@ class AIOrchestratorService:
             limit=80,
         ).casefold()
         sample_layout_mode = AIOrchestratorService._sample_blueprint_layout_mode(sample_page_blueprint)
+        # The sample layout mode controls which module-count lock gets inserted into the render prompt.
         story_role_normalized = AIOrchestratorService._normalize_metadata_text(story_role, limit=48).casefold().replace(" ", "_")
         sample_contract_for_prompt = {
             "sample_page_editorial_role": slide_metadata.get("sample_page_editorial_role"),
@@ -31439,6 +32865,7 @@ class AIOrchestratorService:
             and story_role_normalized in {"takeaway", "close", "closing", "cta", "final", "macro_takeaway", "strategic_meaning"}
         )
         if closing_sample_disallows_product:
+            # Some selected samples close editorially, so product/CTA language is stripped from final-slide visuals.
             editorial_structure_lock = (
                 " Preserve the editorial explainer structure: large visual region(s), supporting text blocks, and explanatory hierarchy must stay distinct."
                 if sample_layout_mode == "editorial_explainer"
@@ -31483,6 +32910,7 @@ class AIOrchestratorService:
                 sample_allows_data_or_product=False,
             )
         ):
+            # Reset visual focus when the planner drifted toward product surfaces that the selected sample does not allow.
             visual_focus_for_prompt = AIOrchestratorService._sample_matched_visual_focus(
                 slide,
                 request=request,
@@ -31504,6 +32932,7 @@ class AIOrchestratorService:
         proof_points_limit = 3
         if style_reference_sample_active and sample_page_blueprint:
             counts = sample_page_blueprint.get("module_counts") if isinstance(sample_page_blueprint.get("module_counts"), dict) else {}
+            # Proof-point limits mirror the sample's module capacity instead of using a generic carousel count.
             if sample_layout_mode == "numbered_or_icon_row_list":
                 proof_points_limit = max(3, min(int(counts.get("horizontal_band_count") or 3), 8))
             elif sample_layout_mode == "card_callout_grid":
@@ -31537,6 +32966,7 @@ class AIOrchestratorService:
         if style_reference_sample_active and sample_page_blueprint:
             counts = sample_page_blueprint.get("module_counts") if isinstance(sample_page_blueprint.get("module_counts"), dict) else {}
             large_visual_count = int(counts.get("large_visual_count") or 0)
+            # Module execution locks protect the selected sample's structure from being replaced by generic visuals.
             if sample_layout_mode == "numbered_or_icon_row_list":
                 row_count = max(1, min(int(counts.get("horizontal_band_count") or proof_points_limit or 3), 8))
                 sample_module_execution_contract = (
@@ -31641,6 +33071,7 @@ class AIOrchestratorService:
             or sample_support_only_cover
             else AIOrchestratorService._carousel_slide_body_text(prompt_slide, fallback_text="")
         )
+        # Dense sample-led pages push body detail into modules, so the text contract avoids duplicating it as a paragraph.
         text_render_contract = (
             AIOrchestratorService._text_overlay_substrate_contract(
                 headline=prompt_slide.get("headline"),
@@ -31754,6 +33185,7 @@ class AIOrchestratorService:
             asset_catalog=request.asset_catalog,
             compiled_context=compiled_context,
         )
+        # Structured visual metadata turns scattered slide facts into explicit anchors and permissions for prompts.
         structured_visual_metadata_section = AIOrchestratorService._structured_visual_metadata_prompt_section(
             structured_visual_metadata
         )
@@ -31803,6 +33235,7 @@ class AIOrchestratorService:
             asset_catalog=request.asset_catalog,
             compiled_context=compiled_context,
         )
+        # Dynamic art direction combines the current slide content, sample permissions, and allowed visual systems.
         reference_creative_profile = AIOrchestratorService._resolve_reference_creative_profile(
             request=request,
             format_name="carousel slide",
@@ -31823,6 +33256,7 @@ class AIOrchestratorService:
             compiled_context=compiled_context,
             logo_position_hint=logo_position_hint,
         )
+        # The reference profile decides what can be borrowed visually without copying literal reference content.
         reference_creative_profile_section = AIOrchestratorService._reference_creative_profile_prompt_section(
             reference_creative_profile
         )
@@ -31869,6 +33303,7 @@ class AIOrchestratorService:
                 text_payload=None,
             )
         ):
+            # Style-reference samples should not suddenly gain charts just because the topic has numbers.
             data_visualization_contract = (
                 "Style-reference data-visual guard: do not invent charts, graphs, tables, dashboards, metric tiles, axes, or numeric plots from topic numbers alone. "
                 "Use those structures only when they are visibly present on the selected sample page; otherwise express facts through the same non-data modules, image slots, cards, rows, or callouts used by that sample page."
@@ -31897,11 +33332,13 @@ class AIOrchestratorService:
             )
         )
         if not sequence_pack_relevant:
+            # If no relevant sequence pack remains, remove family/sequence guidance so it cannot pollute this slide.
             sequence_alignment_sections = []
             reference_family_contract = []
         if not sample_template_relevant:
             sample_alignment_sections = []
         if sample_metadata_contaminated and template_surface_policy == "style_reference_only":
+            # Contaminated metadata means the selected image is trusted, but derived family alignment is not.
             reference_family_contract = []
             sample_alignment_sections = []
         reference_slide_index = int(slide_metadata.get("reference_slide_index") or slide_index)
@@ -32324,6 +33761,8 @@ class AIOrchestratorService:
             limit=prompt_limit,
         )
         prompt = AIOrchestratorService._scrub_image_prompt_brand_mark_triggers(prompt)
+        # Returns one provider-ready prompt for a single carousel slide; the caller repeats this for each slide asset.
+        # The prompt limit grows when a template/sample is authoritative because the slide needs extra layout contracts.
         return AIOrchestratorService._trim_prompt(prompt, prompt_limit)
 
     @staticmethod
@@ -32333,6 +33772,8 @@ class AIOrchestratorService:
         scene_graph: GenerationSceneGraph,
         selected_logo_variant: str | None = None,
     ) -> str:
+        # Builds logo composite prompt from request state, copy payload, and scene graph for AIOrchestratorService.
+        # It calls _normalize_metadata_text and _trim_prompt while assembling the payload or prompt text.
         platform = str(request.studio_panel.get("platform_preset") or "social")
         format_name = str(request.studio_panel.get("format") or "static")
         headline = AIOrchestratorService._normalize_metadata_text(text_payload.headline, limit=140)
@@ -32375,6 +33816,8 @@ class AIOrchestratorService:
         compiled_context: dict[str, Any] | None = None,
         visual_explanation_plan: dict[str, Any] | None = None,
     ) -> str:
+        # Builds image prompt from request state, copy payload, and creative decision for AIOrchestratorService.
+        # It calls _coerce_text_value and _llm_led_static_infographic_format while assembling the payload or prompt text.
         compiled_context = compiled_context or {}
         creative_decision = creative_decision or CreativeDecisionPayload()
         if not isinstance(text_payload, StructuredTextPayload):
@@ -32397,6 +33840,7 @@ class AIOrchestratorService:
         layout_decision_payload = getattr(request, "layout_decision", {}) or {}
         format_name = str(studio_panel.get("format") or "static").strip().lower()
         llm_led_static_infographic = AIOrchestratorService._llm_led_static_infographic_format(format_name)
+        # Sanitize visual metadata first so stale model-generated imagery cannot leak into later prompt sections.
         metadata, sanitized_visual_fields = AIOrchestratorService._sanitize_visual_metadata_fields(
             text_payload.metadata or {},
             compiled_context=compiled_context,
@@ -32425,6 +33869,7 @@ class AIOrchestratorService:
             creative_decision=creative_decision,
             metadata=metadata,
         )
+        # Asset strategy decides whether brand assets are literal inputs, broad style cues, or suppressed entirely.
         dominant_visual_system = AIOrchestratorService._normalized_dominant_visual_system(asset_strategy) or "generated_image"
         supporting_visual_system = AIOrchestratorService._normalized_supporting_visual_system(asset_strategy)
         explicit_data_visual_request = AIOrchestratorService._has_explicit_data_visual_request(
@@ -32462,6 +33907,7 @@ class AIOrchestratorService:
         )
         layout_decision = AIOrchestratorService._compact_layout_decision(layout_decision_payload)
         if llm_led_static_infographic:
+            # LLM-led static/infographic posts must not inherit old template geometry or reference-content authority.
             reference_assets = (
                 "Reference/template assets have no content or layout authority for this static/infographic ad creative; "
                 "use them only for broad brand style if they reinforce the current prompt."
@@ -32498,6 +33944,7 @@ class AIOrchestratorService:
         )
         template_suppressed = bool(visual_knowledge_brief.get("template_suppressed"))
         use_llm_fallback_visual_metadata = grounding_mode == "llm_fallback" or not direct_brand_grounding
+        # Grounding mode tells the prompt whether to trust retrieved brand evidence or derive visuals from copy/context.
         secondary_visual_hints = " | ".join(
             part
             for part in [
@@ -32551,6 +33998,7 @@ class AIOrchestratorService:
             limit=340,
         )
         data_visualization_anchor_sources: list[tuple[str, Any]] = [
+            # Collect every approved numeric/list source before deciding whether chart/table guidance is allowed.
             ("stat_highlights", metadata.get("stat_highlights")),
             ("claim_evidence_pairs", metadata.get("claim_evidence_pairs")),
             ("proof_points", metadata.get("proof_points")),
@@ -32583,6 +34031,7 @@ class AIOrchestratorService:
                 AIOrchestratorService._coerce_text_value(metadata.get("visual_focus")),
             ]
         )
+        # Reference template structure is only active when the source and output surfaces are compatible.
         reference_template_blueprint = AIOrchestratorService._reference_template_sample_page_blueprint(
             compiled_context,
             format_name=format_name,
@@ -32627,6 +34076,7 @@ class AIOrchestratorService:
             else reference_template_blueprint
         )
         reference_profile_same_surface = reference_source_family == reference_output_family == format_name
+        # Same-surface reference structure may guide layout; cross-surface references stay broad style only.
         reference_template_structure_active = (
             format_name in {"static", "infographic"}
             and not llm_led_static_infographic
@@ -32659,6 +34109,7 @@ class AIOrchestratorService:
             asset_catalog=asset_catalog,
             compiled_context=compiled_context,
         )
+        # Structured visual metadata consolidates anchors, permissions, and sample limits for downstream prompt sections.
         structured_visual_metadata_section = AIOrchestratorService._structured_visual_metadata_prompt_section(
             structured_visual_metadata
         )
@@ -32689,6 +34140,7 @@ class AIOrchestratorService:
             if stripped_prompt_keywords and resolved_copy_keywords and stripped_prompt_keywords & resolved_copy_keywords
             else (message_theme or resolved_copy_theme or stripped_prompt_theme)
         )
+        # Theme anchor protects the current user topic from being replaced by older copy or template semantics.
         brand_name = AIOrchestratorService._normalize_metadata_text(
             request.resolved_brand_context.get("brand_name") or "",
             limit=80,
@@ -32720,6 +34172,7 @@ class AIOrchestratorService:
             request,
             legal_footer_text=legal_footer_text,
         )
+        # Footer safe area is calculated before layout budgeting so image content leaves room for legal overlay.
         request_size = request.studio_panel.get("size") if isinstance(request.studio_panel.get("size"), dict) else {}
         footer_safe_area = (
             calculate_footer_safe_area(
@@ -32746,6 +34199,7 @@ class AIOrchestratorService:
             disclaimer_guidance=disclaimer_overlay_guidance,
             logo_position_hint=logo_position_hint,
         )
+        # The budget trims visible text before prompt building, preventing the model from overfilling the canvas.
         prompt_text_payload = AIOrchestratorService._prompt_visible_text_payload_from_layout_budget(
             text_payload,
             layout_content_budget,
@@ -32830,6 +34284,7 @@ class AIOrchestratorService:
             asset_catalog=asset_catalog,
             compiled_context=compiled_context,
         )
+        # Dynamic art direction translates approved metadata into concrete visual treatment for this format.
         reference_creative_profile = AIOrchestratorService._resolve_reference_creative_profile(
             request=request,
             format_name=format_name,
@@ -32845,6 +34300,7 @@ class AIOrchestratorService:
             compiled_context=compiled_context,
             logo_position_hint=logo_position_hint,
         )
+        # Reference profile describes what can be borrowed from uploaded/reference assets without copying them literally.
         reference_creative_profile_section = AIOrchestratorService._reference_creative_profile_prompt_section(
             reference_creative_profile
         )
@@ -32948,6 +34404,7 @@ class AIOrchestratorService:
             else ""
         )
         if llm_led_static_infographic:
+            # LLM-led mode intentionally clears template/sample sections so only the current prompt controls composition.
             layout_quality_guard = ""
             infographic_surface_enforcement = ""
             data_visualization_contract = ""
@@ -33299,15 +34756,21 @@ class AIOrchestratorService:
         )
         prompt = AIOrchestratorService._strip_blocked_compliance_phrases(prompt)
         prompt = AIOrchestratorService._scrub_image_prompt_brand_mark_triggers(prompt)
+        # Returns a supporting-image prompt for backend-rendered layouts, not the final response object.
+        # Static/infographic LLM-led final renders bypass this and use build_final_render_prompt instead.
         return AIOrchestratorService._trim_prompt(prompt, AIOrchestratorService.IMAGE_PROMPT_MAX_LENGTH)
 
     @staticmethod
     def _compact_named_items(value: Any, limit: int) -> str:
+        # Compacts named items from input value and limit for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         items = AIOrchestratorService._normalize_metadata_list(value, limit=limit)
         return ", ".join(items) if items else "None"
 
     @staticmethod
     def _compact_palette_summary(visual_identity: Any) -> str:
+        # Compacts palette summary from visual identity for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if not isinstance(visual_identity, dict):
             return "Use the validated primary and secondary brand colors."
         resolved_roles = derive_palette_roles(visual_identity)
@@ -33345,6 +34808,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _palette_role_guidance(visual_identity: Any) -> str:
+        # Derives palette role guidance from visual identity for AIOrchestratorService.
+        # This turns source evidence into a stable planning hint.
         if not isinstance(visual_identity, dict):
             return (
                 "Use the brand background or surface color for the main canvas, keep primary and secondary colors for emphasis, "
@@ -33374,6 +34839,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _strict_palette_contract(visual_identity: Any) -> str:
+        # Derives strict palette contract from visual identity for AIOrchestratorService.
+        # The derived signal gives the LLM explicit evidence instead of asking it to infer the same thing later.
         if not isinstance(visual_identity, dict):
             return ""
         roles = derive_palette_roles(visual_identity)
@@ -33409,6 +34876,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _palette_role_execution_contract(visual_identity: Any, *, has_cta: bool, has_legal_footer: bool) -> str:
+        # Derives palette role execution contract from visual identity, has cta, and has legal footer for AIOrchestratorService.
+        # The derived signal gives the LLM explicit evidence instead of asking it to infer the same thing later.
         if not isinstance(visual_identity, dict):
             return ""
         roles = derive_palette_roles(visual_identity)
@@ -33442,6 +34911,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _story_role_visual_execution_guidance(story_role: str, *, has_cta: bool = False) -> str:
+        # Builds story role visual execution guidance from story role and has cta for AIOrchestratorService.
+        # It calls _normalize_metadata_text while assembling the payload or prompt text.
         normalized = AIOrchestratorService._normalize_metadata_text(story_role, limit=48).casefold().replace(" ", "_")
         if normalized in {"hook", "cover", "opening", "title"}:
             return (
@@ -33471,6 +34942,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _is_non_retryable_image_error(error: Exception) -> bool:
+        # Checks non retryable image error from error for AIOrchestratorService.
+        # This keeps the allowed/blocked rule in one place.
         text = str(error or "").strip().lower()
         return any(
             marker in text
@@ -33485,6 +34958,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _compact_typography_summary(visual_identity: Any) -> str:
+        # Compacts typography summary from visual identity for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if not isinstance(visual_identity, dict):
             return "Follow the validated brand typography."
         typography = visual_identity.get("typography") or visual_identity.get("typography_guide") or {}
@@ -33497,6 +34972,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _compact_layout_decision(layout_decision: Any) -> str:
+        # Compacts layout decision from layout decision for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if not isinstance(layout_decision, dict):
             return "Synthesized layout"
         mode = AIOrchestratorService._normalize_metadata_text(layout_decision.get("mode"), limit=32) or "Synthesized layout"
@@ -33514,6 +34991,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _compact_reference_assets(reference_assets: Any) -> str:
+        # Compacts reference assets from reference assets for AIOrchestratorService.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if not isinstance(reference_assets, list):
             return "None"
         labels: list[str] = []
@@ -33532,6 +35011,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _brand_knowledge_visual_grounding(knowledge_brief: Any) -> str:
+        # Centralizes brand knowledge visual grounding from knowledge brief for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         brief = ContextCompilerService.coerce_visual_knowledge_brief(knowledge_brief)
         items = brief.get("items") if isinstance(brief.get("items"), list) else []
         grounded_items: list[str] = []
@@ -33549,6 +35030,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def _trim_prompt(value: str, limit: int) -> str:
+        # Trims trim prompt from input value and limit for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         text = " ".join(value.split())
         if len(text) <= limit:
             return text
@@ -33557,6 +35040,8 @@ class AIOrchestratorService:
 
     @staticmethod
     def estimate_token_usage(input_segments: list[str], output_segments: list[str]) -> dict:
+        # Extracts estimate token usage from input segments and output segments for AIOrchestratorService.
+        # It calls _estimate_tokens to turn raw evidence into the structured signal the caller needs.
         input_tokens = sum(AIOrchestratorService._estimate_tokens(segment) for segment in input_segments)
         output_tokens = sum(AIOrchestratorService._estimate_tokens(segment) for segment in output_segments)
         return {
@@ -33568,12 +35053,16 @@ class AIOrchestratorService:
 
     @staticmethod
     def _estimate_tokens(value: str | None) -> int:
+        # Centralizes estimate tokens from input value for AIOrchestratorService.
+        # The main branch stays readable while this function handles the local edge case.
         if not value:
             return 0
         return max(1, (len(value.strip()) + 3) // 4)
 
     @staticmethod
     def _trace_text_token_measurement(label: str, value: Any) -> dict[str, Any]:
+        # Extracts trace text token measurement from label and input value for AIOrchestratorService.
+        # It calls _estimate_tokens to turn raw evidence into the structured signal the caller needs.
         text = str(value or "")
         return {
             "label": label,
@@ -33585,6 +35074,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _trace_prompt_token_measurement(cls, segments: dict[str, Any]) -> dict[str, Any]:
+        # Builds trace prompt token measurement from segments for AIOrchestratorService.
+        # It calls _trace_text_token_measurement while assembling the payload or prompt text.
         measured_segments = [
             cls._trace_text_token_measurement(label, value)
             for label, value in segments.items()
@@ -33604,6 +35095,8 @@ class AIOrchestratorService:
         *,
         limit: int = 20,
     ) -> dict[str, Any]:
+        # Extracts trace mapping token measurement from mapping and limit for AIOrchestratorService.
+        # It calls _estimate_tokens to turn raw evidence into the structured signal the caller needs.
         if not isinstance(mapping, dict) or not mapping:
             return {"sections": [], "total_chars": 0, "estimated_tokens": 0, "estimated": True}
         sections: list[dict[str, Any]] = []
@@ -33635,6 +35128,8 @@ class AIOrchestratorService:
 
     @classmethod
     def _prompt_length_metrics(cls, prompt: str | None) -> dict[str, int]:
+        # Builds prompt length metrics from prompt text for AIOrchestratorService.
+        # It calls _estimate_tokens while assembling the payload or prompt text.
         text = str(prompt or "")
         char_count = len(text)
         return {

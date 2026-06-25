@@ -17,6 +17,8 @@ from app.ai.template_vision import TemplateVisionAnalyzer
 from app.core.enums import BrandAssetCategory, BrandAssetField
 from app.utils.image_assets import open_image_asset
 
+# Brand asset analysis is the ingestion side of the AI system: uploaded files become searchable text, visual DNA, and reusable assets.
+# The orchestrator later treats these outputs as brand/reference evidence, not as final generated content.
 
 COMMON_COLOR_NAMES = {
     "black",
@@ -39,6 +41,7 @@ COMMON_COLOR_NAMES = {
     "beige",
 }
 
+ # Common font names are used as OCR hints only; validated brand font choices still come from analyzed/stored asset metadata.
 COMMON_FONT_FAMILIES = (
     "DM Sans",
     "Manrope",
@@ -61,6 +64,7 @@ COMMON_FONT_FAMILIES = (
     "Calibri",
 )
 
+ # These copy markers help route extracted text into CTA/legal/template buckets instead of treating it as campaign copy.
 PROMOTIONAL_COPY_TOKENS = {
     "apply now",
     "book now",
@@ -93,6 +97,7 @@ LEGAL_COPY_TOKENS = {
     "trademark",
 }
 
+ # Visual-system tokens identify design instructions inside OCR text so they can inform layout/style without becoming visible copy.
 VISUAL_SYSTEM_TOKENS = {
     "background",
     "badge",
@@ -124,6 +129,7 @@ VISUAL_SYSTEM_TOKENS = {
     "zone",
 }
 
+ # Audience field specs turn semi-structured brand research uploads into stable persona/audience evidence for prompt compilation.
 AUDIENCE_EVIDENCE_FIELD_SPECS: dict[str, dict[str, Any]] = {
     "segments": {
         "aliases": (
@@ -271,6 +277,8 @@ FONT_SPECIMEN_MARKERS = {
 
 @dataclass(slots=True)
 class AssetProcessingOutcome:
+    # Groups asset processing outcome behavior for brand/reference asset analysis.
+    # Callers use this class to produce or evaluate data consumed by retrieval and visual grounding.
     routed_category: str
     channel: str
     extracted_text: str
@@ -289,7 +297,11 @@ class AssetProcessingOutcome:
 
 
 class BrandAssetAnalyzer:
+    # Converts uploaded brand files and references into logos, palettes, typography, layout DNA, reusable crops, and audience clues.
+    # Those signals feed retrieval, prompt grounding, template matching, and future visual generation choices.
     def __init__(self) -> None:
+        # Initializes settings, clients, and helper services needed by retrieval and visual grounding.
+        # Public methods reuse these collaborators instead of rebuilding them for each request.
         self.ocr = OCRService()
         self.vision = TemplateVisionAnalyzer()
 
@@ -303,6 +315,8 @@ class BrandAssetAnalyzer:
         metadata: dict[str, Any] | None = None,
         progress_callback: Callable[[int, int, str], None] | None = None,
     ) -> AssetProcessingOutcome:
+        # Runs one uploaded asset through OCR, routing, extraction, template vision, normalization, warnings, and reusable asset derivation.
+        # The returned AssetProcessingOutcome becomes stored metadata for retrieval, visual grounding, and future reference selection.
         extracted = self.ocr.extract(absolute_path, progress_callback=progress_callback)
         text = (extracted.get("text") or "").strip()
         images = [str(image) for image in (extracted.get("images") or []) if str(image).strip()]
@@ -319,6 +333,7 @@ class BrandAssetAnalyzer:
             if str(path).strip()
         ]
 
+        # Routing decides which extractor owns the file; the rest of the method keeps category outputs uniform.
         routed_category, routing = self._route_category(
             text=text,
             filename=filename,
@@ -334,6 +349,7 @@ class BrandAssetAnalyzer:
             BrandAssetCategory.MOOD_BOARD,
             BrandAssetCategory.KNOWLEDGE_OTHER,
         }:
+            # Some PDFs have weak OCR but useful page imagery, so visual candidates are pulled as a second pass.
             images = self.ocr.extract_visual_candidates(absolute_path)
 
         structured: dict[str, Any]
@@ -351,6 +367,7 @@ class BrandAssetAnalyzer:
             BrandAssetCategory.TEMPLATE,
             BrandAssetCategory.USER_UPLOAD_FOR_GENERATION,  # 🔥 PHASE 3: Apply deep vision to user uploads
         }:
+            # Template-like uploads need layout, zones, and crops; raw extracted text is not enough for generation.
             structured, normalized, template_analysis = self._extract_template_intelligence(
                 text=text,
                 absolute_path=absolute_path,
@@ -391,6 +408,7 @@ class BrandAssetAnalyzer:
         warnings = [*list(structured.get("warnings", [])), *extraction_warnings]
         validation_state = "warning" if warnings else "clean"
         if not text and not normalized:
+            # Weak files are still stored, but the warning helps retrieval and UI treat them with lower confidence.
             warnings.append("Low-confidence extraction. No strong structured signal was detected.")
             validation_state = "warning"
 
@@ -429,6 +447,8 @@ class BrandAssetAnalyzer:
         requested_field_key: str,
         desired_category: str | None = None,
     ) -> tuple[str, dict[str, Any]]:
+        # Routes category from text, filename, and mime type for retrieval and visual grounding.
+        # The main branch stays readable while this function handles the local edge case.
         if desired_category:
             return desired_category, {
                 "requested_field_key": requested_field_key,
@@ -497,6 +517,8 @@ class BrandAssetAnalyzer:
         absolute_path: str,
         images: list[str],
     ) -> tuple[dict[str, Any], dict[str, Any]]:
+        # Extracts logo from text, local asset path, and image candidates for retrieval and visual grounding.
+        # It calls _extract_palette_from_text and _guess_tagline to turn raw evidence into the structured signal the caller needs.
         candidates = images or [absolute_path]
         palette = self._dominant_palette(candidates[0]) if candidates else []
         colors = self._extract_palette_from_text(text)
@@ -621,6 +643,8 @@ class BrandAssetAnalyzer:
 
     @staticmethod
     def _logo_candidate_dimensions(candidate_path: str) -> tuple[int, int]:
+        # Measures logo candidate dimensions from candidate path for retrieval and visual grounding.
+        # The measurement feeds layout, crop, overlap, or density decisions.
         try:
             with open_image_asset(candidate_path) as image:
                 return image.size
@@ -635,6 +659,8 @@ class BrandAssetAnalyzer:
         text: str,
         compatibility: list[str],
     ) -> dict[str, Any]:
+        # Builds logo variant from candidate path, text, and compatibility for retrieval and visual grounding.
+        # It calls _logo_candidate_dimensions while assembling the payload or prompt text.
         filename = Path(candidate_path).name
         lowered = f"{filename} {text}".casefold()
         width, height = cls._logo_candidate_dimensions(candidate_path)
@@ -686,6 +712,8 @@ class BrandAssetAnalyzer:
         }
 
     def _extract_audience_insights(self, text: str) -> tuple[dict[str, Any], dict[str, Any]]:
+        # Extracts audience insights from text for retrieval and visual grounding.
+        # It calls _interesting_lines and _audience_line_entries to turn raw evidence into the structured signal the caller needs.
         lines = self._interesting_lines(text)
         audience_entries = self._audience_line_entries(text)
         research_evidence = {
@@ -805,6 +833,8 @@ class BrandAssetAnalyzer:
         return structured, normalized
 
     def _load_visual_analysis(self, source_path: str | None, analysis_path: str | None = None) -> dict[str, Any]:
+        # Loads load visual analysis from source path and analysis path for retrieval and visual grounding.
+        # The caller gets cached or external analysis in the same shape as fresh analysis.
         path = Path(analysis_path) if analysis_path else None
         if path is None:
             if not source_path:
@@ -824,6 +854,8 @@ class BrandAssetAnalyzer:
 
     @staticmethod
     def _page_analysis_text(analysis: dict[str, Any] | None) -> str:
+        # Extracts page analysis text from analysis for retrieval and visual grounding.
+        # The extracted signal becomes prompt context, metadata, or ranking input.
         if not isinstance(analysis, dict):
             return ""
         lines: list[str] = []
@@ -837,6 +869,8 @@ class BrandAssetAnalyzer:
 
     @classmethod
     def _page_density_score(cls, analysis: dict[str, Any] | None) -> float:
+        # Centralizes page density from analysis for retrieval and visual grounding.
+        # The main branch stays readable while this function handles the local edge case.
         if not isinstance(analysis, dict):
             return 0.0
         page_dimensions = analysis.get("page_dimensions") if isinstance(analysis.get("page_dimensions"), dict) else {}
@@ -864,6 +898,8 @@ class BrandAssetAnalyzer:
         page_index: int,
         total_pages: int,
     ) -> float:
+        # Centralizes page cta from analysis, page index, and total pages for retrieval and visual grounding.
+        # The main branch stays readable while this function handles the local edge case.
         text = cls._page_analysis_text(analysis).casefold()
         token_score = sum(1.0 for token in PROMOTIONAL_COPY_TOKENS if token in text)
         footer_bonus = 0.75 if page_index == total_pages else 0.0
@@ -876,6 +912,8 @@ class BrandAssetAnalyzer:
         images: list[str],
         analysis_paths: list[str] | None,
     ) -> list[dict[str, Any]]:
+        # Selects selected page records from local asset path, image candidates, and analysis paths for retrieval and visual grounding.
+        # It reuses _load_visual_analysis and _page_density_score so related checks follow the same rule.
         image_candidates = [str(image) for image in images if str(image).strip() and Path(str(image)).exists()]
         if not image_candidates:
             if Path(absolute_path).suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"} and Path(absolute_path).exists():
@@ -913,6 +951,8 @@ class BrandAssetAnalyzer:
 
     @staticmethod
     def _dedupe_page_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        # Deduplicates dedupe page records from records for retrieval and visual grounding.
+        # The helper owns a small rule that would distract from the surrounding flow.
         deduped: list[dict[str, Any]] = []
         seen: set[str] = set()
         for record in records:
@@ -930,6 +970,8 @@ class BrandAssetAnalyzer:
         images: list[str],
         analysis_paths: list[str] | None,
     ) -> list[dict[str, Any]]:
+        # Selects representative visual pages from local asset path, image candidates, and analysis paths for retrieval and visual grounding.
+        # It reuses _selected_page_records and _dedupe_page_records so related checks follow the same rule.
         records = self._selected_page_records(
             absolute_path=absolute_path,
             images=images,
@@ -948,6 +990,8 @@ class BrandAssetAnalyzer:
         return self._dedupe_page_records(selected)
 
     def _merge_text_style_maps(self, analyses: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        # Merges text style maps from analyses for retrieval and visual grounding.
+        # The helper owns a small rule that would distract from the surrounding flow.
         style_map: list[dict[str, Any]] = []
         seen: set[tuple[str, int, int, int, int]] = set()
         for analysis in analyses:
@@ -968,6 +1012,8 @@ class BrandAssetAnalyzer:
 
     @staticmethod
     def _bbox_dimensions(bbox: dict[str, Any] | None) -> tuple[int, int, int, int]:
+        # Measures bbox dimensions from bbox for retrieval and visual grounding.
+        # Keeping the math here avoids subtle differences between renderer-facing branches.
         if not isinstance(bbox, dict):
             return 0, 0, 0, 0
         x = int(bbox.get("x", 0) or 0)
@@ -978,6 +1024,8 @@ class BrandAssetAnalyzer:
 
     @classmethod
     def _analysis_text_boxes(cls, analysis: dict[str, Any] | None) -> list[tuple[int, int, int, int]]:
+        # Extracts analysis text boxes from analysis for retrieval and visual grounding.
+        # It calls _bbox_dimensions to turn raw evidence into the structured signal the caller needs.
         if not isinstance(analysis, dict):
             return []
         boxes: list[tuple[int, int, int, int]] = []
@@ -1000,6 +1048,8 @@ class BrandAssetAnalyzer:
         crop_box: tuple[int, int, int, int] | None,
         analysis: dict[str, Any] | None,
     ) -> bool:
+        # Checks text dominated crop from crop box and analysis for retrieval and visual grounding.
+        # It reuses _analysis_text_boxes so related checks follow the same rule.
         if not crop_box:
             return False
         text_boxes = cls._analysis_text_boxes(analysis)
@@ -1029,6 +1079,8 @@ class BrandAssetAnalyzer:
 
     @classmethod
     def _extract_sidecar_visual_regions(cls, analysis: dict[str, Any] | None) -> list[dict[str, Any]]:
+        # Extracts sidecar visual regions from analysis for retrieval and visual grounding.
+        # It calls _is_text_dominated_crop and _boxes_connect to turn raw evidence into the structured signal the caller needs.
         if not isinstance(analysis, dict):
             return []
         page_dimensions = analysis.get("page_dimensions") or {}
@@ -1058,6 +1110,8 @@ class BrandAssetAnalyzer:
             return []
 
         def _boxes_connect(first: tuple[int, int, int, int], second: tuple[int, int, int, int]) -> bool:
+            # Centralizes boxes connect from first and second for retrieval and visual grounding.
+            # The helper owns a small rule that would distract from the surrounding flow.
             left_a, top_a, right_a, bottom_a = first
             left_b, top_b, right_b, bottom_b = second
             width_a = max(right_a - left_a, 1)
@@ -1156,6 +1210,8 @@ class BrandAssetAnalyzer:
 
     @staticmethod
     def _hex_to_rgb(hex_code: str | None) -> tuple[int, int, int] | None:
+        # Converts hex rgb from hex code for retrieval and visual grounding.
+        # The helper owns a small rule that would distract from the surrounding flow.
         value = str(hex_code or "").strip()
         if not re.fullmatch(r"#?[0-9A-Fa-f]{6}", value):
             return None
@@ -1169,6 +1225,8 @@ class BrandAssetAnalyzer:
         source_path: str,
         analysis: dict[str, Any] | None,
     ) -> list[dict[str, Any]]:
+        # Extracts text excluded visual regions from source path and analysis for retrieval and visual grounding.
+        # It calls _analysis_text_boxes and _hex_to_rgb to turn raw evidence into the structured signal the caller needs.
         path = Path(source_path)
         if not path.exists():
             return []
@@ -1254,6 +1312,8 @@ class BrandAssetAnalyzer:
 
     @staticmethod
     def _normalize_color_payload(color_payload: Any) -> dict[str, Any] | None:
+        # Normalizes color from color payload for retrieval and visual grounding.
+        # Later prompt and metadata code can compare the cleaned value directly.
         if not color_payload:
             return None
         if isinstance(color_payload, list):
@@ -1278,12 +1338,16 @@ class BrandAssetAnalyzer:
         }
 
     def _estimate_font_size_from_bbox(self, bbox: dict[str, Any] | None) -> int | None:
+        # Measures estimate font size bbox from bbox for retrieval and visual grounding.
+        # It calls _bbox_dimensions to turn raw evidence into the structured signal the caller needs.
         _x, _y, _width, height = self._bbox_dimensions(bbox)
         if height <= 0:
             return None
         return max(int(round(height * 0.76)), 8)
 
     def _extract_text_style_map(self, analysis: dict[str, Any]) -> list[dict[str, Any]]:
+        # Extracts text style map from analysis for retrieval and visual grounding.
+        # It calls _bbox_dimensions and _normalize_color_payload to turn raw evidence into the structured signal the caller needs.
         style_map: list[dict[str, Any]] = []
         seen: set[tuple[str, int, int]] = set()
         sentences = analysis.get("sentences", [])
@@ -1327,6 +1391,8 @@ class BrandAssetAnalyzer:
         role: str,
         fallback_text: str | None = None,
     ) -> dict[str, Any] | None:
+        # Picks text style role from style map, role, and fallback text for retrieval and visual grounding.
+        # The main branch stays readable while this function handles the local edge case.
         if not style_map:
             return None
         if fallback_text:
@@ -1356,6 +1422,8 @@ class BrandAssetAnalyzer:
         return ranked[0][1]
 
     def _exact_text_palette(self, style_map: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        # Derives exact text palette from style map for retrieval and visual grounding.
+        # The derived signal gives the LLM explicit evidence instead of asking it to infer the same thing later.
         entries: list[dict[str, Any]] = []
         seen: set[str] = set()
         for item in style_map:
@@ -1381,6 +1449,8 @@ class BrandAssetAnalyzer:
         return entries
 
     def _infer_image_gradient(self, image_path: str | None) -> list[dict[str, Any]]:
+        # Derives infer image gradient from image path for retrieval and visual grounding.
+        # It calls _rgb_to_hex to turn raw evidence into the structured signal the caller needs.
         if not image_path:
             return []
         path = Path(image_path)
@@ -1393,10 +1463,14 @@ class BrandAssetAnalyzer:
             return []
 
         def sample_hex(sample: np.ndarray) -> str:
+            # Centralizes sample hex from sample for retrieval and visual grounding.
+            # The main branch stays readable while this function handles the local edge case.
             rgb_value = tuple(int(round(float(channel))) for channel in sample.tolist())
             return self._rgb_to_hex(rgb_value)
 
         def diff(a: np.ndarray, b: np.ndarray) -> float:
+            # Centralizes diff from a and b for retrieval and visual grounding.
+            # The helper owns a small rule that would distract from the surrounding flow.
             return float(np.linalg.norm(a.astype(np.float32) - b.astype(np.float32)))
 
         top = rgb[:24, :, :].mean(axis=(0, 1))
@@ -1431,6 +1505,8 @@ class BrandAssetAnalyzer:
 
     @staticmethod
     def _zone_roles_in_reading_order(zones: list[dict[str, Any]] | None) -> list[str]:
+        # Measures zone roles in reading order from zones for retrieval and visual grounding.
+        # The measurement feeds layout, crop, overlap, or density decisions.
         if not isinstance(zones, list):
             return []
         sortable: list[tuple[float, float, str]] = []
@@ -1465,6 +1541,8 @@ class BrandAssetAnalyzer:
         heading_style: dict[str, Any] | None,
         cta_area: str | None,
     ) -> dict[str, Any]:
+        # Derives visual hierarchy from vision, reusable zones, and style map for retrieval and visual grounding.
+        # It calls _zone_roles_in_reading_order to turn raw evidence into the structured signal the caller needs.
         existing = vision.get("visual_hierarchy") if isinstance(vision.get("visual_hierarchy"), dict) else {}
         reading_order = existing.get("reading_order")
         if not isinstance(reading_order, list) or not reading_order:
@@ -1508,6 +1586,8 @@ class BrandAssetAnalyzer:
         cta_area: str | None,
         classified_lines: list[dict[str, Any]],
     ) -> dict[str, Any]:
+        # Derives content structure from vision, reusable zones, and heading for retrieval and visual grounding.
+        # This turns source evidence into a stable planning hint.
         existing = vision.get("content_structure") if isinstance(vision.get("content_structure"), dict) else {}
         zone_roles = {
             str(zone.get("role") or "").strip().lower()
@@ -1557,6 +1637,8 @@ class BrandAssetAnalyzer:
         exact_text_palette: list[dict[str, Any]],
         gradients: list[dict[str, Any]],
     ) -> dict[str, Any]:
+        # Derives design tokens from background style, palette, and exact text palette for retrieval and visual grounding.
+        # This turns source evidence into a stable planning hint.
         normalized_palette = [item for item in palette if isinstance(item, dict)]
         normalized_text_palette = [item for item in exact_text_palette if isinstance(item, dict)]
         return {
@@ -1577,6 +1659,8 @@ class BrandAssetAnalyzer:
         page_count_hint: int,
         storytelling: str,
     ) -> list[str]:
+        # Edits editorial story arc roles from page count hint and storytelling for retrieval and visual grounding.
+        # The main branch stays readable while this function handles the local edge case.
         slide_count = max(1, int(page_count_hint or 1))
         if slide_count == 1:
             return ["hook"]
@@ -1604,6 +1688,8 @@ class BrandAssetAnalyzer:
         cta_area: str | None,
         footer: str | None,
     ) -> dict[str, Any]:
+        # Derives editorial dna from text, content structure, and visual hierarchy for retrieval and visual grounding.
+        # It calls _editorial_story_arc_roles to turn raw evidence into the structured signal the caller needs.
         storytelling = str(content_structure.get("storytelling") or "").strip().lower()
         proof_modules = int(content_structure.get("proof_modules") or 0)
         legal_footer_present = bool(content_structure.get("legal_footer_present") or footer)
@@ -1672,6 +1758,8 @@ class BrandAssetAnalyzer:
         gradients: list[dict[str, Any]],
         component_motifs: dict[str, Any],
     ) -> dict[str, Any]:
+        # Derives visual craft dna from vision, gradients, and component motifs for retrieval and visual grounding.
+        # This turns source evidence into a stable planning hint.
         craft = vision.get("visual_craft_dna") if isinstance(vision.get("visual_craft_dna"), dict) else {}
         image_treatment = vision.get("image_treatment") if isinstance(vision.get("image_treatment"), dict) else {}
         design_style = str(vision.get("design_style") or "").strip().lower()
@@ -1744,6 +1832,8 @@ class BrandAssetAnalyzer:
         template_copy_lines: list[str],
         classified_lines: list[dict[str, Any]],
     ) -> dict[str, Any]:
+        # Derives subject semantics from vision, template copy lines, and classified lines for retrieval and visual grounding.
+        # This turns source evidence into a stable planning hint.
         semantics = vision.get("subject_semantics") if isinstance(vision.get("subject_semantics"), dict) else {}
         image_treatment = vision.get("image_treatment") if isinstance(vision.get("image_treatment"), dict) else {}
         infographic_elements = vision.get("infographic_elements") if isinstance(vision.get("infographic_elements"), dict) else {}
@@ -1815,6 +1905,8 @@ class BrandAssetAnalyzer:
 
     @staticmethod
     def _dedupe_visual_style_values(values: list[str], *, limit: int = 6) -> list[str]:
+        # Deduplicates dedupe visual style from values and limit for retrieval and visual grounding.
+        # The helper owns a small rule that would distract from the surrounding flow.
         ordered: list[str] = []
         seen: set[str] = set()
         for value in values:
@@ -1829,11 +1921,15 @@ class BrandAssetAnalyzer:
 
     @staticmethod
     def _supports_visual_signal(value: Any) -> bool:
+        # Checks supports visual signal from input value for retrieval and visual grounding.
+        # The boolean result controls the nearby policy or validation branch.
         normalized = str(value or "").strip().lower()
         return normalized not in {"", "none", "no", "false", "0", "null", "unknown"}
 
     @staticmethod
     def _rendering_family(rendering_mode: str) -> str:
+        # Centralizes rendering family from rendering mode for retrieval and visual grounding.
+        # The main branch stays readable while this function handles the local edge case.
         normalized = str(rendering_mode or "").strip().lower()
         return {
             "photo": "photo",
@@ -1849,6 +1945,8 @@ class BrandAssetAnalyzer:
         subject_semantics: dict[str, Any],
         editorial_dna: dict[str, Any],
     ) -> dict[str, Any]:
+        # Derives visual style profile from vision, visual craft dna, and subject semantics for retrieval and visual grounding.
+        # It calls _dedupe_visual_style_values and _supports_visual_signal to turn raw evidence into the structured signal the caller needs.
         image_treatment = vision.get("image_treatment") if isinstance(vision.get("image_treatment"), dict) else {}
         infographic_elements = vision.get("infographic_elements") if isinstance(vision.get("infographic_elements"), dict) else {}
         design_style = str(vision.get("design_style") or "").strip().lower()
@@ -2012,6 +2110,8 @@ class BrandAssetAnalyzer:
         category: str,
         analysis_paths: list[str] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        # Extracts template intelligence from text, local asset path, and image candidates for retrieval and visual grounding.
+        # It calls _select_representative_visual_pages and _extract_fonts to turn raw evidence into the structured signal the caller needs.
         fallback = {
             "background_style": {"type": "graphic", "dominant_mode": "graphic", "source": "heuristic"},
             "layout_type": "multi_section",
@@ -2036,6 +2136,7 @@ class BrandAssetAnalyzer:
         vision_inputs = [str(item.get("image_path") or "") for item in selected_pages if str(item.get("image_path") or "").strip()]
         vision_source = vision_inputs[0] if vision_inputs else next((candidate for candidate in ([absolute_path, *images]) if Path(candidate).exists()), None)
         if len(vision_inputs) > 1:
+            # Multi-page templates need page-level evidence so the analyzer can infer sequence patterns, not just a cover.
             vision = TemplateVisionAnalyzer.analyze_pages(self.vision, vision_inputs, fallback)
         else:
             vision = self.vision.analyze(vision_source, fallback) if vision_source else fallback
@@ -2049,6 +2150,7 @@ class BrandAssetAnalyzer:
             key=lambda item: (float(item.get("density_score") or 0.0), float(item.get("cta_score") or 0.0)),
             default={},
         )
+        # The densest/most CTA-heavy page usually carries the reusable layout system, so it anchors text-style recovery.
         analysis = primary_analysis.get("analysis") if isinstance(primary_analysis.get("analysis"), dict) else {}
 
         # 🔥 PHASE 3: Merge layout_structure from GCV into vision intelligence
@@ -2058,6 +2160,7 @@ class BrandAssetAnalyzer:
         layout_dna: dict[str, Any] = {}
         if vision_source:
             try:
+                # Layout DNA stores geometry-like relationships that prompts can reuse without reading raw image pixels.
                 layout_dna = self.vision.extract_layout_dna(
                     vision_source,
                     base_analysis=vision,
@@ -2077,6 +2180,7 @@ class BrandAssetAnalyzer:
         exact_text_palette = self._exact_text_palette(style_map)
         if exact_text_palette:
             existing = {entry.get("hex_code") for entry in palette if isinstance(entry, dict)}
+            # Text-layer colors supplement the dominant palette without duplicating the same hex entries.
             palette = [*palette, *[entry for entry in exact_text_palette if entry.get("hex_code") not in existing]]
         header = self._search_value(text, r"header[:\s]+([^\n]+)")
         footer = self._search_value(text, r"footer[:\s]+([^\n]+)")
@@ -2096,6 +2200,7 @@ class BrandAssetAnalyzer:
             *self._infer_image_gradient(vision_source),
         ]
         reusable_zones = vision.get("editable_zones", []) or fallback["editable_zones"]
+        # Classified lines separate real template copy from visual-system notes so old sample text is not treated as new content.
         classified_lines = self._classified_text_lines(text)
         salient_lines = self._salient_text_lines(
             text,
@@ -2133,6 +2238,7 @@ class BrandAssetAnalyzer:
             }.items()
             if enabled
         }
+        # Source agreement checks whether OCR labels and visual analysis are telling the same design story.
         source_agreement = self._source_agreement(
             classified_lines,
             available_signal_types=available_signal_types,
@@ -2144,6 +2250,7 @@ class BrandAssetAnalyzer:
             heading_style=heading_style,
             cta_area=cta_area,
         )
+        # These derived sections turn raw OCR and vision output into stable vocabulary for context compilation.
         content_structure = self._derive_content_structure(
             vision=vision,
             reusable_zones=reusable_zones,
@@ -2171,6 +2278,7 @@ class BrandAssetAnalyzer:
             ],
             limit=340,
         )
+        # Evidence units preserve where each signal came from, which helps retrieval rank layout versus typography versus palette matches.
         visual_evidence_units = [
             unit
             for unit in [
@@ -2241,6 +2349,7 @@ class BrandAssetAnalyzer:
             len(page_analysis_summary),
             1,
         )
+        # Editorial DNA captures the sample's story rhythm, not the current user's final generated copy.
         editorial_dna = self._derive_editorial_dna(
             text=text,
             content_structure=content_structure,
@@ -2278,6 +2387,7 @@ class BrandAssetAnalyzer:
             classified_lines=classified_lines,
             source_agreement=source_agreement,
         )
+        # structured is the rich asset record consumed by brand intelligence and later prompt context.
         structured = {
             "heading": heading,
             "header": header,
@@ -2360,6 +2470,7 @@ class BrandAssetAnalyzer:
             "editorial_dna": editorial_dna,
             "warnings": [],
         }
+        # normalized is the retrieval-facing version; it keeps useful visual signals without all asset-specific detail.
         normalized = {
             "template_type": category,
             "layout_type": vision.get("layout_type", "multi_section"),
@@ -2398,6 +2509,7 @@ class BrandAssetAnalyzer:
             "design_tokens": design_tokens,
             "editorial_dna": editorial_dna,
         }
+        # template_analysis is the canonical visual payload for crop labeling, template selection, and sample adaptation.
         template_analysis = {
             "layout_type": vision.get("layout_type", "multi_section"),
             "background_style": vision.get("background_style", {}),
@@ -2462,6 +2574,8 @@ class BrandAssetAnalyzer:
     def _merge_layout_structure(
         intelligence: dict[str, Any], layout_structure: dict[str, Any]
     ) -> dict[str, Any]:
+        # Merges layout structure from intelligence and layout structure for retrieval and visual grounding.
+        # The main branch stays readable while this function handles the local edge case.
         """🔥 PHASE 3: Merge GCV layout structure into template intelligence"""
         component_motifs = intelligence.get("component_motifs", {})
 
@@ -2505,6 +2619,8 @@ class BrandAssetAnalyzer:
         absolute_path: str,
         images: list[str],
     ) -> tuple[dict[str, Any], dict[str, Any]]:
+        # Extracts mood board from text, local asset path, and image candidates for retrieval and visual grounding.
+        # It calls _dominant_palette and _interesting_lines to turn raw evidence into the structured signal the caller needs.
         palette = self._dominant_palette(next(iter(images or [absolute_path]), absolute_path))
         lines = self._interesting_lines(text)
         classified_lines = self._classified_text_lines(text)
@@ -2628,6 +2744,8 @@ class BrandAssetAnalyzer:
         absolute_path: str,
         images: list[str],
     ) -> tuple[dict[str, Any], dict[str, Any]]:
+        # Extracts palette from text, local asset path, and image candidates for retrieval and visual grounding.
+        # It calls _extract_palette_from_text and _classified_text_lines to turn raw evidence into the structured signal the caller needs.
         entries = self._extract_palette_from_text(text)
         if not entries:
             palette_source = next(iter(images or [absolute_path]), absolute_path)
@@ -2690,6 +2808,8 @@ class BrandAssetAnalyzer:
         absolute_path: str | None = None,
         source_format: str | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
+        # Extracts typography from text, local asset path, and source format for retrieval and visual grounding.
+        # It calls _extract_fonts and _extract_font_sizes to turn raw evidence into the structured signal the caller needs.
         if absolute_path and (source_format in {"ttf", "otf"} or Path(absolute_path).suffix.lower() in {".ttf", ".otf"}):
             return self._extract_typography_from_font_file(absolute_path)
         fonts = self._extract_fonts(text)
@@ -2773,6 +2893,8 @@ class BrandAssetAnalyzer:
         return structured, normalized
 
     def _extract_typography_from_font_file(self, absolute_path: str) -> tuple[dict[str, Any], dict[str, Any]]:
+        # Extracts typography font file from local asset path for retrieval and visual grounding.
+        # It calls _summary_from_parts to turn raw evidence into the structured signal the caller needs.
         font_path = Path(absolute_path)
         family_name = font_path.stem
         style_name = "Regular"
@@ -2863,6 +2985,8 @@ class BrandAssetAnalyzer:
         return structured, normalized
 
     def _extract_word_bank(self, text: str, category: str) -> tuple[dict[str, Any], dict[str, Any]]:
+        # Extracts word bank from text and category for retrieval and visual grounding.
+        # It calls _interesting_lines to turn raw evidence into the structured signal the caller needs.
         raw_lines = self._interesting_lines(text)
         normalized_terms: list[str] = []
         phrase_map: dict[str, list[str]] = {}
@@ -2912,6 +3036,8 @@ class BrandAssetAnalyzer:
         absolute_path: str,
         images: list[str],
     ) -> tuple[dict[str, Any], dict[str, Any]]:
+        # Extracts other from text, local asset path, and image candidates for retrieval and visual grounding.
+        # It calls _extract_fonts and _classified_text_lines to turn raw evidence into the structured signal the caller needs.
         palette = self._extract_palette_from_text(text) or (self._dominant_palette(next(iter(images or [absolute_path]), absolute_path)))
         fonts = self._extract_fonts(text)
         classified_lines = self._classified_text_lines(text)
@@ -2990,6 +3116,8 @@ class BrandAssetAnalyzer:
         template_analysis: dict[str, Any] | None,
         image_candidates: list[str],
     ) -> list[dict[str, Any]]:
+        # Derives reusable assets from local asset path, routed category, and structured data for retrieval and visual grounding.
+        # It calls _dedupe_and_rank_derived_assets and _load_visual_analysis to turn raw evidence into the structured signal the caller needs.
         allowed_suffixes = {".png", ".jpg", ".jpeg", ".webp"}
         candidate_paths: list[str] = []
         seen: set[str] = set()
@@ -3043,6 +3171,7 @@ class BrandAssetAnalyzer:
                         duplicate = True
                         break
                 if not duplicate:
+                    # Sidecar regions can recover useful icons or logos that contour detection missed.
                     crop_regions.append(supplemental)
             if crop_regions:
                 for region_index, region in enumerate(crop_regions, start=1):
@@ -3060,6 +3189,7 @@ class BrandAssetAnalyzer:
                         asset_kind != "logo_variant"
                         and self._is_text_dominated_crop(region.get("crop_box"), visual_analysis)
                     ):
+                        # Non-logo reusable assets should be visual fragments, not cropped template copy.
                         continue
                     if not self._is_reusable_region_eligible(
                         routed_category=routed_category,
@@ -3105,6 +3235,7 @@ class BrandAssetAnalyzer:
                 asset_kind=asset_kind,
             ):
                 continue
+            # When no clean crop exists, keep the full image only if the category and dimensions make it reusable.
             derived_assets.append(
                 self._build_derived_asset_payload(
                     source_path=source_path,
@@ -3128,6 +3259,8 @@ class BrandAssetAnalyzer:
 
     @staticmethod
     def _crop_iou(first: tuple[int, int, int, int] | None, second: tuple[int, int, int, int] | None) -> float:
+        # Measures crop iou from first and second for retrieval and visual grounding.
+        # The measurement feeds layout, crop, overlap, or density decisions.
         if not first or not second:
             return 0.0
         left_a, top_a, right_a, bottom_a = first
@@ -3147,7 +3280,11 @@ class BrandAssetAnalyzer:
 
     @classmethod
     def _dedupe_and_rank_derived_assets(cls, derived_assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        # Deduplicates dedupe rank derived assets from derived assets for retrieval and visual grounding.
+        # It delegates shared cleanup to _crop_iou and _natural_sort_key before returning the cleaned value.
         def _score(item: dict[str, Any]) -> tuple[float, float, float]:
+            # Scores score from item for retrieval and visual grounding.
+            # The caller can compare candidates without rerunning the heuristic.
             metadata = item.get("normalized_metadata") or {}
             review = metadata.get("asset_review") or {}
             dimensions = review.get("dimensions") or {}
@@ -3209,6 +3346,8 @@ class BrandAssetAnalyzer:
         asset_kind: str,
         region: dict[str, Any],
     ) -> bool:
+        # Checks reusable region eligible from routed category, asset kind, and region for retrieval and visual grounding.
+        # The boolean result controls the nearby policy or validation branch.
         width = int(region.get("width") or 0)
         height = int(region.get("height") or 0)
         area_ratio = float(region.get("area_ratio") or 0.0)
@@ -3251,6 +3390,8 @@ class BrandAssetAnalyzer:
         height: int,
         asset_kind: str,
     ) -> bool:
+        # Checks keep full image as reusable asset from routed category, source path, and width for retrieval and visual grounding.
+        # The boolean result controls the nearby policy or validation branch.
         filename = Path(source_path).name.lower()
         if routed_category == BrandAssetCategory.LOGO:
             return True
@@ -3273,6 +3414,8 @@ class BrandAssetAnalyzer:
         source_path: str,
         asset_kind: str,
     ) -> tuple[int, int, int, int] | None:
+        # Measures expand crop box from crop box, source path, and asset kind for retrieval and visual grounding.
+        # The measurement feeds layout, crop, overlap, or density decisions.
         if not crop_box:
             return None
         path = Path(source_path)
@@ -3303,6 +3446,8 @@ class BrandAssetAnalyzer:
         source_path: str,
         crop_box: tuple[int, int, int, int] | None,
     ) -> dict[str, float]:
+        # Checks compute crop visual quality from source path and crop box for retrieval and visual grounding.
+        # This keeps the allowed/blocked rule in one place.
         if not crop_box:
             return {}
         path = Path(source_path)
@@ -3347,6 +3492,8 @@ class BrandAssetAnalyzer:
         height: int,
         area_ratio: float,
     ) -> dict[str, Any]:
+        # Builds derived asset from source path, routed category, and structured data for retrieval and visual grounding.
+        # It calls _dominant_palette and _expand_crop_box while assembling the payload or prompt text.
         palette = self._dominant_palette(source_path)
         expanded_crop_box = self._expand_crop_box(
             crop_box,
@@ -3437,6 +3584,8 @@ class BrandAssetAnalyzer:
         confidence: float,
         visual_quality: dict[str, float] | None = None,
     ) -> dict[str, Any]:
+        # Builds asset review from routed category, asset kind, and width for retrieval and visual grounding.
+        # This keeps payload shape decisions close to the code that understands the inputs.
         review_class = "fragment"
         review_status = "reference_only"
         review_reason = "Kept only as visual reference."
@@ -3510,6 +3659,8 @@ class BrandAssetAnalyzer:
         region_index: int,
         source_path: str,
     ) -> str:
+        # Derives derived asset label from routed category, structured data, and template analysis for retrieval and visual grounding.
+        # It calls _collect_candidate_labels to turn raw evidence into the structured signal the caller needs.
         label_sources = self._collect_candidate_labels(structured_data, template_analysis)
         stem = Path(source_path).stem.replace("_", " ").replace("-", " ").strip() or "asset"
         if asset_kind == "logo_variant":
@@ -3527,6 +3678,8 @@ class BrandAssetAnalyzer:
 
     @staticmethod
     def _looks_like_asset_label(value: str) -> bool:
+        # Checks asset label from input value for retrieval and visual grounding.
+        # This keeps the allowed/blocked rule in one place.
         text = " ".join(str(value or "").strip().split())
         if not text:
             return False
@@ -3555,9 +3708,13 @@ class BrandAssetAnalyzer:
         structured_data: dict[str, Any],
         template_analysis: dict[str, Any] | None = None,
     ) -> list[str]:
+        # Collects collect candidate labels from structured data and template analysis for retrieval and visual grounding.
+        # The helper owns a small rule that would distract from the surrounding flow.
         candidates: list[str] = []
 
         def _visit(value: Any) -> None:
+            # Centralizes visit from input value for retrieval and visual grounding.
+            # The main branch stays readable while this function handles the local edge case.
             if isinstance(value, dict):
                 for key, nested in value.items():
                     if key in {"label", "name", "title"}:
@@ -3600,6 +3757,8 @@ class BrandAssetAnalyzer:
         structured_data: dict[str, Any],
         template_analysis: dict[str, Any] | None,
     ) -> str:
+        # Extracts classify reusable asset kind from routed category, width, and height for retrieval and visual grounding.
+        # It calls _looks_like_logo_candidate_source to turn raw evidence into the structured signal the caller needs.
         logoish = BrandAssetAnalyzer._looks_like_logo_candidate_source(
             source_path=source_path,
             structured_data=structured_data,
@@ -3633,6 +3792,8 @@ class BrandAssetAnalyzer:
         structured_data: dict[str, Any],
         template_analysis: dict[str, Any] | None,
     ) -> bool:
+        # Checks logo candidate source from source path, structured data, and template analysis for retrieval and visual grounding.
+        # It reuses _collect_candidate_labels so related checks follow the same rule.
         label_sources = BrandAssetAnalyzer._collect_candidate_labels(structured_data, template_analysis)
         combined = " ".join(
             part.casefold()
@@ -3642,6 +3803,8 @@ class BrandAssetAnalyzer:
         return any(token in combined for token in ("logo", "wordmark", "brandmark", "lockup", "emblem", "monogram"))
 
     def _extract_visual_regions(self, image_path: str) -> list[dict[str, Any]]:
+        # Extracts visual regions from image path for retrieval and visual grounding.
+        # It calls _boxes_connect and _iou to turn raw evidence into the structured signal the caller needs.
         path = Path(image_path)
         if not path.exists():
             return []
@@ -3803,6 +3966,8 @@ class BrandAssetAnalyzer:
                 pass
 
         def _boxes_connect(first: dict[str, Any], second: dict[str, Any]) -> bool:
+            # Centralizes boxes connect from first and second for retrieval and visual grounding.
+            # The helper owns a small rule that would distract from the surrounding flow.
             first_pad = max(18, int(min(max(first["w"], first["h"]), 220) * 0.4))
             second_pad = max(18, int(min(max(second["w"], second["h"]), 220) * 0.4))
             left_a = first["x"] - first_pad
@@ -3876,6 +4041,8 @@ class BrandAssetAnalyzer:
             )
 
         def _iou(first: dict[str, Any], second: dict[str, Any]) -> float:
+            # Measures iou from first and second for retrieval and visual grounding.
+            # Keeping the math here avoids subtle differences between renderer-facing branches.
             left_a, top_a, right_a, bottom_a = first["crop_box"]
             left_b, top_b, right_b, bottom_b = second["crop_box"]
             overlap_left = max(left_a, left_b)
@@ -3925,6 +4092,8 @@ class BrandAssetAnalyzer:
 
     @staticmethod
     def _interesting_lines(text: str) -> list[str]:
+        # Extracts interesting lines from text for retrieval and visual grounding.
+        # The extracted signal becomes prompt context, metadata, or ranking input.
         if not text:
             return []
         lines = []
@@ -3939,6 +4108,8 @@ class BrandAssetAnalyzer:
 
     @staticmethod
     def _extract_bucketed_items(lines: list[str], keywords: list[str], *, require_asset_label: bool = True) -> list[str]:
+        # Extracts bucketed items from lines, keywords, and require asset label for retrieval and visual grounding.
+        # It calls _looks_like_asset_label to turn raw evidence into the structured signal the caller needs.
         items: list[str] = []
         seen: set[str] = set()
         for line in lines:
@@ -3961,6 +4132,8 @@ class BrandAssetAnalyzer:
 
     @staticmethod
     def _dedupe_preserving_order(items: list[str]) -> list[str]:
+        # Deduplicates dedupe preserving order from items for retrieval and visual grounding.
+        # It delegates shared cleanup to _normalize_summary_fragment before returning the cleaned value.
         deduped: list[str] = []
         seen: set[str] = set()
         for item in items:
@@ -3976,6 +4149,8 @@ class BrandAssetAnalyzer:
 
     @classmethod
     def _audience_section_from_text(cls, value: str, *, strict: bool = True) -> str | None:
+        # Builds audience section text from input value and strict for retrieval and visual grounding.
+        # It calls _normalize_summary_fragment while assembling the payload or prompt text.
         cleaned = cls._normalize_summary_fragment(value, limit=96).casefold()
         cleaned = re.sub(r"^[\-\d\.\)\s]+", "", cleaned).strip(" :-")
         if not cleaned:
@@ -3995,6 +4170,8 @@ class BrandAssetAnalyzer:
 
     @classmethod
     def _audience_keyword_hits(cls, text: str, keywords: tuple[str, ...] | list[str]) -> list[str]:
+        # Centralizes audience keyword hits from text and keywords for retrieval and visual grounding.
+        # The helper owns a small rule that would distract from the surrounding flow.
         lowered = cls._normalize_summary_fragment(text, limit=220).casefold()
         hits: list[str] = []
         for keyword in keywords:
@@ -4011,6 +4188,8 @@ class BrandAssetAnalyzer:
 
     @classmethod
     def _looks_like_audience_statement(cls, value: str) -> bool:
+        # Checks audience statement from input value for retrieval and visual grounding.
+        # It reuses _normalize_summary_fragment so related checks follow the same rule.
         cleaned = cls._normalize_summary_fragment(value, limit=220)
         if not cleaned:
             return False
@@ -4023,6 +4202,8 @@ class BrandAssetAnalyzer:
 
     @classmethod
     def _audience_line_entries(cls, text: str) -> list[dict[str, Any]]:
+        # Extracts audience line entries from text for retrieval and visual grounding.
+        # It calls _interesting_lines and _normalize_summary_fragment to turn raw evidence into the structured signal the caller needs.
         entries: list[dict[str, Any]] = []
         current_section: str | None = None
         current_section_index = -999
@@ -4075,6 +4256,8 @@ class BrandAssetAnalyzer:
         section_match: bool,
         keyword_hits: list[str],
     ) -> float:
+        # Centralizes audience evidence confidence from entry, section match, and keyword hits for retrieval and visual grounding.
+        # The helper owns a small rule that would distract from the surrounding flow.
         confidence = 0.18
         if section_match:
             confidence += 0.28
@@ -4103,6 +4286,8 @@ class BrandAssetAnalyzer:
         entries: list[dict[str, Any]],
         field: str,
     ) -> list[dict[str, Any]]:
+        # Extracts audience evidence from entries and field for retrieval and visual grounding.
+        # It calls _audience_keyword_hits and _audience_evidence_confidence to turn raw evidence into the structured signal the caller needs.
         spec = AUDIENCE_EVIDENCE_FIELD_SPECS.get(field, {})
         keywords = tuple(spec.get("keywords") or ())
         min_confidence = float(spec.get("min_confidence") or 0.62)
@@ -4148,6 +4333,8 @@ class BrandAssetAnalyzer:
 
     @staticmethod
     def _normalize_summary_fragment(value: Any, limit: int = 96) -> str:
+        # Normalizes summary fragment from input value and limit for retrieval and visual grounding.
+        # This shields downstream matching from casing, whitespace, and empty-value noise.
         text = " ".join(str(value or "").strip().split())
         if not text:
             return ""
@@ -4155,6 +4342,8 @@ class BrandAssetAnalyzer:
 
     @classmethod
     def _palette_summary_terms(cls, entries: list[dict[str, Any]] | None, *, limit: int = 4) -> list[str]:
+        # Derives palette summary terms from entries and limit for retrieval and visual grounding.
+        # It calls _normalize_summary_fragment to turn raw evidence into the structured signal the caller needs.
         if not isinstance(entries, list):
             return []
         results: list[str] = []
@@ -4178,6 +4367,8 @@ class BrandAssetAnalyzer:
 
     @classmethod
     def _font_summary_terms(cls, fonts: list[dict[str, Any]] | None, *, limit: int = 4) -> list[str]:
+        # Derives font summary terms from fonts and limit for retrieval and visual grounding.
+        # It calls _normalize_summary_fragment to turn raw evidence into the structured signal the caller needs.
         if not isinstance(fonts, list):
             return []
         results: list[str] = []
@@ -4199,6 +4390,8 @@ class BrandAssetAnalyzer:
 
     @classmethod
     def _zone_summary_terms(cls, zones: list[dict[str, Any]] | None, *, limit: int = 5) -> list[str]:
+        # Measures zone summary terms from zones and limit for retrieval and visual grounding.
+        # It calls _normalize_summary_fragment to turn raw evidence into the structured signal the caller needs.
         if not isinstance(zones, list):
             return []
         results: list[str] = []
@@ -4220,6 +4413,8 @@ class BrandAssetAnalyzer:
 
     @classmethod
     def _summary_from_parts(cls, parts: list[str], *, limit: int = 320) -> str:
+        # Summarizes summary parts from parts and limit for retrieval and visual grounding.
+        # The helper owns a small rule that would distract from the surrounding flow.
         cleaned: list[str] = []
         seen: set[str] = set()
         for part in parts:
@@ -4236,6 +4431,8 @@ class BrandAssetAnalyzer:
 
     @classmethod
     def _template_copy_lines(cls, *values: Any, limit: int = 4) -> list[str]:
+        # Extracts template copy lines from limit for retrieval and visual grounding.
+        # It calls _normalize_summary_fragment to turn raw evidence into the structured signal the caller needs.
         lines: list[str] = []
         seen: set[str] = set()
         for value in values:
@@ -4253,6 +4450,8 @@ class BrandAssetAnalyzer:
 
     @classmethod
     def _line_signal_types(cls, line: str) -> list[str]:
+        # Extracts line signal types from line for retrieval and visual grounding.
+        # It calls _normalize_summary_fragment to turn raw evidence into the structured signal the caller needs.
         lowered = cls._normalize_summary_fragment(line, limit=220).casefold()
         if not lowered:
             return []
@@ -4265,6 +4464,8 @@ class BrandAssetAnalyzer:
 
     @classmethod
     def _classify_text_line(cls, line: str) -> dict[str, Any]:
+        # Extracts classify text line from line for retrieval and visual grounding.
+        # It calls _normalize_summary_fragment and _line_signal_types to turn raw evidence into the structured signal the caller needs.
         cleaned = cls._normalize_summary_fragment(line, limit=220)
         if not cleaned:
             return {
@@ -4349,6 +4550,8 @@ class BrandAssetAnalyzer:
 
     @classmethod
     def _classified_text_lines(cls, text: str, *, limit: int = 24) -> list[dict[str, Any]]:
+        # Extracts classified text lines from text and limit for retrieval and visual grounding.
+        # It calls _interesting_lines and _classify_text_line to turn raw evidence into the structured signal the caller needs.
         classified: list[dict[str, Any]] = []
         seen: set[str] = set()
         for line in cls._interesting_lines(text):
@@ -4367,6 +4570,8 @@ class BrandAssetAnalyzer:
 
     @staticmethod
     def _line_classification_counts(classified_lines: list[dict[str, Any]]) -> dict[str, int]:
+        # Counts line classification counts from classified lines for retrieval and visual grounding.
+        # The helper owns a small rule that would distract from the surrounding flow.
         counts = Counter(
             str(item.get("classification") or "unknown")
             for item in classified_lines
@@ -4381,6 +4586,8 @@ class BrandAssetAnalyzer:
         *,
         available_signal_types: set[str] | None = None,
     ) -> dict[str, Any]:
+        # Centralizes source agreement from classified lines and available signal types for retrieval and visual grounding.
+        # The helper owns a small rule that would distract from the surrounding flow.
         available = {
             str(signal_type or "").strip()
             for signal_type in (available_signal_types or set())
@@ -4415,6 +4622,8 @@ class BrandAssetAnalyzer:
         keywords: list[str] | None = None,
         prefer_label: bool = False,
     ) -> float:
+        # Extracts line quality from line, keywords, and prefer label for retrieval and visual grounding.
+        # It calls _normalize_summary_fragment and _looks_like_asset_label to turn raw evidence into the structured signal the caller needs.
         cleaned = cls._normalize_summary_fragment(line, limit=220)
         if not cleaned:
             return -999.0
@@ -4464,6 +4673,8 @@ class BrandAssetAnalyzer:
         minimum_score: float = 2.2,
         allowed_classifications: set[str] | None = None,
     ) -> list[str]:
+        # Extracts salient text lines from text, keywords, and limit for retrieval and visual grounding.
+        # It calls _interesting_lines and _normalize_summary_fragment to turn raw evidence into the structured signal the caller needs.
         lines = cls._interesting_lines(text)
         scored: list[tuple[float, int, str]] = []
         for index, line in enumerate(lines):
@@ -4516,6 +4727,8 @@ class BrandAssetAnalyzer:
         classified_lines: list[dict[str, Any]] | None = None,
         source_agreement: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Checks analysis quality from text, summary, and salient lines for retrieval and visual grounding.
+        # It reuses _interesting_lines and _line_classification_counts so related checks follow the same rule.
         candidate_lines = cls._interesting_lines(text)
         classified = classified_lines or cls._classified_text_lines(text)
         classification_counts = cls._line_classification_counts(classified)
@@ -4588,6 +4801,8 @@ class BrandAssetAnalyzer:
 
     @staticmethod
     def _extract_key_value_pairs(lines: list[str], keys: list[str]) -> dict[str, str]:
+        # Extracts key pairs from lines and keys for retrieval and visual grounding.
+        # The extracted signal becomes prompt context, metadata, or ranking input.
         values: dict[str, str] = {}
         for line in lines:
             lowered = line.lower()
@@ -4603,6 +4818,8 @@ class BrandAssetAnalyzer:
 
     @staticmethod
     def _search_value(text: str, pattern: str) -> str | None:
+        # Searches search from text and pattern for retrieval and visual grounding.
+        # The main branch stays readable while this function handles the local edge case.
         match = re.search(pattern, text, flags=re.IGNORECASE)
         if not match:
             return None
@@ -4610,6 +4827,8 @@ class BrandAssetAnalyzer:
 
     @staticmethod
     def _guess_tagline(text: str) -> str | None:
+        # Centralizes guess tagline from text for retrieval and visual grounding.
+        # The main branch stays readable while this function handles the local edge case.
         for line in text.splitlines():
             clean = " ".join(line.split()).strip()
             if 12 <= len(clean) <= 90 and "'" in clean:
@@ -4618,6 +4837,8 @@ class BrandAssetAnalyzer:
 
     @staticmethod
     def _guess_heading(text: str) -> str | None:
+        # Centralizes guess heading from text for retrieval and visual grounding.
+        # The main branch stays readable while this function handles the local edge case.
         for line in text.splitlines():
             clean = " ".join(line.split()).strip()
             if 8 <= len(clean) <= 120 and len(clean.split()) <= 14:
@@ -4626,16 +4847,22 @@ class BrandAssetAnalyzer:
 
     @staticmethod
     def _guess_cta(text: str) -> str | None:
+        # Centralizes guess cta from text for retrieval and visual grounding.
+        # The helper owns a small rule that would distract from the surrounding flow.
         candidates = re.findall(r"(learn more|apply now|talk to us|get started|book now|download now)", text, flags=re.IGNORECASE)
         return candidates[0].title() if candidates else None
 
     @staticmethod
     def _has_tokens(text: str, tokens: list[str]) -> bool:
+        # Checks tokens from text and tokens for retrieval and visual grounding.
+        # The boolean result controls the nearby policy or validation branch.
         lowered = text.lower()
         return any(token in lowered for token in tokens)
 
     @staticmethod
     def _extract_fonts(text: str) -> list[dict[str, Any]]:
+        # Extracts fonts from text for retrieval and visual grounding.
+        # Later planning can reuse the structured value instead of scanning the source again.
         detected: list[dict[str, Any]] = []
         for family in COMMON_FONT_FAMILIES:
             if family.lower() in text.lower():
@@ -4655,6 +4882,8 @@ class BrandAssetAnalyzer:
 
     @staticmethod
     def _extract_font_sizes(text: str) -> list[dict[str, Any]]:
+        # Extracts font sizes from text for retrieval and visual grounding.
+        # Later planning can reuse the structured value instead of scanning the source again.
         sizes = re.findall(r"(\d{1,3})\s*(?:pt|px)", text, flags=re.IGNORECASE)
         seen: set[str] = set()
         result: list[dict[str, Any]] = []
@@ -4667,6 +4896,8 @@ class BrandAssetAnalyzer:
 
     @staticmethod
     def _extract_gradients(text: str) -> list[dict[str, Any]]:
+        # Extracts gradients from text for retrieval and visual grounding.
+        # The extracted signal becomes prompt context, metadata, or ranking input.
         gradients = re.findall(r"(?i)(linear gradient|radial gradient|gradient)", text)
         deduped = list(dict.fromkeys(item.lower() for item in gradients))
         return [
@@ -4680,6 +4911,8 @@ class BrandAssetAnalyzer:
         ]
 
     def _extract_palette_from_text(self, text: str) -> list[dict[str, Any]]:
+        # Extracts palette text from text for retrieval and visual grounding.
+        # It calls _rebalance_palette_roles and _infer_palette_role to turn raw evidence into the structured signal the caller needs.
         entries: list[dict[str, Any]] = []
         seen: set[str] = set()
         lowered = text.lower()
@@ -4722,6 +4955,8 @@ class BrandAssetAnalyzer:
 
     @staticmethod
     def _infer_palette_role(text: str, token: str) -> str:
+        # Derives infer palette role from text and token for retrieval and visual grounding.
+        # This turns source evidence into a stable planning hint.
         lowered = text.lower()
         semantic_window = f"{lowered} {token.lower()}".strip()
         if any(keyword in semantic_window for keyword in ("orange", "peel", "amber", "yellow", "gold")):
@@ -4746,6 +4981,8 @@ class BrandAssetAnalyzer:
         return "accent"
 
     def _rebalance_palette_roles(self, entries: list[dict[str, Any]], lowered_text: str) -> list[dict[str, Any]]:
+        # Derives rebalance palette roles from entries and lowered text for retrieval and visual grounding.
+        # It calls _rgb to turn raw evidence into the structured signal the caller needs.
         hex_entries = [
             entry for entry in entries
             if isinstance(entry, dict) and str(entry.get("hex_code", "")).startswith("#")
@@ -4756,6 +4993,8 @@ class BrandAssetAnalyzer:
             return entries
 
         def _rgb(hex_code: str) -> tuple[int, int, int] | None:
+            # Centralizes rgb from hex code for retrieval and visual grounding.
+            # The helper owns a small rule that would distract from the surrounding flow.
             if not re.fullmatch(r"#[0-9A-Fa-f]{6}", hex_code):
                 return None
             return tuple(int(hex_code[index:index + 2], 16) for index in (1, 3, 5))
@@ -4826,9 +5065,13 @@ class BrandAssetAnalyzer:
 
     @staticmethod
     def _rgb_to_hex(color: tuple[int, int, int]) -> str:
+        # Centralizes rgb hex from color for retrieval and visual grounding.
+        # The helper owns a small rule that would distract from the surrounding flow.
         return "#{:02X}{:02X}{:02X}".format(*color)
 
     def _dominant_palette(self, image_path: str) -> list[dict[str, Any]]:
+        # Derives dominant palette from image path for retrieval and visual grounding.
+        # It calls _rgb_to_hex to turn raw evidence into the structured signal the caller needs.
         path = Path(image_path)
         if not path.exists():
             return []
@@ -4868,6 +5111,8 @@ class BrandAssetAnalyzer:
 
     @staticmethod
     def _extract_keywords_from_filename(filename: str) -> list[str]:
+        # Extracts keywords filename from filename for retrieval and visual grounding.
+        # Later planning can reuse the structured value instead of scanning the source again.
         """
         Extract keywords from icon filename.
 
@@ -4886,6 +5131,8 @@ class BrandAssetAnalyzer:
 
 
     def _extract_icon_metadata(self, source_path: str, label: str) -> dict[str, Any]:
+        # Extracts icon metadata from source path and label for retrieval and visual grounding.
+        # It calls _extract_keywords_from_filename to turn raw evidence into the structured signal the caller needs.
         """
         Extract semantic metadata from icon file.
 
@@ -4914,6 +5161,8 @@ class BrandAssetAnalyzer:
 
     @staticmethod
     def _natural_sort_key(value: str) -> list[int | str]:
+        # Centralizes natural sort key from input value for retrieval and visual grounding.
+        # The helper owns a small rule that would distract from the surrounding flow.
         text = str(value)
         parts = re.split(r"(\d+)", text)
         return [int(part) if part.isdigit() else part.casefold() for part in parts if part]

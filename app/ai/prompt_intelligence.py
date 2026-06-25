@@ -7,15 +7,22 @@ from typing import Any
 from app.ai.context_compiler import ContextCompilerService
 from app.ai.providers.llm import PromptEnvelope
 
+# Prompt envelopes are the LLM-facing layer of the AI pipeline: compiled context goes in, structured JSON comes back.
+# The orchestrator owns validation, so this file focuses on clear instructions and stable output contracts.
+
 
 class PromptIntelligenceService:
+    # Builds PromptEnvelope objects for copy, creative planning, scene graph repair, and rewrite calls.
+    # Provider adapters receive these envelopes and return structured JSON that the orchestrator validates and stores.
     DEFAULT_RESEARCH_FACT_LIMIT = 6
     MAX_DATA_SURFACE_FACT_LIMIT = 10
     MAX_RESEARCH_SOURCE_PACK_LIMIT = 12
+    # These keyword rules route "mistake" style requests into a different carousel structure and validation path.
     MISTAKE_CAROUSEL_SIGNAL_PATTERN = re.compile(
         r"\b(mistake|mistakes|pitfall|pitfalls|error|errors|wrong|misstep|missteps|avoid|avoiding|costly)\b",
         re.IGNORECASE,
     )
+    # Platform guidance is copied into prompts so the LLM adapts copy density before renderer constraints are applied.
     PLATFORM_GUIDANCE = {
         "linkedin": (
             "Use professional, insight-led copy. Lead with business value, credibility, and investor confidence. "
@@ -34,6 +41,7 @@ class PromptIntelligenceService:
             "choose curiosity or outcome-driven phrasing."
         ),
     }
+    # Format guidance keeps static, carousel, infographic, PDF, and doc outputs from collapsing into the same text shape.
     FORMAT_GUIDANCE = {
         "static": "Design the copy for a single polished social creative with concise on-canvas text.",
         "carousel": "Design the copy so it can break across multiple slides with clear sectioning and compact cards.",
@@ -47,10 +55,14 @@ class PromptIntelligenceService:
 
     @staticmethod
     def _prompt_json(value: Any) -> str:
+        # Builds prompt json from input value for provider prompt calls.
+        # The returned payload is the compact contract consumed by the next branch.
         return json.dumps(value, ensure_ascii=True, default=str)
 
     @classmethod
     def _format_visual_structure_summary(cls, detailed_context: dict[str, Any]) -> str:
+        # Formats visual structure summary from detailed context for provider prompt calls.
+        # The main branch stays readable while this function handles the local edge case.
         """🔥 PHASE 4: Format detailed visual context for LLM prompt"""
         if not detailed_context:
             return ""
@@ -97,6 +109,8 @@ class PromptIntelligenceService:
 
     @classmethod
     def _visual_knowledge_prompt_payload(cls, value: Any) -> dict[str, Any]:
+        # Builds visual knowledge prompt from input value for provider prompt calls.
+        # It calls _format_visual_structure_summary while assembling the payload or prompt text.
         """🔥 PHASE 4: Extract visual knowledge for prompt - PRESERVE DETAIL"""
         brief = ContextCompilerService.coerce_visual_knowledge_brief(value)
 
@@ -133,6 +147,8 @@ class PromptIntelligenceService:
 
     @staticmethod
     def _prompt_intelligence_prompt_payload(value: Any) -> dict[str, Any]:
+        # Builds prompt intelligence prompt from input value for provider prompt calls.
+        # The returned payload is the compact contract consumed by the next branch.
         brief = value if isinstance(value, dict) else {}
         starter_patterns = []
         for item in (brief.get("starter_patterns") or [])[:4]:
@@ -160,6 +176,8 @@ class PromptIntelligenceService:
 
     @staticmethod
     def _drop_empty(value: Any) -> Any:
+        # Centralizes drop empty from input value for provider prompt calls.
+        # The main branch stays readable while this function handles the local edge case.
         if isinstance(value, dict):
             cleaned = {
                 key: PromptIntelligenceService._drop_empty(item)
@@ -177,6 +195,8 @@ class PromptIntelligenceService:
 
     @staticmethod
     def _compact_sequence_pack(value: Any) -> dict[str, Any]:
+        # Compacts sequence pack from input value for provider prompt calls.
+        # The helper owns a small rule that would distract from the surrounding flow.
         pack = value if isinstance(value, dict) else {}
         slides = []
         for item in (pack.get("slides") or [])[:12]:
@@ -211,6 +231,8 @@ class PromptIntelligenceService:
 
     @staticmethod
     def _template_fit_prompt_payload(value: Any) -> dict[str, Any]:
+        # Builds template fit prompt from input value for provider prompt calls.
+        # It calls _drop_empty and _compact_sequence_pack while assembling the payload or prompt text.
         brief = value if isinstance(value, dict) else {}
         return PromptIntelligenceService._drop_empty(
             {
@@ -232,6 +254,8 @@ class PromptIntelligenceService:
 
     @staticmethod
     def _brand_visual_prompt_payload(value: Any) -> dict[str, Any]:
+        # Builds brand visual prompt from input value for provider prompt calls.
+        # It calls _drop_empty and _compact_sequence_pack while assembling the payload or prompt text.
         brief = value if isinstance(value, dict) else {}
         design_system = brief.get("design_system") if isinstance(brief.get("design_system"), dict) else {}
         return PromptIntelligenceService._drop_empty(
@@ -293,6 +317,8 @@ class PromptIntelligenceService:
 
     @staticmethod
     def _reference_asset_prompt_payload(value: Any, *, limit: int = 8) -> list[dict[str, Any]]:
+        # Builds reference asset prompt from input value and limit for provider prompt calls.
+        # It calls _drop_empty while assembling the payload or prompt text.
         assets = value if isinstance(value, list) else []
         compact = []
         for item in assets[: max(1, limit)]:
@@ -327,6 +353,8 @@ class PromptIntelligenceService:
         brief_name: str = "prompt_intelligence_brief",
         output_targets: str = "headline, body, CTA, hashtags, and other copy-bearing fields",
     ) -> str:
+        # Builds prompt intelligence rule block from brief name and output targets for provider prompt calls.
+        # This keeps payload shape decisions close to the code that understands the inputs.
         return " ".join(
             [
                 f"Use {brief_name}.starter_patterns and {brief_name}.starter_texts as preferred framing patterns for {output_targets}.",
@@ -343,6 +371,8 @@ class PromptIntelligenceService:
         copy_brief_name: str = "brand_copy_brief",
         audience_brief_name: str = "audience_brief",
     ) -> str:
+        # Centralizes persona depth rule block from copy brief name and audience brief name for provider prompt calls.
+        # The helper owns a small rule that would distract from the surrounding flow.
         return " ".join(
             [
                 f"Use {audience_brief_name}.audience_research_motivations and {audience_brief_name}.desired_outcomes before persona defaults when deciding which benefit to lead with.",
@@ -361,6 +391,8 @@ class PromptIntelligenceService:
         audience_brief_name: str = "audience_brief",
         research_summary_name: str = "research_summary",
     ) -> str:
+        # Centralizes audience research rule block from audience brief name and research summary name for provider prompt calls.
+        # The main branch stays readable while this function handles the local edge case.
         return " ".join(
             [
                 f"Use {audience_brief_name}.research_highlights, {audience_brief_name}.audience_research_motivations, {audience_brief_name}.desired_outcomes, {audience_brief_name}.audience_research_pain_points, {audience_brief_name}.audience_research_preferences, {audience_brief_name}.audience_research_objections, {audience_brief_name}.trust_signals, {audience_brief_name}.proof_cues, and {audience_brief_name}.comparison_points as concrete audience evidence.",
@@ -372,6 +404,8 @@ class PromptIntelligenceService:
 
     @staticmethod
     def _content_format_prompt_payload(value: Any) -> dict[str, Any]:
+        # Builds content prompt from input value for provider prompt calls.
+        # The returned payload is the compact contract consumed by the next branch.
         brief = value if isinstance(value, dict) else {}
         return {
             "platform_preset": str(brief.get("platform_preset") or "").strip(),
@@ -393,6 +427,8 @@ class PromptIntelligenceService:
 
     @staticmethod
     def _research_editorial_prompt_payload(value: Any) -> dict[str, Any]:
+        # Builds research editorial prompt from input value for provider prompt calls.
+        # The returned payload is the compact contract consumed by the next branch.
         brief = value if isinstance(value, dict) else {}
         fact_model = brief.get("fact_model") if isinstance(brief.get("fact_model"), dict) else {}
         try:
@@ -555,6 +591,8 @@ class PromptIntelligenceService:
 
     @staticmethod
     def _format_family_plan_prompt_payload(value: Any) -> dict[str, Any]:
+        # Formats family plan prompt from input value for provider prompt calls.
+        # The main branch stays readable while this function handles the local edge case.
         plan = value if isinstance(value, dict) else {}
         return {
             "family": str(plan.get("family") or "").strip(),
@@ -576,6 +614,8 @@ class PromptIntelligenceService:
 
     @staticmethod
     def _content_plan_prompt_payload(value: Any) -> dict[str, Any]:
+        # Builds content plan prompt from input value for provider prompt calls.
+        # This keeps payload shape decisions close to the code that understands the inputs.
         plan = value if isinstance(value, dict) else {}
         return {
             "planning_family": str(plan.get("planning_family") or "").strip(),
@@ -651,6 +691,8 @@ class PromptIntelligenceService:
 
     @staticmethod
     def _template_sample_authority_rule_block(content_plan: Any) -> str:
+        # Centralizes template sample authority rule block from content plan for provider prompt calls.
+        # The helper owns a small rule that would distract from the surrounding flow.
         plan = content_plan if isinstance(content_plan, dict) else {}
         generation_strategy = str(plan.get("generation_strategy") or "").strip().casefold()
         template_authority_mode = str(plan.get("template_authority_mode") or "").strip().casefold()
@@ -683,6 +725,8 @@ class PromptIntelligenceService:
 
     @staticmethod
     def _template_sample_message_strategy_rule_block(content_plan: Any) -> str:
+        # Centralizes template sample message strategy rule block from content plan for provider prompt calls.
+        # The helper owns a small rule that would distract from the surrounding flow.
         plan = content_plan if isinstance(content_plan, dict) else {}
         generation_strategy = str(plan.get("generation_strategy") or "").strip().casefold()
         template_authority_mode = str(plan.get("template_authority_mode") or "").strip().casefold()
@@ -715,6 +759,8 @@ class PromptIntelligenceService:
 
     @staticmethod
     def _visual_plan_prompt_payload(value: Any) -> dict[str, Any]:
+        # Builds visual plan prompt from input value for provider prompt calls.
+        # The returned payload is the compact contract consumed by the next branch.
         plan = value if isinstance(value, dict) else {}
         return {
             "planning_family": str(plan.get("planning_family") or "").strip(),
@@ -732,6 +778,8 @@ class PromptIntelligenceService:
 
     @staticmethod
     def _compact_repair_text(value: Any, *, limit: int = 420) -> str:
+        # Compacts text from input value and limit for provider prompt calls.
+        # The main branch stays readable while this function handles the local edge case.
         text = " ".join(str(value or "").split())
         if len(text) <= limit:
             return text
@@ -739,6 +787,8 @@ class PromptIntelligenceService:
 
     @staticmethod
     def _compact_repair_list(value: Any, *, limit: int = 4, text_limit: int = 220) -> list[Any]:
+        # Compacts compact repair list from input value, limit, and text limit for provider prompt calls.
+        # The main branch stays readable while this function handles the local edge case.
         items = value if isinstance(value, list) else []
         compact: list[Any] = []
         for item in items[: max(0, limit)]:
@@ -754,6 +804,8 @@ class PromptIntelligenceService:
 
     @staticmethod
     def _compact_repair_mapping(value: Any, *, field_limit: int = 16, text_limit: int = 420) -> dict[str, Any]:
+        # Compacts mapping from input value, field limit, and text limit for provider prompt calls.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if not isinstance(value, dict):
             return {}
         compact: dict[str, Any] = {}
@@ -776,6 +828,8 @@ class PromptIntelligenceService:
 
     @staticmethod
     def _repair_issue_element_ids(validation_report: Any) -> set[str]:
+        # Repairs issue element ids from validation report for provider prompt calls.
+        # The helper owns a small rule that would distract from the surrounding flow.
         report = validation_report if isinstance(validation_report, dict) else {}
         ids: set[str] = set()
         for issue in report.get("issues") or []:
@@ -788,6 +842,8 @@ class PromptIntelligenceService:
 
     @staticmethod
     def _repair_issue_summary(validation_report: Any) -> dict[str, Any]:
+        # Repairs issue summary from validation report for provider prompt calls.
+        # It delegates shared cleanup to _drop_empty and _compact_repair_list before returning the cleaned value.
         report = validation_report if isinstance(validation_report, dict) else {}
         issues = []
         for issue in (report.get("issues") or [])[:16]:
@@ -822,6 +878,8 @@ class PromptIntelligenceService:
 
     @staticmethod
     def _compact_repair_element(element: Any) -> dict[str, Any]:
+        # Compacts element from element for provider prompt calls.
+        # The main branch stays readable while this function handles the local edge case.
         if not isinstance(element, dict):
             return {}
         style = element.get("style") if isinstance(element.get("style"), dict) else {}
@@ -857,6 +915,8 @@ class PromptIntelligenceService:
 
     @staticmethod
     def _compact_repair_scene_graph(current_scene_graph: Any, validation_report: Any) -> dict[str, Any]:
+        # Compacts scene graph from current scene graph and validation report for provider prompt calls.
+        # The helper owns a small rule that would distract from the surrounding flow.
         scene_graph = current_scene_graph if isinstance(current_scene_graph, dict) else {}
         target_ids = PromptIntelligenceService._repair_issue_element_ids(validation_report)
         elements = scene_graph.get("elements") if isinstance(scene_graph.get("elements"), list) else []
@@ -922,6 +982,8 @@ class PromptIntelligenceService:
 
     @staticmethod
     def _compact_repair_creative_decision(value: Any) -> dict[str, Any]:
+        # Compacts creative decision from input value for provider prompt calls.
+        # The main branch stays readable while this function handles the local edge case.
         decision = value if isinstance(value, dict) else {}
         return PromptIntelligenceService._drop_empty(
             {
@@ -948,6 +1010,8 @@ class PromptIntelligenceService:
 
     @staticmethod
     def _compact_repair_context_payload(compiled_context: Any) -> dict[str, Any]:
+        # Compacts context from compiled context for provider prompt calls.
+        # The helper owns a small rule that would distract from the surrounding flow.
         context = compiled_context if isinstance(compiled_context, dict) else {}
         return PromptIntelligenceService._drop_empty(
             {
@@ -994,6 +1058,8 @@ class PromptIntelligenceService:
         *,
         plan_name: str = "format_family_plan",
     ) -> str:
+        # Formats family rule block from plan name for provider prompt calls.
+        # The main branch stays readable while this function handles the local edge case.
         return " ".join(
             [
                 f"Treat {plan_name} as the authoritative structural contract for this content family.",
@@ -1011,6 +1077,8 @@ class PromptIntelligenceService:
         format_family_name: str = "format_family_plan",
         research_brief_name: str = "research_editorial_brief",
     ) -> str:
+        # Plans planning contract rule block from content plan name, visual plan name, and format family name for provider prompt calls.
+        # The helper owns a small rule that would distract from the surrounding flow.
         return " ".join(
             [
                 f"Treat {content_plan_name} and {visual_plan_name} as execution contracts, not optional hints.",
@@ -1054,6 +1122,8 @@ class PromptIntelligenceService:
         *,
         brief_name: str = "research_editorial_brief",
     ) -> str:
+        # Centralizes research editorial rule block from brief name for provider prompt calls.
+        # The helper owns a small rule that would distract from the surrounding flow.
         return " ".join(
             [
                 f"When {brief_name}.active is true, treat it as the authoritative analytical plan for research-heavy content.",
@@ -1084,6 +1154,8 @@ class PromptIntelligenceService:
 
     @staticmethod
     def _has_guide_scoped_client_quality_signals(content_format_brief: dict[str, Any]) -> bool:
+        # Checks guide scoped client quality signals from content format brief for provider prompt calls.
+        # The boolean result controls the nearby policy or validation branch.
         return any(
             [
                 str(content_format_brief.get("summary") or "").strip(),
@@ -1100,6 +1172,8 @@ class PromptIntelligenceService:
         *,
         brief_name: str = "content_format_brief",
     ) -> str:
+        # Checks client quality rule block from brief name for provider prompt calls.
+        # This keeps the allowed/blocked rule in one place.
         return " ".join(
             [
                 f"When {brief_name}.summary or {brief_name}.quality_priorities are present, treat them as client-approved quality guidance.",
@@ -1123,6 +1197,8 @@ class PromptIntelligenceService:
         prompt: str,
         content_format_brief: dict[str, Any],
     ) -> bool:
+        # Checks mistake carousel signals from prompt text and content format brief for provider prompt calls.
+        # This keeps the allowed/blocked rule in one place.
         if str(content_format_brief.get("format") or "").strip().casefold() != "carousel":
             return False
         return bool(cls.MISTAKE_CAROUSEL_SIGNAL_PATTERN.search(str(prompt or "")))
@@ -1133,6 +1209,8 @@ class PromptIntelligenceService:
         prompt_name: str,
         brief_name: str = "content_format_brief",
     ) -> str:
+        # Centralizes mistake carousel rule block from prompt name and brief name for provider prompt calls.
+        # The main branch stays readable while this function handles the local edge case.
         return " ".join(
             [
                 f"When {brief_name}.format is carousel and {prompt_name} clearly signals mistakes, pitfalls, errors, or what to avoid, switch into a mistake-teaching story structure.",
@@ -1152,6 +1230,8 @@ class PromptIntelligenceService:
 
     @staticmethod
     def _content_metadata_schema_block() -> str:
+        # Centralizes content metadata schema block for provider prompt calls.
+        # The main branch stays readable while this function handles the local edge case.
         return "\n".join(
             [
                 "- section_label: a short optional label or chip only when it adds clarity",
@@ -1188,6 +1268,8 @@ class PromptIntelligenceService:
 
     @staticmethod
     def _persuasion_metadata_rule_block() -> str:
+        # Centralizes persuasion metadata rule block for provider prompt calls.
+        # The helper owns a small rule that would distract from the surrounding flow.
         return " ".join(
             [
                 "Use hook_type to make the persuasion pattern explicit instead of hiding it inside generic copy.",
@@ -1201,6 +1283,8 @@ class PromptIntelligenceService:
 
     @staticmethod
     def _strategic_content_quality_rule_block() -> str:
+        # Checks strategic content quality rule block for provider prompt calls.
+        # The boolean result controls the nearby policy or validation branch.
         return " ".join(
             [
                 "Strategic content quality rules: think like a senior LinkedIn/Instagram campaign strategist and finance-education copy lead, not a mechanical summarizer.",
@@ -1226,6 +1310,8 @@ class PromptIntelligenceService:
 
     @staticmethod
     def _data_visualization_rule_block() -> str:
+        # Centralizes visualization rule block for provider prompt calls.
+        # The helper owns a small rule that would distract from the surrounding flow.
         return " ".join(
             [
                 "Data visualization rules: tables, tabular sections, charts, graphs, dashboards, matrices, comparison grids, timelines, scorecards, and metric modules are content instruments, not decoration.",
@@ -1241,6 +1327,8 @@ class PromptIntelligenceService:
 
     @staticmethod
     def _logo_overlay_rule_block() -> str:
+        # Centralizes logo overlay rule block for provider prompt calls.
+        # The main branch stays readable while this function handles the local edge case.
         return " ".join(
             [
                 "Treat the corner logo placement as a reserved overlay zone for the exact stored brand asset, not as generated artwork.",
@@ -1260,6 +1348,8 @@ class PromptIntelligenceService:
         fallback_sources: str,
         output_targets: str | None = None,
     ) -> str:
+        # Centralizes visual grounding rule block from brief name, fallback sources, and output targets for provider prompt calls.
+        # The helper owns a small rule that would distract from the surrounding flow.
         rules = [
             f"Always follow {brief_name}.grounding_mode and {brief_name}.grounding_strength.",
             f"Treat any {brief_name} item with role=fallback as lower priority than primary or supporting evidence.",
@@ -1300,6 +1390,8 @@ class PromptIntelligenceService:
         compiled_context: dict[str, Any],
         studio_panel: dict[str, Any],
     ) -> PromptEnvelope:
+        # Creates the main structured-copy prompt from request intent, compiled context, brand rules, and planning contracts.
+        # The active text provider returns JSON that is parsed into StructuredTextPayload.
         brand_copy_brief = compiled_context.get("brand_copy_brief", {}) or {}
         brand_visual_brief = self._brand_visual_prompt_payload(compiled_context.get("brand_visual_brief"))
         audience_brief = compiled_context.get("audience_brief", {}) or {}
@@ -1317,6 +1409,7 @@ class PromptIntelligenceService:
         format_family_plan = self._format_family_plan_prompt_payload(compiled_context.get("format_family_plan"))
         content_plan = self._content_plan_prompt_payload(compiled_context.get("content_plan"))
         visual_plan = self._visual_plan_prompt_payload(compiled_context.get("visual_plan"))
+        # These planning briefs are where common copy generation becomes format-aware: static panel, carousel slides, or infographic sections.
         template_sample_authority_rules = self._template_sample_authority_rule_block(content_plan)
         prompt_intelligence_rules = self._prompt_intelligence_rule_block()
         persona_depth_rules = self._persona_depth_rule_block()
@@ -1342,6 +1435,7 @@ class PromptIntelligenceService:
         platform_preset = studio_panel.get("platform_preset")
         format_name = studio_panel.get("format")
         follow_up_mode = session_brief.get("follow_up_mode")
+        # Visual grounding rules tell the model when to use approved evidence and when to ignore suppressed template noise.
         visual_grounding_rules = self._visual_grounding_rule_block(
             fallback_sources="the approved brand visual brief, approved copy direction, the user's topical anchor, and render constraints",
             output_targets="metadata.visual_direction, metadata.design_style, and metadata.image_prompt",
@@ -1477,6 +1571,7 @@ class PromptIntelligenceService:
 
         Produce concise, brand-aligned copy that is safe for rendering.
         """.strip()
+        # Returns the provider envelope, not generated copy; the provider response is normalized later into StructuredTextPayload.
         return PromptEnvelope(system=system, user=user)
 
     def compose_creative_planning_envelope(
@@ -1488,10 +1583,13 @@ class PromptIntelligenceService:
         validation_report: dict[str, Any] | None = None,
         replan_note: str | None = None,
     ) -> PromptEnvelope:
+        # Creates the prompt that asks the LLM for creative direction, layout mode, template adaptation, and asset strategy.
+        # The orchestrator converts the returned JSON into CreativeDecisionPayload before layout and rendering branches continue.
         brand_copy_brief = compiled_context.get("brand_copy_brief", {}) or {}
         brand_visual_brief = self._brand_visual_prompt_payload(compiled_context.get("brand_visual_brief"))
         audience_brief = compiled_context.get("audience_brief", {}) or {}
         visual_knowledge_brief = self._visual_knowledge_prompt_payload(compiled_context.get("visual_knowledge_brief"))
+        # Creative planning returns layout and scene intent, so format rules here decide whether later flow is static, carousel, or infographic.
         visual_grounding_rules = self._visual_grounding_rule_block(
             fallback_sources=(
                 "the approved brand visual brief, the user's topical anchor, allowed template/reference structure cues, "
@@ -1512,9 +1610,11 @@ class PromptIntelligenceService:
         format_family_plan = self._format_family_plan_prompt_payload(compiled_context.get("format_family_plan"))
         content_plan = self._content_plan_prompt_payload(compiled_context.get("content_plan"))
         visual_plan = self._visual_plan_prompt_payload(compiled_context.get("visual_plan"))
+        # These compact prompt payloads are the same facts the orchestrator has already compiled; this method only frames them for planning.
         prompt_intelligence_rules = self._prompt_intelligence_rule_block(
             output_targets="headline, body, CTA, supporting copy, proof points, and other text-bearing plan fields"
         )
+        # Creative planning receives the same compact briefs as copy generation, but returns layout and scene decisions too.
         persona_depth_rules = self._persona_depth_rule_block()
         audience_research_rules = self._audience_research_rule_block()
         research_editorial_rules = self._research_editorial_rule_block()
@@ -1538,6 +1638,7 @@ class PromptIntelligenceService:
         platform_preset = studio_panel.get("platform_preset")
         format_name = studio_panel.get("format")
 
+        # The system prompt defines the JSON contract that downstream payload normalizers expect from the LLM.
         system = f"""
         You are Violyt's AI creative planning engine.
         You are the authoritative decision-maker for content structure, template use, layout synthesis, asset selection, and visual composition.
@@ -1661,6 +1762,7 @@ class PromptIntelligenceService:
         Do not return markdown or explanations outside JSON.
         """.strip()
 
+        # The user message carries all runtime context as JSON-like blocks so the model can plan without hidden state.
         user = f"""
         User prompt:
         {user_prompt}
@@ -1725,6 +1827,7 @@ class PromptIntelligenceService:
         Replan instruction:
         {replan_note or ""}
         """.strip()
+        # Returns the prompt used for scene-graph planning; the orchestrator consumes its JSON as copy, creative decision, and scene graph.
         return PromptEnvelope(system=system, user=user)
 
     def compose_message_strategy_envelope(
@@ -1734,6 +1837,8 @@ class PromptIntelligenceService:
         compiled_context: dict[str, Any],
         studio_panel: dict[str, Any],
     ) -> PromptEnvelope:
+        # Centralizes compose message strategy envelope from user prompt, compiled context, and studio settings for provider prompt calls.
+        # The helper owns a small rule that would distract from the surrounding flow.
         brand_copy_brief = compiled_context.get("brand_copy_brief", {}) or {}
         audience_brief = compiled_context.get("audience_brief", {}) or {}
         objective_brief = compiled_context.get("objective_brief", {}) or {}
@@ -1855,6 +1960,8 @@ class PromptIntelligenceService:
         validation_report: dict[str, Any] | None = None,
         replan_note: str | None = None,
     ) -> PromptEnvelope:
+        # Centralizes compose image led social envelope from user prompt, compiled context, and studio settings for provider prompt calls.
+        # The main branch stays readable while this function handles the local edge case.
         brand_copy_brief = compiled_context.get("brand_copy_brief", {}) or {}
         brand_visual_brief = self._brand_visual_prompt_payload(compiled_context.get("brand_visual_brief"))
         audience_brief = compiled_context.get("audience_brief", {}) or {}
@@ -1877,6 +1984,7 @@ class PromptIntelligenceService:
         format_family_plan = self._format_family_plan_prompt_payload(compiled_context.get("format_family_plan"))
         content_plan = self._content_plan_prompt_payload(compiled_context.get("content_plan"))
         visual_plan = self._visual_plan_prompt_payload(compiled_context.get("visual_plan"))
+        # Image-led prompts are used mainly by static/infographic social ads where the image model composes the final creative.
         template_sample_authority_rules = self._template_sample_authority_rule_block(content_plan)
         prompt_intelligence_rules = self._prompt_intelligence_rule_block(
             output_targets="headline, body, CTA, supporting copy, proof points, and other overlay text fields"
@@ -2088,6 +2196,7 @@ class PromptIntelligenceService:
         Replan instruction:
         {replan_note or ""}
         """.strip()
+        # Returns the image-led planning envelope; static/infographic final-render branches consume its JSON most often.
         return PromptEnvelope(system=system, user=user)
 
     def compose_scene_graph_repair_envelope(
@@ -2101,6 +2210,8 @@ class PromptIntelligenceService:
         validation_report: dict[str, Any],
         repair_quality_history: list[float] | None = None,
     ) -> PromptEnvelope:
+        # Creates a focused repair prompt containing validation issues and the compact scene graph that needs correction.
+        # The orchestrator sends this only after validation finds repairable geometry, layering, or placement issues.
         prompt_intelligence_brief = self._prompt_intelligence_prompt_payload(compiled_context.get("prompt_intelligence_brief"))
         content_format_brief = self._content_format_prompt_payload(compiled_context.get("content_format_brief"))
         research_editorial_brief = self._research_editorial_prompt_payload(compiled_context.get("research_editorial_brief"))
@@ -2164,6 +2275,7 @@ class PromptIntelligenceService:
         """.strip()
         repair_context_payload = self._compact_repair_context_payload(compiled_context)
         compact_creative_decision = self._compact_repair_creative_decision(creative_decision)
+        # Repair prompts are intentionally compact so the model fixes failing geometry instead of re-planning the whole design.
         compact_scene_graph = self._compact_repair_scene_graph(current_scene_graph, validation_report)
         compact_validation_report = self._repair_issue_summary(validation_report)
         user = f"""
@@ -2221,6 +2333,8 @@ class PromptIntelligenceService:
         targeted_fields: list[str] | None = None,
         revision_scope: dict[str, Any] | None = None,
     ) -> PromptEnvelope:
+        # Centralizes compose rewrite envelope from original prompt, rewrite instruction, and current payload for provider prompt calls.
+        # The helper owns a small rule that would distract from the surrounding flow.
         brand_copy_brief = compiled_context.get("brand_copy_brief", {}) or {}
         audience_brief = compiled_context.get("audience_brief", {}) or {}
         objective_brief = compiled_context.get("objective_brief", {}) or {}
@@ -2352,6 +2466,8 @@ class PromptIntelligenceService:
 
     @staticmethod
     def _knowledge_to_sections(retrieved_knowledge: dict[str, list[dict[str, Any]]]) -> dict[str, list[str]]:
+        # Centralizes knowledge sections from retrieved knowledge for provider prompt calls.
+        # The main branch stays readable while this function handles the local edge case.
         sections: dict[str, list[str]] = {}
         for channel, items in retrieved_knowledge.items():
             sections[channel] = [item["content"] for item in items]

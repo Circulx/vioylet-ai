@@ -7,7 +7,12 @@ from typing import Any
 from app.core.config import get_settings
 from app.utils.palette_roles import derive_palette_roles
 
+# Context compilation is the pipeline's narrowing step: raw brand, RAG, memory, research, and template evidence become prompt-safe briefs.
+# Anything added here can affect every later LLM call, so the code favors compact contracts over passing raw records downstream.
+
 class ContextCompilerService:
+    # Compresses brand, research, retrieval, reference, memory, and visual evidence into prompt-safe context.
+    # PromptIntelligenceService consumes this compact context instead of sending raw database or OCR records to the LLM.
     DEFAULT_RESEARCH_FACT_LIMIT = 6
     MAX_DATA_SURFACE_FACT_LIMIT = 10
     MAX_RESEARCH_SOURCE_PACK_LIMIT = 12
@@ -27,6 +32,7 @@ class ContextCompilerService:
     MAX_VISUAL_KNOWLEDGE_ITEMS = 5
     MAX_KNOWLEDGE_CHARS = 220
     MIN_KNOWLEDGE_SIGNAL_SCORE = 6
+    # Visual grounding ranks which asset channels can influence image/style prompts and which ones stay as weak background evidence.
     VISUAL_KNOWLEDGE_PRIORITY = (
         "visual_identity",
         "mood_board",
@@ -45,6 +51,7 @@ class ContextCompilerService:
     }
     VISUAL_BLOCKED_DOCUMENT_TYPES = {"structured_template_copy"}
     VISUAL_GROUNDING_GATE_VERSION = "v3"
+    # These thresholds prevent low-confidence OCR or weak visual analysis from becoming authoritative style guidance.
     VISUAL_GROUNDING_THRESHOLD_KEYS = (
         "min_analysis_quality_score",
         "min_summary_quality_score",
@@ -117,6 +124,8 @@ class ContextCompilerService:
 
     @staticmethod
     def _repair_encoding_noise(text: str) -> str:
+        # Repairs encoding noise from text for LLM prompt context.
+        # The main branch stays readable while this function handles the local edge case.
         if "Ã" not in text and "â" not in text:
             return text
         try:
@@ -127,6 +136,8 @@ class ContextCompilerService:
 
     @staticmethod
     def _normalize_text(value: Any, limit: int | None = None) -> str:
+        # Normalizes text from input value and limit for LLM prompt context.
+        # It delegates shared cleanup to _repair_encoding_noise before returning the cleaned value.
         if value is None:
             return ""
         if isinstance(value, str):
@@ -148,6 +159,8 @@ class ContextCompilerService:
 
     @staticmethod
     def _looks_like_weak_sequence_hint(text: str) -> bool:
+        # Detects placeholder layout labels and numeric fragments that should not guide carousel sequencing.
+        # Filtering these early prevents weak reference metadata from being promoted into prompt context.
         value = ContextCompilerService._normalize_text(text)
         if not value:
             return True
@@ -163,6 +176,8 @@ class ContextCompilerService:
 
     @staticmethod
     def _dedupe_items(items: list[str], limit: int) -> list[str]:
+        # Deduplicates dedupe items from items and limit for LLM prompt context.
+        # It delegates shared cleanup to _normalize_text before returning the cleaned value.
         cleaned: list[str] = []
         seen: set[str] = set()
         for item in items:
@@ -180,6 +195,8 @@ class ContextCompilerService:
 
     @staticmethod
     def _truncate_text_on_word_boundary(value: Any, limit: int) -> str:
+        # Shortens long text without cutting through useful words when a clean boundary is available.
+        # Compiled context uses this to preserve readable evidence while staying inside prompt-size limits.
         text = ContextCompilerService._normalize_text(value)
         if not text or len(text) <= limit:
             return text
@@ -191,10 +208,14 @@ class ContextCompilerService:
 
     @staticmethod
     def _summary_fragment_key(text: str) -> str:
+        # Summarizes summary fragment key from text for LLM prompt context.
+        # The helper owns a small rule that would distract from the surrounding flow.
         return re.sub(r"[.!?]+$", "", text.strip()).casefold()
 
     @classmethod
     def _compose_summary(cls, values: list[Any], *, item_limit: int, summary_limit: int, max_items: int) -> str:
+        # Composes compose summary from values, item limit, and summary limit for LLM prompt context.
+        # It calls _summary_fragment_key and _truncate_text_on_word_boundary while assembling the payload or prompt text.
         sentences: list[str] = []
         seen: set[str] = set()
         for value in values:
@@ -218,6 +239,8 @@ class ContextCompilerService:
 
     @classmethod
     def _normalized_text_list(cls, value: Any, *, item_limit: int, limit: int) -> list[str]:
+        # Normalizes text from input value, item limit, and limit for LLM prompt context.
+        # It delegates shared cleanup to _dedupe_items and _truncate_text_on_word_boundary before returning the cleaned value.
         raw_items = value if isinstance(value, (list, tuple, set)) else [value]
         normalized: list[str] = []
         for item in raw_items:
@@ -228,6 +251,8 @@ class ContextCompilerService:
 
     @classmethod
     def _sentence_text_list(cls, value: Any, *, item_limit: int, limit: int) -> list[str]:
+        # Extracts sentence text from input value, item limit, and limit for LLM prompt context.
+        # It calls _dedupe_items and _normalize_text to turn raw evidence into the structured signal the caller needs.
         raw_items = value if isinstance(value, (list, tuple, set)) else [value]
         sentences: list[str] = []
         for item in raw_items:
@@ -246,10 +271,14 @@ class ContextCompilerService:
 
     @classmethod
     def _persona_content_behavior_items(cls, value: Any, *, limit: int = 4) -> list[str]:
+        # Extracts persona content behavior items from input value and limit for LLM prompt context.
+        # It calls _value_text and _summary_fragment_key to turn raw evidence into the structured signal the caller needs.
         items: list[str] = []
         seen: set[str] = set()
 
         def _append(text: str) -> None:
+            # Centralizes append from text for LLM prompt context.
+            # The main branch stays readable while this function handles the local edge case.
             normalized = cls._normalize_text(text, limit=96).strip(" ,.;:-")
             if not normalized:
                 return
@@ -260,6 +289,8 @@ class ContextCompilerService:
             items.append(normalized)
 
         def _value_text(candidate: Any) -> str:
+            # Extracts text from candidate for LLM prompt context.
+            # It calls _normalize_text to turn raw evidence into the structured signal the caller needs.
             if candidate in (None, "", [], (), {}):
                 return ""
             if isinstance(candidate, bool):
@@ -364,6 +395,8 @@ class ContextCompilerService:
 
     @classmethod
     def _persona_summary(cls, persona_context: dict[str, Any]) -> str:
+        # Builds persona summary from persona context for LLM prompt context.
+        # It calls _normalized_text_list and _persona_content_behavior_items while assembling the payload or prompt text.
         if not isinstance(persona_context, dict):
             return ""
         goals = cls._normalized_text_list(persona_context.get("audience_goals"), item_limit=88, limit=2)
@@ -388,6 +421,8 @@ class ContextCompilerService:
 
     @classmethod
     def _audience_research_items(cls, audience: dict[str, Any]) -> list[str]:
+        # Extracts audience research items from audience for LLM prompt context.
+        # It calls _dedupe_items and _sentence_text_list to turn raw evidence into the structured signal the caller needs.
         if not isinstance(audience, dict):
             return []
         lanes: dict[str, list[str]] = {
@@ -432,6 +467,8 @@ class ContextCompilerService:
         positions = {lane_name: 0 for lane_name in lanes}
 
         def _append_from_lane(lane_name: str) -> bool:
+            # Centralizes append lane from lane name for LLM prompt context.
+            # The helper owns a small rule that would distract from the surrounding flow.
             lane = lanes.get(lane_name, [])
             index = positions[lane_name]
             while index < len(lane):
@@ -487,6 +524,8 @@ class ContextCompilerService:
 
     @classmethod
     def _audience_research_priority(cls, field: Any) -> int:
+        # Selects audience research priority from field for LLM prompt context.
+        # Centralizing this choice keeps reference and asset selection deterministic.
         normalized = str(field or "").strip().casefold()
         try:
             return cls.AUDIENCE_RESEARCH_PRIORITY_FIELDS.index(normalized)
@@ -495,6 +534,8 @@ class ContextCompilerService:
 
     @staticmethod
     def _hex_to_rgb(value: str) -> tuple[int, int, int] | None:
+        # Converts hex rgb from input value for LLM prompt context.
+        # The main branch stays readable while this function handles the local edge case.
         text = str(value or "").strip()
         if not re.fullmatch(r"#?[0-9a-fA-F]{6}", text):
             return None
@@ -503,10 +544,14 @@ class ContextCompilerService:
 
     @classmethod
     def _derived_palette_roles(cls, visual_identity: dict[str, Any]) -> dict[str, str]:
+        # Derives derived palette roles from visual identity for LLM prompt context.
+        # This turns source evidence into a stable planning hint.
         return derive_palette_roles(visual_identity)
 
     @classmethod
     def _clean_knowledge_content(cls, value: Any, limit: int | None = None) -> str:
+        # Centralizes clean knowledge content from input value and limit for LLM prompt context.
+        # The helper owns a small rule that would distract from the surrounding flow.
         text = cls._normalize_text(value)
         if not text:
             return ""
@@ -526,6 +571,8 @@ class ContextCompilerService:
 
     @classmethod
     def _knowledge_signal_score(cls, value: Any) -> int:
+        # Centralizes knowledge signal from input value for LLM prompt context.
+        # The main branch stays readable while this function handles the local edge case.
         text = cls._normalize_text(value)
         if not text:
             return -999
@@ -555,11 +602,15 @@ class ContextCompilerService:
 
     @staticmethod
     def _entry_metadata(entry: dict[str, Any]) -> dict[str, Any]:
+        # Centralizes entry metadata from entry for LLM prompt context.
+        # The helper owns a small rule that would distract from the surrounding flow.
         metadata = entry.get("metadata")
         return metadata if isinstance(metadata, dict) else {}
 
     @staticmethod
     def _metadata_float(metadata: dict[str, Any], key: str) -> float:
+        # Centralizes metadata float from metadata and key for LLM prompt context.
+        # The main branch stays readable while this function handles the local edge case.
         try:
             return float(metadata.get(key) or 0.0)
         except (TypeError, ValueError):
@@ -567,6 +618,8 @@ class ContextCompilerService:
 
     @staticmethod
     def _metadata_int(metadata: dict[str, Any], key: str) -> int:
+        # Centralizes metadata int from metadata and key for LLM prompt context.
+        # The helper owns a small rule that would distract from the surrounding flow.
         try:
             return int(metadata.get(key) or 0)
         except (TypeError, ValueError):
@@ -574,6 +627,8 @@ class ContextCompilerService:
 
     @staticmethod
     def _coerce_non_negative_int(value: Any) -> int:
+        # Coerces non negative int from input value for LLM prompt context.
+        # The caller receives one predictable shape even when upstream metadata is loose.
         try:
             return max(int(value or 0), 0)
         except (TypeError, ValueError):
@@ -581,6 +636,8 @@ class ContextCompilerService:
 
     @classmethod
     def _visual_grounding_runtime_config(cls) -> dict[str, Any]:
+        # Centralizes visual grounding runtime config for LLM prompt context.
+        # The main branch stays readable while this function handles the local edge case.
         settings = get_settings()
         thresholds = {
             channel: dict(values)
@@ -625,6 +682,8 @@ class ContextCompilerService:
 
     @staticmethod
     def _has_visual_quality_metadata(metadata: dict[str, Any]) -> bool:
+        # Checks visual quality metadata from metadata for LLM prompt context.
+        # This keeps the allowed/blocked rule in one place.
         return any(
             key in metadata
             for key in (
@@ -638,6 +697,8 @@ class ContextCompilerService:
 
     @classmethod
     def _low_quality_exclusion_reason(cls, metadata: dict[str, Any]) -> str:
+        # Checks low quality exclusion reason from metadata for LLM prompt context.
+        # It reuses _metadata_float so related checks follow the same rule.
         document_type = str(metadata.get("document_type") or "").strip().lower()
         if document_type != "raw_ocr":
             return ""
@@ -653,10 +714,14 @@ class ContextCompilerService:
 
     @classmethod
     def _should_exclude_low_quality_entry(cls, metadata: dict[str, Any]) -> bool:
+        # Checks exclude low quality entry from metadata for LLM prompt context.
+        # It reuses _low_quality_exclusion_reason so related checks follow the same rule.
         return bool(cls._low_quality_exclusion_reason(metadata))
 
     @classmethod
     def _visual_channel_gate(cls, channel: str, metadata: dict[str, Any]) -> tuple[bool, str]:
+        # Centralizes visual channel gate from channel and metadata for LLM prompt context.
+        # The helper owns a small rule that would distract from the surrounding flow.
         normalized_channel = cls._normalize_text(channel, limit=32).casefold()
         if not cls._visual_grounding_allowed(normalized_channel, metadata):
             return False, "visual_grounding_blocked"
@@ -703,6 +768,8 @@ class ContextCompilerService:
 
     @classmethod
     def _knowledge_entry_rank(cls, entry: dict[str, Any], content: str, text_signal_score: int | None = None) -> float:
+        # Selects knowledge entry rank from entry, generated content, and text signal score for LLM prompt context.
+        # It reuses _entry_metadata and _knowledge_signal_score so related checks follow the same rule.
         metadata = cls._entry_metadata(entry)
         text_signal = float(text_signal_score if text_signal_score is not None else cls._knowledge_signal_score(content))
         raw_distance = entry.get("score")
@@ -710,6 +777,7 @@ class ContextCompilerService:
             distance = max(float(raw_distance), 0.0) if raw_distance is not None else None
         except (TypeError, ValueError):
             distance = None
+        # Retrieval distance is useful, but it is only one vote beside quality, validation, and structured-signal checks.
         retrieval_bonus = (18.0 / (1.0 + distance)) if distance is not None else 0.0
         validation_state = str(metadata.get("validation_state") or "").strip().lower()
         validation_bonus = {
@@ -786,6 +854,7 @@ class ContextCompilerService:
         promotional_penalty = min(promotional_line_ratio, 1.0) * 10.0
         template_copy_penalty = min(template_copy_line_count, 4.0) * 0.35
         raw_ocr_penalty = 3.5 if document_type == "raw_ocr" and analysis_quality_score < 6.0 else 0.0
+        # The final score intentionally rewards corroborated visual evidence and pushes down noisy OCR/template copy.
         return (
             text_signal
             + retrieval_bonus
@@ -814,6 +883,8 @@ class ContextCompilerService:
         *,
         per_channel_limit: int,
     ) -> list[dict[str, Any]]:
+        # Ranks ranked knowledge records from entries and per channel limit for LLM prompt context.
+        # It reuses _clean_knowledge_content and _knowledge_signal_score so related checks follow the same rule.
         ranked_entries: list[dict[str, Any]] = []
         seen_content: set[str] = set()
         seen_sources: set[str] = set()
@@ -830,6 +901,7 @@ class ContextCompilerService:
             metadata = cls._entry_metadata(entry)
             if cls._should_exclude_low_quality_entry(metadata):
                 continue
+            # Keep one strong record per source so a single noisy asset cannot dominate the compiled prompt.
             source_key = cls._normalize_text(
                 metadata.get("source_id") or metadata.get("asset_id") or metadata.get("filename"),
                 limit=96,
@@ -867,6 +939,8 @@ class ContextCompilerService:
         *,
         per_channel_limit: int,
     ) -> list[str]:
+        # Ranks ranked knowledge entries from entries and per channel limit for LLM prompt context.
+        # It reuses _ranked_knowledge_records so related checks follow the same rule.
         return [
             str(item.get("content") or "")
             for item in cls._ranked_knowledge_records(entries, per_channel_limit=per_channel_limit)
@@ -880,6 +954,8 @@ class ContextCompilerService:
         *,
         per_channel_limit: int,
     ) -> tuple[list[dict[str, Any]], int, dict[str, int]]:
+        # Ranks ranked visual knowledge candidates from entries and per channel limit for LLM prompt context.
+        # It reuses _clean_knowledge_content and _knowledge_signal_score so related checks follow the same rule.
         ranked_entries: list[dict[str, Any]] = []
         seen_content: set[str] = set()
         seen_sources: set[str] = set()
@@ -899,6 +975,7 @@ class ContextCompilerService:
             candidate_count += 1
             early_reason = cls._low_quality_exclusion_reason(metadata)
             if early_reason:
+                # Rejection reasons are surfaced later so abstention is explainable instead of looking random.
                 rejection_reasons[early_reason] = int(rejection_reasons.get(early_reason) or 0) + 1
                 continue
             source_key = cls._normalize_text(
@@ -933,6 +1010,8 @@ class ContextCompilerService:
 
     @classmethod
     def _visual_grounding_role(cls, channel: str) -> str:
+        # Centralizes visual grounding role from channel for LLM prompt context.
+        # The main branch stays readable while this function handles the local edge case.
         normalized = cls._normalize_text(channel, limit=32).casefold()
         if normalized in cls.VISUAL_PRIMARY_CHANNELS:
             return "primary"
@@ -942,15 +1021,20 @@ class ContextCompilerService:
 
     @classmethod
     def _visual_grounding_allowed(cls, channel: str, metadata: dict[str, Any]) -> bool:
+        # Checks visual grounding allowed from channel and metadata for LLM prompt context.
+        # It reuses _normalize_text so related checks follow the same rule.
         if metadata.get("visual_grounding_allowed") is False:
             return False
         document_type = cls._normalize_text(metadata.get("document_type"), limit=48).casefold()
         if document_type in cls.VISUAL_BLOCKED_DOCUMENT_TYPES:
+            # Structured template copy describes text slots, not reusable visual style, so it stays out of grounding.
             return False
         return bool(cls._normalize_text(channel, limit=32))
 
     @classmethod
     def _visual_grounding_strength(cls, items: list[dict[str, Any]]) -> str:
+        # Centralizes visual grounding strength from items for LLM prompt context.
+        # The helper owns a small rule that would distract from the surrounding flow.
         channels = {
             cls._normalize_text(item.get("channel"), limit=32).casefold()
             for item in items
@@ -966,6 +1050,8 @@ class ContextCompilerService:
 
     @classmethod
     def _visual_knowledge_summary(cls, items: list[dict[str, Any]]) -> str:
+        # Builds visual knowledge summary from items for LLM prompt context.
+        # It calls _normalize_text while assembling the payload or prompt text.
         parts = [
             f"{cls._normalize_text(item.get('channel'), limit=32)}: {cls._normalize_text(item.get('content'), limit=180)}"
             for item in items[:4]
@@ -977,6 +1063,8 @@ class ContextCompilerService:
 
     @classmethod
     def _normalize_visual_rejection_reasons(cls, value: Any) -> dict[str, int]:
+        # Normalizes visual rejection reasons from input value for LLM prompt context.
+        # It delegates shared cleanup to _normalize_text before returning the cleaned value.
         reasons: dict[str, int] = {}
         if not isinstance(value, dict):
             return reasons
@@ -1003,6 +1091,8 @@ class ContextCompilerService:
         rank_score: Any = 0.0,
         role: str | None = None,
     ) -> dict[str, Any]:
+        # Extracts visual brief item from channel, generated content, and metadata for LLM prompt context.
+        # It calls _normalize_text and _clean_knowledge_content to turn raw evidence into the structured signal the caller needs.
         normalized_channel = cls._normalize_text(channel, limit=32).casefold()
         source_id = cls._normalize_text(
             metadata.get("source_id") or metadata.get("asset_id") or metadata.get("filename"),
@@ -1029,6 +1119,8 @@ class ContextCompilerService:
         overflow: list[dict[str, Any]] | None = None,
         rejection_reasons: dict[str, int] | None = None,
     ) -> tuple[list[dict[str, Any]], bool, dict[str, int]]:
+        # Selects visual brief items from grouped, overflow, and rejection reasons for LLM prompt context.
+        # It reuses _normalize_visual_rejection_reasons and _normalize_text so related checks follow the same rule.
         rejection_counts = dict(rejection_reasons or {})
         grouped_items = {
             cls._normalize_text(channel, limit=32).casefold(): [
@@ -1088,6 +1180,8 @@ class ContextCompilerService:
         candidate_count: int,
         rejection_reasons: dict[str, int],
     ) -> str:
+        # Centralizes visual abstention reason from items, candidate count, and rejection reasons for LLM prompt context.
+        # The main branch stays readable while this function handles the local edge case.
         if items:
             return ""
         if candidate_count <= 0:
@@ -1103,6 +1197,8 @@ class ContextCompilerService:
 
     @classmethod
     def _research_editorial_brief(cls, value: Any) -> dict[str, Any]:
+        # Centralizes research editorial brief from input value for LLM prompt context.
+        # The main branch stays readable while this function handles the local edge case.
         brief = value if isinstance(value, dict) else {}
         fact_model = brief.get("fact_model") if isinstance(brief.get("fact_model"), dict) else {}
         raw_fact_limit = cls._coerce_non_negative_int(brief.get("fact_limit"))
@@ -1244,6 +1340,8 @@ class ContextCompilerService:
 
     @classmethod
     def _format_family_plan(cls, value: Any) -> dict[str, Any]:
+        # Formats family plan from input value for LLM prompt context.
+        # It calls _normalize_text and _normalized_text_list while assembling the payload or prompt text.
         plan = value if isinstance(value, dict) else {}
         return {
             "family": cls._normalize_text(plan.get("family"), limit=32),
@@ -1265,6 +1363,8 @@ class ContextCompilerService:
 
     @classmethod
     def _content_plan(cls, value: Any) -> dict[str, Any]:
+        # Builds content plan from input value for LLM prompt context.
+        # It calls _normalize_text and _normalized_text_list while assembling the payload or prompt text.
         plan = value if isinstance(value, dict) else {}
         format_family = cls._normalize_text(plan.get("format_family"), limit=32)
         metadata_fields = cls._normalized_text_list(plan.get("metadata_fields"), item_limit=64, limit=12)
@@ -1376,6 +1476,8 @@ class ContextCompilerService:
 
     @classmethod
     def _visual_plan(cls, value: Any) -> dict[str, Any]:
+        # Builds visual plan from input value for LLM prompt context.
+        # It calls _normalize_text while assembling the payload or prompt text.
         plan = value if isinstance(value, dict) else {}
         format_family = cls._normalize_text(plan.get("format_family"), limit=32)
         preferred_slide_count = int(plan.get("preferred_slide_count") or 0) or None
@@ -1403,6 +1505,8 @@ class ContextCompilerService:
 
     @classmethod
     def _reference_asset_brief_item(cls, asset: dict[str, Any]) -> dict[str, Any]:
+        # Extracts reference asset brief item from asset record for LLM prompt context.
+        # It calls _normalized_text_list and _compact_sample_page_blueprint to turn raw evidence into the structured signal the caller needs.
         metadata = asset.get("metadata") if isinstance(asset.get("metadata"), dict) else {}
         structural_cues = cls._normalized_text_list(
             metadata.get("structural_cues")
@@ -1482,6 +1586,8 @@ class ContextCompilerService:
 
     @classmethod
     def _extract_detailed_visual_context(cls, items: list[dict[str, Any]]) -> dict[str, Any]:
+        # Extracts detailed visual context from items for LLM prompt context.
+        # Later planning can reuse the structured value instead of scanning the source again.
         """🔥 PHASE 4: Extract rich visual context from items metadata"""
         context = {
             "layout_structures": [],
@@ -1539,6 +1645,8 @@ class ContextCompilerService:
 
     @classmethod
     def _compact_layout_dna(cls, value: Any, *, zone_limit: int = 8) -> dict[str, Any]:
+        # Compacts layout dna from input value and zone limit for LLM prompt context.
+        # The helper owns a small rule that would distract from the surrounding flow.
         layout_dna = value if isinstance(value, dict) else {}
         zones = layout_dna.get("zones") if isinstance(layout_dna.get("zones"), dict) else {}
         zone_list = layout_dna.get("zones") if isinstance(layout_dna.get("zones"), list) else []
@@ -1546,6 +1654,8 @@ class ContextCompilerService:
         compact_zones: list[dict[str, Any]] = []
 
         def _append_zone(candidate: dict[str, Any]) -> None:
+            # Measures append zone from candidate for LLM prompt context.
+            # It calls _normalize_text to turn raw evidence into the structured signal the caller needs.
             role = cls._normalize_text(candidate.get("role"), limit=32)
             if not role:
                 return
@@ -1614,6 +1724,8 @@ class ContextCompilerService:
 
     @classmethod
     def _compact_zone_boxes(cls, value: Any, *, zone_limit: int = 8) -> list[dict[str, Any]]:
+        # Compacts zone boxes from input value and zone limit for LLM prompt context.
+        # The main branch stays readable while this function handles the local edge case.
         zone_map = cls._compact_layout_dna(value, zone_limit=zone_limit)
         zone_boxes: list[dict[str, Any]] = []
         for zone in zone_map.get("zones", []):
@@ -1646,6 +1758,8 @@ class ContextCompilerService:
 
     @classmethod
     def _compact_visual_craft_dna(cls, value: Any) -> dict[str, Any]:
+        # Compacts visual craft dna from input value for LLM prompt context.
+        # The main branch stays readable while this function handles the local edge case.
         dna = value if isinstance(value, dict) else {}
         return {
             "depth_style": cls._normalize_text(dna.get("depth_style"), limit=32),
@@ -1658,6 +1772,8 @@ class ContextCompilerService:
 
     @classmethod
     def _compact_composition_logic_dna(cls, value: Any) -> dict[str, Any]:
+        # Compacts composition logic dna from input value for LLM prompt context.
+        # The helper owns a small rule that would distract from the surrounding flow.
         dna = value if isinstance(value, dict) else {}
         return {
             "balance": cls._normalize_text(dna.get("balance"), limit=32),
@@ -1669,6 +1785,8 @@ class ContextCompilerService:
 
     @classmethod
     def _compact_subject_semantics_dna(cls, value: Any) -> dict[str, Any]:
+        # Compacts subject semantics dna from input value for LLM prompt context.
+        # The main branch stays readable while this function handles the local edge case.
         dna = value if isinstance(value, dict) else {}
         return {
             "scene_type": cls._normalize_text(dna.get("scene_type"), limit=32),
@@ -1682,6 +1800,8 @@ class ContextCompilerService:
 
     @classmethod
     def _compact_editorial_dna(cls, value: Any) -> dict[str, Any]:
+        # Compacts editorial dna from input value for LLM prompt context.
+        # The helper owns a small rule that would distract from the surrounding flow.
         dna = value if isinstance(value, dict) else {}
         return {
             "format_family": cls._normalize_text(dna.get("format_family"), limit=24),
@@ -1714,6 +1834,8 @@ class ContextCompilerService:
         source: Any = None,
         brand_visual_brief: Any = None,
     ) -> dict[str, Any]:
+        # Compacts template layout grammar from blueprint, layout dna, and composition logic for LLM prompt context.
+        # The helper owns a small rule that would distract from the surrounding flow.
         blueprint_map = blueprint if isinstance(blueprint, dict) else {}
         layout_map = layout_dna if isinstance(layout_dna, dict) else {}
         composition_map = composition_logic if isinstance(composition_logic, dict) else {}
@@ -1754,6 +1876,8 @@ class ContextCompilerService:
             zones.append(entry)
 
         def role_matches(role: str, tokens: tuple[str, ...]) -> bool:
+            # Centralizes role from role and tokens for LLM prompt context.
+            # The helper owns a small rule that would distract from the surrounding flow.
             lowered = role.casefold()
             return any(token in lowered for token in tokens)
 
@@ -1933,6 +2057,8 @@ class ContextCompilerService:
 
     @classmethod
     def _compact_asset_reference(cls, value: Any) -> str:
+        # Compacts asset reference from input value for LLM prompt context.
+        # The helper owns a small rule that would distract from the surrounding flow.
         text = cls._normalize_text(value)
         if not text:
             return ""
@@ -1940,6 +2066,8 @@ class ContextCompilerService:
 
     @classmethod
     def _compact_sequence_pack(cls, value: Any) -> dict[str, Any]:
+        # Compacts sequence pack from input value for LLM prompt context.
+        # The main branch stays readable while this function handles the local edge case.
         pack = value if isinstance(value, dict) else {}
         slides: list[dict[str, Any]] = []
         story_roles: list[str] = []
@@ -2017,6 +2145,8 @@ class ContextCompilerService:
         compatibility_bypass_count: int = 0,
         missing_quality_metadata_count: int = 0,
     ) -> dict[str, Any]:
+        # Builds visual brief from items, template suppressed, and candidate count for LLM prompt context.
+        # It calls _visual_grounding_runtime_config and _normalize_visual_rejection_reasons while assembling the payload or prompt text.
         runtime_config = cls._visual_grounding_runtime_config()
         cleaned_items: list[dict[str, Any]] = []
         seen: set[tuple[str, str]] = set()
@@ -2099,6 +2229,8 @@ class ContextCompilerService:
 
     @classmethod
     def _visual_grounding_diagnostics(cls, brief: dict[str, Any]) -> dict[str, Any]:
+        # Centralizes visual grounding diagnostics from brief for LLM prompt context.
+        # The main branch stays readable while this function handles the local edge case.
         if not isinstance(brief, dict):
             return {
                 "grounding_mode": "llm_fallback",
@@ -2141,6 +2273,8 @@ class ContextCompilerService:
 
     @classmethod
     def coerce_visual_knowledge_brief(cls, value: Any) -> dict[str, Any]:
+        # Centralizes visual knowledge brief from input value for LLM prompt context.
+        # The helper owns a small rule that would distract from the surrounding flow.
         channel_priority = list(cls.VISUAL_KNOWLEDGE_PRIORITY)
         runtime_config = cls._visual_grounding_runtime_config()
         require_quality_metadata = bool(runtime_config["require_quality_metadata"])
@@ -2296,6 +2430,8 @@ class ContextCompilerService:
 
     @classmethod
     def _knowledge_brief(cls, ordered_knowledge: dict[str, list[dict[str, Any]]]) -> list[dict[str, str]]:
+        # Centralizes knowledge brief from ordered knowledge for LLM prompt context.
+        # The helper owns a small rule that would distract from the surrounding flow.
         brief: list[dict[str, str]] = []
         for channel, entries in ordered_knowledge.items():
             for content in cls._ranked_knowledge_entries(entries, per_channel_limit=2):
@@ -2311,6 +2447,8 @@ class ContextCompilerService:
 
     @classmethod
     def _visual_knowledge_brief(cls, ordered_knowledge: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+        # Centralizes visual knowledge brief from ordered knowledge for LLM prompt context.
+        # The helper owns a small rule that would distract from the surrounding flow.
         grouped: dict[str, list[dict[str, Any]]] = {channel: [] for channel in cls.VISUAL_KNOWLEDGE_PRIORITY}
         rejection_reasons: dict[str, int] = {}
         candidate_count = 0
@@ -2368,6 +2506,8 @@ class ContextCompilerService:
 
     @classmethod
     def _audience_brief(cls, audience: dict[str, Any], persona_context: dict[str, Any]) -> dict[str, Any]:
+        # Centralizes audience brief from audience and persona context for LLM prompt context.
+        # The main branch stays readable while this function handles the local edge case.
         segments = []
         for segment in audience.get("segments", []) or []:
             if isinstance(segment, dict):
@@ -2444,6 +2584,8 @@ class ContextCompilerService:
 
     @classmethod
     def _brand_foundations_summary(cls, foundations: dict[str, Any]) -> str:
+        # Builds brand foundations summary from foundations for LLM prompt context.
+        # It calls _compose_summary while assembling the payload or prompt text.
         if not isinstance(foundations, dict):
             return ""
         current_schema_summary = cls._compose_summary(
@@ -2478,6 +2620,8 @@ class ContextCompilerService:
         objective_context: dict[str, Any],
         session_memory: dict[str, Any],
     ) -> dict[str, Any]:
+        # Centralizes copy brief from brand context, persona context, and objective context for LLM prompt context.
+        # The main branch stays readable while this function handles the local edge case.
         voice = brand_context.get("voice_tone", {}) or {}
         guardrails = brand_context.get("guardrails", {}) or {}
         foundations = brand_context.get("foundations", {}) or {}
@@ -2522,12 +2666,16 @@ class ContextCompilerService:
 
     @classmethod
     def _lineage_inheritance_policy(cls, session_memory: dict[str, Any]) -> dict[str, Any]:
+        # Builds lineage inheritance policy from session memory for LLM prompt context.
+        # The returned payload is the compact contract consumed by the next branch.
         request_lineage = (session_memory or {}).get("request_lineage") if isinstance((session_memory or {}).get("request_lineage"), dict) else {}
         inheritance_policy = request_lineage.get("inheritance_policy") if isinstance(request_lineage.get("inheritance_policy"), dict) else {}
         return inheritance_policy
 
     @classmethod
     def _should_use_prior_copy_context(cls, session_memory: dict[str, Any]) -> bool:
+        # Checks use prior copy context from session memory for LLM prompt context.
+        # It reuses _lineage_inheritance_policy so related checks follow the same rule.
         inheritance_policy = cls._lineage_inheritance_policy(session_memory)
         explicit = inheritance_policy.get("inherit_copy_context")
         if explicit is not None:
@@ -2537,6 +2685,8 @@ class ContextCompilerService:
 
     @classmethod
     def _should_use_prior_layout_context(cls, session_memory: dict[str, Any]) -> bool:
+        # Checks use prior layout context from session memory for LLM prompt context.
+        # It reuses _lineage_inheritance_policy so related checks follow the same rule.
         inheritance_policy = cls._lineage_inheritance_policy(session_memory)
         explicit = inheritance_policy.get("inherit_layout_context")
         if explicit is not None:
@@ -2546,6 +2696,8 @@ class ContextCompilerService:
 
     @classmethod
     def _summary_list(cls, value: Any, *, limit: int = 4, item_limit: int = 48) -> list[str]:
+        # Summarizes summary from input value, limit, and item limit for LLM prompt context.
+        # The main branch stays readable while this function handles the local edge case.
         if value in (None, ""):
             return []
         raw_items = value if isinstance(value, (list, tuple, set)) else [value]
@@ -2558,6 +2710,8 @@ class ContextCompilerService:
 
     @classmethod
     def _join_summary(cls, values: list[str], *, limit: int = 180) -> str:
+        # Joins join summary from values and limit for LLM prompt context.
+        # The helper owns a small rule that would distract from the surrounding flow.
         return cls._normalize_text(", ".join(value for value in values if value), limit=limit)
 
     @classmethod
@@ -2570,6 +2724,8 @@ class ContextCompilerService:
         content_structure_summary: str,
         motif_summary: str,
     ) -> list[str]:
+        # Centralizes reference family module patterns from zone roles, story roles, and sequence kind for LLM prompt context.
+        # The helper owns a small rule that would distract from the surrounding flow.
         lowered_roles = {str(role or "").strip().casefold() for role in zone_roles}
         lowered_story_roles = {str(role or "").strip().casefold() for role in story_roles}
         sequence_text = str(sequence_kind or "").strip().casefold()
@@ -2578,6 +2734,8 @@ class ContextCompilerService:
         patterns: list[str] = []
 
         def add(name: str) -> None:
+            # Centralizes add from name for LLM prompt context.
+            # The main branch stays readable while this function handles the local edge case.
             if name not in patterns:
                 patterns.append(name)
 
@@ -2606,6 +2764,8 @@ class ContextCompilerService:
         hierarchy_summary: str,
         content_structure_summary: str,
     ) -> str:
+        # Centralizes reference family density target from format name, editorial dna, and hierarchy summary for LLM prompt context.
+        # The helper owns a small rule that would distract from the surrounding flow.
         text = " ".join(
             [
                 str(editorial_dna.get("copy_density") or ""),
@@ -2629,6 +2789,8 @@ class ContextCompilerService:
         layout_type: str,
         composition_summary: str,
     ) -> str:
+        # Centralizes reference family balance target from zone roles, layout type, and composition summary for LLM prompt context.
+        # The helper owns a small rule that would distract from the surrounding flow.
         lowered_roles = {str(role or "").strip().casefold() for role in zone_roles}
         text = f"{layout_type} {composition_summary}".casefold()
         if any(role in lowered_roles for role in {"image", "hero_visual", "primary_visual"}) and any(
@@ -2641,6 +2803,8 @@ class ContextCompilerService:
 
     @classmethod
     def _compact_sample_page_blueprint(cls, blueprint: Any) -> dict[str, Any]:
+        # Compacts sample page blueprint from blueprint for LLM prompt context.
+        # The main branch stays readable while this function handles the local edge case.
         if not isinstance(blueprint, dict):
             return {}
         module_counts = blueprint.get("module_counts") if isinstance(blueprint.get("module_counts"), dict) else {}
@@ -2698,10 +2862,14 @@ class ContextCompilerService:
 
     @staticmethod
     def _reference_profile_score(value: float) -> float:
+        # Builds reference profile from input value for LLM prompt context.
+        # The returned payload is the compact contract consumed by the next branch.
         return round(max(0.0, min(float(value or 0.0), 1.0)), 2)
 
     @classmethod
     def _normalize_surface_family(cls, value: Any) -> str:
+        # Normalizes surface family from input value for LLM prompt context.
+        # It delegates shared cleanup to _normalize_text before returning the cleaned value.
         text = cls._normalize_text(value, limit=48).casefold()
         if not text:
             return ""
@@ -2718,6 +2886,8 @@ class ContextCompilerService:
 
     @classmethod
     def _surface_output_behavior(cls, output_family: str) -> str:
+        # Centralizes surface output behavior from output family for LLM prompt context.
+        # The helper owns a small rule that would distract from the surrounding flow.
         return {
             "static": "static_creative_output",
             "carousel": "carousel_sequence_output",
@@ -2727,6 +2897,8 @@ class ContextCompilerService:
 
     @classmethod
     def _selected_size_label(cls, studio_panel: dict[str, Any]) -> str:
+        # Selects selected size label from studio settings for LLM prompt context.
+        # It reuses _normalize_text so related checks follow the same rule.
         for key in ("size_label", "aspect_ratio", "aspect", "ratio"):
             label = cls._normalize_text(studio_panel.get(key), limit=24)
             if label:
@@ -2760,6 +2932,8 @@ class ContextCompilerService:
         format_family_plan: dict[str, Any] | None = None,
         reference_asset_brief: list[dict[str, Any]],
     ) -> dict[str, Any]:
+        # Builds reference adaptation profile from studio settings, brand visual brief, and template fit brief for LLM prompt context.
+        # It calls _reference_profile_score and _surface_output_behavior while assembling the payload or prompt text.
         studio_panel = studio_panel if isinstance(studio_panel, dict) else {}
         brand_visual_brief = brand_visual_brief if isinstance(brand_visual_brief, dict) else {}
         template_fit_brief = template_fit_brief if isinstance(template_fit_brief, dict) else {}
@@ -2783,9 +2957,13 @@ class ContextCompilerService:
         )
 
         def family_for(item: dict[str, Any]) -> str:
+            # Centralizes family from item for LLM prompt context.
+            # The helper owns a small rule that would distract from the surrounding flow.
             return cls._normalize_surface_family(item.get("format_family") or item.get("format") or "")
 
         def is_adaptable_reference(item: dict[str, Any]) -> bool:
+            # Checks adaptable reference from item for LLM prompt context.
+            # It reuses _normalize_text so related checks follow the same rule.
             role = cls._normalize_text(item.get("role"), limit=32).casefold()
             trust = cls._normalize_text(item.get("trust_level"), limit=32).casefold()
             return (
@@ -3041,6 +3219,8 @@ class ContextCompilerService:
         render_constraints: dict[str, Any],
         reference_adaptation_profile: dict[str, Any],
     ) -> dict[str, Any]:
+        # Builds generation surface contract from studio settings, objective brief, and content format brief for LLM prompt context.
+        # It calls _selected_size_label and _normalize_surface_family while assembling the payload or prompt text.
         studio_panel = studio_panel if isinstance(studio_panel, dict) else {}
         objective_brief = objective_brief if isinstance(objective_brief, dict) else {}
         content_format_brief = content_format_brief if isinstance(content_format_brief, dict) else {}
@@ -3152,6 +3332,8 @@ class ContextCompilerService:
         template_fit_brief: dict[str, Any],
         content_format_brief: dict[str, Any],
     ) -> dict[str, Any]:
+        # Builds reference family profile from brand visual brief, template fit brief, and content format brief for LLM prompt context.
+        # It calls _normalize_text and _dedupe_items while assembling the payload or prompt text.
         brand_visual_brief = brand_visual_brief if isinstance(brand_visual_brief, dict) else {}
         template_fit_brief = template_fit_brief if isinstance(template_fit_brief, dict) else {}
         content_format_brief = content_format_brief if isinstance(content_format_brief, dict) else {}
@@ -3339,6 +3521,8 @@ class ContextCompilerService:
         template_context: dict[str, Any] | None,
         reference_assets: list[dict[str, Any]],
     ) -> dict[str, Any]:
+        # Centralizes visual brief from brand context, layout decision, and template context for LLM prompt context.
+        # The helper owns a small rule that would distract from the surrounding flow.
         visual_identity = brand_context.get("visual_identity", {}) or {}
         design_system = visual_identity.get("design_system", {}) if isinstance(visual_identity.get("design_system"), dict) else {}
         typography = visual_identity.get("typography", {}) or {}
@@ -3350,6 +3534,7 @@ class ContextCompilerService:
         sequence_pack = template_context.get("sequence_pack") if isinstance(template_context, dict) else {}
         sequence_slides = [dict(item) for item in sequence_pack.get("slides", []) if isinstance(item, dict)] if isinstance(sequence_pack, dict) else []
         source_format_family = ""
+        # Reference assets can shift the visual brief from a static post to carousel/infographic rules before prompts are built.
         for asset in reference_assets:
             if not isinstance(asset, dict):
                 continue
@@ -3401,6 +3586,7 @@ class ContextCompilerService:
         sequence_pack = template_context.get("sequence_pack") if isinstance(template_context, dict) and isinstance(template_context.get("sequence_pack"), dict) else {}
         sequence_slides = [dict(item) for item in sequence_pack.get("slides", []) if isinstance(item, dict)] if isinstance(sequence_pack, dict) else []
         sequence_slide_zone_map = {}
+        # The first slide with a real zone map becomes the sequence-level layout sample for downstream carousel prompts.
         for slide in sequence_slides:
             zone_map = slide.get("zone_map") if isinstance(slide.get("zone_map"), dict) else {}
             if isinstance(zone_map, dict) and zone_map.get("zones"):
@@ -3411,6 +3597,7 @@ class ContextCompilerService:
         template_visual_craft_dna = {}
         template_subject_semantics = {}
         template_editorial_dna = {}
+        # Template context arrives in several shapes, so this pass pulls the strongest DNA from whichever source has it.
         for candidate in [template_zone_map, sequence_slide_zone_map, template_context]:
             if not isinstance(candidate, dict):
                 continue
@@ -3428,6 +3615,7 @@ class ContextCompilerService:
             if not template_editorial_dna and isinstance(candidate.get("editorial_dna"), dict):
                 template_editorial_dna = candidate.get("editorial_dna") or {}
         if not template_composition_logic and isinstance(template_layout_dna, dict):
+            # Older analyses only expose zone roles; this inference keeps prompt guidance useful without inventing new fields.
             inferred_zone_roles = [
                 cls._normalize_text(zone.get("role"), limit=32)
                 for zone in (template_layout_dna.get("zones") or [])
@@ -3440,6 +3628,7 @@ class ContextCompilerService:
                     "layering": "flat_editorial",
                 }
         if not template_editorial_dna and sequence_slides:
+            # A carousel reference still needs narrative rhythm even when page-level editorial DNA was not extracted.
             inferred_story_roles = cls._dedupe_items(
                 [slide.get("story_role") for slide in sequence_slides],
                 limit=8,
@@ -3643,6 +3832,7 @@ class ContextCompilerService:
             limit=220,
         )
         reference_visual_profiles = []
+        # Reference creative profiles are kept compact here because image prompts borrow style signals from this list later.
         for reference in (visual_identity.get("reference_creatives", []) or [])[:6]:
             if not isinstance(reference, dict):
                 continue
@@ -3929,6 +4119,8 @@ class ContextCompilerService:
 
     @classmethod
     def _objective_brief(cls, objective_context: dict[str, Any]) -> dict[str, Any]:
+        # Centralizes objective brief from objective context for LLM prompt context.
+        # The helper owns a small rule that would distract from the surrounding flow.
         configuration = objective_context.get("configuration", {}) if isinstance(objective_context, dict) else {}
         return {
             "name": cls._normalize_text(objective_context.get("name"), limit=64),
@@ -3941,6 +4133,8 @@ class ContextCompilerService:
 
     @classmethod
     def _normalize_prompt_intelligence_platform_key(cls, value: Any) -> str:
+        # Normalizes prompt intelligence platform key from input value for LLM prompt context.
+        # It delegates shared cleanup to _normalize_text before returning the cleaned value.
         text = cls._normalize_text(value, limit=40).casefold()
         if not text:
             return ""
@@ -3959,6 +4153,8 @@ class ContextCompilerService:
 
     @classmethod
     def _prompt_intelligence_platforms(cls, value: Any) -> list[str]:
+        # Builds prompt intelligence platforms from input value for LLM prompt context.
+        # It calls _normalize_prompt_intelligence_platform_key while assembling the payload or prompt text.
         if value is None:
             return []
         raw_items = value if isinstance(value, (list, tuple, set)) else [value]
@@ -3974,6 +4170,8 @@ class ContextCompilerService:
 
     @classmethod
     def _prompt_intelligence_starter_records(cls, value: Any) -> list[dict[str, Any]]:
+        # Builds prompt intelligence starter records from input value for LLM prompt context.
+        # It calls _normalize_prompt_intelligence_platform_key while assembling the payload or prompt text.
         records: list[dict[str, Any]] = []
         if value in (None, ""):
             return records
@@ -4029,6 +4227,8 @@ class ContextCompilerService:
 
     @classmethod
     def _prompt_intelligence_lookup(cls, source: Any, key: str) -> Any:
+        # Builds prompt intelligence lookup from source and key for LLM prompt context.
+        # It calls _normalize_prompt_intelligence_platform_key while assembling the payload or prompt text.
         if not isinstance(source, dict):
             return None
         normalized_key = cls._normalize_prompt_intelligence_platform_key(key)
@@ -4041,10 +4241,14 @@ class ContextCompilerService:
 
     @classmethod
     def _prompt_intelligence_lines(cls, value: Any, *, limit: int = 6) -> list[str]:
+        # Builds prompt intelligence lines from input value and limit for LLM prompt context.
+        # It calls _visit and _summary_fragment_key while assembling the payload or prompt text.
         lines: list[str] = []
         seen: set[str] = set()
 
         def _append(candidate: Any) -> None:
+            # Centralizes append from candidate for LLM prompt context.
+            # The main branch stays readable while this function handles the local edge case.
             text = cls._truncate_text_on_word_boundary(candidate, 120).strip(" ,.;:-")
             if not text:
                 return
@@ -4055,6 +4259,8 @@ class ContextCompilerService:
             lines.append(text)
 
         def _visit(candidate: Any) -> None:
+            # Centralizes visit from candidate for LLM prompt context.
+            # The main branch stays readable while this function handles the local edge case.
             if len(lines) >= limit or candidate in (None, ""):
                 return
             if isinstance(candidate, str):
@@ -4123,6 +4329,8 @@ class ContextCompilerService:
         prompt_intelligence: dict[str, Any],
         studio_panel: dict[str, Any],
     ) -> dict[str, Any]:
+        # Builds prompt intelligence brief from prompt intelligence and studio settings for LLM prompt context.
+        # It calls _normalize_prompt_intelligence_platform_key and _prompt_intelligence_starter_records while assembling the payload or prompt text.
         prompt_intelligence = prompt_intelligence if isinstance(prompt_intelligence, dict) else {}
         platform_preset = cls._normalize_prompt_intelligence_platform_key(studio_panel.get("platform_preset"))
         raw_starters = cls._prompt_intelligence_starter_records(prompt_intelligence.get("prompt_starters") or [])
@@ -4232,6 +4440,8 @@ class ContextCompilerService:
         studio_panel: dict[str, Any],
         layout_decision: dict[str, Any],
     ) -> dict[str, Any]:
+        # Centralizes constraints from prompt text, studio settings, and layout decision for LLM prompt context.
+        # The main branch stays readable while this function handles the local edge case.
         preset = cls._normalize_text(studio_panel.get("platform_preset"), limit=32) or "instagram"
         format_name = cls._normalize_text(studio_panel.get("format"), limit=32) or "static"
         size = studio_panel.get("size", {}) or {}
@@ -4253,6 +4463,8 @@ class ContextCompilerService:
 
     @classmethod
     def _session_brief(cls, session_memory: dict[str, Any], conversation_context: dict[str, Any]) -> dict[str, Any]:
+        # Centralizes session brief from session memory and conversation context for LLM prompt context.
+        # The main branch stays readable while this function handles the local edge case.
         follow_up_intent = (session_memory or {}).get("follow_up_intent", {}) or {}
         latest_content = (session_memory or {}).get("latest_content_version", {}) or {}
         uses_previous_output = cls._should_use_prior_copy_context(session_memory)
@@ -4288,6 +4500,8 @@ class ContextCompilerService:
         content_format_guide: dict[str, Any] | None,
         studio_panel: dict[str, Any],
     ) -> dict[str, Any]:
+        # Centralizes content brief from content format guide and studio settings for LLM prompt context.
+        # The helper owns a small rule that would distract from the surrounding flow.
         guide = content_format_guide if isinstance(content_format_guide, dict) else {}
         if not guide:
             return {}
@@ -4394,6 +4608,8 @@ class ContextCompilerService:
 
     @classmethod
     def _compact_prompt_text(cls, value: Any, *, limit: int) -> str:
+        # Compacts prompt text from input value and limit for LLM prompt context.
+        # The helper owns a small rule that would distract from the surrounding flow.
         text = cls._normalize_text(value)
         if not text or len(text) <= limit:
             return text
@@ -4408,6 +4624,8 @@ class ContextCompilerService:
         text_limit: int,
         depth: int = 0,
     ) -> list[Any]:
+        # Compacts prompt from input value, item limit, and text limit for LLM prompt context.
+        # The helper owns a small rule that would distract from the surrounding flow.
         items = value if isinstance(value, list) else []
         compact: list[Any] = []
         for item in items[: max(int(item_limit), 0)]:
@@ -4441,6 +4659,8 @@ class ContextCompilerService:
         text_limit: int = 360,
         depth: int = 0,
     ) -> dict[str, Any]:
+        # Compacts prompt mapping from input value, field limit, and text limit for LLM prompt context.
+        # The main branch stays readable while this function handles the local edge case.
         if not isinstance(value, dict):
             return {}
         compact: dict[str, Any] = {}
@@ -4479,6 +4699,8 @@ class ContextCompilerService:
 
     @classmethod
     def _compact_prompt_reference_assets(cls, value: Any, *, limit: int = 6) -> list[dict[str, Any]]:
+        # Compacts prompt reference assets from input value and limit for LLM prompt context.
+        # The helper owns a small rule that would distract from the surrounding flow.
         assets = value if isinstance(value, list) else []
         compact: list[dict[str, Any]] = []
         seen: set[tuple[str, str]] = set()
@@ -4512,6 +4734,8 @@ class ContextCompilerService:
 
     @classmethod
     def _compact_prompt_visual_knowledge(cls, value: Any) -> dict[str, Any]:
+        # Compacts prompt visual knowledge from input value for LLM prompt context.
+        # The helper owns a small rule that would distract from the surrounding flow.
         brief = value if isinstance(value, dict) else {}
         items: list[dict[str, Any]] = []
         for item in (brief.get("items") or [])[:3]:
@@ -4542,6 +4766,8 @@ class ContextCompilerService:
 
     @classmethod
     def compact_generation_prompt_context(cls, compiled_context: dict[str, Any] | None) -> dict[str, Any]:
+        # Builds generation prompt context from compiled context for LLM prompt context.
+        # It calls _compact_prompt_mapping and _compact_prompt_reference_assets while assembling the payload or prompt text.
         """Return a prompt-only view of compiled context without mutating shared contracts."""
         context = compiled_context if isinstance(compiled_context, dict) else {}
         compact = dict(context)
@@ -4601,7 +4827,11 @@ class ContextCompilerService:
         full_context: dict[str, Any] | None,
         prompt_context: dict[str, Any] | None,
     ) -> dict[str, Any]:
+        # Centralizes generation context budget report from full context and prompt context for LLM prompt context.
+        # The helper owns a small rule that would distract from the surrounding flow.
         def _measure(mapping: dict[str, Any] | None) -> dict[str, Any]:
+            # Centralizes measure from mapping for LLM prompt context.
+            # The helper owns a small rule that would distract from the surrounding flow.
             if not isinstance(mapping, dict):
                 return {"total_chars": 0, "estimated_tokens": 0, "sections": []}
             sections: list[dict[str, Any]] = []
@@ -4663,6 +4893,8 @@ class ContextCompilerService:
         resolution_instructions: str | None = None,
         research_summary: str | None = None,
     ) -> dict[str, Any]:
+        # Assembles the final compact context object used by prompt generation.
+        # It blends brand foundations, audience research, retrieval, reference assets, memory, and visual grounding into one bounded payload.
         audience = brand_context.get("audience_insights", {}) or {}
         decision = layout_decision or {}
         reference_assets = reference_assets or []
@@ -4675,6 +4907,7 @@ class ContextCompilerService:
             template_context=template_context,
             reference_assets=reference_assets,
         )
+        # This is the main template handoff: render prompts read it to decide whether to copy, adapt, or ignore sample structure.
         template_fit_brief = {
             "mode": self._normalize_text(decision.get("mode"), limit=24),
             "confidence": decision.get("confidence"),
@@ -4824,6 +5057,7 @@ class ContextCompilerService:
         )
         reference_profile_assets: list[dict[str, Any]] = []
         seen_reference_profile_assets: set[tuple[str, str]] = set()
+        # Reference assets and the wider asset catalog overlap, so de-duping prevents the same upload from overweighting style guidance.
         for asset in [*reference_assets, *asset_catalog]:
             if not isinstance(asset, dict):
                 continue
@@ -4844,6 +5078,7 @@ class ContextCompilerService:
             template_fit_brief=template_fit_brief,
             content_format_brief=content_format_brief,
         )
+        # Reference adaptation tells later prompt builders which parts of a sample are layout authority versus loose style inspiration.
         reference_adaptation_profile = self._reference_adaptation_profile(
             studio_panel=studio_panel,
             brand_visual_brief=brand_visual_brief,
@@ -4854,6 +5089,7 @@ class ContextCompilerService:
         )
         objective_brief = self._objective_brief(objective_context)
         render_constraints = self._render_constraints(prompt, studio_panel, decision)
+        # The surface contract is the final guardrail bundle consumed by image/render prompt builders.
         generation_surface_contract = self._generation_surface_contract(
             studio_panel=studio_panel,
             objective_brief=objective_brief,
@@ -4863,6 +5099,7 @@ class ContextCompilerService:
             render_constraints=render_constraints,
             reference_adaptation_profile=reference_adaptation_profile,
         )
+        # Every value returned here is intentionally compact because the orchestrator passes it directly into model prompts.
         return {
             "brand_copy_brief": self._copy_brief(
                 brand_context=brand_context,

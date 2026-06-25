@@ -6,6 +6,8 @@ from app.models.brand import BrandSpace, Guardrail, Objective, Persona
 
 
 class BrandIntelligenceService:
+    # Groups brand intelligence service behavior for brand context assembly.
+    # Callers use this class to produce or evaluate data consumed by orchestrator brand prompts.
     def build_context(
         self,
         brand_space: BrandSpace,                                                                                                                                                                                                                                                                                                                                                                                                                                         
@@ -14,10 +16,13 @@ class BrandIntelligenceService:
         guardrails: list[Guardrail],
         objectives: list[Objective],
     ) -> dict[str, Any]:
+        # Builds context from brand space, sections, and personas for orchestrator brand prompts.
+        # This keeps payload shape decisions close to the code that understands the inputs.
         merged_sections: dict[str, Any] = {}
         for section in sections:
             merged_sections[section["section_code"]] = section["payload"]
 
+        # Saved form sections win over model records, but model records provide defaults when sections are missing.
         default_persona = next((persona for persona in personas if persona.is_default), None)
         primary_guardrail = guardrails[0] if guardrails else None
         default_objective = next((objective for objective in objectives if objective.is_default), None)
@@ -31,6 +36,7 @@ class BrandIntelligenceService:
         brand_description = identity_context.get("brand_description") or brand_space.description
         industry_category = identity_context.get("industry_category") or brand_space.industry_category
 
+        # The orchestrator receives one brand-context object instead of querying each brand table separately.
         return {
             "brand_id": str(brand_space.id),
             "brand_name": brand_name,
@@ -56,6 +62,8 @@ class BrandIntelligenceService:
 
     @staticmethod
     def persona_to_dict(persona: Persona | None) -> dict[str, Any]:
+        # Centralizes persona from persona for orchestrator brand prompts.
+        # The main branch stays readable while this function handles the local edge case.
         if not persona:
             return {}
         return {
@@ -74,6 +82,8 @@ class BrandIntelligenceService:
 
     @staticmethod
     def guardrail_to_dict(guardrail: Guardrail | None) -> dict[str, Any]:
+        # Centralizes guardrail from guardrail for orchestrator brand prompts.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if not guardrail:
             return {}
         return {
@@ -91,6 +101,8 @@ class BrandIntelligenceService:
 
     @staticmethod
     def objective_to_dict(objective: Objective | None) -> dict[str, Any]:
+        # Centralizes objective from objective for orchestrator brand prompts.
+        # The helper owns a small rule that would distract from the surrounding flow.
         if not objective:
             return {}
         return {

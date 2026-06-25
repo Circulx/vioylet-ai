@@ -6,6 +6,8 @@ from typing import Any
 
 @dataclass(slots=True)
 class ResolutionPlan:
+    # Groups resolution plan behavior for context resolution.
+    # Callers use this class to produce or evaluate data consumed by worker setup.
     ordered_knowledge: dict[str, list[dict[str, Any]]]
     priority_order: list[str]
     instructions: str
@@ -13,6 +15,8 @@ class ResolutionPlan:
 
 
 class ContextResolutionService:
+    # Groups context resolution service behavior for context resolution.
+    # Callers use this class to produce or evaluate data consumed by worker setup.
     PRIORITY_ORDER = [
         "guardrails",
         "identity",
@@ -58,11 +62,14 @@ class ContextResolutionService:
         objective_context: dict[str, Any],
         retrieved_knowledge: dict[str, list[dict[str, Any]]],
     ) -> ResolutionPlan:
+        # Builds plan from brand context, persona context, and objective context for worker setup.
+        # This keeps payload shape decisions close to the code that understands the inputs.
         ordered_knowledge = {
             channel: retrieved_knowledge.get(channel, [])
             for channel in self.KNOWLEDGE_PRIORITY
             if retrieved_knowledge.get(channel)
         }
+        # Metadata carries the same precedence policy that the prompt will later receive as instructions.
         metadata = {
             "priority_order": self.PRIORITY_ORDER,
             "knowledge_channel_priority": self.KNOWLEDGE_PRIORITY,
@@ -80,6 +87,7 @@ class ContextResolutionService:
             "has_objective": bool(objective_context),
         }
         instructions = (
+            # This sentence is intentionally explicit because it becomes the conflict policy for downstream prompts.
             "Conflict resolution order: guardrails first; then current brand form/config sections; "
             "then selected persona and objective; then strategy knowledge; then brand knowledge; "
             "then campaign history; then template/metadata hints; finally the user prompt. "

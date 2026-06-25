@@ -9,6 +9,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass(slots=True)
 class LayoutDecision:
+    # Groups layout decision behavior for layout routing.
+    # Callers use this class to produce or evaluate data consumed by template planning.
     mode: str
     template_id: str | None
     template_name: str | None
@@ -20,6 +22,8 @@ class LayoutDecision:
     review_flags: list[str]
 
     def to_payload(self) -> dict[str, Any]:
+        # Builds to payload for template planning.
+        # The returned payload is the compact contract consumed by the next branch.
         return {
             "mode": self.mode,
             "template_id": self.template_id,
@@ -34,8 +38,12 @@ class LayoutDecision:
 
 
 class LayoutDecisionEngine:
+    # Groups layout decision engine behavior for layout routing.
+    # Callers use this class to produce or evaluate data consumed by template planning.
     @staticmethod
     def _identity_has_logo(brand_context: dict[str, Any]) -> bool:
+        # Centralizes identity logo from brand context for template planning.
+        # The helper owns a small rule that would distract from the surrounding flow.
         identity = brand_context.get("identity", {}) or {}
         logo_assets = identity.get("logo_assets") or []
         return bool(
@@ -47,12 +55,16 @@ class LayoutDecisionEngine:
 
     @staticmethod
     def _is_visual_social_request(studio_panel: dict[str, Any]) -> bool:
+        # Checks visual social request from studio settings for template planning.
+        # The boolean result controls the nearby policy or validation branch.
         format_name = str(studio_panel.get("format") or "").strip().lower()
         file_type = str(studio_panel.get("file_type") or "").strip().lower()
         return file_type in {"png", "jpg", "jpeg", "webp"} and format_name not in {"doc", "pdf"}
 
     @staticmethod
     def _template_topic_fit_is_weak(chosen_template: dict[str, Any] | None) -> bool:
+        # Checks template topic fit weak from chosen template for template planning.
+        # The boolean result controls the nearby policy or validation branch.
         if not chosen_template:
             return False
         breakdown = chosen_template.get("score_breakdown") or {}
@@ -64,6 +76,8 @@ class LayoutDecisionEngine:
 
     @staticmethod
     def _template_format_compatible(recommendation: dict[str, Any], format_name: str) -> bool:
+        # Checks template compatible from recommendation and format name for template planning.
+        # The boolean result controls the nearby policy or validation branch.
         """Check if template supports requested format."""
         template_metadata = recommendation.get("metadata", {})
         template_format = str(template_metadata.get("format", "")).strip().lower()
@@ -123,11 +137,14 @@ class LayoutDecisionEngine:
         selected_template_name: str | None = None,
         reference_assets: list[dict[str, Any]] | None = None,
     ) -> LayoutDecision:
+        # Centralizes decide from prompt text, studio settings, and brand context for template planning.
+        # The main branch stays readable while this function handles the local edge case.
         recommendations = template_recommendations or []
 
         # Filter templates by format compatibility for carousel requests
         format_name = studio_panel.get("format", "").strip().lower()
         if format_name in ("carousel", "instagram_carousel", "linkedin_carousel"):
+            # Carousel generation needs slide-capable references; single-frame templates are filtered out when possible.
             filtered_recs = [
                 rec for rec in recommendations
                 if self._template_format_compatible(rec, format_name)
@@ -141,6 +158,7 @@ class LayoutDecisionEngine:
         top = recommendations[0] if recommendations else None
         chosen_template = None
         if selected_template_id:
+            # Explicit user selection wins even if the recommender did not return the template in its top matches.
             chosen_template = next(
                 (
                     item
@@ -183,6 +201,8 @@ class LayoutDecisionEngine:
         reference_assets: list[dict[str, Any]],
         explicit_template: bool,
     ) -> LayoutDecision:
+        # Centralizes mode template from prompt text, studio settings, and brand context for template planning.
+        # The helper owns a small rule that would distract from the surrounding flow.
         prompt_length = len(prompt.strip())
         platform = studio_panel.get("platform_preset", "")
         format_name = studio_panel.get("format", "")
@@ -223,6 +243,7 @@ class LayoutDecisionEngine:
         if prompt_length > 120:
             adaptation_plan["expand_headline_or_body"] = True
         if format_name in {"carousel", "infographic", "pdf", "doc"}:
+            # Long-form and multi-panel formats need section-aware planning instead of a single poster layout.
             adaptation_plan["multi_section_flow"] = True
             adaptation_plan["prefer_distinct_sections"] = True
         if platform in {"instagram", "x"}:
@@ -256,6 +277,7 @@ class LayoutDecisionEngine:
             export_fit = float(breakdown.get("export_fit", 0.0) or 0.0)
             overlay_safe = bool(metadata.get("overlay_safe", True))
             if not overlay_safe:
+                # Templates with baked-in text can inspire style, but they should not become render surfaces.
                 mode = "synthesized_layout"
                 review_flags.append("template_text_overlay_risk")
                 adaptation_plan["reference_style_only"] = True
@@ -263,6 +285,7 @@ class LayoutDecisionEngine:
                     f"Template '{chosen_template.get('name', 'Template')}' contains baked-in text and will be used as a style reference instead of a render surface."
                 ]
             elif visual_social_request and weak_topic_fit and not explicit_template:
+                # Weak topic fit is allowed as inspiration only; otherwise old template semantics leak into new posts.
                 mode = "synthesized_layout"
                 review_flags.append("template_topic_mismatch")
                 adaptation_plan["reference_style_only"] = True
@@ -326,6 +349,7 @@ class LayoutDecisionEngine:
             + len((brand_context.get("guardrails", {}) or {}).get("negative_word_bank", [])),
         }
         asset_strategy = {
+            # Asset strategy summarizes the decision for downstream prompt and rendering stages.
             "use_template_background": mode in {"exact_template", "adapted_template"} and "template_text_overlay_risk" not in review_flags,
             "use_generated_image": studio_panel.get("file_type") != "doc",
             "use_brand_reference_assets": bool(reference_assets),

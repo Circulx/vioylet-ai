@@ -15,12 +15,18 @@ logger = logging.getLogger(__name__)
 
 
 class OCRService:
+    # Groups ocr service behavior for OCR extraction.
+    # Callers use this class to produce or evaluate data consumed by asset ingestion.
     def __init__(self) -> None:
+        # Initializes settings, clients, and helper services needed by asset ingestion.
+        # Public methods reuse these collaborators instead of rebuilding them for each request.
         self.processor = GoogleVisionOCRProcessor()
         self.settings = get_settings()
 
     @staticmethod
     def _is_transient_ocr_error(exc: Exception) -> bool:
+        # Checks transient OCR error from exc for asset ingestion.
+        # This keeps the allowed/blocked rule in one place.
         message = str(exc).lower()
         transient_markers = (
             "failed to connect to all addresses",
@@ -44,6 +50,8 @@ class OCRService:
 
     @staticmethod
     def _is_authentication_ocr_error(exc: Exception) -> bool:
+        # Checks authentication OCR error from exc for asset ingestion.
+        # The boolean result controls the nearby policy or validation branch.
         message = str(exc).lower()
         authentication_markers = (
             "invalid authentication credentials",
@@ -62,6 +70,8 @@ class OCRService:
         skip_auth_errors: bool = False,
         **kwargs,
     ):
+        # Centralizes retry from operation name, func, and skip auth errors for asset ingestion.
+        # The helper owns a small rule that would distract from the surrounding flow.
         attempts = max(int(self.settings.ocr_retry_attempts), 1)
         base_backoff = max(float(self.settings.ocr_retry_backoff_seconds), 0.0)
         last_error: Exception | None = None
@@ -71,6 +81,7 @@ class OCRService:
             except Exception as exc:  # noqa: BLE001
                 last_error = exc
                 if skip_auth_errors and self._is_authentication_ocr_error(exc):
+                    # User image uploads should still be accepted when optional OCR credentials are missing.
                     logger.warning(
                         "ocr.%s.skipped authentication_error=%s",
                         operation_name,
@@ -78,6 +89,7 @@ class OCRService:
                     )
                     return None
                 if attempt >= attempts or not self._is_transient_ocr_error(exc):
+                    # Non-transient failures are raised immediately so ingestion does not hide real file issues.
                     logger.error(
                         "ocr.%s.failed attempt=%s/%s transient=%s error=%s",
                         operation_name,
@@ -88,6 +100,7 @@ class OCRService:
                     )
                     raise
                 delay_seconds = round(base_backoff * attempt, 2)
+                # Backoff scales with the attempt number to give flaky OCR/network calls a short recovery window.
                 logger.warning(
                     "ocr.%s.retry attempt=%s/%s delay_seconds=%s error=%s",
                     operation_name,
@@ -103,6 +116,8 @@ class OCRService:
 
     @staticmethod
     def _resolve_office_suffix(file_path: str) -> str:
+        # Resolves office suffix from file path for asset ingestion.
+        # The caller receives the canonical identifier/path/config value expected by the next step.
         suffix = Path(file_path).suffix.lower()
         if suffix not in {".doc", ".ppt"}:
             return suffix
@@ -121,10 +136,14 @@ class OCRService:
 
     @staticmethod
     def _scratch_root(file_path: str) -> Path:
+        # Centralizes scratch root from file path for asset ingestion.
+        # The main branch stays readable while this function handles the local edge case.
         return Path(file_path).parent / "_ocr"
 
     @staticmethod
     def _analysis_paths_for_images(image_paths: list[str]) -> list[str]:
+        # Centralizes analysis paths images from image paths for asset ingestion.
+        # The helper owns a small rule that would distract from the surrounding flow.
         analysis_paths: list[str] = []
         for image_path in image_paths:
             candidate = Path(str(image_path)).with_name(f"{Path(str(image_path)).stem}_analysis.json")
@@ -133,6 +152,8 @@ class OCRService:
         return analysis_paths
 
     def extract_visual_candidates(self, file_path: str) -> list[str]:
+        # Extracts visual candidates from file path for asset ingestion.
+        # It calls _resolve_office_suffix and _scratch_root to turn raw evidence into the structured signal the caller needs.
         suffix = self._resolve_office_suffix(file_path)
         scratch_root = self._scratch_root(file_path)
         scratch_root.mkdir(parents=True, exist_ok=True)
@@ -153,10 +174,13 @@ class OCRService:
         return []
 
     def extract(self, file_path: str, progress_callback=None) -> dict[str, Any]:
+        # Runs OCR for the source file and returns text, image candidates, page counts, and analysis artifacts.
+        # It calls _resolve_office_suffix and _scratch_root to turn raw evidence into the structured signal the caller needs.
         suffix = self._resolve_office_suffix(file_path)
         scratch_root = self._scratch_root(file_path)
         scratch_root.mkdir(parents=True, exist_ok=True)
         if suffix == ".pdf":
+            # PDFs produce both extracted text and page images so later analysis can read layout as well as words.
             with pdfplumber.open(file_path) as pdf:
                 page_count = len(pdf.pages)
             text = self._with_retry(
@@ -182,6 +206,7 @@ class OCRService:
             }
         if suffix in {".png", ".jpg", ".jpeg", ".webp"}:
             warnings: list[str] = []
+            # Images are treated as valid visual assets even if OCR text extraction is unavailable.
             text = self._with_retry(
                 "extract_text_from_image_file",
                 self.processor.extract_text_from_image_file,
@@ -224,6 +249,7 @@ class OCRService:
         if suffix in {".ttf", ".otf"}:
             return {"text": "", "images": [], "page_count": 0, "source_format": suffix.lstrip(".")}
         if suffix == ".pptx":
+            # PPTX extraction returns slide text and embedded images in one payload, then images get sidecar analysis lookup.
             payload = self._with_retry(
                 "extract_text_and_images_from_pptx",
                 self.processor.extract_text_and_images_from_pptx,

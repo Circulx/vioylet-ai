@@ -5,6 +5,8 @@ from typing import Any
 
 
 class VisualAssetIntelligenceService:
+    # Groups visual asset intelligence service behavior for visual requirement parsing.
+    # Callers use this class to produce or evaluate data consumed by image prompt enrichment.
     """
     Service for parsing visual requirements from prompts and enhancing image generation
     with specific illustration styles, data visualization needs, and visual element specifications.
@@ -53,6 +55,8 @@ class VisualAssetIntelligenceService:
 
     @classmethod
     def parse_visual_requirements(cls, prompt: str, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+        # Parses visual requirements from prompt text and metadata for image prompt enrichment.
+        # The main branch stays readable while this function handles the local edge case.
         """
         Parse the prompt to extract visual requirements including:
         - Chart types needed
@@ -77,6 +81,7 @@ class VisualAssetIntelligenceService:
 
         # Default to editorial if no style detected
         if not illustration_styles:
+            # Editorial/modern is the neutral fallback because it works across most branded social surfaces.
             illustration_styles = ["editorial", "modern"]
 
         # Detect visual elements
@@ -103,6 +108,8 @@ class VisualAssetIntelligenceService:
 
     @classmethod
     def _extract_data_points(cls, prompt: str) -> list[dict[str, Any]]:
+        # Extracts points from prompt text for image prompt enrichment.
+        # Later planning can reuse the structured value instead of scanning the source again.
         """Extract numerical data points from the prompt."""
         data_points = []
 
@@ -120,6 +127,7 @@ class VisualAssetIntelligenceService:
             values = currency_matches if currency_matches else percentages
             for i, year in enumerate(years):
                 if i < len(values):
+                    # Pair by position so "Year: ... Value: ..." prompts become a usable visual data series.
                     data_points.append({
                         "year": year,
                         "value": values[i],
@@ -130,6 +138,8 @@ class VisualAssetIntelligenceService:
 
     @classmethod
     def _parse_structured_data_from_metadata(cls, metadata: dict[str, Any]) -> dict[str, Any] | None:
+        # Centralizes structured metadata from metadata for image prompt enrichment.
+        # The main branch stays readable while this function handles the local edge case.
         """
         Parse structured data from metadata fields like stat_highlights or proof_points.
         """
@@ -168,6 +178,8 @@ class VisualAssetIntelligenceService:
         visual_requirements: dict[str, Any],
         brand_visual_brief: dict[str, Any] | None = None,
     ) -> str:
+        # Builds enhance image prompt visual intelligence from base prompt, visual requirements, and brand visual brief for image prompt enrichment.
+        # It calls _get_illustration_style_description and _get_chart_visualization_guidance while assembling the payload or prompt text.
         """
         Enhance the image generation prompt with specific visual intelligence
         based on parsed requirements.
@@ -201,6 +213,7 @@ class VisualAssetIntelligenceService:
             if isinstance(a, dict) and a.get("asset_kind") in {"illustration", "icon", "decorative"}
         ]
         if illustration_assets:
+            # Reusable brand assets are described as guidance so image prompts can echo the library without copying paths.
             asset_guidance = cls._get_brand_asset_guidance(illustration_assets)
             enhancements.append(f"BRAND ILLUSTRATION LIBRARY: {asset_guidance}")
 
@@ -214,6 +227,7 @@ class VisualAssetIntelligenceService:
 
         # Combine enhancements with base prompt
         if enhancements:
+            # The base prompt stays last so the generated image still follows the current request after enrichment.
             enhanced_sections = [
                 "VISUAL INTELLIGENCE ENHANCEMENTS:",
                 *enhancements,
@@ -227,6 +241,8 @@ class VisualAssetIntelligenceService:
 
     @classmethod
     def _get_illustration_style_description(cls, styles: list[str]) -> str:
+        # Derives illustration style description from styles for image prompt enrichment.
+        # The derived signal gives the LLM explicit evidence instead of asking it to infer the same thing later.
         """Generate detailed illustration style description."""
         style_descriptions = {
             "3d": "Use 3D illustration style with depth, shadows, and perspective. Create volumetric objects with realistic lighting and shading. Add subtle gradients for dimension.",
@@ -244,6 +260,8 @@ class VisualAssetIntelligenceService:
 
     @classmethod
     def _get_chart_visualization_guidance(cls, chart_types: list[str], visual_requirements: dict[str, Any]) -> str:
+        # Builds chart visualization guidance from chart types and visual requirements for image prompt enrichment.
+        # This keeps payload shape decisions close to the code that understands the inputs.
         """Generate specific chart visualization guidance."""
         chart_guidance = {
             "bar_chart": "Create a professional bar chart with clearly labeled axes, distinct bars with proper spacing, and data labels. Use brand colors for bars with subtle gradients or solid fills. Ensure bars are proportional to data values.",
@@ -267,6 +285,8 @@ class VisualAssetIntelligenceService:
 
     @classmethod
     def _get_visual_element_guidance(cls, elements: list[str]) -> str:
+        # Builds visual element guidance from elements for image prompt enrichment.
+        # The returned payload is the compact contract consumed by the next branch.
         """Generate guidance for specific visual elements."""
         element_descriptions = {
             "arrow": "Include an arrow only when the content explicitly needs directional movement, comparison flow, or a step transition. Avoid defaulting to a generic upward growth arrow.",
@@ -285,6 +305,8 @@ class VisualAssetIntelligenceService:
 
     @classmethod
     def _get_brand_asset_guidance(cls, assets: list[dict[str, Any]]) -> str:
+        # Builds brand asset guidance from assets for image prompt enrichment.
+        # The returned payload is the compact contract consumed by the next branch.
         """Generate guidance for using brand illustration assets."""
         asset_descriptions = []
         for asset in assets[:3]:

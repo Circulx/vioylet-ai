@@ -12,6 +12,8 @@ from uuid import UUID
 
 
 class IconMatchingService:
+    # Groups icon matching service behavior for icon matching.
+    # Callers use this class to produce or evaluate data consumed by brand-aware visuals.
     """
     Service for matching semantic icon requirements to brand-aligned icon assets.
 
@@ -25,6 +27,8 @@ class IconMatchingService:
         brand_context: dict[str, Any],
         preferred_style: str | None = None,
     ) -> dict[str, Any] | None:
+        # Matches icon from semantic need, brand context, and preferred style for brand-aware visuals.
+        # It reuses _infer_icon_style so related checks follow the same rule.
         """
         Match semantic icon need to brand-consistent icon asset.
 
@@ -67,6 +71,8 @@ class IconMatchingService:
         }
 
     def _infer_icon_style(self, visual_identity: dict[str, Any]) -> str:
+        # Derives infer icon style from visual identity for brand-aware visuals.
+        # The derived signal gives the LLM explicit evidence instead of asking it to infer the same thing later.
         """
         Infer brand's preferred icon style from visual identity.
 
@@ -105,6 +111,8 @@ class IconMatchingService:
         semantic_need: str,
         candidate_icons: list[dict[str, Any]],
     ) -> dict[str, Any] | None:
+        # Checks semantic from semantic need and candidate icons for brand-aware visuals.
+        # It reuses _llm_select_best_icon so related checks follow the same rule.
         """
         Match semantic need to best candidate icon.
 
@@ -159,6 +167,8 @@ class IconMatchingService:
         semantic_need: str,
         candidate_icons: list[dict[str, Any]],
     ) -> dict[str, Any]:
+        # Selects llm best icon from semantic need and candidate icons for brand-aware visuals.
+        # Centralizing this choice keeps reference and asset selection deterministic.
         """
         Use LLM to select best icon from candidates.
 
@@ -223,6 +233,8 @@ class IconMatchingService:
         icon_asset: dict[str, Any],
         brand_color_palette: dict[str, Any],
     ) -> bool:
+        # Derives color compliant from icon asset and brand color palette for brand-aware visuals.
+        # This turns source evidence into a stable planning hint.
         """
         Check if icon color matches brand palette.
 
@@ -247,6 +259,8 @@ class IconMatchingService:
         icon_asset: dict[str, Any],
         target_color: str,
     ) -> dict[str, Any]:
+        # Centralizes recolor icon from icon asset and target color for brand-aware visuals.
+        # The main branch stays readable while this function handles the local edge case.
         """
         Recolor icon to match brand palette.
 

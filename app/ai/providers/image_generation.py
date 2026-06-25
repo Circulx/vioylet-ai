@@ -13,9 +13,13 @@ from app.utils.image_assets import open_image_asset
 
 
 class ImageGenerationProvider(ImageGenerationBackend):
+    # Groups image generation provider behavior for image backend wrapping.
+    # Callers use this class to produce or evaluate data consumed by generated asset flow.
     provider_name = "mock"
 
     def __init__(self) -> None:
+        # Initializes settings, clients, and helper services needed by generated asset flow.
+        # Public methods reuse these collaborators instead of rebuilding them for each request.
         self.settings = get_settings()
         self.storage = LocalObjectStorage()
 
@@ -26,6 +30,8 @@ class ImageGenerationProvider(ImageGenerationBackend):
         prompt: str,
         size: str | None = None,
     ) -> dict:
+        # Generates generate from tenant id, brand space id, and prompt text for generated asset flow.
+        # The main branch stays readable while this function handles the local edge case.
         size_map = {
             "1024x1024": (1400, 1400),
             "1536x1024": (1600, 1067),
@@ -40,6 +46,7 @@ class ImageGenerationProvider(ImageGenerationBackend):
             80 + digest[1] % 120,
             80 + digest[2] % 120,
         )
+        # The mock backend is deterministic: the same prompt creates the same placeholder visual and metadata.
         img = Image.new("RGB", (width, height), color=(247, 244, 236))
         draw = ImageDraw.Draw(img)
         soft_primary = tuple(int((247 + channel) / 2) for channel in primary)
@@ -120,6 +127,8 @@ class ImageGenerationProvider(ImageGenerationBackend):
 
     @staticmethod
     def _edge_background_should_strip(image: Image.Image, threshold: int = 245) -> bool:
+        # Centralizes edge background strip from image and threshold for generated asset flow.
+        # The main branch stays readable while this function handles the local edge case.
         rgba = image.convert("RGBA")
         width, height = rgba.size
         if width <= 0 or height <= 0:
@@ -140,10 +149,13 @@ class ImageGenerationProvider(ImageGenerationBackend):
             for pixel in opaque_edges
             if pixel[0] >= threshold and pixel[1] >= threshold and pixel[2] >= threshold
         ]
+        # Only strip when the border strongly suggests a plain white logo background.
         return (len(light_edges) / len(opaque_edges)) >= 0.75
 
     @classmethod
     def _strip_logo_background_if_safe(cls, image: Image.Image) -> Image.Image:
+        # Strips strip logo background if safe from image for generated asset flow.
+        # The main branch stays readable while this function handles the local edge case.
         rgba = image.convert("RGBA")
         if not cls._edge_background_should_strip(rgba):
             return rgba
@@ -154,6 +166,8 @@ class ImageGenerationProvider(ImageGenerationBackend):
         seen: set[tuple[int, int]] = set()
 
         def is_background(px: tuple[int, int, int, int]) -> bool:
+            # Checks background from px for generated asset flow.
+            # This keeps the allowed/blocked rule in one place.
             red, green, blue, alpha = px
             return alpha > 0 and red >= 245 and green >= 245 and blue >= 245
 
@@ -171,6 +185,7 @@ class ImageGenerationProvider(ImageGenerationBackend):
             seen.add((x, y))
             if not is_background(pixels[x, y]):
                 continue
+            # Flood fill from the edges avoids removing white areas inside the actual logo mark.
             keep[y][x] = False
             queue.extend(((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)))
 
@@ -185,6 +200,8 @@ class ImageGenerationProvider(ImageGenerationBackend):
 
     @staticmethod
     def _trim_transparent_logo_margins(image: Image.Image) -> Image.Image:
+        # Trims trim transparent logo margins from image for generated asset flow.
+        # The helper owns a small rule that would distract from the surrounding flow.
         rgba = image.convert("RGBA")
         alpha = rgba.getchannel("A")
         bbox = alpha.getbbox()
@@ -204,6 +221,8 @@ class ImageGenerationProvider(ImageGenerationBackend):
         size: str | None = None,
         mask_png_bytes: bytes | None = None,
     ) -> dict:
+        # Centralizes edit from tenant id, brand space id, and prompt text for generated asset flow.
+        # The main branch stays readable while this function handles the local edge case.
         if not image_paths:
             raise ValueError("image_paths must include at least one base image path")
         with open_image_asset(image_paths[0]) as opened_base:

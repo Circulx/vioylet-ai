@@ -6,6 +6,8 @@ from app.ai.contracts import BlueprintPayload, BlueprintZone, GenerationSceneGra
 
 
 class BlueprintService:
+    # Translates copy, scene graph geometry, studio size, and template metadata into deterministic canvas zones.
+    # The renderer treats BlueprintPayload as the placement contract for text, images, logo, CTA, and overflow handling.
     PRESET_DIMENSIONS = {
         "instagram": {"width": 1080, "height": 1080},
         "linkedin": {"width": 1200, "height": 627},
@@ -20,6 +22,8 @@ class BlueprintService:
         canvas_width: int,
         canvas_height: int,
     ) -> dict[str, Any] | None:
+        # Converts one visible scene graph element into a blueprint-zone dictionary with pixel coordinates.
+        # from_scene_graph uses this when model-planned geometry should override the default layout.
         geometry = element.geometry
         width_value = geometry.width
         height_value = geometry.height
@@ -29,6 +33,8 @@ class BlueprintService:
             return None
 
         def _resolve(value: float | int | None, scale: int) -> int:
+            # Converts normalized or absolute geometry values into canvas pixels.
+            # The parent zone conversion uses it for x, y, width, and height without duplicating scale rules.
             if value is None:
                 return 0
             numeric = float(value)
@@ -77,6 +83,8 @@ class BlueprintService:
         layout_decision: dict[str, Any] | None = None,
         brand_context: dict[str, Any] | None = None,
     ) -> BlueprintPayload:
+        # Creates a default or template-adapted BlueprintPayload from copy, studio settings, layout decisions, and brand context.
+        # Renderer code reads its zones, image slots, logo rules, CTA placement, and overflow policy as the final placement contract.
         preset = studio_panel.get("platform_preset", "instagram")
         layout_type = studio_panel.get("format", "static")
         size = studio_panel.get("size") or self.PRESET_DIMENSIONS.get(preset, self.PRESET_DIMENSIONS["instagram"])
@@ -91,6 +99,7 @@ class BlueprintService:
         zone_load = content_structure.get("zone_load", {}) if isinstance(content_structure.get("zone_load"), dict) else {}
 
         zone_map = (template_metadata or {}).get("zone_map") or {}
+        # Template decisions can override the generic layout type, but only when the template exposes usable zones.
         if mode in {"exact_template", "adapted_template"} and zone_map.get("layout_type"):
             layout_type = str(zone_map.get("layout_type"))
         pad_x = max(48, int(width * 0.06))
@@ -117,6 +126,7 @@ class BlueprintService:
             headline_top = pad_y + logo_height + 12
             body_top = headline_top + headline_height + 12
             image_top = body_top + max(140, int(height * 0.2)) + 12
+            # Square/mobile surfaces stack content vertically so text stays readable before the image slot.
             default_zones = [
                 BlueprintZone(zone_id="logo", role="logo", x=width - pad_x - logo_width, y=pad_y, width=logo_width, height=logo_height),
                 BlueprintZone(zone_id="headline", role="headline", x=pad_x, y=headline_top, width=width - (pad_x * 2), height=headline_height, max_lines=3),
@@ -126,6 +136,7 @@ class BlueprintService:
             ]
         raw_zones = zone_map.get("zones") or [zone.model_dump() for zone in default_zones]
         if mode == "adapted_template" and zone_map.get("zones"):
+            # Adapted templates keep their original map but loosen text/image capacity for the current payload.
             raw_zones = self._adapt_template_zones(
                 raw_zones,
                 width=width,
@@ -141,6 +152,8 @@ class BlueprintService:
         zones = [BlueprintZone(**zone) if isinstance(zone, dict) else zone for zone in normalized_zones]
         brand_rules_applied = self._brand_rules_applied(context)
 
+        # This payload is intentionally explicit because downstream renderers should not re-infer placement rules.
+        # Static/infographic backend renderers use this directly; carousel AI-final-render flows mainly keep it for trace/export context.
         return BlueprintPayload(
             layout_type=layout_type,
             zones=zones,
@@ -175,6 +188,8 @@ class BlueprintService:
         text_payload: dict[str, Any] | None = None,
         brand_rules_applied: dict[str, Any] | None = None,
     ) -> BlueprintPayload:
+        # Builds a BlueprintPayload from an already planned scene graph.
+        # It keeps model-provided geometry when available and falls back to normal blueprint defaults for missing zones.
         canvas = scene_graph.canvas
         compatible_roles = {
             "headline",
@@ -231,6 +246,7 @@ class BlueprintService:
         template_adaptation = scene_graph.template_adaptation or {}
         source_template_id = template_adaptation.get("selected_template_id")
         if scene_graph.layout_mode == "synthesized_layout" or template_adaptation.get("reference_style_only") or template_adaptation.get("topic_fit_too_weak"):
+            # Style-only or weak-fit references must not be treated as locked template surfaces later.
             source_template_id = None
         return BlueprintPayload(
             layout_type=str(scene_graph.styles.get("layout_type") or studio_panel.get("format") or "static"),
@@ -257,6 +273,8 @@ class BlueprintService:
         default_zones: list[dict[str, Any]] | list[BlueprintZone],
         canvas_size: dict[str, int] | None = None,
     ) -> list[dict[str, Any]]:
+        # Measures zone payloads from raw zones, default zones, and canvas size for renderer placement and export.
+        # The measurement feeds layout, crop, overlap, or density decisions.
         default_payloads = [
             zone.model_dump() if isinstance(zone, BlueprintZone) else dict(zone)
             for zone in default_zones
@@ -328,6 +346,8 @@ class BlueprintService:
         text_payload: dict[str, Any],
         adaptation_plan: dict[str, Any],
     ) -> list[dict[str, Any]]:
+        # Centralizes adapt template zones from zones, width, and height for renderer placement and export.
+        # The main branch stays readable while this function handles the local edge case.
         adjusted = [dict(zone) for zone in zones]
         role_map = {
             str(zone.get("role")): zone
@@ -382,6 +402,8 @@ class BlueprintService:
 
     @staticmethod
     def _brand_rules_applied(brand_context: dict[str, Any]) -> dict[str, Any]:
+        # Centralizes brand rules applied from brand context for renderer placement and export.
+        # The main branch stays readable while this function handles the local edge case.
         identity = brand_context.get("identity", {}) or {}
         visual_identity = brand_context.get("visual_identity", {}) or {}
         guardrails = brand_context.get("guardrails", {}) or {}

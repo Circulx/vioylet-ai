@@ -16,6 +16,8 @@ from PIL import Image
 
 @dataclass
 class ChartDataPoint:
+    # Groups chart point behavior for data visualization.
+    # Callers use this class to produce or evaluate data consumed by chart rendering.
     """Single data point in a chart."""
     label: str
     value: float
@@ -25,6 +27,8 @@ class ChartDataPoint:
 
 @dataclass
 class ChartSpec:
+    # Groups chart spec behavior for data visualization.
+    # Callers use this class to produce or evaluate data consumed by chart rendering.
     """Specification for a chart to be rendered."""
     chart_type: Literal["bar", "line", "pie", "area", "comparison", "timeline"]
     title: str | None = None
@@ -37,6 +41,8 @@ class ChartSpec:
     annotations: list[dict[str, Any]] | None = None
     
     def __post_init__(self):
+        # Normalizes dataclass defaults after construction for chart rendering.
+        # Planner or renderer code receives an instance whose optional fields are already safe to iterate.
         if self.data_points is None:
             self.data_points = []
         if self.colors is None:
@@ -48,6 +54,8 @@ class ChartSpec:
 
 
 class DataVisualizationService:
+    # Groups visualization service behavior for data visualization.
+    # Callers use this class to produce or evaluate data consumed by chart rendering.
     """
     Service for parsing data visualization requests from prompts and generating
     professional charts using matplotlib.
@@ -74,6 +82,8 @@ class DataVisualizationService:
 
     @classmethod
     def parse_chart_request(cls, prompt: str, metadata: dict[str, Any] | None = None) -> ChartSpec | None:
+        # Parses chart request from prompt text and metadata for chart rendering.
+        # The main branch stays readable while this function handles the local edge case.
         """
         Parse a prompt to extract chart specifications.
         
@@ -97,6 +107,7 @@ class DataVisualizationService:
         data_points = cls._extract_data_points(prompt, metadata)
         
         if not data_points:
+            # Without numeric points the renderer should stay in normal visual mode instead of fabricating a chart.
             return None
         
         # Extract labels
@@ -117,6 +128,8 @@ class DataVisualizationService:
     
     @classmethod
     def _detect_chart_type(cls, prompt_lower: str) -> str | None:
+        # Centralizes chart type from prompt lower for chart rendering.
+        # The helper owns a small rule that would distract from the surrounding flow.
         """Detect the type of chart requested."""
         if re.search(r"bar\s+chart|bar\s+graph|vertical\s+bar|horizontal\s+bar", prompt_lower):
             return "bar"
@@ -139,6 +152,8 @@ class DataVisualizationService:
     
     @classmethod
     def _extract_title_subtitle(cls, prompt: str, metadata: dict[str, Any]) -> tuple[str | None, str | None]:
+        # Extracts title subtitle from prompt text and metadata for chart rendering.
+        # The extracted signal becomes prompt context, metadata, or ranking input.
         """Extract title and subtitle from prompt or metadata."""
         title = None
         subtitle = None
@@ -163,6 +178,8 @@ class DataVisualizationService:
     
     @classmethod
     def _extract_data_points(cls, prompt: str, metadata: dict[str, Any]) -> list[ChartDataPoint]:
+        # Extracts points from prompt text and metadata for chart rendering.
+        # It calls _parse_numeric_value and _format_value to turn raw evidence into the structured signal the caller needs.
         """Extract data points from prompt or metadata."""
         data_points = []
         
@@ -179,6 +196,7 @@ class DataVisualizationService:
             for pattern_name, pattern in cls.CURRENCY_PATTERNS.items():
                 value_matches = re.findall(pattern, values_text)
                 if value_matches:
+                    # Values are aligned to the year list by index because this input format separates labels and amounts.
                     for i, (value_str, unit) in enumerate(value_matches):
                         if i < len(years):
                             value_num = cls._parse_numeric_value(value_str, unit)
@@ -227,6 +245,8 @@ class DataVisualizationService:
     
     @classmethod
     def _parse_numeric_value(cls, value_str: str, unit: str | None) -> float:
+        # Centralizes numeric from value str and unit for chart rendering.
+        # The main branch stays readable while this function handles the local edge case.
         """Parse a numeric value string with optional unit."""
         # Remove commas and convert to float
         value_str = value_str.replace(",", "")
@@ -236,12 +256,15 @@ class DataVisualizationService:
         if unit:
             unit_lower = unit.lower().strip()
             multiplier = cls.MULTIPLIERS.get(unit_lower, 1)
+            # Store the normalized number internally; formatted display text is calculated separately for labels.
             return base_value * multiplier
         
         return base_value
     
     @classmethod
     def _format_value(cls, value: float, unit: str) -> str:
+        # Formats format from input value and unit for chart rendering.
+        # The helper owns a small rule that would distract from the surrounding flow.
         """Format a numeric value for display."""
         unit_lower = unit.lower().strip() if unit else ""
         
@@ -267,6 +290,8 @@ class DataVisualizationService:
     
     @classmethod
     def _extract_axis_labels(cls, prompt: str, metadata: dict[str, Any]) -> tuple[str | None, str | None]:
+        # Extracts axis labels from prompt text and metadata for chart rendering.
+        # Later planning can reuse the structured value instead of scanning the source again.
         """Extract axis labels from prompt."""
         x_label = None
         y_label = None
@@ -276,6 +301,7 @@ class DataVisualizationService:
             x_label = "Year"
         
         if re.search(r"value|amount|portfolio|revenue|sales", prompt, re.IGNORECASE):
+            # Axis labels keep unit-heavy financial charts readable after values are shortened on the bars.
             if "lakh crore" in prompt.lower() or "crore" in prompt.lower():
                 y_label = "Value (₹ Lakh Crore)"
             elif "billion" in prompt.lower():
@@ -289,6 +315,8 @@ class DataVisualizationService:
     
     @classmethod
     def _extract_annotations(cls, prompt: str) -> list[dict[str, Any]]:
+        # Extracts annotations from prompt text for chart rendering.
+        # Later planning can reuse the structured value instead of scanning the source again.
         """Extract annotation requests like arrows, highlights."""
         annotations = []
         
@@ -324,6 +352,8 @@ class DataVisualizationService:
         brand_colors: dict[str, str] | None = None,
         style: str = "modern"
     ) -> Image.Image:
+        # Generates chart image from spec, width, and height for chart rendering.
+        # The main branch stays readable while this function handles the local edge case.
         """
         Generate a professional chart image from a ChartSpec.
         
@@ -377,6 +407,8 @@ class DataVisualizationService:
         return Image.open(buf)
     
     def _get_chart_colors(self, spec: ChartSpec, brand_colors: dict[str, str] | None) -> list[str]:
+        # Centralizes chart colors from spec and brand colors for chart rendering.
+        # The helper owns a small rule that would distract from the surrounding flow.
         """Get color palette for the chart."""
         if spec.colors:
             return spec.colors
@@ -394,6 +426,8 @@ class DataVisualizationService:
         return ["#2E5BFF", "#8C54FF", "#00D4AA", "#FFB800", "#FF6B9D"]
     
     def _render_bar_chart(self, ax, spec: ChartSpec, colors: list[str]):
+        # Centralizes bar chart from ax, spec, and colors for chart rendering.
+        # The main branch stays readable while this function handles the local edge case.
         """Render a bar chart."""
         labels = [dp.label for dp in spec.data_points]
         values = [dp.value for dp in spec.data_points]
@@ -423,6 +457,8 @@ class DataVisualizationService:
                    ha='center', fontsize=12, style='italic')
     
     def _render_line_chart(self, ax, spec: ChartSpec, colors: list[str]):
+        # Extracts line chart from ax, spec, and colors for chart rendering.
+        # It calls _format_value to turn raw evidence into the structured signal the caller needs.
         """Render a line chart."""
         labels = [dp.label for dp in spec.data_points]
         values = [dp.value for dp in spec.data_points]
@@ -449,6 +485,8 @@ class DataVisualizationService:
             ax.set_title(spec.title, fontsize=16, fontweight='bold', pad=20)
     
     def _render_pie_chart(self, ax, spec: ChartSpec, colors: list[str]):
+        # Centralizes pie chart from ax, spec, and colors for chart rendering.
+        # The helper owns a small rule that would distract from the surrounding flow.
         """Render a pie chart."""
         labels = [dp.label for dp in spec.data_points]
         values = [dp.value for dp in spec.data_points]
@@ -466,6 +504,8 @@ class DataVisualizationService:
             ax.set_title(spec.title, fontsize=16, fontweight='bold', pad=20)
     
     def _render_area_chart(self, ax, spec: ChartSpec, colors: list[str]):
+        # Centralizes area chart from ax, spec, and colors for chart rendering.
+        # The main branch stays readable while this function handles the local edge case.
         """Render an area chart."""
         labels = [dp.label for dp in spec.data_points]
         values = [dp.value for dp in spec.data_points]
@@ -485,16 +525,22 @@ class DataVisualizationService:
             ax.set_title(spec.title, fontsize=16, fontweight='bold', pad=20)
     
     def _render_comparison_chart(self, ax, spec: ChartSpec, colors: list[str]):
+        # Centralizes comparison chart from ax, spec, and colors for chart rendering.
+        # The main branch stays readable while this function handles the local edge case.
         """Render a comparison chart (grouped bars)."""
         # Similar to bar chart but with grouping
         self._render_bar_chart(ax, spec, colors)
     
     def _render_timeline_chart(self, ax, spec: ChartSpec, colors: list[str]):
+        # Centralizes timeline chart from ax, spec, and colors for chart rendering.
+        # The helper owns a small rule that would distract from the surrounding flow.
         """Render a timeline chart."""
         # Similar to line chart with timeline styling
         self._render_line_chart(ax, spec, colors)
     
     def _add_annotations(self, ax, spec: ChartSpec, colors: list[str]):
+        # Adds add annotations from ax, spec, and colors for chart rendering.
+        # The helper owns a small rule that would distract from the surrounding flow.
         """Add annotations like arrows to the chart."""
         for annotation in spec.annotations:
             if annotation.get("type") == "arrow" and annotation.get("direction") == "up":
@@ -511,6 +557,8 @@ class DataVisualizationService:
                                             alpha=0.6))
     
     def _apply_chart_styling(self, ax, spec: ChartSpec, style: str):
+        # Applies apply chart styling from ax, spec, and style for chart rendering.
+        # The helper owns a small rule that would distract from the surrounding flow.
         """Apply styling to the chart."""
         # Remove top and right spines for cleaner look
         ax.spines['top'].set_visible(False)

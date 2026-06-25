@@ -14,7 +14,11 @@ from app.core.config import get_settings
 
 
 class TemplateVisionAnalyzer:
+    # Groups template vision analyzer behavior for template vision.
+    # Callers use this class to produce or evaluate data consumed by layout DNA and sample blueprints.
     def __init__(self) -> None:
+        # Initializes settings, clients, and helper services needed by layout DNA and sample blueprints.
+        # Public methods reuse these collaborators instead of rebuilding them for each request.
         settings = get_settings()
         self.settings = settings
         self.client = OpenAI(api_key=settings.openai_api_key) if settings.openai_api_key else None
@@ -24,6 +28,8 @@ class TemplateVisionAnalyzer:
         self.cache_base_path = Path(getattr(settings, "template_vision_cache_base_path", "") or "")
 
     def _cache_path(self, *, image_hash: str) -> Path | None:
+        # Resolves cache path from image hash for layout DNA and sample blueprints.
+        # This hides source-specific naming and path quirks from the main flow.
         if not self.cache_enabled or not image_hash:
             return None
         cache_key = hashlib.sha256(
@@ -40,12 +46,16 @@ class TemplateVisionAnalyzer:
 
     @staticmethod
     def _analysis_without_provider_usage(payload: dict[str, Any]) -> dict[str, Any]:
+        # Centralizes analysis without provider usage from payload for layout DNA and sample blueprints.
+        # The helper owns a small rule that would distract from the surrounding flow.
         cleaned = dict(payload)
         cleaned.pop("provider_usage", None)
         cleaned.pop("vision_cache", None)
         return cleaned
 
     def _load_cached_analysis(self, cache_path: Path | None) -> dict[str, Any] | None:
+        # Loads load cached analysis from cache path for layout DNA and sample blueprints.
+        # The caller gets cached or external analysis in the same shape as fresh analysis.
         if cache_path is None or not cache_path.exists():
             return None
         try:
@@ -60,6 +70,8 @@ class TemplateVisionAnalyzer:
         return cached
 
     def _write_cached_analysis(self, cache_path: Path | None, analysis: dict[str, Any]) -> None:
+        # Writes write cached analysis from cache path and analysis for layout DNA and sample blueprints.
+        # Cache formatting stays separate from the flow that produced the analysis.
         if cache_path is None or not isinstance(analysis, dict):
             return
         try:
@@ -79,6 +91,8 @@ class TemplateVisionAnalyzer:
             return
 
     def analyze(self, image_path: str, fallback: dict[str, Any]) -> dict[str, Any]:
+        # Loads cached visual analysis or asks the vision provider to inspect one template/reference image.
+        # The normalized result supplies layout, palette, density, and sample blueprint signals to prompt and carousel flows.
         if not self.client:
             self.last_usage = None
             return fallback
@@ -92,9 +106,11 @@ class TemplateVisionAnalyzer:
             cache_path = self._cache_path(image_hash=image_hash)
             cached = self._load_cached_analysis(cache_path)
             if cached is not None:
+                # Cached analysis avoids paying for repeat template audits while keeping the same response shape.
                 self.last_usage = None
                 return cached
             encoded = base64.b64encode(image_bytes).decode("utf-8")
+            # The vision prompt asks for design DNA, not just labels, because downstream code needs reusable layout signals.
             response = self.client.responses.create(
                 model=self.model,
                 input=[
@@ -239,6 +255,7 @@ class TemplateVisionAnalyzer:
                 or fallback.get("background_style", {}).get("dominant_mode")
                 or "flat"
             ).strip()
+            # Normalize alternate background fields so older and newer prompt schemas stay compatible.
             background_style = {
                 **background_style,
                 "type": background_type,
@@ -281,6 +298,8 @@ class TemplateVisionAnalyzer:
 
     @staticmethod
     def _merge_string_vote(values: list[Any]) -> str:
+        # Merges string vote from values for layout DNA and sample blueprints.
+        # The helper owns a small rule that would distract from the surrounding flow.
         normalized = [str(value).strip() for value in values if str(value).strip()]
         if not normalized:
             return ""
@@ -293,6 +312,8 @@ class TemplateVisionAnalyzer:
 
     @classmethod
     def _merge_mapping_vote(cls, mappings: list[dict[str, Any]], *, keys: list[str]) -> dict[str, Any]:
+        # Merges mapping vote from mappings and keys for layout DNA and sample blueprints.
+        # The main branch stays readable while this function handles the local edge case.
         merged: dict[str, Any] = {}
         for key in keys:
             values = [mapping.get(key) for mapping in mappings if isinstance(mapping, dict) and mapping.get(key) not in (None, "", [], {})]
@@ -326,6 +347,8 @@ class TemplateVisionAnalyzer:
         image_paths: list[str],
         fallback: dict[str, Any],
     ) -> dict[str, Any]:
+        # Analyzes multi-page references page by page so each slide can keep its own layout and visual signals.
+        # Carousel and template branches use these page records as sequence packs and sample blueprint sources.
         selected = [str(path) for path in image_paths if str(path).strip()]
         if not selected:
             return fallback
@@ -351,6 +374,7 @@ class TemplateVisionAnalyzer:
         if not page_results:
             return fallback
 
+        # The richest page becomes the base record, while vote-merged fields below add sequence-wide consistency.
         primary = max(
             page_results,
             key=lambda item: (
@@ -376,6 +400,7 @@ class TemplateVisionAnalyzer:
 
         component_motifs: dict[str, Any] = {}
         motif_support: Counter[str] = Counter()
+        # Motif support ratios tell later stages whether a visual pattern is recurring or just a one-page accident.
         for result in page_results:
             motifs = result.get("component_motifs") if isinstance(result.get("component_motifs"), dict) else {}
             for key, value in motifs.items():
@@ -395,6 +420,7 @@ class TemplateVisionAnalyzer:
                     "page_support_ratio": round(motif_support.get(key, 0) / max(len(page_results), 1), 4),
                 }
 
+        # The merged object is intentionally page-aware: it keeps primary-page detail plus cross-page votes and summaries.
         merged = {
             **primary,
             "background_style": {
@@ -497,6 +523,8 @@ class TemplateVisionAnalyzer:
         canvas_height: int | None = None,
         base_analysis: dict[str, Any] | None = None,
     ) -> dict:
+        # Extracts layout dna from image path, canvas width, and canvas height for layout DNA and sample blueprints.
+        # It calls _analyze_spacing to turn raw evidence into the structured signal the caller needs.
         """Extract precise layout DNA from reference image with exact positions"""
         if canvas_width is None or canvas_height is None:
             try:
@@ -570,6 +598,8 @@ class TemplateVisionAnalyzer:
 
     @staticmethod
     def _analyze_spacing(zones: list[dict], canvas_h: int) -> dict:
+        # Centralizes analyze spacing from zones and canvas h for layout DNA and sample blueprints.
+        # The main branch stays readable while this function handles the local edge case.
         """Analyze vertical spacing between zones"""
         if not zones:
             return {"inter_element_gap": 20, "detected_gaps": []}

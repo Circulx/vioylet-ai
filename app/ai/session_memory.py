@@ -5,6 +5,8 @@ from typing import Any
 
 
 class SessionMemoryPlanner:
+    # Groups session memory planner behavior for session memory.
+    # Callers use this class to produce or evaluate data consumed by follow-up context.
     FRESH_STANDALONE_PATTERN = re.compile(
         r"^(?:write|create|generate|design|draft|prepare|make)\b",
         re.IGNORECASE,
@@ -49,6 +51,8 @@ class SessionMemoryPlanner:
         recent_content_versions: list[dict[str, Any]],
         session_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Builds the session-memory payload from the current prompt and recent conversation/content history.
+        # This keeps payload shape decisions close to the code that understands the inputs.
         recent_messages = list(recent_messages or [])
         recent_content_versions = list(recent_content_versions or [])
         latest_content = recent_content_versions[0] if recent_content_versions else None
@@ -57,6 +61,7 @@ class SessionMemoryPlanner:
             recent_messages=recent_messages,
             latest_content=latest_content,
         )
+        # Inherited IDs are only attached when the current prompt actually depends on the previous output.
         return {
             "follow_up_intent": follow_up_intent,
             "recent_messages": recent_messages,
@@ -75,6 +80,8 @@ class SessionMemoryPlanner:
         recent_messages: list[dict[str, Any]],
         latest_content: dict[str, Any] | None,
     ) -> dict[str, Any]:
+        # Detects follow up intent from current prompt, recent messages, and latest content for follow-up context.
+        # The helper owns a small rule that would distract from the surrounding flow.
         prompt = (current_prompt or "").strip()
         lowered = prompt.lower()
         if not prompt or not latest_content:
@@ -88,6 +95,7 @@ class SessionMemoryPlanner:
         is_short_follow_up = len(tokens) <= 12
         has_history = bool(recent_messages)
         if self._looks_like_fresh_standalone_request(prompt, latest_content):
+            # A new, specific brief should not accidentally inherit the last design just because history exists.
             return self._intent_payload(
                 "new_content",
                 0.9,
@@ -110,6 +118,8 @@ class SessionMemoryPlanner:
 
     @classmethod
     def _topic_tokens(cls, text: str | None) -> set[str]:
+        # Centralizes topic tokens from text for follow-up context.
+        # The helper owns a small rule that would distract from the surrounding flow.
         return {
             token
             for token in re.findall(r"[a-z0-9']+", str(text or "").casefold())
@@ -156,6 +166,8 @@ class SessionMemoryPlanner:
         prompt: str,
         latest_content: dict[str, Any] | None,
     ) -> bool:
+        # Checks fresh standalone request from prompt text and latest content for follow-up context.
+        # It reuses _topic_tokens so related checks follow the same rule.
         text = str(prompt or "").strip()
         if not text or latest_content is None:
             return False
@@ -174,10 +186,13 @@ class SessionMemoryPlanner:
             return False
         overlap = current_tokens & previous_tokens
         overlap_ratio = len(overlap) / max(len(current_tokens), 1)
+        # Low topic overlap is the signal that this is a fresh brief, not a rewrite of the last output.
         return overlap_ratio <= 0.25 and len(current_tokens - overlap) >= 4
 
     @staticmethod
     def _intent_payload(mode: str, confidence: float, rationale: str) -> dict[str, Any]:
+        # Builds intent from mode, confidence, and rationale for follow-up context.
+        # The returned payload is the compact contract consumed by the next branch.
         return {
             "mode": mode,
             "confidence": confidence,

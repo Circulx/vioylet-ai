@@ -6,7 +6,11 @@ from app.core.exceptions import GuardrailViolationError
 
 
 class GuardrailService:
+    # Groups guardrail service behavior for guardrail checks.
+    # Callers use this class to produce or evaluate data consumed by safe output handling.
     def validate_prompt(self, prompt: str, guardrails: dict) -> dict:
+        # Builds prompt from prompt text and guardrails for safe output handling.
+        # This keeps payload shape decisions close to the code that understands the inputs.
         violations: list[str] = []
         lowered = prompt.lower()
         for blocked in guardrails.get("blocked_words", []):
@@ -22,9 +26,12 @@ class GuardrailService:
             if re.search(pattern, prompt, flags=re.IGNORECASE):
                 violations.append(f"Forbidden prompt pattern detected: {pattern}")
         if violations:
+            # Fail fast here so unsafe prompt or output text never reaches downstream generation.
             raise GuardrailViolationError("; ".join(violations))
         return {"status": "passed", "violations": []}
 
     def validate_output(self, content: str, guardrails: dict) -> dict:
+        # Centralizes output from generated content and guardrails for safe output handling.
+        # The main branch stays readable while this function handles the local edge case.
         return self.validate_prompt(content, guardrails)
 

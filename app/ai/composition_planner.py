@@ -6,6 +6,8 @@ from app.ai.contracts import BlueprintPayload, StructuredTextPayload
 
 
 class CompositionPlannerService:
+    # Groups composition planner service behavior for composition planning.
+    # Callers use this class to produce or evaluate data consumed by scene graph prompts.
     def _choose_layout_archetype(
         self,
         *,
@@ -15,6 +17,8 @@ class CompositionPlannerService:
         text_payload: StructuredTextPayload,
         compiled_context: dict[str, Any],
     ) -> str:
+        # Chooses layout archetype from prompt text, studio settings, and blueprint for scene graph prompts.
+        # The helper owns a small rule that would distract from the surrounding flow.
         mode = blueprint.source_mode
         if mode == "exact_template":
             return "template_lock"
@@ -31,6 +35,7 @@ class CompositionPlannerService:
         platform = studio_panel.get("platform_preset", "")
         text_density = render_constraints.get("text_density", "medium")
 
+        # Template modes already decided the surface contract, so archetype selection should not override them.
         if format_name == "infographic":
             return "infographic_stack"
         if any(token in lowered_prompt for token in ["compare", "comparison", "versus", "vs "]):
@@ -51,6 +56,8 @@ class CompositionPlannerService:
         blueprint: BlueprintPayload,
         brand_visual_brief: dict[str, Any],
     ) -> dict[str, Any]:
+        # Builds background plan from blueprint and brand visual brief for scene graph prompts.
+        # This keeps payload shape decisions close to the code that understands the inputs.
         if blueprint.source_mode == "exact_template":
             return {
                 "policy": "template_background",
@@ -67,6 +74,7 @@ class CompositionPlannerService:
             }
         palette_roles = brand_visual_brief.get("palette_roles", {}) or {}
         if palette_roles.get("secondary") and (palette_roles.get("background") or palette_roles.get("primary")):
+            # Synthesized layouts can use a brand gradient only when enough palette roles exist to keep it on-brand.
             return {
                 "policy": "brand_gradient",
                 "template_background_required": False,
@@ -82,6 +90,8 @@ class CompositionPlannerService:
 
     @staticmethod
     def _brand_element_plan(blueprint: BlueprintPayload) -> dict[str, Any]:
+        # Builds brand element plan from blueprint for scene graph prompts.
+        # The returned payload is the compact contract consumed by the next branch.
         if blueprint.source_mode == "exact_template":
             return {
                 "logo_policy": "preserve_existing",
@@ -106,6 +116,8 @@ class CompositionPlannerService:
         blueprint: BlueprintPayload,
         brand_visual_brief: dict[str, Any],
     ) -> dict[str, Any]:
+        # Builds decorative plan from blueprint and brand visual brief for scene graph prompts.
+        # This keeps payload shape decisions close to the code that understands the inputs.
         if blueprint.source_mode == "exact_template":
             return {"policy": "template_only", "max_assets": 0}
         if blueprint.source_mode == "adapted_template":
@@ -122,6 +134,8 @@ class CompositionPlannerService:
         blueprint: BlueprintPayload,
         adaptation_plan: dict[str, Any],
     ) -> dict[str, Any]:
+        # Builds primary visual plan from blueprint and adaptation plan for scene graph prompts.
+        # This keeps payload shape decisions close to the code that understands the inputs.
         if blueprint.source_mode == "exact_template":
             return {
                 "policy": "preserve_template_visual",
@@ -143,6 +157,8 @@ class CompositionPlannerService:
         blueprint: BlueprintPayload,
         brand_visual_brief: dict[str, Any],
     ) -> dict[str, Any]:
+        # Derives text style plan from blueprint and brand visual brief for scene graph prompts.
+        # The derived signal gives the LLM explicit evidence instead of asking it to infer the same thing later.
         precedence = "template_first" if blueprint.source_mode in {"exact_template", "adapted_template"} else "brand_first"
         return {
             "precedence": precedence,
@@ -158,6 +174,8 @@ class CompositionPlannerService:
         text_payload: StructuredTextPayload,
         render_constraints: dict[str, Any],
     ) -> dict[str, Any]:
+        # Builds text content plan from blueprint, copy payload, and render constraints for scene graph prompts.
+        # The returned payload is the compact contract consumed by the next branch.
         proof_points = text_payload.metadata.get("proof_points", []) or []
         stat_highlights = text_payload.metadata.get("stat_highlights", []) or []
         return {
@@ -179,6 +197,8 @@ class CompositionPlannerService:
         studio_panel: dict[str, Any],
         compiled_context: dict[str, Any],
     ) -> dict[str, Any]:
+        # Assembles the full composition plan from prompt intent, blueprint zones, and approved copy.
+        # It calls _choose_layout_archetype and _background_plan while assembling the payload or prompt text.
         brand_visual_brief = compiled_context.get("brand_visual_brief", {}) or {}
         render_constraints = compiled_context.get("render_constraints", {}) or {}
         template_fit_brief = compiled_context.get("template_fit_brief", {}) or {}
@@ -190,6 +210,7 @@ class CompositionPlannerService:
             text_payload=text_payload,
             compiled_context=compiled_context,
         )
+        # The composition plan is a compact handoff: prompts consume policy, not full upstream objects.
         return {
             "canvas_plan": {
                 "platform_preset": blueprint.platform_preset,

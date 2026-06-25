@@ -9,6 +9,8 @@ from app.ai.data_visualization import ChartSpec
 
 @dataclass
 class SlideBlueprint:
+    # Groups slide blueprint behavior for carousel planning.
+    # Callers use this class to produce or evaluate data consumed by slide metadata.
     """Blueprint for a single carousel slide."""
     slide_number: int
     role: str  # cover, detail, data_viz, closing
@@ -23,6 +25,8 @@ class SlideBlueprint:
     cta_style: dict[str, Any] | None = None  # CTA button styling from brand template
 
     def __post_init__(self):
+        # Normalizes dataclass defaults after construction for slide metadata.
+        # Planner or renderer code receives an instance whose optional fields are already safe to iterate.
         if self.proof_points is None:
             self.proof_points = []
         if self.visual_elements is None:
@@ -32,6 +36,8 @@ class SlideBlueprint:
 
 
 class CarouselPlannerService:
+    # Groups carousel planner service behavior for carousel planning.
+    # Callers use this class to produce or evaluate data consumed by slide metadata.
     """
     Service for planning multi-slide carousel content distribution.
     Breaks content into logical slides with proper visual hierarchy.
@@ -47,6 +53,8 @@ class CarouselPlannerService:
         reference_images: list[dict[str, Any]] | None = None,
         max_slides: int = 10,
     ) -> list[SlideBlueprint]:
+        # Builds plan carousel slides from copy payload, data elements, and brand assets for slide metadata.
+        # It calls _create_cover_slide and _create_closing_slide while assembling the payload or prompt text.
         """
         Plan carousel slides from text payload and data elements.
 
@@ -78,6 +86,7 @@ class CarouselPlannerService:
         proof_points = metadata.get("proof_points", []) or []
         stat_highlights = metadata.get("stat_highlights", []) or []
 
+        # The strategy is chosen by strongest available material: images first, then data, then proof-point density.
         if has_reference_images:
             # Image-driven carousel: cover + image-driven detail slides + closing
             slides.extend(cls._plan_image_driven_slides(
@@ -112,6 +121,8 @@ class CarouselPlannerService:
         text_payload: StructuredTextPayload,
         brand_assets: list[dict[str, Any]],
     ) -> SlideBlueprint:
+        # Creates cover slide from copy payload and brand assets for slide metadata.
+        # The helper owns a small rule that would distract from the surrounding flow.
         """Create the cover slide."""
         metadata = text_payload.metadata or {}
         
@@ -140,6 +151,8 @@ class CarouselPlannerService:
         brand_assets: list[dict[str, Any]],
         brand_context: dict[str, Any] | None = None,
     ) -> SlideBlueprint:
+        # Creates closing slide from copy payload, brand assets, and brand context for slide metadata.
+        # The main branch stays readable while this function handles the local edge case.
         """Create the closing/CTA slide using brand CTA template if available."""
         metadata = text_payload.metadata or {}
         brand_context = brand_context or {}
@@ -230,6 +243,8 @@ class CarouselPlannerService:
         brand_assets: list[dict[str, Any]],
         max_detail_slides: int,
     ) -> list[SlideBlueprint]:
+        # Plans plan image driven slides from copy payload, reference images, and brand assets for slide metadata.
+        # The main branch stays readable while this function handles the local edge case.
         """Plan slides driven by reference images - one image per slide.
 
         CRITICAL: Each slide must bind to a valid reference image storage_path.
@@ -250,6 +265,7 @@ class CarouselPlannerService:
             # CRITICAL: Extract and validate image storage path
             storage_path = ref_image.get("storage_path") or ref_image.get("path")
             if not storage_path or storage_path == "unknown" or storage_path == "null":
+                # A slide without a real storage path cannot render its visual, so it is skipped instead of half-built.
                 logger.warning(f"Skipping slide {slide_number}: reference image {idx} has invalid storage_path '{storage_path}'")
                 skipped_count += 1
                 continue
@@ -304,6 +320,8 @@ class CarouselPlannerService:
         brand_assets: list[dict[str, Any]],
         max_detail_slides: int,
     ) -> list[SlideBlueprint]:
+        # Plans plan driven slides from copy payload, data elements, and brand assets for slide metadata.
+        # The main branch stays readable while this function handles the local edge case.
         """Plan slides for data-driven carousel."""
         slides = []
         metadata = text_payload.metadata or {}
@@ -311,6 +329,7 @@ class CarouselPlannerService:
         proof_points = metadata.get("proof_points", []) or []
         
         # Slide 2: Context/setup slide
+        # Data carousels get a setup slide before the chart so the visual has narrative context.
         context_headline = stat_highlights[0] if stat_highlights else "Key Insight"
         context_supporting = proof_points[0] if proof_points else text_payload.body[:200]
         
@@ -349,6 +368,8 @@ class CarouselPlannerService:
         brand_assets: list[dict[str, Any]],
         max_detail_slides: int,
     ) -> list[SlideBlueprint]:
+        # Plans plan multi point slides from copy payload, brand assets, and max detail slides for slide metadata.
+        # The helper owns a small rule that would distract from the surrounding flow.
         """Plan slides for multi-point carousel (3+ proof points)."""
         slides = []
         metadata = text_payload.metadata or {}
@@ -365,6 +386,7 @@ class CarouselPlannerService:
             # Get additional proof points for this slide
             slide_proof_points = []
             if i * 2 + 1 < len(proof_points):
+                # Pair nearby proof points so each detail slide has enough substance without becoming dense.
                 slide_proof_points = proof_points[i * 2 : i * 2 + 2]
             
             slides.append(SlideBlueprint(
@@ -387,6 +409,8 @@ class CarouselPlannerService:
         brand_assets: list[dict[str, Any]],
         max_detail_slides: int,
     ) -> list[SlideBlueprint]:
+        # Plans plan simple slides from copy payload, brand assets, and max detail slides for slide metadata.
+        # The helper owns a small rule that would distract from the surrounding flow.
         """Plan slides for simple carousel (1-2 detail slides)."""
         slides = []
         metadata = text_payload.metadata or {}
@@ -415,6 +439,8 @@ class CarouselPlannerService:
         metadata: dict[str, Any],
         brand_assets: list[dict[str, Any]],
     ) -> list[str]:
+        # Selects visual elements role from role, metadata, and brand assets for slide metadata.
+        # The chosen candidate becomes the source used by the next planning branch.
         """Select appropriate visual elements for a slide role."""
         visual_elements = []
         
@@ -452,6 +478,8 @@ class CarouselPlannerService:
     
     @classmethod
     def renumber_slides(cls, slides: list[SlideBlueprint]) -> list[SlideBlueprint]:
+        # Renumbers renumber slides from slides for slide metadata.
+        # The helper owns a small rule that would distract from the surrounding flow.
         """Renumber slides sequentially."""
         for i, slide in enumerate(slides, start=1):
             slide.slide_number = i

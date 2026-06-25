@@ -6,8 +6,13 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+# These models are the pipeline handoff language: routes build them, workers pass them to AI, and render/export code reads them back.
+# When adding fields, prefer additive metadata so older workflow branches can keep consuming the same contracts.
+
 
 class AIOrchestrationRequest(BaseModel):
+    # Defines the ai orchestration request payload exchanged across AI contracts.
+    # Typed models keep API, worker, orchestration, provider, and renderer data explicit.
     tenant_id: UUID
     brand_space_id: UUID
     user_id: UUID
@@ -47,6 +52,8 @@ class AIOrchestrationRequest(BaseModel):
 
 
 class StructuredTextPayload(BaseModel):
+    # Defines the structured text payload exchanged across AI contracts.
+    # Typed models keep API, worker, orchestration, provider, and renderer data explicit.
     headline: str
     body: str
     cta: str
@@ -55,6 +62,8 @@ class StructuredTextPayload(BaseModel):
 
 
 class MessageStrategyPayload(BaseModel):
+    # Defines the message strategy payload exchanged across AI contracts.
+    # Typed models keep API, worker, orchestration, provider, and renderer data explicit.
     primary_campaign_theme: str = ""
     core_audience_message: str = ""
     headline_direction: str = ""
@@ -67,6 +76,8 @@ class MessageStrategyPayload(BaseModel):
 
 
 class BlueprintZone(BaseModel):
+    # Defines the blueprint zone payload exchanged across AI contracts.
+    # Typed models keep API, worker, orchestration, provider, and renderer data explicit.
     zone_id: str
     role: str
     x: int
@@ -77,6 +88,8 @@ class BlueprintZone(BaseModel):
 
 
 class BlueprintPayload(BaseModel):
+    # Defines the blueprint payload exchanged across AI contracts.
+    # Typed models keep API, worker, orchestration, provider, and renderer data explicit.
     layout_type: str
     zones: list[BlueprintZone]
     hierarchy: list[str]
@@ -96,6 +109,8 @@ class BlueprintPayload(BaseModel):
 
 
 class GeneratedImageAsset(BaseModel):
+    # Defines the generated image asset payload exchanged across AI contracts.
+    # Typed models keep API, worker, orchestration, provider, and renderer data explicit.
     asset_id: UUID
     mime_type: str
     storage_path: str
@@ -106,6 +121,8 @@ class GeneratedImageAsset(BaseModel):
 
 
 class CreativeDecisionPayload(BaseModel):
+    # Defines the creative decision payload exchanged across AI contracts.
+    # Typed models keep API, worker, orchestration, provider, and renderer data explicit.
     layout_mode: str = "synthesized_layout"
     selected_template_id: str | None = None
     confidence: float = 0.0
@@ -117,6 +134,8 @@ class CreativeDecisionPayload(BaseModel):
 
 
 class SceneGraphCanvas(BaseModel):
+    # Defines the scene graph canvas payload exchanged across AI contracts.
+    # Typed models keep API, worker, orchestration, provider, and renderer data explicit.
     width: int
     height: int
     platform: str
@@ -125,6 +144,8 @@ class SceneGraphCanvas(BaseModel):
 
 
 class SceneGraphGeometry(BaseModel):
+    # Defines the scene graph geometry payload exchanged across AI contracts.
+    # Typed models keep API, worker, orchestration, provider, and renderer data explicit.
     x: float | int | None = None
     y: float | int | None = None
     width: float | int | None = None
@@ -136,6 +157,8 @@ class SceneGraphGeometry(BaseModel):
 
 
 class SceneGraphAssetBinding(BaseModel):
+    # Defines the scene graph asset binding payload exchanged across AI contracts.
+    # Typed models keep API, worker, orchestration, provider, and renderer data explicit.
     asset_id: str | None = None
     asset_role: str | None = None
     storage_path: str | None = None
@@ -145,6 +168,8 @@ class SceneGraphAssetBinding(BaseModel):
 
 
 class SceneGraphElement(BaseModel):
+    # Defines the scene graph element payload exchanged across AI contracts.
+    # Typed models keep API, worker, orchestration, provider, and renderer data explicit.
     element_id: str
     element_type: str
     role: str
@@ -159,6 +184,8 @@ class SceneGraphElement(BaseModel):
 
 
 class GenerationSceneGraph(BaseModel):
+    # Defines the generation scene graph payload exchanged across AI contracts.
+    # Typed models keep API, worker, orchestration, provider, and renderer data explicit.
     version: str = "1.0"
     canvas: SceneGraphCanvas
     layout_mode: str = "synthesized_layout"
@@ -172,6 +199,8 @@ class GenerationSceneGraph(BaseModel):
 
 
 class SceneGraphValidationIssue(BaseModel):
+    # Defines the scene graph validation issue payload exchanged across AI contracts.
+    # Typed models keep API, worker, orchestration, provider, and renderer data explicit.
     severity: str
     rule_id: str
     element_id: str | None = None
@@ -181,6 +210,8 @@ class SceneGraphValidationIssue(BaseModel):
 
 
 class SceneGraphValidationReport(BaseModel):
+    # Defines the scene graph validation report payload exchanged across AI contracts.
+    # Typed models keep API, worker, orchestration, provider, and renderer data explicit.
     status: str = "clean"
     issues: list[SceneGraphValidationIssue] = Field(default_factory=list)
     summary: list[str] = Field(default_factory=list)
@@ -188,6 +219,8 @@ class SceneGraphValidationReport(BaseModel):
 
 
 class AIOrchestrationResponse(BaseModel):
+    # Defines the ai orchestration response payload exchanged across AI contracts.
+    # Typed models keep API, worker, orchestration, provider, and renderer data explicit.
     message_strategy: MessageStrategyPayload = Field(default_factory=MessageStrategyPayload)
     text: StructuredTextPayload
     creative_decision: CreativeDecisionPayload
@@ -205,6 +238,8 @@ class AIOrchestrationResponse(BaseModel):
 
 
 class RendererInput(BaseModel):
+    # Defines the renderer input payload exchanged across AI contracts.
+    # Typed models keep API, worker, orchestration, provider, and renderer data explicit.
     tenant_id: UUID
     brand_space_id: UUID
     content_version_id: UUID
@@ -226,12 +261,16 @@ class RendererInput(BaseModel):
 
 
 class RendererResponse(BaseModel):
+    # Defines the renderer response payload exchanged across AI contracts.
+    # Typed models keep API, worker, orchestration, provider, and renderer data explicit.
     preview_asset: dict[str, Any] | None = None
     export_assets: list[dict[str, Any]] = Field(default_factory=list)
     renderer_metadata: dict[str, Any]
 
 
 class GenerationTrace(BaseModel):
+    # Defines the generation trace payload exchanged across AI contracts.
+    # Typed models keep API, worker, orchestration, provider, and renderer data explicit.
     """
     Tracks all generation decisions for debugging and evaluation.
     Provides full traceability of why specific design choices were made.

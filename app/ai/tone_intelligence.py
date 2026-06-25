@@ -9,6 +9,8 @@ from app.ai.providers.router import ProviderRouter
 
 
 class ToneIntelligenceService:
+    # Scores generated copy for tone, evidence, audience fit, distinctiveness, CTA quality, and request grounding.
+    # The orchestrator uses the evaluation to accept the payload or trigger a targeted rewrite.
     CTA_PATTERN = re.compile(
         r"\b(call|book|claim|compare|contact|discover|download|explore|get|join|learn|shop|start|try|see|schedule)\b",
         flags=re.IGNORECASE,
@@ -182,14 +184,20 @@ class ToneIntelligenceService:
     FIELD_GUIDANCE_KEYS = ("headline", "body", "cta", "metadata")
 
     def __init__(self) -> None:
+        # Initializes settings, clients, and helper services needed by rewrite decisions.
+        # Public methods reuse these collaborators instead of rebuilding them for each request.
         self.providers = ProviderRouter()
 
     @staticmethod
     def _clamp_score(value: float | int) -> int:
+        # Centralizes clamp from input value for rewrite decisions.
+        # The helper owns a small rule that would distract from the surrounding flow.
         return max(0, min(100, int(round(float(value)))))
 
     @classmethod
     def _dedupe_messages(cls, messages: list[str]) -> list[str]:
+        # Deduplicates dedupe messages from messages for rewrite decisions.
+        # The helper owns a small rule that would distract from the surrounding flow.
         seen: set[str] = set()
         output: list[str] = []
         for message in messages:
@@ -205,6 +213,8 @@ class ToneIntelligenceService:
 
     @classmethod
     def _flatten_text(cls, value: object) -> list[str]:
+        # Flattens flatten text from input value for rewrite decisions.
+        # The main branch stays readable while this function handles the local edge case.
         if value is None:
             return []
         if isinstance(value, str):
@@ -224,6 +234,8 @@ class ToneIntelligenceService:
 
     @classmethod
     def _extract_terms(cls, value: object) -> set[str]:
+        # Extracts terms from input value for rewrite decisions.
+        # It calls _flatten_text to turn raw evidence into the structured signal the caller needs.
         terms: set[str] = set()
         for text in cls._flatten_text(value):
             for token in cls.TOKEN_PATTERN.findall(text.lower()):
@@ -234,10 +246,14 @@ class ToneIntelligenceService:
 
     @classmethod
     def _content_tokens(cls, content: str) -> list[str]:
+        # Centralizes content tokens from generated content for rewrite decisions.
+        # The main branch stays readable while this function handles the local edge case.
         return [token for token in cls.TOKEN_PATTERN.findall(content.lower()) if token not in cls.STOPWORDS]
 
     @classmethod
     def _match_phrases(cls, content: str, phrases: set[str]) -> list[str]:
+        # Matches phrases from generated content and phrases for rewrite decisions.
+        # The main branch stays readable while this function handles the local edge case.
         lowered = content.lower()
         hits: list[str] = []
         for phrase in phrases:
@@ -250,6 +266,8 @@ class ToneIntelligenceService:
 
     @classmethod
     def _phrase_occurrences(cls, content: str, phrase: str) -> int:
+        # Centralizes phrase occurrences from generated content and phrase for rewrite decisions.
+        # The helper owns a small rule that would distract from the surrounding flow.
         lowered = content.lower()
         target = str(phrase or "").strip().lower()
         if not target:
@@ -260,10 +278,14 @@ class ToneIntelligenceService:
 
     @classmethod
     def _normalize_grounding_text(cls, value: object) -> str:
+        # Normalizes grounding text from input value for rewrite decisions.
+        # Later prompt and metadata code can compare the cleaned value directly.
         return re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).strip()
 
     @classmethod
     def _grounding_token_root(cls, token: str) -> str:
+        # Extracts grounding token root from token for rewrite decisions.
+        # The extracted signal becomes prompt context, metadata, or ranking input.
         root = str(token or "").lower().strip("'")
         if not root:
             return ""
@@ -291,6 +313,8 @@ class ToneIntelligenceService:
 
     @classmethod
     def _grounding_token_variants(cls, token: str) -> set[str]:
+        # Extracts grounding token variants from token for rewrite decisions.
+        # It calls _grounding_token_root to turn raw evidence into the structured signal the caller needs.
         root = cls._grounding_token_root(token)
         if len(root) < 4 or root in cls.STOPWORDS:
             return set()
@@ -303,11 +327,15 @@ class ToneIntelligenceService:
 
     @classmethod
     def _is_low_signal_grounding_term(cls, term: str) -> bool:
+        # Checks low signal grounding term from term for rewrite decisions.
+        # The boolean result controls the nearby policy or validation branch.
         lowered = str(term or "").lower()
         return any(lowered.startswith(prefix) for prefix in cls.LOW_SIGNAL_GROUNDING_PREFIXES)
 
     @classmethod
     def _grounding_term_weight(cls, term: str) -> float:
+        # Centralizes grounding term weight from term for rewrite decisions.
+        # The main branch stays readable while this function handles the local edge case.
         lowered = str(term or "").lower()
         if not lowered:
             return 0.0
@@ -320,6 +348,8 @@ class ToneIntelligenceService:
 
     @classmethod
     def _grounding_phrase_records(cls, value: object) -> list[dict[str, Any]]:
+        # Extracts grounding phrase records from input value for rewrite decisions.
+        # It calls _flatten_text and _normalize_grounding_text to turn raw evidence into the structured signal the caller needs.
         records: list[dict[str, Any]] = []
         for text in cls._flatten_text(value):
             normalized_text = cls._normalize_grounding_text(text)
@@ -372,6 +402,8 @@ class ToneIntelligenceService:
 
     @classmethod
     def _grounding_candidate_profile(cls, value: object) -> list[dict[str, Any]]:
+        # Builds grounding candidate profile from input value for rewrite decisions.
+        # It calls _flatten_text and _normalize_grounding_text while assembling the payload or prompt text.
         profiles: list[dict[str, Any]] = []
         for text in cls._flatten_text(value):
             normalized_text = cls._normalize_grounding_text(text)
@@ -400,6 +432,8 @@ class ToneIntelligenceService:
         *,
         mode: str = "default",
     ) -> bool:
+        # Builds grounding profile from candidate, evidence, and mode for rewrite decisions.
+        # It calls _grounding_term_weight while assembling the payload or prompt text.
         normalized_candidate = str(candidate.get("normalized_text") or "")
         candidate_variants = candidate.get("variants", set())
         if not normalized_candidate:
@@ -446,6 +480,8 @@ class ToneIntelligenceService:
 
     @classmethod
     def _grounding_match_count(cls, candidates: object, evidence_items: object, *, mode: str = "default") -> int:
+        # Counts grounding count from candidates, evidence items, and mode for rewrite decisions.
+        # The main branch stays readable while this function handles the local edge case.
         evidence_records = cls._grounding_phrase_records(evidence_items)
         candidate_profiles = cls._grounding_candidate_profile(candidates)
         if not evidence_records or not candidate_profiles:
@@ -463,10 +499,14 @@ class ToneIntelligenceService:
 
     @classmethod
     def _sentence_list(cls, content: str) -> list[str]:
+        # Centralizes sentence from generated content for rewrite decisions.
+        # The main branch stays readable while this function handles the local edge case.
         return [sentence.strip() for sentence in cls.SENTENCE_SPLIT_PATTERN.split(content) if sentence.strip()]
 
     @classmethod
     def _normalize_content_payload(cls, content_payload: dict[str, Any] | None) -> dict[str, Any]:
+        # Normalizes content from content payload for rewrite decisions.
+        # It delegates shared cleanup to _flatten_text before returning the cleaned value.
         payload = content_payload if isinstance(content_payload, dict) else {}
         metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
         return {
@@ -479,10 +519,14 @@ class ToneIntelligenceService:
 
     @classmethod
     def _metadata_list(cls, metadata: dict[str, Any], key: str) -> list[str]:
+        # Centralizes metadata from metadata and key for rewrite decisions.
+        # The main branch stays readable while this function handles the local edge case.
         return [item for item in cls._flatten_text(metadata.get(key, [])) if item]
 
     @classmethod
     def _metadata_pairs(cls, metadata: dict[str, Any], key: str) -> list[dict[str, str]]:
+        # Centralizes metadata pairs from metadata and key for rewrite decisions.
+        # The helper owns a small rule that would distract from the surrounding flow.
         raw_pairs = metadata.get(key, [])
         if not isinstance(raw_pairs, list):
             return []
@@ -499,6 +543,8 @@ class ToneIntelligenceService:
 
     @classmethod
     def _structured_assets(cls, content_payload: dict[str, Any]) -> dict[str, Any]:
+        # Extracts structured assets from content payload for rewrite decisions.
+        # It calls _metadata_pairs and _metadata_list to turn raw evidence into the structured signal the caller needs.
         metadata = content_payload.get("metadata", {}) if isinstance(content_payload.get("metadata"), dict) else {}
         claim_evidence_pairs = cls._metadata_pairs(metadata, "claim_evidence_pairs")
         evidence_fragments = (
@@ -520,6 +566,8 @@ class ToneIntelligenceService:
 
     @classmethod
     def _is_response_style_objection_line(cls, value: str) -> bool:
+        # Checks response style objection line from input value for rewrite decisions.
+        # It reuses _match_phrases so related checks follow the same rule.
         text = str(value or "").strip()
         if not text:
             return False
@@ -530,6 +578,8 @@ class ToneIntelligenceService:
 
     @classmethod
     def _response_style_objection_lines(cls, values: list[str]) -> list[str]:
+        # Derives response style objection lines from values for rewrite decisions.
+        # It calls _dedupe_messages and _is_response_style_objection_line to turn raw evidence into the structured signal the caller needs.
         lines: list[str] = []
         for value in values:
             text = str(value or "").strip()
@@ -544,6 +594,8 @@ class ToneIntelligenceService:
         brand_context: dict[str, Any] | None,
         persona_context: dict[str, Any] | None,
     ) -> dict[str, list[str]]:
+        # Centralizes audience evidence context from brand context and persona context for rewrite decisions.
+        # The helper owns a small rule that would distract from the surrounding flow.
         audience_context = (
             brand_context.get("audience_insights", {})
             if isinstance(brand_context, dict) and isinstance(brand_context.get("audience_insights"), dict)
@@ -589,6 +641,8 @@ class ToneIntelligenceService:
         message_strategy: dict[str, Any] | None,
         audience_evidence: dict[str, list[str]] | None = None,
     ) -> set[str]:
+        # Extracts important terms from persona context, objective context, and message strategy for rewrite decisions.
+        # It calls _extract_terms to turn raw evidence into the structured signal the caller needs.
         persona_context = persona_context or {}
         objective_context = objective_context or {}
         message_strategy = message_strategy or {}
@@ -618,6 +672,8 @@ class ToneIntelligenceService:
 
     @classmethod
     def _claim_fragments(cls, content: str, content_payload: dict[str, Any], message_strategy: dict[str, Any] | None) -> list[str]:
+        # Centralizes claim fragments from generated content, content payload, and message strategy for rewrite decisions.
+        # The helper owns a small rule that would distract from the surrounding flow.
         structured_assets = cls._structured_assets(content_payload)
         candidates = [
             content_payload.get("headline"),
@@ -635,6 +691,8 @@ class ToneIntelligenceService:
 
     @classmethod
     def _concrete_evidence_fragments(cls, evidence_fragments: list[str]) -> list[str]:
+        # Centralizes concrete evidence fragments from evidence fragments for rewrite decisions.
+        # The main branch stays readable while this function handles the local edge case.
         concrete: list[str] = []
         for fragment in evidence_fragments:
             lowered = fragment.lower()
@@ -647,6 +705,8 @@ class ToneIntelligenceService:
 
     @classmethod
     def _weighted_score_from_dimensions(cls, dimensions: dict[str, int]) -> int:
+        # Measures weighted dimensions from dimensions for rewrite decisions.
+        # It calls _clamp_score to turn raw evidence into the structured signal the caller needs.
         weights = {
             "brand_alignment": 0.20,
             "proof_strength": 0.24,
@@ -660,6 +720,8 @@ class ToneIntelligenceService:
 
     @classmethod
     def _coerce_dimension_score(cls, value: object, fallback: int) -> int:
+        # Coerces dimension from input value and fallback payload for rewrite decisions.
+        # It delegates shared cleanup to _clamp_score before returning the cleaned value.
         try:
             return cls._clamp_score(float(value))
         except (TypeError, ValueError):
@@ -667,6 +729,8 @@ class ToneIntelligenceService:
 
     @classmethod
     def _quality_summary(cls, dimensions: dict[str, int], deviations: list[str], matched_signals: list[str]) -> list[str]:
+        # Builds quality summary from dimensions, deviations, and matched signals for rewrite decisions.
+        # It calls _dedupe_messages while assembling the payload or prompt text.
         dimension_messages = {
             "proof_strength": "Proof is too thin relative to the claims being made.",
             "objection_handling": "Copy does not do enough to resolve likely skepticism or friction.",
@@ -699,6 +763,8 @@ class ToneIntelligenceService:
         structured_assets: dict[str, Any],
         weak_cta: bool,
     ) -> dict[str, list[str]]:
+        # Builds field guidance from content payload, dimensions, and generic hits for rewrite decisions.
+        # It calls _dedupe_messages while assembling the payload or prompt text.
         guidance: dict[str, list[str]] = {key: [] for key in cls.FIELD_GUIDANCE_KEYS}
 
         if not structured_assets.get("hook_type") or dimensions["distinctiveness"] < 70 or generic_hits:
@@ -752,6 +818,8 @@ class ToneIntelligenceService:
         message_strategy: dict[str, Any] | None = None,
         objective_context: dict[str, Any] | None = None,
     ) -> dict:
+        # Centralizes heuristic evaluate from generated content, brand context, and persona context for rewrite decisions.
+        # The helper owns a small rule that would distract from the surrounding flow.
         persona_context = persona_context or {}
         objective_context = objective_context or {}
         message_strategy = message_strategy or {}
@@ -777,6 +845,7 @@ class ToneIntelligenceService:
             for phrase in self.GENERIC_PROMO_WORDS
             if self._phrase_occurrences(content_lower, phrase) >= 2
         ]
+        # The evaluator rewards concrete evidence and penalizes generic language only when proof is weak.
         proof_marker_hits = self._match_phrases(" ".join([content_lower] + [item.lower() for item in evidence_fragments]), self.PROOF_MARKERS)
         trust_marker_hits = self._match_phrases(" ".join([content_lower] + [item.lower() for item in evidence_fragments]), self.TRUST_MARKERS)
         sentences = self._sentence_list(content)
@@ -889,6 +958,7 @@ class ToneIntelligenceService:
         objection_handling = 60 if not objection_targets else 45
         response_style_objection_lines = self._response_style_objection_lines(structured_assets["objection_handling"])
         response_text = " ".join(response_style_objection_lines + [normalized_payload["body"], normalized_payload["headline"]]).lower()
+        # Objection handling is scored as an answer to friction, not just a repeated pain-point phrase.
         objection_context_text = " ".join(
             structured_assets["objection_handling"] + [normalized_payload["body"], normalized_payload["headline"]]
         ).lower()
@@ -961,6 +1031,7 @@ class ToneIntelligenceService:
         cta_text = normalized_payload["cta"] or content
         cta_strength = 45
         weak_cta = False
+        # CTA is scored separately because weak closing copy often needs a targeted rewrite rather than a full regeneration.
         if self.CTA_PATTERN.search(cta_text):
             matched_signals.append("CTA is explicit and action-oriented")
             cta_strength += 24
@@ -987,6 +1058,7 @@ class ToneIntelligenceService:
             "clarity": self._clamp_score(clarity),
             "cta_strength": self._clamp_score(cta_strength),
         }
+        # The final score is weighted, but dimensions stay visible so repair prompts know what to improve.
         score = self._weighted_score_from_dimensions(dimensions)
 
         if blocked_hits or negative_hits:
@@ -1003,6 +1075,7 @@ class ToneIntelligenceService:
         )
         quality_summary = self._quality_summary(dimensions, deviations, matched_signals)
 
+        # The orchestrator consumes this report to decide whether to accept the copy or run a focused rewrite.
         return {
             "score": score,
             "matched_signals": self._dedupe_messages(matched_signals)[:8],
@@ -1023,6 +1096,8 @@ class ToneIntelligenceService:
         message_strategy: dict[str, Any] | None = None,
         objective_context: dict[str, Any] | None = None,
     ) -> dict:
+        # Evaluates generated copy against the request, persona, audience evidence, brand context, and structured asset metadata.
+        # The orchestrator uses the score, dimension breakdown, and guidance to decide whether rewrite repair is needed.
         fallback = self._heuristic_evaluate(
             content,
             brand_context,
@@ -1033,6 +1108,7 @@ class ToneIntelligenceService:
         )
         provider = self.providers.get_text_provider("generation")
         try:
+            # The provider review is blended with deterministic scoring so one model judgment cannot override hard signals.
             result = provider.generate_structured_json(
                 PromptEnvelope(
                     system=(
@@ -1086,6 +1162,7 @@ class ToneIntelligenceService:
             provider_score = self._coerce_dimension_score(result.get("score", fallback["score"]), fallback["score"])
             grounded_score = self._weighted_score_from_dimensions(merged_dimensions)
 
+            # Final score averages provider opinion, heuristic evidence, and the weighted dimension breakdown.
             return {
                 "score": self._clamp_score((provider_score + fallback["score"] + grounded_score) / 3),
                 "matched_signals": self._dedupe_messages(

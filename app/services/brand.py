@@ -2,12 +2,17 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.brand_intelligence import BrandIntelligenceService
 from app.core.enums import BrandSpaceLifecycle, RoleCode, UsageMetricCode
 from app.core.exceptions import LifecycleError, NotFoundError
 from app.models.brand import BrandConfigurationSection, BrandSpace, BrandSpaceMember, Guardrail, Objective, Persona
+from app.models.collaboration import UsageLimit
+from app.models.content import ContentVersion, GeneratedAsset
+from app.models.knowledge import KnowledgeAsset
+from app.models.tenant import Tenant
 from app.repositories.brand import (
     BrandMemberRepository,
     BrandSectionRepository,
@@ -16,7 +21,7 @@ from app.repositories.brand import (
     ObjectiveRepository,
     PersonaRepository,
 )
-from app.schemas.brand import BrandCreateRequest, BrandSectionUpsertRequest, BrandUpdateRequest, GuardrailPayload
+from app.schemas.brand import BrandCreateRequest, BrandSectionUpsertRequest, BrandSectionsUpsertRequest, BrandUpdateRequest, GuardrailPayload
 from app.services.brand_summary_memory import BrandSummaryMemoryService
 from app.services.data_validation import DataValidatorService
 from app.services.usage import UsageLimitService
@@ -36,6 +41,20 @@ class BrandSpaceService:
         self.intelligence = BrandIntelligenceService()
         self.validator = DataValidatorService(session)
         self.brand_summary_memory = BrandSummaryMemoryService()
+
+    @staticmethod
+    def _clamp_percent(value: object) -> int:
+        try:
+            numeric_value = int(value)
+        except (TypeError, ValueError):
+            return 0
+        return max(0, min(numeric_value, 100))
+
+    @staticmethod
+    def _metric_percent(used: int, allocated_limit: float) -> int:
+        if allocated_limit <= 0:
+            return 0
+        return max(0, min(round((used / allocated_limit) * 100), 100))
 
     async def _commit_and_refresh_brand(self, brand: BrandSpace) -> BrandSpace:
         await self.session.commit()
@@ -152,20 +171,26 @@ class BrandSpaceService:
         self.brand_summary_memory.upsert_brand_summary(brand, sections=sections)
         return brand
 
-    async def upsert_section(self, tenant_id: UUID, brand_space_id: UUID, payload: BrandSectionUpsertRequest) -> BrandSpace:
-        brand = await self.brands.get_scoped(tenant_id, brand_space_id)
-        if not brand:
-            raise NotFoundError("Brand Space not found")
-        existing_sections = await self.sections.list_current_sections(brand_space_id, tenant_id)
+    async def _apply_section_upsert(
+        self,
+        tenant_id: UUID,
+        brand_space_id: UUID,
+        brand: BrandSpace,
+        payload: BrandSectionUpsertRequest,
+        existing_sections: list[BrandConfigurationSection],
+        section_versions: dict[str, int],
+    ) -> None:
         for existing in existing_sections:
             if existing.section_code == payload.section_code:
                 existing.is_current = False
+        next_version = section_versions.get(payload.section_code, 0) + 1
+        section_versions[payload.section_code] = next_version
         await self.sections.add(
             BrandConfigurationSection(
                 tenant_id=tenant_id,
                 brand_space_id=brand_space_id,
                 section_code=payload.section_code,
-                version=max([s.version for s in existing_sections if s.section_code == payload.section_code], default=0) + 1,
+                version=next_version,
                 is_current=True,
                 completion_percent=payload.completion_percent,
                 payload=payload.payload,
@@ -224,6 +249,37 @@ class BrandSpaceService:
                 await self.objectives.delete(existing)
             for item in payload.payload.get("objectives", []):
                 await self.objectives.add(Objective(tenant_id=tenant_id, brand_space_id=brand_space_id, **item))
+
+    async def upsert_section(self, tenant_id: UUID, brand_space_id: UUID, payload: BrandSectionUpsertRequest) -> BrandSpace:
+        brand = await self.brands.get_scoped(tenant_id, brand_space_id)
+        if not brand:
+            raise NotFoundError("Brand Space not found")
+        existing_sections = await self.sections.list_current_sections(brand_space_id, tenant_id)
+        section_versions = {
+            section.section_code: max(
+                section.version,
+                max((item.version for item in existing_sections if item.section_code == section.section_code), default=0),
+            )
+            for section in existing_sections
+        }
+        await self._apply_section_upsert(tenant_id, brand_space_id, brand, payload, existing_sections, section_versions)
+        await self.session.commit()
+        return await self.refresh_context(brand_space_id)
+
+    async def upsert_sections(self, tenant_id: UUID, brand_space_id: UUID, payload: BrandSectionsUpsertRequest) -> BrandSpace:
+        brand = await self.brands.get_scoped(tenant_id, brand_space_id)
+        if not brand:
+            raise NotFoundError("Brand Space not found")
+        existing_sections = await self.sections.list_current_sections(brand_space_id, tenant_id)
+        section_versions = {
+            section.section_code: max(
+                section.version,
+                max((item.version for item in existing_sections if item.section_code == section.section_code), default=0),
+            )
+            for section in existing_sections
+        }
+        for section in payload.sections:
+            await self._apply_section_upsert(tenant_id, brand_space_id, brand, section, existing_sections, section_versions)
         await self.session.commit()
         return await self.refresh_context(brand_space_id)
 
@@ -236,6 +292,85 @@ class BrandSpaceService:
         if payload.overview_snapshot is not None:
             brand.overview_snapshot = payload.overview_snapshot
         return await self._commit_and_refresh_brand(brand)
+
+    async def get_usage_summary(self, tenant_id: UUID, brand_space_id: UUID) -> dict:
+        brand = await self.brands.get_scoped(tenant_id, brand_space_id)
+        if not brand:
+            raise NotFoundError("Brand Space not found")
+
+        tenant = await self.session.get(Tenant, tenant_id)
+        usage_limit = await self.session.scalar(
+            select(UsageLimit).where(UsageLimit.tenant_id == tenant_id)
+        )
+        configured_targets = {}
+        if tenant and isinstance(tenant.metadata_json, dict):
+            raw_targets = tenant.metadata_json.get("brand_usage_targets")
+            if isinstance(raw_targets, dict):
+                configured_targets = raw_targets
+        capacity_percent = self._clamp_percent(configured_targets.get(str(brand_space_id)) or configured_targets.get(brand_space_id))
+        capacity_ratio = capacity_percent / 100
+
+        content_used = int(
+            await self.session.scalar(
+                select(func.count(ContentVersion.id)).where(
+                    ContentVersion.tenant_id == tenant_id,
+                    ContentVersion.brand_space_id == brand_space_id,
+                )
+            )
+            or 0
+        )
+        image_used = int(
+            await self.session.scalar(
+                select(func.count(GeneratedAsset.id)).where(
+                    GeneratedAsset.tenant_id == tenant_id,
+                    GeneratedAsset.brand_space_id == brand_space_id,
+                )
+            )
+            or 0
+        )
+        ocr_used = int(
+            await self.session.scalar(
+                select(func.coalesce(func.sum(KnowledgeAsset.page_count), 0)).where(
+                    KnowledgeAsset.tenant_id == tenant_id,
+                    KnowledgeAsset.brand_space_id == brand_space_id,
+                )
+            )
+            or 0
+        )
+
+        limits = {
+            UsageMetricCode.CONTENT_GENERATIONS: float(getattr(usage_limit, "max_content_generations", 0) or 0) * capacity_ratio,
+            UsageMetricCode.IMAGE_GENERATIONS: float(getattr(usage_limit, "max_image_generations", 0) or 0) * capacity_ratio,
+            UsageMetricCode.OCR_PAGES: float(getattr(usage_limit, "max_ocr_pages", 0) or 0) * capacity_ratio,
+        }
+        usage_values = {
+            UsageMetricCode.CONTENT_GENERATIONS: content_used,
+            UsageMetricCode.IMAGE_GENERATIONS: image_used,
+            UsageMetricCode.OCR_PAGES: ocr_used,
+        }
+        metrics = [
+            {
+                "code": metric_code,
+                "used": usage_values[metric_code],
+                "allocated_limit": limits[metric_code],
+                "percent": self._metric_percent(usage_values[metric_code], limits[metric_code]),
+            }
+            for metric_code in (
+                UsageMetricCode.CONTENT_GENERATIONS,
+                UsageMetricCode.IMAGE_GENERATIONS,
+                UsageMetricCode.OCR_PAGES,
+            )
+        ]
+        active_metric_percents = [item["percent"] for item in metrics if item["allocated_limit"] > 0]
+        usage_percent = round(sum(active_metric_percents) / len(active_metric_percents)) if active_metric_percents else 0
+
+        return {
+            "brand_space_id": brand_space_id,
+            "tenant_id": tenant_id,
+            "capacity_percent": capacity_percent,
+            "usage_percent": usage_percent,
+            "metrics": metrics,
+        }
 
     async def finalize_brand(self, tenant_id: UUID, brand_space_id: UUID) -> BrandSpace:
         return await self.publish_brand(tenant_id, brand_space_id)

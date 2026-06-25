@@ -13,6 +13,10 @@ class ChatSessionCreateRequest(APIModel):
     studio_panel: StudioPanelSelection
 
 
+class ChatSessionUpdateRequest(APIModel):
+    title: str | None = Field(default=None, max_length=255)
+
+
 class ChatMessageCreateRequest(APIModel):
     message: str = Field(min_length=1)
     studio_panel: StudioPanelSelection | None = None

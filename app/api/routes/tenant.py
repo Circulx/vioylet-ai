@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import CurrentPrincipal, assert_tenant_access, get_current_principal, require_roles
@@ -8,6 +8,8 @@ from app.core.enums import RoleCode
 from app.db.session import get_db_session
 from app.schemas.common import MessageResponse
 from app.schemas.tenant import (
+    TenantBrandUsageTargetsResponse,
+    TenantBrandUsageTargetsUpdate,
     TenantCreateRequest,
     TenantCreateResponse,
     TenantLogoUploadRequest,
@@ -95,6 +97,19 @@ async def update_tenant(
     await service.update_tenant(tenant_id, payload)
     summary = await service.get_tenant_summary(tenant_id)
     return TenantSummaryResponse.model_validate(summary)
+
+
+@router.put("/{tenant_id}/brand-usage-targets", response_model=TenantBrandUsageTargetsResponse)
+async def update_brand_usage_targets(
+    tenant_id: UUID,
+    payload: TenantBrandUsageTargetsUpdate,
+    _: CurrentPrincipal = Depends(require_roles(RoleCode.SUPER_ADMIN, RoleCode.TENANT_ADMIN)),
+    principal: CurrentPrincipal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db_session),
+) -> TenantBrandUsageTargetsResponse:
+    assert_tenant_access(principal, tenant_id)
+    targets = await TenantService(session).update_brand_usage_targets(tenant_id, payload.brand_usage_targets)
+    return TenantBrandUsageTargetsResponse(brand_usage_targets=targets)
 
 
 @router.delete(
@@ -185,6 +200,15 @@ async def update_user(
     session: AsyncSession = Depends(get_db_session),
 ) -> TenantUserResponse:
     assert_tenant_access(principal, tenant_id)
+    if (
+        user_id == principal.user_id
+        and payload.role_code is not None
+        and payload.role_code not in principal.role_codes
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You cannot change your own admin role.",
+        )
     service = TenantService(session)
     user = await service.update_tenant_user(tenant_id, user_id, payload)
     return TenantUserResponse.model_validate(await service.build_user_summary(user))

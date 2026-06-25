@@ -66,3 +66,7 @@ class GenerationFailureError(DomainError):
             "suggested_next_action": self.suggested_next_action,
             "details": self.details,
         }
+
+
+class ChatGenerationCancelledError(DomainError):
+    """Raised when a user cancels an in-flight chat generation."""

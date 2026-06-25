@@ -6,6 +6,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.router import api_router
 from app.core.config import get_settings
@@ -35,6 +36,8 @@ app.include_router(api_router, prefix=settings.api_v1_prefix)
 
 storage_dir = Path(settings.object_storage_base_path)
 storage_dir.mkdir(parents=True, exist_ok=True)
+if settings.expose_public_storage:
+    app.mount("/storage", StaticFiles(directory=storage_dir), name="storage")
 
 
 @app.get("/health", include_in_schema=False)

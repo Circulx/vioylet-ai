@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import EmailStr, Field
+from pydantic import EmailStr, Field, field_validator
 
 from app.schemas.common import APIModel
 
@@ -42,6 +42,33 @@ class TenantUpdateRequest(APIModel):
     usage_limits: TenantUsageLimitUpdate | None = None
     metadata_json: dict[str, Any] | None = None
     is_active: bool | None = None
+
+
+class TenantBrandUsageTargetsUpdate(APIModel):
+    brand_usage_targets: dict[str, float] = Field(default_factory=dict)
+
+    @field_validator("brand_usage_targets")
+    @classmethod
+    def validate_brand_usage_targets(cls, value: dict[str, float]) -> dict[str, float]:
+        normalized: dict[str, float] = {}
+        total = 0.0
+        for brand_id, target in value.items():
+            try:
+                UUID(str(brand_id))
+                numeric_target = float(target)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("Brand usage targets must use valid brand IDs and numeric percentages.") from exc
+            if numeric_target < 0 or numeric_target > 100:
+                raise ValueError("Brand usage target percentages must be between 0 and 100.")
+            normalized[str(brand_id)] = numeric_target
+            total += numeric_target
+        if total > 100:
+            raise ValueError("Brand usage allocation cannot exceed 100%.")
+        return normalized
+
+
+class TenantBrandUsageTargetsResponse(APIModel):
+    brand_usage_targets: dict[str, float] = Field(default_factory=dict)
 
 
 class TenantLogoUploadRequest(APIModel):
@@ -136,7 +163,26 @@ class TenantBrandSpaceSummaryResponse(APIModel):
     ocr_pages: int = 0
 
 
+class TenantUsageMonthResponse(APIModel):
+    month: str
+    content_generations: int = 0
+    image_generations: int = 0
+    ocr_pages: int = 0
+
+
+class TenantBrandUsageResponse(APIModel):
+    id: UUID
+    name: str
+    allocation_percent: float = 0
+    content_generations: int = 0
+    image_generations: int = 0
+    ocr_pages: int = 0
+    monthly_usage: list[TenantUsageMonthResponse] = Field(default_factory=list)
+
+
 class TenantUsageSummary(APIModel):
     tenant_id: UUID
     limits: TenantUsageLimitUpdate
     consumption: dict[str, int]
+    monthly_usage: list[TenantUsageMonthResponse] = Field(default_factory=list)
+    brand_usage: list[TenantBrandUsageResponse] = Field(default_factory=list)

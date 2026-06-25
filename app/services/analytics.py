@@ -4,7 +4,7 @@ from collections import defaultdict
 from datetime import timezone
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, literal_column, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.brand import BrandSpace
@@ -67,13 +67,54 @@ class AnalyticsService:
         tenant_id: UUID | None = None,
         brand_space_id: UUID | None = None,
     ) -> dict:
-        query = select(ContentVersion.created_at, ContentVersion.explainability_metadata)
+        filters = []
         if tenant_id is not None:
-            query = query.where(ContentVersion.tenant_id == tenant_id)
+            filters.append(ContentVersion.tenant_id == tenant_id)
         if brand_space_id is not None:
-            query = query.where(ContentVersion.brand_space_id == brand_space_id)
-        records = (await self.session.execute(query)).all()
-        return self.summarize_token_usage(records)
+            filters.append(ContentVersion.brand_space_id == brand_space_id)
+
+        input_tokens = func.coalesce(ContentVersion.token_input_tokens, 0)
+        output_tokens = func.coalesce(ContentVersion.token_output_tokens, 0)
+        total_tokens = func.coalesce(ContentVersion.token_total_tokens, input_tokens + output_tokens)
+
+        totals_query = select(
+            func.coalesce(func.sum(input_tokens), 0),
+            func.coalesce(func.sum(output_tokens), 0),
+            func.coalesce(func.sum(total_tokens), 0),
+        )
+        if filters:
+            totals_query = totals_query.where(*filters)
+        input_total, output_total, total = (await self.session.execute(totals_query)).one()
+
+        month_expr = func.date_trunc(literal_column("'month'"), ContentVersion.created_at)
+        monthly_query = (
+            select(
+                month_expr,
+                func.coalesce(func.sum(input_tokens), 0),
+                func.coalesce(func.sum(output_tokens), 0),
+                func.coalesce(func.sum(total_tokens), 0),
+            )
+            .where(ContentVersion.created_at.is_not(None), *filters)
+            .group_by(month_expr)
+            .order_by(month_expr)
+        )
+        monthly_records = (await self.session.execute(monthly_query)).all()
+        monthly_usage = [
+            {
+                "month": created_at.strftime("%Y-%m") if hasattr(created_at, "strftime") else str(created_at)[:7],
+                "input_tokens": int(month_input or 0),
+                "output_tokens": int(month_output or 0),
+                "total_tokens": int(month_total or 0),
+            }
+            for created_at, month_input, month_output, month_total in monthly_records
+        ][-12:]
+
+        return {
+            "input_tokens": int(input_total or 0),
+            "output_tokens": int(output_total or 0),
+            "total_tokens": int(total or 0),
+            "monthly_token_usage": monthly_usage,
+        }
 
     async def tenant_summary(self, tenant_id: UUID) -> dict:
         brand_spaces = await self.session.scalar(select(func.count(BrandSpace.id)).where(BrandSpace.tenant_id == tenant_id))

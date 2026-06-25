@@ -21922,7 +21922,7 @@ class AIOrchestratorService:
         request: AIOrchestrationRequest,
     ) -> AIOrchestrationResponse:
         if strategy == GenerationStrategy.DEV1_HARI:
-            # DEV1_HARI static/infographic behavior is integrated in the guarded main pipeline.
+            # static/infographic behavior is integrated in the guarded main pipeline.
             return self._generate_main_ai(request)
         if strategy == GenerationStrategy.TEMPLATE_ADAPTANCE:
             # TODO: integrate template-adaptance carousel

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, ForeignKey, Integer, String, Text, UniqueConstraint, event
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -93,6 +93,9 @@ class ContentVersion(
     generated_payload: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     blueprint_payload: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     explainability_metadata: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    token_input_tokens: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    token_output_tokens: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    token_total_tokens: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     tone_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     tone_feedback: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
 
@@ -122,3 +125,38 @@ class GeneratedAsset(
     width: Mapped[int | None] = mapped_column(Integer, nullable=True)
     height: Mapped[int | None] = mapped_column(Integer, nullable=True)
     metadata_json: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+
+
+def _token_count(value: object) -> int:
+    if isinstance(value, bool) or value is None:
+        return 0
+    if isinstance(value, int):
+        return max(value, 0)
+    if isinstance(value, float):
+        return max(int(value), 0)
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return 0
+
+
+def _sync_content_version_token_columns(
+    _mapper: object,
+    _connection: object,
+    target: ContentVersion,
+) -> None:
+    metadata = target.explainability_metadata if isinstance(target.explainability_metadata, dict) else {}
+    usage = metadata.get("token_usage") if isinstance(metadata.get("token_usage"), dict) else {}
+
+    input_tokens = _token_count(usage.get("input_tokens") or usage.get("prompt_tokens"))
+    output_tokens = _token_count(usage.get("output_tokens") or usage.get("completion_tokens"))
+    total_tokens = _token_count(usage.get("total_tokens"))
+    if total_tokens == 0 and (input_tokens or output_tokens):
+        total_tokens = input_tokens + output_tokens
+
+    target.token_input_tokens = input_tokens
+    target.token_output_tokens = output_tokens
+    target.token_total_tokens = total_tokens
+
+
+event.listen(ContentVersion, "before_insert", _sync_content_version_token_columns)
+event.listen(ContentVersion, "before_update", _sync_content_version_token_columns)

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, literal_column, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.models  # noqa: F401
@@ -31,6 +31,13 @@ from app.services.analytics import AnalyticsService
 from app.services.email import EmailDeliveryResult, EmailService
 from app.services.usage import UsageLimitService
 from app.utils.files import decode_base64_content
+
+
+USAGE_METRIC_CONTENT = "content_generations"
+USAGE_METRIC_IMAGES = "image_generations"
+USAGE_METRIC_OCR = "ocr_pages"
+USAGE_METRIC_USERS = "users"
+USAGE_METRIC_BRAND_SPACES = "brand_spaces"
 
 
 class TenantService:
@@ -173,25 +180,244 @@ class TenantService:
             raise NotFoundError("Tenant not found")
         return tenant
 
+    @staticmethod
+    def _month_key(value: object) -> str:
+        if isinstance(value, datetime):
+            return value.strftime("%Y-%m")
+        return str(value)[:7]
+
+    @staticmethod
+    def _brand_usage_targets(tenant: Tenant | None) -> dict[str, float]:
+        if not tenant or not isinstance(tenant.metadata_json, dict):
+            return {}
+        raw_targets = tenant.metadata_json.get("brand_usage_targets")
+        if not isinstance(raw_targets, dict):
+            return {}
+        targets: dict[str, float] = {}
+        for key, value in raw_targets.items():
+            try:
+                targets[str(key)] = max(0.0, min(100.0, float(value)))
+            except (TypeError, ValueError):
+                continue
+        return targets
+
+    @staticmethod
+    def _usage_limit_values(usage_limit: UsageLimit) -> dict[str, int]:
+        return {
+            "max_users": usage_limit.max_users,
+            "max_brand_spaces": usage_limit.max_brand_spaces,
+            "max_content_generations": usage_limit.max_content_generations,
+            "max_image_generations": usage_limit.max_image_generations,
+            "max_ocr_pages": usage_limit.max_ocr_pages,
+        }
+
+    async def _real_usage_consumption(self, tenant_id: UUID) -> dict[str, int]:
+        users = int(
+            await self.session.scalar(select(func.count(User.id)).where(User.tenant_id == tenant_id))
+            or 0
+        )
+        brand_spaces = int(
+            await self.session.scalar(
+                select(func.count(BrandSpace.id)).where(
+                    BrandSpace.tenant_id == tenant_id,
+                    BrandSpace.lifecycle_state != "deleted",
+                )
+            )
+            or 0
+        )
+        content_generations = int(
+            await self.session.scalar(
+                select(func.count(ContentVersion.id)).where(ContentVersion.tenant_id == tenant_id)
+            )
+            or 0
+        )
+        image_generations = int(
+            await self.session.scalar(
+                select(func.count(GeneratedAsset.id)).where(GeneratedAsset.tenant_id == tenant_id)
+            )
+            or 0
+        )
+        ocr_pages = int(
+            await self.session.scalar(
+                select(func.coalesce(func.sum(KnowledgeAsset.page_count), 0)).where(
+                    KnowledgeAsset.tenant_id == tenant_id
+                )
+            )
+            or 0
+        )
+        return {
+            USAGE_METRIC_USERS: users,
+            USAGE_METRIC_BRAND_SPACES: brand_spaces,
+            USAGE_METRIC_CONTENT: content_generations,
+            USAGE_METRIC_IMAGES: image_generations,
+            USAGE_METRIC_OCR: ocr_pages,
+        }
+
+    async def _monthly_usage(self, tenant_id: UUID) -> list[dict[str, int | str]]:
+        rows_by_month: dict[str, dict[str, int | str]] = {}
+
+        async def add_month_rows(query, metric_key: str) -> None:
+            result = await self.session.execute(query)
+            for month_value, amount in result.all():
+                month_key = self._month_key(month_value)
+                row = rows_by_month.setdefault(
+                    month_key,
+                    {
+                        "month": month_key,
+                        USAGE_METRIC_CONTENT: 0,
+                        USAGE_METRIC_IMAGES: 0,
+                        USAGE_METRIC_OCR: 0,
+                    },
+                )
+                row[metric_key] = int(amount or 0)
+
+        content_month = func.date_trunc(literal_column("'month'"), ContentVersion.created_at)
+        generated_asset_month = func.date_trunc(literal_column("'month'"), GeneratedAsset.created_at)
+        knowledge_asset_month = func.date_trunc(literal_column("'month'"), KnowledgeAsset.created_at)
+
+        await add_month_rows(
+            select(content_month, func.count(ContentVersion.id))
+            .where(ContentVersion.tenant_id == tenant_id)
+            .group_by(content_month)
+            .order_by(content_month),
+            USAGE_METRIC_CONTENT,
+        )
+        await add_month_rows(
+            select(generated_asset_month, func.count(GeneratedAsset.id))
+            .where(GeneratedAsset.tenant_id == tenant_id)
+            .group_by(generated_asset_month)
+            .order_by(generated_asset_month),
+            USAGE_METRIC_IMAGES,
+        )
+        await add_month_rows(
+            select(
+                knowledge_asset_month,
+                func.coalesce(func.sum(KnowledgeAsset.page_count), 0),
+            )
+            .where(KnowledgeAsset.tenant_id == tenant_id)
+            .group_by(knowledge_asset_month)
+            .order_by(knowledge_asset_month),
+            USAGE_METRIC_OCR,
+        )
+
+        return [rows_by_month[key] for key in sorted(rows_by_month)]
+
+    async def _brand_usage(self, tenant_id: UUID, tenant: Tenant | None) -> list[dict[str, object]]:
+        brands = await self.brand_spaces.list_by_tenant(tenant_id)
+        targets = self._brand_usage_targets(tenant)
+        rows: list[dict[str, object]] = []
+        for brand in brands:
+            if brand.lifecycle_state == "deleted":
+                continue
+            content_generations = int(
+                await self.session.scalar(
+                    select(func.count(ContentVersion.id)).where(
+                        ContentVersion.tenant_id == tenant_id,
+                        ContentVersion.brand_space_id == brand.id,
+                    )
+                )
+                or 0
+            )
+            image_generations = int(
+                await self.session.scalar(
+                    select(func.count(GeneratedAsset.id)).where(
+                        GeneratedAsset.tenant_id == tenant_id,
+                        GeneratedAsset.brand_space_id == brand.id,
+                    )
+                )
+                or 0
+            )
+            ocr_pages = int(
+                await self.session.scalar(
+                    select(func.coalesce(func.sum(KnowledgeAsset.page_count), 0)).where(
+                        KnowledgeAsset.tenant_id == tenant_id,
+                        KnowledgeAsset.brand_space_id == brand.id,
+                    )
+                )
+                or 0
+            )
+            monthly_rows: dict[str, dict[str, int | str]] = {}
+
+            async def add_brand_month_rows(query, metric_key: str) -> None:
+                result = await self.session.execute(query)
+                for month_value, amount in result.all():
+                    month_key = self._month_key(month_value)
+                    row = monthly_rows.setdefault(
+                        month_key,
+                        {
+                            "month": month_key,
+                            USAGE_METRIC_CONTENT: 0,
+                            USAGE_METRIC_IMAGES: 0,
+                            USAGE_METRIC_OCR: 0,
+                        },
+                    )
+                    row[metric_key] = int(amount or 0)
+
+            brand_content_month = func.date_trunc(literal_column("'month'"), ContentVersion.created_at)
+            brand_generated_asset_month = func.date_trunc(literal_column("'month'"), GeneratedAsset.created_at)
+            brand_knowledge_asset_month = func.date_trunc(literal_column("'month'"), KnowledgeAsset.created_at)
+
+            await add_brand_month_rows(
+                select(brand_content_month, func.count(ContentVersion.id))
+                .where(
+                    ContentVersion.tenant_id == tenant_id,
+                    ContentVersion.brand_space_id == brand.id,
+                )
+                .group_by(brand_content_month),
+                USAGE_METRIC_CONTENT,
+            )
+            await add_brand_month_rows(
+                select(brand_generated_asset_month, func.count(GeneratedAsset.id))
+                .where(
+                    GeneratedAsset.tenant_id == tenant_id,
+                    GeneratedAsset.brand_space_id == brand.id,
+                )
+                .group_by(brand_generated_asset_month),
+                USAGE_METRIC_IMAGES,
+            )
+            await add_brand_month_rows(
+                select(
+                    brand_knowledge_asset_month,
+                    func.coalesce(func.sum(KnowledgeAsset.page_count), 0),
+                )
+                .where(
+                    KnowledgeAsset.tenant_id == tenant_id,
+                    KnowledgeAsset.brand_space_id == brand.id,
+                )
+                .group_by(brand_knowledge_asset_month),
+                USAGE_METRIC_OCR,
+            )
+            rows.append(
+                {
+                    "id": brand.id,
+                    "name": brand.name,
+                    "allocation_percent": targets.get(str(brand.id), 0.0),
+                    USAGE_METRIC_CONTENT: content_generations,
+                    USAGE_METRIC_IMAGES: image_generations,
+                    USAGE_METRIC_OCR: ocr_pages,
+                    "monthly_usage": [monthly_rows[key] for key in sorted(monthly_rows)],
+                }
+            )
+        return rows
+
     async def get_usage_summary(self, tenant_id: UUID) -> dict:
         usage_limit = await self.usage_limits.get_by_tenant(tenant_id)
         if not usage_limit:
             raise NotFoundError("Usage limit record not found")
+        tenant = await self.tenants.get(tenant_id)
         return {
             "tenant_id": tenant_id,
-            "limits": {
-                "max_users": usage_limit.max_users,
-                "max_brand_spaces": usage_limit.max_brand_spaces,
-                "max_content_generations": usage_limit.max_content_generations,
-                "max_image_generations": usage_limit.max_image_generations,
-                "max_ocr_pages": usage_limit.max_ocr_pages,
-            },
-            "consumption": await self.usage.summary(tenant_id),
+            "limits": self._usage_limit_values(usage_limit),
+            "consumption": await self._real_usage_consumption(tenant_id),
+            "monthly_usage": await self._monthly_usage(tenant_id),
+            "brand_usage": await self._brand_usage(tenant_id, tenant),
         }
 
     async def get_tenant_summary(self, tenant_id: UUID) -> dict:
         tenant = await self.get_tenant(tenant_id)
-        usage_summary = await self.get_usage_summary(tenant_id)
+        usage_limit = await self.usage_limits.get_by_tenant(tenant_id)
+        usage_limits = self._usage_limit_values(usage_limit) if usage_limit else None
+        usage_consumption = await self._real_usage_consumption(tenant_id)
         metrics = await self.analytics.tenant_summary(tenant_id)
         admin_user = await self._get_primary_tenant_admin(tenant_id)
         last_login_result = await self.session.execute(
@@ -214,8 +440,8 @@ class TenantService:
             "created_at": tenant.created_at,
             "total_users": metrics["total_users"],
             "brand_space_count": metrics["number_of_brand_spaces"],
-            "usage_limits": usage_summary["limits"],
-            "usage_consumption": usage_summary["consumption"],
+            "usage_limits": usage_limits,
+            "usage_consumption": usage_consumption,
             "token_usage": {
                 "input_tokens": int(token_usage.get("input_tokens") or 0),
                 "output_tokens": int(token_usage.get("output_tokens") or 0),
@@ -244,7 +470,6 @@ class TenantService:
                 select(func.count(GeneratedAsset.id)).where(
                     GeneratedAsset.tenant_id == tenant_id,
                     GeneratedAsset.brand_space_id == brand.id,
-                    GeneratedAsset.asset_role == "ai_image",
                 )
             )
             ocr_pages = await self.session.scalar(
@@ -359,6 +584,31 @@ class TenantService:
         await self.session.refresh(tenant)
         return tenant
 
+    async def update_brand_usage_targets(self, tenant_id: UUID, targets: dict[str, float]) -> dict[str, float]:
+        tenant = await self.get_tenant(tenant_id)
+        brand_ids = set(
+            str(brand_id)
+            for brand_id in (
+                await self.session.execute(
+                    select(BrandSpace.id).where(
+                        BrandSpace.tenant_id == tenant_id,
+                        BrandSpace.lifecycle_state != "deleted",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        unknown_brand_ids = [brand_id for brand_id in targets if brand_id not in brand_ids]
+        if unknown_brand_ids:
+            raise NotFoundError("One or more brand spaces were not found")
+
+        metadata = dict(tenant.metadata_json or {})
+        metadata["brand_usage_targets"] = targets
+        tenant.metadata_json = metadata
+        await self.session.commit()
+        return targets
+
     async def delete_tenant(self, tenant_id: UUID) -> None:
         tenant = await self.get_tenant(tenant_id)
         if tenant.logo_asset_path:
@@ -431,24 +681,44 @@ class TenantService:
             role = await self.roles.get_by_code(payload.role_code)
             if not role:
                 raise NotFoundError("Role not found")
-            existing_roles = await self.user_roles.list_for_user(user.id)
-            for item in existing_roles:
-                await self.user_roles.delete(item)
-            await self.user_roles.add(UserRole(user_id=user.id, role_id=role.id, brand_space_id=None))
+            await self.session.execute(delete(UserRole).where(UserRole.user_id == user.id))
+            self.session.add(UserRole(user_id=user.id, role_id=role.id, brand_space_id=None))
 
         if payload.brand_space_ids is not None:
-            existing_members = await self.brand_members.list_for_user(user.id, tenant_id)
-            for member in existing_members:
-                await self.brand_members.delete(member)
-            for brand_space_id in payload.brand_space_ids:
-                await self.brand_members.add(
-                    __import__("app.models.brand", fromlist=["BrandSpaceMember"]).BrandSpaceMember(
+            brand_space_ids = list(dict.fromkeys(payload.brand_space_ids))
+            if brand_space_ids:
+                existing_brand_ids = set(
+                    (
+                        await self.session.execute(
+                            select(BrandSpace.id).where(
+                                BrandSpace.tenant_id == tenant_id,
+                                BrandSpace.id.in_(brand_space_ids),
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                if len(existing_brand_ids) != len(brand_space_ids):
+                    raise NotFoundError("One or more brand spaces were not found")
+
+            await self.session.execute(
+                delete(BrandSpaceMember).where(
+                    BrandSpaceMember.user_id == user.id,
+                    BrandSpaceMember.tenant_id == tenant_id,
+                )
+            )
+            self.session.add_all(
+                [
+                    BrandSpaceMember(
                         tenant_id=tenant_id,
                         brand_space_id=brand_space_id,
                         user_id=user.id,
                         can_manage=False,
                     )
-                )
+                    for brand_space_id in brand_space_ids
+                ]
+            )
 
         await self.session.commit()
         await self.session.refresh(user)

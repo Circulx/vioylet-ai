@@ -185,6 +185,10 @@ class BrandSectionUpsertRequest(APIModel):
         return self
 
 
+class BrandSectionsUpsertRequest(APIModel):
+    sections: list[BrandSectionUpsertRequest] = Field(default_factory=list)
+
+
 class BrandCreateRequest(APIModel):
     identity: BrandIdentityPayload
     foundations: BrandFoundationsPayload | None = None
@@ -212,6 +216,21 @@ class BrandResponse(APIModel):
     resolved_brand_context: dict[str, Any]
     created_at: datetime
     updated_at: datetime
+
+
+class BrandUsageMetricResponse(APIModel):
+    code: str
+    used: int = 0
+    allocated_limit: float = 0
+    percent: int = 0
+
+
+class BrandUsageResponse(APIModel):
+    brand_space_id: UUID
+    tenant_id: UUID
+    capacity_percent: int = 0
+    usage_percent: int = 0
+    metrics: list[BrandUsageMetricResponse] = Field(default_factory=list)
 
 
 class BrandOverviewResponse(APIModel):

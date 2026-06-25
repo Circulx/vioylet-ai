@@ -6,7 +6,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import CurrentPrincipal, assert_brand_access, forbid_super_admin_brand_access, get_current_principal
 from app.db.session import get_db_session
-from app.schemas.brand import BrandCreateRequest, BrandFinalizeRequest, BrandOverviewResponse, BrandResponse, BrandSectionUpsertRequest, BrandUpdateRequest
+from app.schemas.brand import (
+    BrandCreateRequest,
+    BrandFinalizeRequest,
+    BrandOverviewResponse,
+    BrandResponse,
+    BrandSectionUpsertRequest,
+    BrandSectionsUpsertRequest,
+    BrandUpdateRequest,
+    BrandUsageResponse,
+)
 from app.schemas.brand_assets import (
     AssetValidationResultResponse,
     DataConflictResponse,
@@ -67,6 +76,20 @@ async def get_brand(
     return BrandResponse.model_validate(brand)
 
 
+@router.get("/{brand_id}/usage", response_model=BrandUsageResponse)
+async def get_brand_usage(
+    brand_id: UUID,
+    principal: CurrentPrincipal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db_session),
+) -> BrandUsageResponse:
+    forbid_super_admin_brand_access(principal)
+    assert_brand_access(principal, brand_id)
+    if not principal.tenant_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    payload = await BrandSpaceService(session).get_usage_summary(principal.tenant_id, brand_id)
+    return BrandUsageResponse.model_validate(payload)
+
+
 @router.put("/{brand_id}", response_model=BrandResponse)
 async def update_brand(
     brand_id: UUID,
@@ -99,6 +122,19 @@ async def upsert_section(
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=exc.errors()) from exc
     brand = await BrandSpaceService(session).upsert_section(principal.tenant_id, brand_id, request)
+    return BrandResponse.model_validate(brand)
+
+
+@router.put("/{brand_id}/sections", response_model=BrandResponse)
+async def upsert_sections(
+    brand_id: UUID,
+    payload: BrandSectionsUpsertRequest,
+    principal: CurrentPrincipal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db_session),
+) -> BrandResponse:
+    forbid_super_admin_brand_access(principal)
+    assert_brand_access(principal, brand_id)
+    brand = await BrandSpaceService(session).upsert_sections(principal.tenant_id, brand_id, payload)
     return BrandResponse.model_validate(brand)
 
 

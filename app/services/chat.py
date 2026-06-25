@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import AssetRole, BrandSpaceLifecycle, ExportFileType
 from app.core.studio import resolve_studio_panel_defaults
-from app.core.exceptions import GenerationFailureError, GuardrailViolationError, LifecycleError, NotFoundError
+from app.core.exceptions import ChatGenerationCancelledError, GenerationFailureError, GuardrailViolationError, LifecycleError, NotFoundError
 from app.integrations.object_storage import LocalObjectStorage
 from app.services.asset_delivery import AssetDeliveryService
 from app.services.conversation_memory import ConversationMemoryService
@@ -19,11 +19,12 @@ from app.models.content import ChatMessage, ContentSession, GeneratedAsset
 from app.repositories.brand import BrandSectionRepository, BrandSpaceRepository
 from app.repositories.content import AssetRepository, ChatMessageRepository, ContentRepository, SessionRepository
 from app.schemas.common import StudioPanelSelection
-from app.schemas.chat import ChatMessageCreateRequest, ChatSessionCreateRequest
+from app.schemas.chat import ChatMessageCreateRequest, ChatSessionCreateRequest, ChatSessionUpdateRequest
 from app.schemas.content import ContentGenerateRequest, ContentRewriteRequest, RequestInheritancePolicy
 from app.services.artifact_state import ArtifactStateService
 from app.services.brand_summary_memory import BrandSummaryMemoryService
 from app.services.conversation import ConversationService
+from app.services.chat_cancellation import chat_cancellation_registry
 from app.services.content import ContentService
 from app.services.evaluation import EvaluationService
 from app.services.intent_router import ChatIntentDecision, IntentRouterService
@@ -167,7 +168,11 @@ class ChatService:
         return await self.sessions.list_by_brand(brand_space_id, session_kind="chat", tenant_id=tenant_id)
 
     async def get_session(self, session_id: UUID, tenant_id: UUID | None = None, brand_space_id: UUID | None = None) -> ContentSession:
-        session = await self.sessions.get(session_id)
+        session = (
+            await self.sessions.get_scoped(session_id, tenant_id, brand_space_id)
+            if tenant_id
+            else await self.sessions.get(session_id)
+        )
         if not session:
             raise NotFoundError("Chat session not found")
         if tenant_id and session.tenant_id != tenant_id:
@@ -176,9 +181,62 @@ class ChatService:
             raise NotFoundError("Chat session not found")
         return session
 
-    async def list_messages(self, session_id: UUID) -> list[ChatMessage]:
+    async def update_session(
+        self,
+        session_id: UUID,
+        tenant_id: UUID,
+        brand_space_id: UUID,
+        payload: ChatSessionUpdateRequest,
+    ) -> ContentSession:
+        session = await self.get_session(session_id, tenant_id=tenant_id, brand_space_id=brand_space_id)
+        if session.session_kind != "chat":
+            raise NotFoundError("Chat session not found")
+        if payload.title is not None:
+            title = payload.title.strip() or "Untitled chat"
+            if len(title) > 255:
+                title = title[:252] + "..."
+            session.title = title
+        await self.session.commit()
+        await self.session.refresh(session)
+        return session
+
+    async def delete_session(self, session_id: UUID, tenant_id: UUID, brand_space_id: UUID) -> dict[str, str]:
+        session = await self.get_session(session_id, tenant_id=tenant_id, brand_space_id=brand_space_id)
+        if session.session_kind != "chat":
+            raise NotFoundError("Chat session not found")
+        await self.sessions.delete(session)
+        await self.session.commit()
+        return {"message": "Chat session deleted", "chat_session_id": str(session_id)}
+
+    async def cancel_generation(self, session_id: UUID, tenant_id: UUID, brand_space_id: UUID) -> dict[str, str]:
+        session = await self.get_session(session_id, tenant_id=tenant_id, brand_space_id=brand_space_id)
+        if session.session_kind != "chat":
+            raise NotFoundError("Chat session not found")
+        chat_cancellation_registry.request_cancel(tenant_id, brand_space_id, session_id)
+        return {"message": "Chat generation cancellation requested", "chat_session_id": str(session_id)}
+
+    @staticmethod
+    def _raise_if_generation_cancelled(tenant_id: UUID, brand_space_id: UUID, session_id: UUID) -> None:
+        if not chat_cancellation_registry.is_cancelled(tenant_id, brand_space_id, session_id):
+            return
+        chat_cancellation_registry.clear(tenant_id, brand_space_id, session_id)
+        raise ChatGenerationCancelledError("Chat generation cancelled")
+
+    async def list_messages(
+        self,
+        session_id: UUID,
+        *,
+        limit: int = CHAT_HISTORY_MESSAGE_LIMIT,
+        before_created_at: datetime | None = None,
+        before_id: UUID | None = None,
+    ) -> list[ChatMessage]:
         await self.get_session(session_id)
-        items = await self.messages.list_recent_by_session(session_id, limit=CHAT_HISTORY_MESSAGE_LIMIT)
+        items = await self.messages.list_recent_by_session(
+            session_id,
+            limit=limit,
+            before_created_at=before_created_at,
+            before_id=before_id,
+        )
         for item in items:
             item.structured_payload = self.decorate_structured_payload_assets(item.structured_payload or {})
         return items
@@ -260,6 +318,7 @@ class ChatService:
         session_id: UUID,
         payload: ChatMessageCreateRequest,
     ) -> tuple[ChatMessage, ChatMessage]:
+        chat_cancellation_registry.clear(tenant_id, brand_space_id, session_id)
         session = await self.get_session(session_id, tenant_id=tenant_id, brand_space_id=brand_space_id)
         studio_panel = self._resolve_studio_panel(payload, session)
         intent = self.intent_router.route(payload.message, session.conversational_context)
@@ -308,10 +367,12 @@ class ChatService:
         memory_service = getattr(self, "memory", None)
         if memory_service is not None:
             await memory_service.index_chat_message(message=user_message, session=session)
+        self._raise_if_generation_cancelled(tenant_id, brand_space_id, session_id)
 
         content_version = None
         memory_assets: list[GeneratedAsset | dict[str, Any]] = []
         brand = await self.brands.get_scoped(tenant_id, brand_space_id)
+        self._raise_if_generation_cancelled(tenant_id, brand_space_id, session_id)
         brand_name = getattr(brand, "name", None)
         review_result = None
         workflow_context = None
@@ -380,6 +441,7 @@ class ChatService:
                     objective_id=payload.objective_id,
                     reference_asset_ids=payload.reference_asset_ids,
                 )
+                self._raise_if_generation_cancelled(tenant_id, brand_space_id, session_id)
                 assistant_message = ChatMessage(
                     tenant_id=tenant_id,
                     brand_space_id=brand_space_id,
@@ -433,6 +495,7 @@ class ChatService:
                         "matched_entries": [],
                     }
                 )
+                self._raise_if_generation_cancelled(tenant_id, brand_space_id, session_id)
                 assistant_message = ChatMessage(
                     tenant_id=tenant_id,
                     brand_space_id=brand_space_id,
@@ -468,6 +531,7 @@ class ChatService:
                         objective_id=payload.objective_id,
                         reference_asset_ids=payload.reference_asset_ids,
                     )
+                    self._raise_if_generation_cancelled(tenant_id, brand_space_id, session_id)
                 workflow_context = mixed_workflow.prepare_generation_context(
                     message=payload.message,
                     workflow_plan=workflow_plan,
@@ -513,6 +577,7 @@ class ChatService:
                         deliverable_type=intent.deliverable_type,
                         uses_previous_output=intent.uses_previous_output,
                     )
+                self._raise_if_generation_cancelled(tenant_id, brand_space_id, session_id)
                 content_version = text_result.content_version
                 assistant_message = ChatMessage(
                     tenant_id=tenant_id,
@@ -539,6 +604,7 @@ class ChatService:
                         objective_id=payload.objective_id,
                         reference_asset_ids=payload.reference_asset_ids,
                     )
+                    self._raise_if_generation_cancelled(tenant_id, brand_space_id, session_id)
                 workflow_context = mixed_workflow.prepare_generation_context(
                     message=payload.message,
                     workflow_plan=workflow_plan,
@@ -559,6 +625,7 @@ class ChatService:
                         if contents_repo is not None
                         else None
                     )
+                    self._raise_if_generation_cancelled(tenant_id, brand_space_id, session_id)
                     instruction_prompt = workflow_context.prompt if workflow_context else payload.message
                     should_treat_as_fresh_generation = self._looks_like_distinct_new_visual_topic(
                         previous_content,
@@ -591,6 +658,7 @@ class ChatService:
                                 reference_asset_ids=workflow_context.reference_asset_ids if workflow_context else payload.reference_asset_ids,
                             ),
                         )
+                        self._raise_if_generation_cancelled(tenant_id, brand_space_id, session_id)
                     elif self._should_regenerate_visual_follow_up(intent.revision_scope):
                         regenerated_prompt = self._compose_visual_regeneration_prompt(
                             previous_content,
@@ -626,6 +694,7 @@ class ChatService:
                                 generate_image=payload.generate_image,
                             ),
                         )
+                        self._raise_if_generation_cancelled(tenant_id, brand_space_id, session_id)
                     else:
                         logger.info(
                             "chat.send_message.visual_rewrite session_id=%s previous_content_version_id=%s studio_format=%s file_type=%s",
@@ -645,6 +714,7 @@ class ChatService:
                                 revision_scope=intent.revision_scope,
                             ),
                         )
+                        self._raise_if_generation_cancelled(tenant_id, brand_space_id, session_id)
                 else:
                     logger.info(
                         "chat.send_message.visual_generate session_id=%s studio_format=%s file_type=%s generate_image=%s prompt_length=%s",
@@ -672,6 +742,7 @@ class ChatService:
                             reference_asset_ids=workflow_context.reference_asset_ids if workflow_context else payload.reference_asset_ids,
                         ),
                     )
+                    self._raise_if_generation_cancelled(tenant_id, brand_space_id, session_id)
                 render_payload = None
                 should_export_visual = studio_panel.file_type != ExportFileType.DOC or (
                     str(studio_panel.format or "").strip().casefold() in self.VISUAL_WORKSPACE_FORMATS
@@ -690,7 +761,9 @@ class ChatService:
                         content_version_id=content_version.id,
                         studio_panel=studio_panel.model_dump(mode="json"),
                     )
+                    self._raise_if_generation_cancelled(tenant_id, brand_space_id, session_id)
                 content_assets = await self.assets.list_by_content(content_version.id)
+                self._raise_if_generation_cancelled(tenant_id, brand_space_id, session_id)
                 memory_assets = self._resolve_displayed_memory_assets(
                     content_assets=list(content_assets),
                     render_payload=render_payload,
@@ -767,6 +840,7 @@ class ChatService:
                 structured_payload=assistant_payload,
                 citations=[],
             )
+        self._raise_if_generation_cancelled(tenant_id, brand_space_id, session_id)
         await self.messages.add(assistant_message)
         if memory_service is not None:
             await memory_service.index_chat_message(message=assistant_message, session=session)
@@ -893,6 +967,7 @@ class ChatService:
                 else session.conversational_context.get("last_displayed_asset_paths")
             ),
         }
+        self._raise_if_generation_cancelled(tenant_id, brand_space_id, session_id)
         await self.session.commit()
         return user_message, assistant_message
 

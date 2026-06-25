@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select
+from datetime import datetime
+from sqlalchemy import and_, select
 from sqlalchemy import or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,6 +31,21 @@ class SessionRepository(Repository[ContentSession]):
             stmt
         )
         return list(result.scalars().all())
+
+    async def get_scoped(
+        self,
+        session_id: UUID,
+        tenant_id: UUID,
+        brand_space_id: UUID | None = None,
+    ) -> ContentSession | None:
+        stmt = select(ContentSession).where(
+            ContentSession.id == session_id,
+            ContentSession.tenant_id == tenant_id,
+        )
+        if brand_space_id:
+            stmt = stmt.where(ContentSession.brand_space_id == brand_space_id)
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
 
 
 class FolderRepository(Repository[ContentFolder]):
@@ -168,8 +184,23 @@ class ChatMessageRepository(Repository[ChatMessage]):
         )
         return list(result.scalars().all())
 
-    async def list_recent_by_session(self, session_id: UUID, limit: int = 8) -> list[ChatMessage]:
-        result = await self.session.execute(
+    async def list_recent_by_session(
+        self,
+        session_id: UUID,
+        limit: int = 8,
+        before_created_at: datetime | None = None,
+        before_id: UUID | None = None,
+    ) -> list[ChatMessage]:
+        cursor_filter = None
+        if before_created_at and before_id:
+            cursor_filter = or_(
+                ChatMessage.created_at < before_created_at,
+                and_(ChatMessage.created_at == before_created_at, ChatMessage.id < before_id),
+            )
+        elif before_created_at:
+            cursor_filter = ChatMessage.created_at < before_created_at
+
+        stmt = (
             select(ChatMessage)
             .outerjoin(ContentVersion, ChatMessage.content_version_id == ContentVersion.id)
             .where(ChatMessage.session_id == session_id)
@@ -185,6 +216,11 @@ class ChatMessageRepository(Repository[ChatMessage]):
                     ContentVersion.lifecycle_state != "archived",
                 )
             )
+        )
+        if cursor_filter is not None:
+            stmt = stmt.where(cursor_filter)
+        result = await self.session.execute(
+            stmt
             .order_by(ChatMessage.created_at.desc())
             .limit(limit)
         )

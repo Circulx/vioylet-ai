@@ -1,3 +1,4 @@
+# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -15,6 +16,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass(slots=True)
 class ChatIntentDecision:
+    # Business layer for chat intent decision; routes and workers pass validated inputs here and receive domain
+    # results back.
     mode: str
     deliverable_type: str | None = None
     reason: str = ""
@@ -26,6 +29,8 @@ class ChatIntentDecision:
 
 
 class IntentRouterService:
+    # Business layer for intent router; routes and workers pass validated inputs here and receive domain results
+    # back.
     _LLM_ALLOWED_MODES = {
         "small_talk",
         "strategy_chat",
@@ -112,9 +117,12 @@ class IntentRouterService:
     )
 
     def __init__(self) -> None:
+        # Wires the repositories and helper services this workflow reuses across its public methods.
         self.providers = ProviderRouter()
 
     def route(self, message: str, session_context: dict[str, Any] | None = None) -> ChatIntentDecision:
+        # Runs the route service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         text = " ".join(str(message or "").split()).strip()
         session_context = session_context or {}
         if not text:
@@ -125,6 +133,7 @@ class IntentRouterService:
             text=text,
             session_context=self._router_session_summary(session_context),
         )
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if llm_decision is None:
             if visual_generation_hint:
                 return ChatIntentDecision(
@@ -136,6 +145,8 @@ class IntentRouterService:
                 reason="llm_classification_unavailable",
             )
         decision = self._build_decision_from_llm(llm_decision=llm_decision)
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if visual_generation_hint and decision.mode in {"small_talk", "strategy_chat", "content_only"}:
             return ChatIntentDecision(
                 mode="visual_generation",
@@ -148,6 +159,8 @@ class IntentRouterService:
 
     @classmethod
     def _looks_like_visual_generation_request(cls, text: str) -> bool:
+        # Internal helper for looks like visual generation request; it keeps the public service method focused
+        # on orchestration instead of low-level shaping.
         normalized = " ".join(str(text or "").split()).strip()
         if not normalized:
             return False
@@ -167,6 +180,8 @@ class IntentRouterService:
         text: str,
         session_context: dict[str, Any],
     ) -> dict[str, Any] | None:
+        # Internal helper for classify with llm; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         provider = self.providers.get_text_provider("generation")
         fallback = {
             "mode": "strategy_chat",
@@ -179,6 +194,8 @@ class IntentRouterService:
             "display_retrieved_asset": False,
             "direct_reply": None,
         }
+        # Keeps the risky I/O or integration boundary contained so callers receive project-level errors
+        # instead of raw library failures.
         try:
             response = provider.generate_structured_json(
                 PromptEnvelope(
@@ -265,6 +282,8 @@ class IntentRouterService:
 
     @classmethod
     def _router_session_summary(cls, session_context: dict[str, Any]) -> dict[str, Any]:
+        # Internal helper for router session summary; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not isinstance(session_context, dict):
             return {}
         summary: dict[str, Any] = {}
@@ -279,6 +298,8 @@ class IntentRouterService:
 
     @classmethod
     def _prompt_safe_value(cls, value: Any, *, max_depth: int = 2) -> Any:
+        # Internal helper for prompt safe value; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if max_depth < 0:
             return cls._normalize_scalar(value, limit=160)
         if isinstance(value, dict):
@@ -292,6 +313,8 @@ class IntentRouterService:
 
     @staticmethod
     def _normalize_scalar(value: Any, *, limit: int) -> Any:
+        # Internal helper for scalar; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         if isinstance(value, (bool, int, float)):
             return value
         text = " ".join(str(value or "").split()).strip()
@@ -299,12 +322,16 @@ class IntentRouterService:
 
     @staticmethod
     def _compact_json(value: Any) -> str:
+        # Internal helper for compact json; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         try:
             return json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
         except TypeError:
             return str(value)
 
     def _build_decision_from_llm(self, *, llm_decision: dict[str, Any]) -> ChatIntentDecision:
+        # Internal helper for decision from llm; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         mode = str(llm_decision.get("mode") or "").strip().casefold()
         workflow_type = str(llm_decision.get("workflow_type") or "").strip() or None
         uses_previous_output = bool(llm_decision.get("uses_previous_output"))
@@ -325,6 +352,8 @@ class IntentRouterService:
 
     @staticmethod
     def _normalize_direct_reply(*, mode: str, value: Any) -> str | None:
+        # Internal helper for direct reply; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         if mode != "small_talk":
             return None
         text = " ".join(str(value or "").split()).strip()
@@ -333,6 +362,8 @@ class IntentRouterService:
         return text[:600].rstrip()
 
     def _normalize_revision_scope(self, value: Any) -> dict[str, Any] | None:
+        # Internal helper for revision scope; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if not isinstance(value, dict):
             return None
 
@@ -342,6 +373,8 @@ class IntentRouterService:
             if str(item).strip() in self._LLM_ALLOWED_TARGET_FIELDS
         ]
         slide_indexes: list[int] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for item in value.get("slide_indexes", []):
             try:
                 normalized = int(item)
@@ -365,6 +398,8 @@ class IntentRouterService:
             "change_tone": bool(value.get("change_tone")),
             "only_targeted": bool(value.get("only_targeted")),
         }
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if any(
             [
                 normalized_scope["targeted_fields"],
@@ -387,9 +422,13 @@ class IntentRouterService:
         mode: str,
         uses_previous_output: bool,
     ) -> dict[str, Any] | None:
+        # Internal helper for workflow plan from llm; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         normalized = str(workflow_type or "").strip()
         if not normalized:
             return None
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if normalized == "review_then_generate":
             return {
                 "type": "review_then_generate",
@@ -399,6 +438,8 @@ class IntentRouterService:
                 "review_source": "reference_assets_or_previous",
                 "apply_review_to_rewrite": uses_previous_output,
             }
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if normalized == "repurpose_text_to_visual":
             return {
                 "type": "repurpose_text_to_visual",
@@ -406,6 +447,8 @@ class IntentRouterService:
                 "uses_previous_output": False,
                 "reason": "llm_repurpose_text_to_visual",
             }
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if normalized == "apply_last_review":
             return {
                 "type": "apply_last_review",

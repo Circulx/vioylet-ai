@@ -1,3 +1,4 @@
+# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
 from io import BytesIO
@@ -22,9 +23,12 @@ logger = logging.getLogger(__name__)
 
 
 class RendererService:
+    # Business layer for renderer; routes and workers pass validated inputs here and receive domain results
+    # back.
     SCENE_TEXT_SYMBOL_PATTERN = re.compile(r"(?:âœ”ï¸\x8f|âœ”ï¸|âœ…|â€¢|✔️|✓|✅|➡️|➜)")
 
     def __init__(self, session: AsyncSession) -> None:
+        # Wires the repositories and helper services this workflow reuses across its public methods.
         self.session = session
         self.storage = LocalObjectStorage()
         self.settings = get_settings()
@@ -37,10 +41,14 @@ class RendererService:
 
     @staticmethod
     def _is_bold_weight(weight: str | None) -> bool:
+        # Internal helper for is bold weight; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         normalized = str(weight or "").strip().casefold().replace("_", "").replace("-", "").replace(" ", "")
         return normalized in {"bold", "semibold", "demibold", "extrabold", "black", "heavy", "700", "800", "900"}
 
     def _font_candidates(self, weight: str | None = None) -> list[Path]:
+        # Internal helper for font candidates; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         repo_root = Path(__file__).resolve().parents[2]
         configured = Path(self.settings.renderer_font_path)
         weighted_candidates: list[Path] = []
@@ -69,6 +77,8 @@ class RendererService:
         return deduped
 
     def _font_path_for_family(self, family_hint: str | None) -> Path | None:
+        # Internal helper for font path for family; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         normalized_hint = str(family_hint or "").strip().casefold()
         if not normalized_hint:
             return None
@@ -83,6 +93,8 @@ class RendererService:
         return None
 
     def _font(self, size: int, family_hint: str | None = None, weight: str | None = None) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+        # Internal helper for font; it keeps the public service method focused on orchestration instead of low-
+        # level shaping.
         preferred = self._font_path_for_family(family_hint)
         if preferred and preferred.exists():
             try:
@@ -102,9 +114,13 @@ class RendererService:
 
     @staticmethod
     def _zone_box(zone) -> tuple[int, int, int, int]:
+        # Internal helper for zone box; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         return zone.x, zone.y, zone.x + zone.width, zone.y + zone.height
 
     def _parse_color(self, value: str | None, default: tuple[int, int, int]) -> tuple[int, int, int]:
+        # Internal helper for color; it keeps the public service method focused on orchestration instead of low-
+        # level shaping.
         if not value:
             return default
         try:
@@ -114,6 +130,8 @@ class RendererService:
 
     @staticmethod
     def _palette_role_map(palette: object) -> dict[str, str]:
+        # Internal helper for palette role map; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if isinstance(palette, dict):
             return {
                 str(key).strip().lower(): str(value).strip()
@@ -140,6 +158,8 @@ class RendererService:
 
     @staticmethod
     def _style_color_payload_to_hex(payload: dict | None) -> str | None:
+        # Internal helper for style color payload to hex; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not isinstance(payload, dict):
             return None
         value = str(payload.get("hex_code") or payload.get("hex") or "").strip()
@@ -147,12 +167,16 @@ class RendererService:
 
     @staticmethod
     def _composition_plan(payload: RendererInput) -> dict:
+        # Internal helper for composition plan; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if not payload.blueprint:
             return {}
         return payload.blueprint.composition_plan or {}
 
     @staticmethod
     def _should_render_scene_graph_direct(payload: RendererInput) -> bool:
+        # Internal helper for should render scene graph direct; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not payload.scene_graph or not payload.scene_graph.elements:
             return False
         if payload.base_canvas_asset_path:
@@ -172,6 +196,8 @@ class RendererService:
 
     @staticmethod
     def _prefer_blueprint_zone_rendering(payload: RendererInput) -> bool:
+        # Internal helper for prefer blueprint zone rendering; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not payload.blueprint or not payload.blueprint.zones:
             return False
         source_mode = str(payload.blueprint.source_mode or "").strip().lower()
@@ -185,6 +211,8 @@ class RendererService:
         return bool(roles & {"logo", "headline", "body", "cta", "image"})
 
     def _template_style_reference(self, payload: RendererInput) -> dict:
+        # Internal helper for template style reference; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         template_intelligence = payload.brand_visual_rules.get("template_intelligence", []) if payload.brand_visual_rules else []
         if not isinstance(template_intelligence, list):
             return {}
@@ -201,6 +229,8 @@ class RendererService:
         return {}
 
     def _footer_text(self, payload: RendererInput, page_text: dict | None = None) -> str:
+        # Internal helper for footer text; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         page_payload = page_text or {}
         page_footer = str(
             page_payload.get("footer")
@@ -226,6 +256,8 @@ class RendererService:
         return ""
 
     def _zone_style_hint(self, payload: RendererInput, role: str) -> dict | None:
+        # Internal helper for zone style hint; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         template_ref = self._template_style_reference(payload)
         if not template_ref:
             return None
@@ -239,6 +271,7 @@ class RendererService:
         text_style_map = template_ref.get("text_style_map", [])
         if not isinstance(text_style_map, list):
             return None
+        # This branch enforces tenant, brand, or role boundaries before shared data can be read or changed.
         if role == "body":
             excluded = {
                 str(item.get("text", "")).strip().casefold()
@@ -254,6 +287,7 @@ class RendererService:
                 if len(text.split()) >= 4:
                     return item
             return next((item for item in text_style_map if isinstance(item, dict)), None)
+        # This branch enforces tenant, brand, or role boundaries before shared data can be read or changed.
         if role == "cta":
             cta_tokens = ("apply", "learn more", "download", "get started", "register", "book", "join")
             for item in text_style_map:
@@ -269,6 +303,8 @@ class RendererService:
         style_hint: dict | None,
         default: tuple[int, int, int],
     ) -> tuple[int, int, int]:
+        # Internal helper for resolved fill from style hint; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not isinstance(style_hint, dict):
             return default
         return self._parse_color(self._style_color_payload_to_hex(style_hint.get("font_color")), default)
@@ -280,6 +316,8 @@ class RendererService:
         primary: tuple[int, int, int],
         accent: tuple[int, int, int],
     ) -> dict | None:
+        # Internal helper for gradient spec; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         composition = self._composition_plan(payload)
         background_plan = composition.get("background_plan", {}) if isinstance(composition, dict) else {}
         if background_plan.get("policy") == "template_background":
@@ -289,6 +327,8 @@ class RendererService:
 
         palette = self._resolve_palette_roles(payload)
         balance = self._reference_color_balance(payload, palette)
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if balance:
             bg_share = float(balance.get("background_share") or 0.0)
             accent_share = float(balance.get("accent_share") or 0.0)
@@ -352,6 +392,8 @@ class RendererService:
         gradient_spec: dict | None,
         base_canvas_asset_path: str | None = None,
     ) -> Image.Image:
+        # Internal helper for background canvas; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if base_canvas_asset_path:
             source = Path(self.storage.absolute_path(base_canvas_asset_path))
             if source.exists():
@@ -371,6 +413,8 @@ class RendererService:
             self._parse_color(str(gradient_spec.get("mid_color") or ""), tuple(((start + end) / 2).astype(int))),
             dtype=np.float32,
         )
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if gradient_type == "radial":
             x = np.linspace(-1.0, 1.0, width, dtype=np.float32)
             y = np.linspace(-1.0, 1.0, height, dtype=np.float32)
@@ -390,12 +434,16 @@ class RendererService:
         return Image.fromarray(np.clip(color_array, 0, 255).astype(np.uint8), mode="RGB")
 
     def _metadata_palette(self, payload: RendererInput) -> dict[str, str]:
+        # Internal helper for metadata palette; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         colors = payload.text.metadata.get("brand_colors") or payload.text.metadata.get("colors") or {}
         if not isinstance(colors, dict):
             return {}
         return {str(key): str(value) for key, value in colors.items()}
 
     def _reference_color_usage_entries(self, payload: RendererInput) -> list[dict[str, object]]:
+        # Internal helper for reference color usage entries; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         template_zone_map = (payload.template_metadata or {}).get("zone_map", {}) if payload.template_metadata else {}
         template_ref = self._template_style_reference(payload)
         sources = [
@@ -404,6 +452,8 @@ class RendererService:
             payload.brand_visual_rules.get("color_usage") if payload.brand_visual_rules else None,
         ]
         best_source: list[dict[str, object]] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for candidate in sources:
             if not isinstance(candidate, list):
                 continue
@@ -439,10 +489,14 @@ class RendererService:
         payload: RendererInput,
         palette: dict[str, str],
     ) -> dict[str, object]:
+        # Internal helper for reference color balance; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         entries = self._reference_color_usage_entries(payload)
         if not entries:
             return {}
         merged: dict[str, dict[str, object]] = {}
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for entry in entries:
             hex_code = str(entry.get("hex_code") or "")
             role = str(entry.get("role") or "").strip().lower()
@@ -468,6 +522,8 @@ class RendererService:
             return {}
 
         def _pick_hex(role_tokens: set[str]) -> str | None:
+            # Internal helper for pick hex; it keeps the public service method focused on orchestration instead
+            # of low-level shaping.
             for item in normalized_entries:
                 roles = {str(role).strip().lower() for role in (item.get("roles") or [])}
                 if roles & role_tokens:
@@ -478,6 +534,7 @@ class RendererService:
         primary_hex = _pick_hex({"primary", "brand", "headline", "title"})
         accent_hex = _pick_hex({"accent", "secondary", "highlight", "cta"})
 
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if not background_hex:
             light_entries = [
                 item
@@ -485,6 +542,7 @@ class RendererService:
                 if (rgb := self._hex_to_rgb(str(item.get("hex_code") or ""))) and self._relative_luminance(rgb) >= 0.72
             ]
             background_hex = str((light_entries[0] if light_entries else normalized_entries[0]).get("hex_code") or "")
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if not primary_hex:
             primary_hex = next(
                 (
@@ -505,6 +563,8 @@ class RendererService:
             )
 
         def _share(hex_code: str | None) -> float:
+            # Internal helper for share; it keeps the public service method focused on orchestration instead of
+            # low-level shaping.
             if not hex_code:
                 return 0.0
             return sum(
@@ -532,6 +592,8 @@ class RendererService:
         primary: tuple[int, int, int],
         accent: tuple[int, int, int],
     ) -> dict[str, tuple[int, int, int]]:
+        # Internal helper for reference palette tokens; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         balance = self._reference_color_balance(payload, palette)
         background_share = float(balance.get("background_share") or 0.0)
         primary_share = float(balance.get("primary_share") or 0.0)
@@ -571,6 +633,8 @@ class RendererService:
 
     @staticmethod
     def _hex_to_rgb(value: str) -> tuple[int, int, int] | None:
+        # Internal helper for hex to rgb; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         text = str(value or "").strip()
         if not re.fullmatch(r"#?[0-9a-fA-F]{6}", text):
             return None
@@ -578,9 +642,13 @@ class RendererService:
         return tuple(int(normalized[index:index + 2], 16) for index in range(0, 6, 2))
 
     def _inferred_palette_roles(self, payload: RendererInput) -> dict[str, str]:
+        # Internal helper for inferred palette roles; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         return derive_palette_roles(payload.brand_visual_rules or {})
 
     def _resolve_palette_roles(self, payload: RendererInput) -> dict[str, str]:
+        # Internal helper for palette roles; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         rules_palette = self._inferred_palette_roles(payload)
         allowed_values = {
             self._normalize_hex(value)
@@ -605,6 +673,8 @@ class RendererService:
 
     @staticmethod
     def _normalize_hex(value: str | None) -> str | None:
+        # Internal helper for hex; it keeps the public service method focused on orchestration instead of low-
+        # level shaping.
         text = str(value or "").strip().upper()
         if not text:
             return None
@@ -614,6 +684,8 @@ class RendererService:
 
     @staticmethod
     def _is_soft_neutral_color(rgb: tuple[int, int, int]) -> bool:
+        # Internal helper for is soft neutral color; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         return max(rgb) - min(rgb) <= 24 or sum(rgb) >= 660
 
     def _resolve_primary_color(
@@ -621,6 +693,8 @@ class RendererService:
         payload_or_palette: RendererInput | dict[str, str],
         palette: dict[str, str] | None = None,
     ) -> tuple[int, int, int]:
+        # Internal helper for primary color; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         payload = payload_or_palette if isinstance(payload_or_palette, RendererInput) else None
         resolved_palette = palette if palette is not None else payload_or_palette
         if not isinstance(resolved_palette, dict):
@@ -640,6 +714,8 @@ class RendererService:
         palette_or_primary: dict[str, str] | tuple[int, int, int],
         primary: tuple[int, int, int] | None = None,
     ) -> tuple[int, int, int]:
+        # Internal helper for accent color; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         payload = payload_or_palette if isinstance(payload_or_palette, RendererInput) else None
         if payload:
             palette = palette_or_primary if isinstance(palette_or_primary, dict) else {}
@@ -668,6 +744,8 @@ class RendererService:
         primary: tuple[int, int, int],
         accent: tuple[int, int, int],
     ) -> tuple[int, int, int]:
+        # Internal helper for background color; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         # Fix 1: Check scene_graph.styles.background_fill first (highest priority)
         if payload.scene_graph and payload.scene_graph.styles:
             scene_background = payload.scene_graph.styles.get("background_fill")
@@ -718,6 +796,8 @@ class RendererService:
         return base
 
     def _brand_has_real_logo(self, payload: RendererInput) -> bool:
+        # Internal helper for brand has real logo; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         identity = payload.brand_visual_rules.get("identity", {}) if payload.brand_visual_rules else {}
         if payload.logo_asset_path:
             return True
@@ -727,6 +807,8 @@ class RendererService:
 
     @staticmethod
     def _template_is_style_reference_only(payload: RendererInput) -> bool:
+        # Internal helper for template is style reference only; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         scene_graph_hints = payload.scene_graph.validation_hints if payload.scene_graph else {}
         if isinstance(scene_graph_hints, dict) and str(scene_graph_hints.get("template_surface_policy") or "").strip() == "style_reference_only":
             return True
@@ -748,7 +830,10 @@ class RendererService:
         fill: tuple[int, int, int],
         logo_path: str | None = None,
     ) -> bool:
+        # Internal helper for logo box; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         resolved_logo_path = logo_path or payload.logo_asset_path
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if resolved_logo_path and not self._storage_exists(resolved_logo_path):
             recovered_logo_path = self._discover_logo_storage_path(payload)
             if recovered_logo_path:
@@ -765,6 +850,7 @@ class RendererService:
         recovered_logo_path = self._discover_logo_storage_path(payload)
         if recovered_logo_path:
             return self._paste_logo(canvas, recovered_logo_path, zone)
+        # This branch enforces tenant, brand, or role boundaries before shared data can be read or changed.
         if self._brand_has_real_logo(payload):
             logger.warning(
                 "renderer.logo.real_asset_unavailable brand_space_id=%s content_version_id=%s",
@@ -776,6 +862,8 @@ class RendererService:
         return True
 
     def _storage_exists(self, storage_path: str | None) -> bool:
+        # Internal helper for storage exists; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if not storage_path:
             return False
         exists_fn = getattr(self.storage, "exists", None)
@@ -791,6 +879,8 @@ class RendererService:
 
     @staticmethod
     def _edge_background_should_strip(image: Image.Image, threshold: int = 245) -> bool:
+        # Internal helper for edge background should strip; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         rgba = image.convert("RGBA")
         width, height = rgba.size
         if width <= 0 or height <= 0:
@@ -815,6 +905,8 @@ class RendererService:
 
     @staticmethod
     def _median_edge_color(image: Image.Image) -> tuple[int, int, int] | None:
+        # Internal helper for median edge color; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         rgba = image.convert("RGBA")
         width, height = rgba.size
         if width <= 0 or height <= 0:
@@ -841,6 +933,8 @@ class RendererService:
         pixel: tuple[int, int, int, int],
         matte: tuple[int, int, int],
     ) -> bool:
+        # Internal helper for logo pixel is mark; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         red, green, blue, alpha = pixel
         if alpha <= 24:
             return False
@@ -850,6 +944,8 @@ class RendererService:
 
     @staticmethod
     def _logo_pixel_is_high_signal_mark(pixel: tuple[int, int, int, int]) -> bool:
+        # Internal helper for logo pixel is high signal mark; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         red, green, blue, alpha = pixel
         if alpha <= 24:
             return False
@@ -863,6 +959,8 @@ class RendererService:
         image: Image.Image,
         matte: tuple[int, int, int],
     ) -> tuple[int, int, int, int] | None:
+        # Internal helper for visual logo mark bbox; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         rgba = image.convert("RGBA")
         pixels = rgba.load()
         left = rgba.width
@@ -883,6 +981,8 @@ class RendererService:
 
     @classmethod
     def _visual_logo_high_signal_bbox(cls, image: Image.Image) -> tuple[int, int, int, int] | None:
+        # Internal helper for visual logo high signal bbox; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         rgba = image.convert("RGBA")
         pixels = rgba.load()
         left = rgba.width
@@ -907,6 +1007,8 @@ class RendererService:
         image: Image.Image,
         matte: tuple[int, int, int],
     ) -> Image.Image:
+        # Internal helper for logo matte pixels; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         cleaned = image.convert("RGBA").copy()
         pixels = cleaned.load()
         for y in range(cleaned.height):
@@ -919,6 +1021,8 @@ class RendererService:
 
     @classmethod
     def _remove_low_signal_logo_pixels(cls, image: Image.Image) -> Image.Image:
+        # Internal helper for low signal logo pixels; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         cleaned = image.convert("RGBA").copy()
         pixels = cleaned.load()
         for y in range(cleaned.height):
@@ -936,6 +1040,8 @@ class RendererService:
         image_height: int,
         bbox: tuple[int, int, int, int],
     ) -> bool:
+        # Internal helper for logo bbox has large margins; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         visual_width = bbox[2] - bbox[0]
         visual_height = bbox[3] - bbox[1]
         visual_area = visual_width * visual_height
@@ -948,6 +1054,8 @@ class RendererService:
 
     @classmethod
     def _strip_logo_background_if_safe(cls, image: Image.Image) -> Image.Image:
+        # Internal helper for strip logo background if safe; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         rgba = image.convert("RGBA")
         if not cls._edge_background_should_strip(rgba):
             return rgba
@@ -958,6 +1066,8 @@ class RendererService:
         seen: set[tuple[int, int]] = set()
 
         def is_background(px: tuple[int, int, int, int]) -> bool:
+            # Runs the is background service flow by coordinating repositories, validators, and integrations,
+            # then returns domain data.
             red, green, blue, alpha = px
             return alpha > 0 and red >= 245 and green >= 245 and blue >= 245
 
@@ -991,12 +1101,16 @@ class RendererService:
 
     @classmethod
     def _trim_transparent_logo_margins(cls, image: Image.Image) -> Image.Image:
+        # Internal helper for transparent logo margins; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         rgba = image.convert("RGBA")
         alpha = rgba.getchannel("A")
         bbox = alpha.getbbox()
         if not bbox:
             return rgba
         cropped = rgba.crop(bbox)
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if cls._edge_background_should_strip(cropped, threshold=235):
             matte = cls._median_edge_color(cropped)
             if matte is not None:
@@ -1012,6 +1126,7 @@ class RendererService:
                         if cleaned_bbox:
                             return cleaned.crop(cleaned_bbox)
         visual_bbox = cls._visual_logo_high_signal_bbox(cropped)
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if visual_bbox is not None and cls._logo_bbox_has_large_margins(
             image_width=cropped.width,
             image_height=cropped.height,
@@ -1024,6 +1139,8 @@ class RendererService:
         return cropped
 
     def _discover_logo_storage_path(self, payload: RendererInput) -> str | None:
+        # Internal helper for discover logo storage path; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         base_path = getattr(self.storage, "base_path", None)
         if not base_path:
             return None
@@ -1034,6 +1151,8 @@ class RendererService:
         search_roots = [brand_root / "logo", brand_root / "brand", brand_root / "uploads"]
         image_suffixes = {".png", ".jpg", ".jpeg", ".webp", ".svg"}
         fallback: list[Path] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for root in search_roots:
             if not root.exists():
                 continue
@@ -1055,6 +1174,8 @@ class RendererService:
         return None
 
     def _brand_name(self, payload: RendererInput) -> str:
+        # Internal helper for brand name; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         identity = payload.brand_visual_rules.get("identity", {}) if payload.brand_visual_rules else {}
         for candidate in (
             payload.brand_visual_rules.get("brand_name") if payload.brand_visual_rules else None,
@@ -1068,6 +1189,8 @@ class RendererService:
 
     @staticmethod
     def _badge_label(value: str) -> str:
+        # Internal helper for badge label; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         text = value.strip().lstrip("#").replace("_", " ").replace("-", " ")
         if not text:
             return ""
@@ -1075,6 +1198,8 @@ class RendererService:
         return label[:22].rstrip()
 
     def _supporting_badges(self, payload: RendererInput, preset: str) -> list[str]:
+        # Internal helper for supporting badges; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         raw_tags = payload.text.hashtags[:4]
         labels = [self._badge_label(tag) for tag in raw_tags]
         labels = [label for label in labels if label]
@@ -1082,11 +1207,15 @@ class RendererService:
         return labels[:max_badges]
 
     def _metadata_text(self, payload: RendererInput, key: str, max_chars: int = 120) -> str:
+        # Internal helper for metadata text; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         value = payload.text.metadata.get(key, "")
         text = " ".join(str(value).strip().split()) if value is not None else ""
         return text[:max_chars].rstrip(" ,.;:") if text else ""
 
     def _metadata_list(self, payload: RendererInput, key: str, limit: int) -> list[str]:
+        # Internal helper for metadata list; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         value = payload.text.metadata.get(key, [])
         if isinstance(value, str):
             parts = re.split(r"(?:\r?\n|[;|])+|\s*•\s*|\s*[-*]\s+", value)
@@ -1113,6 +1242,8 @@ class RendererService:
         return cleaned
 
     def _section_label(self, payload: RendererInput, preset: str) -> str:
+        # Internal helper for section label; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         label = self._metadata_text(payload, "section_label", 26)
         if label:
             return label
@@ -1122,6 +1253,8 @@ class RendererService:
         return preset.replace("_", " ").title()
 
     def _supporting_line(self, payload: RendererInput, preset: str, body_text: str) -> str:
+        # Internal helper for supporting line; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         support = self._metadata_text(payload, "supporting_line", 116) or self._metadata_text(payload, "subheadline", 116)
         if support:
             return support
@@ -1141,6 +1274,8 @@ class RendererService:
         return self._truncate_copy_at_word_boundary(sentences[0], max_chars)
 
     def _proof_points(self, payload: RendererInput, preset: str, body_text: str) -> list[str]:
+        # Internal helper for proof points; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         points = self._metadata_list(payload, "proof_points", 4)
         if points:
             return points[: (3 if preset in {"linkedin", "infographic"} else 2)]
@@ -1158,6 +1293,8 @@ class RendererService:
         return cleaned[: (3 if preset in {"linkedin", "infographic"} else 2)]
 
     def _stat_highlights(self, payload: RendererInput, preset: str) -> list[str]:
+        # Internal helper for stat highlights; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         stats = self._metadata_list(payload, "stat_highlights", 3)
         if stats:
             return stats[: (3 if preset != "instagram" else 2)]
@@ -1170,6 +1307,8 @@ class RendererService:
         overlay: tuple[int, int, int],
         alpha: float,
     ) -> tuple[int, int, int]:
+        # Internal helper for blend color; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         clamped = max(0.0, min(alpha, 1.0))
         return tuple(
             int(round((base[index] * (1 - clamped)) + (overlay[index] * clamped)))
@@ -1178,7 +1317,11 @@ class RendererService:
 
     @staticmethod
     def _relative_luminance(color: tuple[int, int, int]) -> float:
+        # Internal helper for relative luminance; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         def _channel(value: int) -> float:
+            # Internal helper for channel; it keeps the public service method focused on orchestration instead
+            # of low-level shaping.
             normalized = max(0.0, min(value / 255.0, 1.0))
             if normalized <= 0.03928:
                 return normalized / 12.92
@@ -1193,12 +1336,16 @@ class RendererService:
         foreground: tuple[int, int, int],
         background: tuple[int, int, int],
     ) -> float:
+        # Internal helper for contrast ratio; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         lighter = max(cls._relative_luminance(foreground), cls._relative_luminance(background))
         darker = min(cls._relative_luminance(foreground), cls._relative_luminance(background))
         return (lighter + 0.05) / (darker + 0.05)
 
     @classmethod
     def _auto_text_color(cls, background: tuple[int, int, int]) -> tuple[int, int, int]:
+        # Internal helper for auto text color; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         dark = (20, 20, 20)
         light = (255, 255, 255)
         return dark if cls._contrast_ratio(dark, background) >= cls._contrast_ratio(light, background) else light
@@ -1212,6 +1359,8 @@ class RendererService:
         minimum_ratio: float = 4.2,
         fallback: tuple[int, int, int] | None = None,
     ) -> tuple[int, int, int]:
+        # Internal helper for text contrast; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         if cls._contrast_ratio(foreground, background) >= minimum_ratio:
             return foreground
         candidate = fallback or cls._auto_text_color(background)
@@ -1226,10 +1375,14 @@ class RendererService:
         font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
         width: int,
     ) -> list[str]:
+        # Internal helper for wrap text; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         if not text.strip():
             return []
 
         def split_word(word: str) -> list[str]:
+            # Runs the split word service flow by coordinating repositories, validators, and integrations, then
+            # returns domain data.
             if not word:
                 return []
             left, _, right, _ = draw.textbbox((0, 0), word, font=font)
@@ -1256,6 +1409,8 @@ class RendererService:
 
         wrapped: list[str] = []
         current = ""
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for word in text.split():
             candidate = f"{current} {word}".strip()
             left, _, right, _ = draw.textbbox((0, 0), candidate, font=font)
@@ -1281,6 +1436,8 @@ class RendererService:
         font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
         spacing: int,
     ) -> tuple[int, int]:
+        # Internal helper for measure lines; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         if not lines:
             return 0, 0
         widths: list[int] = []
@@ -1294,6 +1451,8 @@ class RendererService:
 
     @staticmethod
     def _spacing_candidates(font_size: int) -> list[int]:
+        # Internal helper for spacing candidates; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         default_spacing = max(4, int(font_size * 0.22))
         min_spacing = max(2, int(font_size * 0.1))
         return list(range(default_spacing, min_spacing - 1, -1))
@@ -1306,6 +1465,8 @@ class RendererService:
         width: int,
         max_lines: int | None,
     ) -> list[str]:
+        # Internal helper for truncate lines; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if max_lines is None or len(lines) <= max_lines:
             return lines
         trimmed = lines[:max_lines]
@@ -1317,6 +1478,8 @@ class RendererService:
 
     @staticmethod
     def _truncate_copy_at_word_boundary(text: str, max_chars: int, *, ellipsis: bool = True) -> str:
+        # Internal helper for truncate copy at word boundary; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         cleaned = " ".join(str(text or "").split()).strip()
         if len(cleaned) <= max_chars:
             return cleaned
@@ -1335,10 +1498,14 @@ class RendererService:
         font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
         width: int,
     ) -> str:
+        # Internal helper for truncate text to width; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         words = [word for word in str(text or "").split() if word]
         if not words:
             return "..."
         accepted: list[str] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for word in words:
             candidate_words = [*accepted, word]
             candidate = " ".join(candidate_words).strip()
@@ -1370,6 +1537,8 @@ class RendererService:
         max_lines: int | None = None,
         family_hint: str | None = None,
     ) -> tuple[ImageFont.FreeTypeFont | ImageFont.ImageFont, list[str], int, dict[str, object]]:
+        # Internal helper for fit text block; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         best_attempt: dict[str, object] | None = None
         best_score: tuple[int, int, int] | None = None
         font_size = base_size
@@ -1430,6 +1599,7 @@ class RendererService:
         best_height_overflow = max(best_total_height - height, 0)
         fallback_line_overflow = 0 if max_lines is None else max(len(final_lines) - max_lines, 0)
         fallback_height_overflow = max(total_height - height, 0)
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if final_lines and (
             truncated
             or best_attempt is None
@@ -1449,13 +1619,19 @@ class RendererService:
 
     @staticmethod
     def _split_sentences(text: str) -> list[str]:
+        # Internal helper for split sentences; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         sentences = [item.strip() for item in re.split(r"(?<=[.!?])\s+", text.strip()) if item.strip()]
         return sentences or ([text.strip()] if text.strip() else [])
 
     def _social_body_copy(self, body: str, preset: str) -> str:
+        # Internal helper for social body copy; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         return " ".join(str(body or "").split()).strip()
 
     def _headline_copy(self, headline: str, preset: str) -> str:
+        # Internal helper for headline copy; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         return " ".join(str(headline or "").split()).strip()
 
     @staticmethod
@@ -1467,10 +1643,14 @@ class RendererService:
         outline: tuple[int, int, int] | None = None,
         width: int = 2,
     ) -> None:
+        # Internal helper for draw panel; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         draw.rounded_rectangle(box, radius=radius, fill=fill, outline=outline, width=width if outline else 0)
 
     @staticmethod
     def _rounded_mask(size: tuple[int, int], radius: int) -> Image.Image:
+        # Internal helper for rounded mask; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         mask = Image.new("L", size, 0)
         ImageDraw.Draw(mask).rounded_rectangle((0, 0, size[0], size[1]), radius=radius, fill=255)
         return mask
@@ -1484,6 +1664,8 @@ class RendererService:
         accent: tuple[int, int, int],
         fill: tuple[int, int, int],
     ) -> None:
+        # Internal helper for draw brand lockup; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         x0, y0, x1, y1 = box
         mark_size = min(y1 - y0, 44)
         mark_box = (x0, y0 + max((y1 - y0 - mark_size) // 2, 0), x0 + mark_size, y0 + max((y1 - y0 - mark_size) // 2, 0) + mark_size)
@@ -1515,6 +1697,8 @@ class RendererService:
         primary: tuple[int, int, int],
         accent: tuple[int, int, int],
     ) -> None:
+        # Internal helper for draw badges; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         if not badges:
             return
         x0, y0, x1, y1 = box
@@ -1544,6 +1728,8 @@ class RendererService:
         primary: tuple[int, int, int],
         accent: tuple[int, int, int],
     ) -> None:
+        # Internal helper for draw section label; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if not label:
             return
         x0, y0, _, y1 = box
@@ -1568,6 +1754,8 @@ class RendererService:
         family_hint: str | None = None,
         badge_style: dict | None = None,
     ) -> list[dict[str, int | str | None]]:
+        # Internal helper for draw bullet list; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if not items:
             return []
         if isinstance(badge_style, str):
@@ -1592,6 +1780,8 @@ class RendererService:
         cursor_y = y0
         zones: list[dict[str, int | str | None]] = []
 
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for index, item in enumerate(items, start=1):
             wrapped = self._wrap_text(draw, item, font, available_width)
             if not wrapped:
@@ -1663,6 +1853,8 @@ class RendererService:
         divider_fill: tuple[int, int, int] | None = None,
         using_base_canvas: bool = False,
     ) -> dict[str, object]:
+        # Internal helper for draw ranked row list; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if not items:
             return {"zones": [], "text_fit": [], "occupied_boxes": []}
 
@@ -1670,6 +1862,8 @@ class RendererService:
         validation_hints = validation_hints if isinstance(validation_hints, dict) else {}
 
         def _positive_int(value: object) -> int | None:
+            # Internal helper for positive int; it keeps the public service method focused on orchestration
+            # instead of low-level shaping.
             try:
                 numeric = int(str(value).strip())
             except (TypeError, ValueError):
@@ -1715,6 +1909,8 @@ class RendererService:
         text_fit_manifest: list[dict[str, object]] = []
         occupied_boxes: list[tuple[int, int, int, int]] = []
         y_cursor = y0
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for index in range(1, row_count + 1):
             row_bottom = y1 if index == row_count else min(y_cursor + row_height, y1)
             row_box = (x0, y_cursor, x1, row_bottom)
@@ -1798,6 +1994,8 @@ class RendererService:
         accent: tuple[int, int, int],
         background: tuple[int, int, int],
     ) -> list[dict[str, int | str | None]]:
+        # Internal helper for draw stat cards; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if not stats:
             return []
         x0, y0, x1, y1 = box
@@ -1807,6 +2005,8 @@ class RendererService:
         card_width = max((x1 - x0 - total_gap) // count, 80)
         card_height = max(y1 - y0, 56)
         zones: list[dict[str, int | str | None]] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for index, stat in enumerate(stats[:count], start=1):
             card_x0 = x0 + (index - 1) * (card_width + card_gap)
             card_box = (card_x0, y0, card_x0 + card_width, y0 + card_height)
@@ -1830,6 +2030,8 @@ class RendererService:
         accent: tuple[int, int, int],
         background: tuple[int, int, int],
     ) -> None:
+        # Internal helper for draw editorial motif; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         x0, y0, x1, y1 = box
         width = x1 - x0
         height = y1 - y0
@@ -1886,6 +2088,8 @@ class RendererService:
         frame_fill: tuple[int, int, int] | None = None,
         padding: int = 0,
     ) -> dict[str, object]:
+        # Internal helper for paste visual card; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         source = Path(self.storage.absolute_path(storage_path))
         if not source.exists():
             return {"rendered": False, "storage_path": storage_path, "reason": "missing"}
@@ -1895,6 +2099,7 @@ class RendererService:
         inner_box = (x0 + padding, y0 + padding, x1 - padding, y1 - padding)
         inner_width = max(inner_box[2] - inner_box[0], 1)
         inner_height = max(inner_box[3] - inner_box[1], 1)
+        # Scopes the resource lifetime tightly around the operation that needs it.
         with open_image_asset(source) as raw:
             visual = raw.convert("RGB")
             fitted, assessment = self._compose_visual_for_zone(
@@ -1913,6 +2118,8 @@ class RendererService:
         }
 
     def _paginate_body(self, body: str, max_chars: int, max_pages: int) -> list[str]:
+        # Internal helper for paginate body; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         sentences = self._split_sentences(body)
         if not sentences:
             return [""]
@@ -1935,6 +2142,8 @@ class RendererService:
 
     @staticmethod
     def _collapse_page_segments(segments: list[str], max_pages: int) -> list[str]:
+        # Internal helper for collapse page segments; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         cleaned: list[str] = []
         seen: set[str] = set()
         for segment in segments:
@@ -1956,12 +2165,16 @@ class RendererService:
 
     @staticmethod
     def _structured_render_sections(payload: RendererInput) -> dict[str, object]:
+        # Internal helper for structured render sections; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         metadata = payload.text.metadata if isinstance(payload.text.metadata, dict) else {}
         render_sections = metadata.get("render_sections", {})
         return render_sections if isinstance(render_sections, dict) else {}
 
     @staticmethod
     def _page_list_value(value: object) -> list[str]:
+        # Internal helper for page list value; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if not isinstance(value, list):
             return []
         cleaned: list[str] = []
@@ -1978,8 +2191,12 @@ class RendererService:
         return cleaned
 
     def _build_carousel_segments(self, payload: RendererInput, max_pages: int) -> list[str]:
+        # Internal helper for carousel segments; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         render_sections = self._structured_render_sections(payload)
         carousel_slide_specs = payload.text.metadata.get("carousel_slide_specs", []) if isinstance(payload.text.metadata, dict) else []
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if isinstance(carousel_slide_specs, list) and carousel_slide_specs:
             segments = [
                 " ".join(
@@ -2015,6 +2232,7 @@ class RendererService:
             if segment:
                 detail_segments.append(segment)
 
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if not detail_segments and proof_points:
             for index in range(0, len(proof_points), 2):
                 segment = ". ".join(point.strip().rstrip(".") for point in proof_points[index : index + 2] if point).strip()
@@ -2043,6 +2261,8 @@ class RendererService:
             max_pages=max_pages,
         )
 
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if len(segments) < min(3, max_pages):
             fallback_segments = self._collapse_page_segments(
                 [
@@ -2071,6 +2291,8 @@ class RendererService:
         render_sections: dict[str, object],
         fallback_body: str,
     ) -> str:
+        # Internal helper for carousel slide body; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         for key in ("body", "body_display", "detail", "narrative", "summary", "description"):
             value = slide.get(key)
             if isinstance(value, list):
@@ -2097,12 +2319,16 @@ class RendererService:
         *,
         body_text: str,
     ) -> str:
+        # Internal helper for carousel slide supporting line; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         supporting_line = str(slide.get("supporting_line") or slide.get("subheadline") or "").strip()
         if supporting_line and supporting_line.casefold() != body_text.casefold():
             return supporting_line
         return ""
 
     def _build_page_payloads(self, payload: RendererInput) -> list[dict]:
+        # Internal helper for page payloads; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         format_name = payload.studio_panel.get("format", "static")
         metadata = payload.text.metadata if isinstance(payload.text.metadata, dict) else {}
         composition = self._composition_plan(payload)
@@ -2111,6 +2337,8 @@ class RendererService:
         text_content_plan = composition.get("text_content_plan", {}) if isinstance(composition, dict) else {}
         show_primary_visual = bool(text_content_plan.get("show_primary_visual", True))
         show_primary_visual_on_first_page_only = bool(primary_visual_plan.get("show_primary_visual_on_first_page_only", True))
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if format_name == "infographic":
             return [
                 {
@@ -2127,6 +2355,7 @@ class RendererService:
                     "content_structure_type": render_sections.get("creative_type") or format_name,
                 }
             ]
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if format_name not in {"carousel", "pdf"}:
             return [
                 {
@@ -2143,6 +2372,8 @@ class RendererService:
             ]
         max_pages = 6 if format_name == "carousel" else 4
         carousel_slide_specs = payload.text.metadata.get("carousel_slide_specs", []) if isinstance(payload.text.metadata, dict) else []
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if format_name == "carousel" and isinstance(carousel_slide_specs, list) and carousel_slide_specs:
             pages: list[dict] = []
             total_segments = max(len(carousel_slide_specs), 1)
@@ -2216,9 +2447,13 @@ class RendererService:
         style_hint: dict | None = None,
         font_family: str | None = None,
     ) -> dict[str, object]:
+        # Internal helper for draw text block; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         family_hint = str(font_family or "").strip() or None
         # Fix 5: Support configurable background_radius from style
         background_radius = 18  # Default radius
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if style_hint:
             fill = self._resolved_fill_from_style_hint(style_hint, fill)
             if background_fill is None:
@@ -2265,6 +2500,8 @@ class RendererService:
         _, total_height = self._measure_lines(draw, lines, font, spacing)
         cursor_y = inner_y + max((inner_h - total_height) // 2, 0)
         occupied_bounds: list[tuple[int, int, int, int]] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for line in lines:
             left, top, right, bottom = draw.textbbox((0, 0), line, font=font)
             line_width = right - left
@@ -2279,6 +2516,8 @@ class RendererService:
             occupied_bounds.append((cursor_x, text_top, cursor_x + line_width, text_top + line_height))
             cursor_y += line_height + spacing
         occupied_box = None
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if occupied_bounds:
             occupied_box = (
                 min(box[0] for box in occupied_bounds),
@@ -2323,6 +2562,8 @@ class RendererService:
         primary: tuple[int, int, int],
         role: str,
     ) -> tuple[tuple[int, int, int], tuple[int, int, int], int]:
+        # Internal helper for base canvas text cleanup fill; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if self._relative_luminance(fill) >= 0.62:
             cleanup_fill = self._blend_color(background, primary, 0.84)
             resolved_fill = self._ensure_text_contrast(fill, cleanup_fill, fallback=(255, 255, 255))
@@ -2340,6 +2581,8 @@ class RendererService:
         *,
         padding: int = 0,
     ) -> bool:
+        # Internal helper for boxes overlap; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         if not first or not second:
             return False
         left_a, top_a, right_a, bottom_a = first
@@ -2359,6 +2602,8 @@ class RendererService:
         *,
         padding: int = 0,
     ) -> bool:
+        # Internal helper for box overlaps any; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         return any(cls._boxes_overlap(box, reserved, padding=padding) for reserved in reserved_boxes if reserved)
 
     @staticmethod
@@ -2368,6 +2613,8 @@ class RendererService:
         canvas_width: int,
         canvas_height: int,
     ) -> tuple[int, int, int, int]:
+        # Internal helper for clamp box; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         left, top, right, bottom = box
         width = max(right - left, 1)
         height = max(bottom - top, 1)
@@ -2385,12 +2632,16 @@ class RendererService:
         canvas_height: int,
         padding: int = 18,
     ) -> tuple[tuple[int, int, int, int], bool]:
+        # Internal helper for adapt box away from reserved; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         clamped = cls._clamp_box(box, canvas_width=canvas_width, canvas_height=canvas_height)
         if not cls._box_overlaps_any(clamped, reserved_boxes, padding=padding):
             return clamped, False
         left, top, right, bottom = clamped
         width = max(right - left, 1)
         height = max(bottom - top, 1)
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for scale in (0.92, 0.84, 0.76, 0.68):
             scaled_width = max(int(width * scale), 48)
             scaled_height = max(int(height * scale), 36)
@@ -2421,6 +2672,8 @@ class RendererService:
         box: tuple[int, int, int, int],
         max_lines: int | None = None,
     ) -> dict[str, int | str | None]:
+        # Internal helper for zone manifest; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         x0, y0, x1, y1 = box
         return {
             "zone_id": zone_id,
@@ -2434,10 +2687,14 @@ class RendererService:
 
     @staticmethod
     def _fit_image_to_zone(source: Image.Image, width: int, height: int) -> Image.Image:
+        # Internal helper for fit image to zone; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         return ImageOps.fit(source, (width, height), method=Image.Resampling.LANCZOS)
 
     @staticmethod
     def _assess_visual_fit(source_width: int, source_height: int, target_width: int, target_height: int) -> dict[str, float | str]:
+        # Internal helper for assess visual fit; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         source_width = max(int(source_width), 1)
         source_height = max(int(source_height), 1)
         target_width = max(int(target_width), 1)
@@ -2475,8 +2732,12 @@ class RendererService:
         radius: int = 0,
         frame_fill: tuple[int, int, int] | None = None,
     ) -> tuple[Image.Image, dict[str, float | str]]:
+        # Internal helper for compose visual for zone; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         assessment = self._assess_visual_fit(source.width, source.height, width, height)
         fit_mode = str(assessment["fit_mode"])
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if fit_mode == "cover":
             composed = self._fit_image_to_zone(source, width, height)
         else:
@@ -2505,6 +2766,8 @@ class RendererService:
         frame_fill: tuple[int, int, int] | None = None,
         radius: int = 0,
     ) -> dict[str, object]:
+        # Internal helper for paste visual; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         source = Path(self.storage.absolute_path(storage_path))
         if not source.exists():
             return {"rendered": False, "storage_path": storage_path, "reason": "missing"}
@@ -2525,6 +2788,8 @@ class RendererService:
         }
 
     def _paste_template_background(self, canvas: Image.Image, template_asset_path: str | None) -> bool:
+        # Internal helper for paste template background; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not template_asset_path:
             return False
         source = self._resolve_template_background_source(template_asset_path)
@@ -2540,6 +2805,8 @@ class RendererService:
         return True
 
     def _resolve_template_background_source(self, template_asset_path: str) -> Path | None:
+        # Internal helper for template background source; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         source = Path(self.storage.absolute_path(template_asset_path))
         if source.exists() and source.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
             return source
@@ -2562,6 +2829,8 @@ class RendererService:
         return source if source.exists() and source.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"} else None
 
     def _paste_logo(self, canvas: Image.Image, logo_path: str | None, zone) -> bool:
+        # Internal helper for paste logo; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         if not logo_path:
             return False
         source = Path(self.storage.absolute_path(logo_path))
@@ -2602,6 +2871,8 @@ class RendererService:
         logo_width: int,
         logo_height: int,
     ) -> tuple[int, int]:
+        # Internal helper for logo offset in zone; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         center_x = zone_x + (zone_width / 2.0)
         center_y = zone_y + (zone_height / 2.0)
         horizontal = "left" if center_x <= canvas_width * 0.34 else ("right" if center_x >= canvas_width * 0.66 else "center")
@@ -2612,6 +2883,8 @@ class RendererService:
             offset_x = zone_x + max(zone_width - logo_width, 0)
         else:
             offset_x = zone_x + max((zone_width - logo_width) // 2, 0)
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if vertical == "top":
             top_margin = RendererService._logo_top_margin_px(canvas_height)
             offset_y = min(max(zone_y, top_margin), zone_y + max(zone_height - logo_height, 0))
@@ -2628,6 +2901,8 @@ class RendererService:
         box: tuple[int, int, int, int],
         opacity: int = 176,
     ) -> bool:
+        # Internal helper for paste decorative asset; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         source = Path(self.storage.absolute_path(asset.storage_path))
         if not source.exists():
             return False
@@ -2651,6 +2926,8 @@ class RendererService:
         *,
         reserved_boxes: list[tuple[int, int, int, int]] | None = None,
     ) -> list[dict[str, int | str | None]]:
+        # Internal helper for decorative assets; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if not payload.decorative_assets:
             return []
         composition = self._composition_plan(payload)
@@ -2670,6 +2947,8 @@ class RendererService:
         zones: list[dict[str, int | str | None]] = []
         max_assets = int(decorative_plan.get("max_assets") or len(placements))
         max_assets = max(0, min(max_assets, len(placements)))
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for index, asset in enumerate(payload.decorative_assets[: max_assets], start=1):
             box = placements[index - 1]
             box, _adjusted = self._adapt_box_away_from_reserved(
@@ -2686,6 +2965,8 @@ class RendererService:
 
     @staticmethod
     def _scene_text_value(value: object) -> str:
+        # Internal helper for scene text value; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if value is None:
             return ""
         if isinstance(value, list):
@@ -2694,6 +2975,8 @@ class RendererService:
 
     @classmethod
     def _scene_text_items(cls, value: object) -> list[str]:
+        # Internal helper for scene text items; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if value is None:
             return []
         if isinstance(value, list):
@@ -2720,6 +3003,8 @@ class RendererService:
 
     @classmethod
     def _scene_table_row_items(cls, value: object) -> list[str]:
+        # Internal helper for scene table row items; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if value is None:
             return []
         if isinstance(value, list):
@@ -2742,26 +3027,38 @@ class RendererService:
 
     @staticmethod
     def _logo_size_scale() -> float:
+        # Internal helper for logo size scale; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         return 0.96
 
     @staticmethod
     def _scaled_logo_dimension(value: int | float) -> int:
+        # Internal helper for scaled logo dimension; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         return max(int(round(float(value) * RendererService._logo_size_scale())), 1)
 
     @staticmethod
     def _logo_horizontal_margin_px(canvas_width: int) -> int:
+        # Internal helper for logo horizontal margin px; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         return min(20, max(int(canvas_width) - 1, 0))
 
     @staticmethod
     def _logo_top_margin_px(canvas_height: int) -> int:
+        # Internal helper for logo top margin px; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         return min(max(int(round(max(int(canvas_height), 1) * 0.035)), 20), max(int(canvas_height) - 1, 0))
 
     @staticmethod
     def _logo_bottom_margin_px(canvas_height: int) -> int:
+        # Internal helper for logo bottom margin px; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         return min(20, max(int(canvas_height) - 1, 0))
 
     @staticmethod
     def _logo_box_profile_for_canvas(width: int, height: int) -> tuple[int, int]:
+        # Internal helper for logo box profile for canvas; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         aspect_ratio = width / max(height, 1)
         if aspect_ratio >= 1.3:
             logo_width = max(int(width * 0.15), 150)
@@ -2780,6 +3077,8 @@ class RendererService:
         width: int,
         height: int,
     ) -> tuple[int, int, int, int]:
+        # Internal helper for logo box with canvas profile; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         x0, y0, x1, y1 = box
         resolved_width = max(x1 - x0, 1)
         resolved_height = max(y1 - y0, 1)
@@ -2811,11 +3110,15 @@ class RendererService:
 
     @staticmethod
     def _scene_graph_box(element: SceneGraphElement, width: int, height: int) -> tuple[int, int, int, int] | None:
+        # Internal helper for scene graph box; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         geometry = element.geometry
         if geometry.width is None or geometry.height is None:
             return None
 
         def _resolve(value: float | int | None, scale: int) -> int:
+            # Internal helper for _resolve; it keeps the public service method focused on orchestration instead
+            # of low-level shaping.
             if value is None:
                 return 0
             numeric = float(value)
@@ -2832,6 +3135,7 @@ class RendererService:
             max_logo_width, max_logo_height = RendererService._logo_box_profile_for_canvas(width, height)
             resolved_width = min(resolved_width, max_logo_width)
             resolved_height = min(resolved_height, max_logo_height)
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if geometry.anchor and (geometry.x is None or geometry.y is None):
             if geometry.x is None:
                 if "left" in geometry.anchor:
@@ -2847,6 +3151,7 @@ class RendererService:
                     resolved_y = max(height - resolved_height - RendererService._logo_bottom_margin_px(height), 0)
                 else:
                     resolved_y = max((height - resolved_height) // 2, 0)
+        # This branch enforces tenant, brand, or role boundaries before shared data can be read or changed.
         if role == "logo":
             anchor = str(geometry.anchor or "").strip().lower()
             if not anchor:
@@ -2882,10 +3187,13 @@ class RendererService:
         default: tuple[int, int, int],
         palette: dict[str, str],
     ) -> tuple[int, int, int]:
+        # Internal helper for scene graph color; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         explicit = str(style.get(key) or "").strip()
         if explicit:
             return self._parse_color(explicit, default)
         role_value = str(style.get(f"{key}_role") or style.get("fill_role") or "").strip().lower()
+        # This branch enforces tenant, brand, or role boundaries before shared data can be read or changed.
         if role_value:
             if role_value == "light_text":
                 return (255, 255, 255)
@@ -2913,7 +3221,11 @@ class RendererService:
         return default
 
     def _resolve_scene_asset_path(self, payload: RendererInput, element: SceneGraphElement) -> str | None:
+        # Internal helper for scene asset path; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         def path_exists(storage_path: str) -> bool:
+            # Runs the path exists service flow by coordinating repositories, validators, and integrations, then
+            # returns domain data.
             if not str(storage_path or "").strip():
                 return False
             if hasattr(self.storage, "exists"):
@@ -2932,6 +3244,8 @@ class RendererService:
         asset_role = (element.asset.asset_role if element.asset else "") or ""
         asset_id = str(element.asset.asset_id) if element.asset and element.asset.asset_id else ""
         candidates = [*payload.image_assets, *payload.decorative_assets]
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for asset in candidates:
             if not path_exists(asset.storage_path):
                 continue
@@ -2939,6 +3253,8 @@ class RendererService:
                 return asset.storage_path
             if asset_role and str(asset.asset_role) == asset_role:
                 return asset.storage_path
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for asset in payload.scene_graph.assets if payload.scene_graph else []:
             storage_path = str(asset.storage_path or "").strip()
             if not storage_path or not path_exists(storage_path):
@@ -2956,6 +3272,8 @@ class RendererService:
         payload: RendererInput,
         size: dict[str, int],
     ) -> tuple[Image.Image, dict[str, object]]:
+        # Internal helper for scene graph; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         scene_graph = payload.scene_graph
         assert scene_graph is not None
         palette = self._resolve_palette_roles(payload)
@@ -2972,6 +3290,8 @@ class RendererService:
 
         bg_element = next((element for element in scene_graph.elements if element.visible and element.role == "background"), None)
         gradient_spec = None
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if bg_element:
             style = bg_element.style or {}
             if style.get("gradient_from") or style.get("gradient_to"):
@@ -2993,6 +3313,7 @@ class RendererService:
         template_rendered = False
         creative_mode = str((payload.creative_decision or {}).get("layout_mode") or scene_graph.layout_mode or "")
         template_policy = str(scene_graph.validation_hints.get("template_surface_policy") or "")
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if (
             not using_base_canvas
             and payload.template_asset_path
@@ -3037,6 +3358,8 @@ class RendererService:
         scene_layer_set = set(scene_layers)
 
         def effective_layer_for(element: SceneGraphElement) -> str:
+            # Runs the effective layer for service flow by coordinating repositories, validators, and
+            # integrations, then returns domain data.
             explicit_layer = str(element.layer or "").strip()
             if explicit_layer:
                 return explicit_layer
@@ -3077,6 +3400,8 @@ class RendererService:
             elements_by_layer.setdefault(effective_layer_for(element), []).append(element)
 
         ordered_layers = scene_layers + [layer for layer in elements_by_layer if layer not in scene_layer_set]
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for layer in ordered_layers:
             for element in elements_by_layer.get(layer, []):
                 box = self._scene_graph_box(element, size["width"], size["height"])
@@ -3322,6 +3647,8 @@ class RendererService:
         }
 
     def _save_image_asset(self, tenant_id: UUID, brand_space_id: UUID, filename: str, image: Image.Image, role: str) -> dict:
+        # Internal helper for save image asset; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         buffer = BytesIO()
         format_name = "PNG" if filename.lower().endswith(".png") else "JPEG"
         image.save(buffer, format=format_name)
@@ -3337,11 +3664,15 @@ class RendererService:
 
     @staticmethod
     def _image_to_pdf_bytes(image: Image.Image) -> bytes:
+        # Internal helper for image to pdf bytes; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         buffer = BytesIO()
         image.save(buffer, format="PDF")
         return buffer.getvalue()
 
     def _document_export(self, payload: RendererInput, image: Image.Image):
+        # Internal helper for document export; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         document = Document()
         document.add_heading(payload.text.headline, level=1)
         document.add_paragraph(payload.text.body)
@@ -3363,6 +3694,8 @@ class RendererService:
         )
 
     def _document_export_multi(self, payload: RendererInput, pages: list[Image.Image]):
+        # Internal helper for document export multi; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         document = Document()
         document.add_heading(payload.text.headline, level=1)
         document.add_paragraph(payload.text.body)
@@ -3390,6 +3723,8 @@ class RendererService:
         size: dict[str, int],
         page_text: dict,
     ) -> tuple[Image.Image, dict[str, object]]:
+        # Internal helper for page; it keeps the public service method focused on orchestration instead of low-
+        # level shaping.
         palette = self._resolve_palette_roles(payload)
         primary = self._resolve_primary_color(payload, palette)
         accent = self._resolve_accent_color(payload, palette, primary)
@@ -3417,6 +3752,7 @@ class RendererService:
 
         preset = payload.studio_panel.get("platform_preset", payload.blueprint.platform_preset)
         prefer_blueprint_zones = self._prefer_blueprint_zone_rendering(payload)
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if payload.blueprint.layout_type == "infographic" and not template_rendered and not prefer_blueprint_zones:
             return self._render_infographic_page(
                 payload=payload,
@@ -3429,6 +3765,7 @@ class RendererService:
                 secondary_text=secondary_text,
                 light_text=light_text,
             )
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if (
             payload.blueprint.layout_type in {"static", "carousel", "pdf"}
             and not template_rendered
@@ -3478,6 +3815,8 @@ class RendererService:
             or bool(adaptation_plan.get("visual_slot_synthesis"))
             or bool(adaptation_plan.get("replace_primary_visual"))
         )
+        # The payload/context shape drives this branch because downstream serializers depend on consistent
+        # fields.
         if allow_generated_image_overlay and payload.image_assets and page_text.get("show_image"):
             for index, image_zone_entry in enumerate(payload.blueprint.image_zones):
                 zone_id = image_zone_entry["zone_id"]
@@ -3741,6 +4080,8 @@ class RendererService:
         secondary_text: tuple[int, int, int],
         light_text: tuple[int, int, int],
     ) -> tuple[Image.Image, dict[str, object]]:
+        # Internal helper for social page; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         composition = self._composition_plan(payload)
         layout_plan = composition.get("layout_plan", {}) if isinstance(composition, dict) else {}
         layout_archetype = str(payload.blueprint.layout_archetype or layout_plan.get("layout_archetype") or "")
@@ -3791,12 +4132,16 @@ class RendererService:
         }
 
         def _occupied_from_fit(items: list[dict[str, object]]) -> list[tuple[int, int, int, int]]:
+            # Internal helper for occupied from fit; it keeps the public service method focused on orchestration
+            # instead of low-level shaping.
             return [
                 tuple(item["occupied_box"])
                 for item in items
                 if isinstance(item, dict) and item.get("occupied_box")
             ]
 
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if preset == "instagram" and layout_archetype == "checklist_card":
             margin = max(52, int(size["width"] * 0.06))
             outer_box = (margin, margin, size["width"] - margin, size["height"] - margin)
@@ -3949,6 +4294,8 @@ class RendererService:
                 "content_structure_type": page_text.get("content_structure_type") or "static",
             }
 
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if preset == "instagram":
             margin = max(52, int(size["width"] * 0.06))
             text_card = (margin, margin, size["width"] - margin, int(size["height"] * 0.4))
@@ -4072,6 +4419,8 @@ class RendererService:
                 "content_structure_type": page_text.get("content_structure_type") or "static",
             }
 
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if preset == "linkedin":
             margin_x = max(48, int(size["width"] * 0.05))
             margin_y = max(30, int(size["height"] * 0.07))
@@ -4362,6 +4711,8 @@ class RendererService:
         secondary_text: tuple[int, int, int],
         light_text: tuple[int, int, int],
     ) -> tuple[Image.Image, dict[str, object]]:
+        # Internal helper for infographic page; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         gradient_spec = self._resolve_gradient_spec(payload, background, primary, accent)
         image = self._build_background_canvas(size["width"], size["height"], background, gradient_spec)
         draw = ImageDraw.Draw(image)
@@ -4466,6 +4817,8 @@ class RendererService:
             canvas_height=size["height"],
             padding=18,
         )
+        # The payload/context shape drives this branch because downstream serializers depend on consistent
+        # fields.
         if payload.image_assets and page_text.get("show_image"):
             visual_result = self._paste_visual_card(
                 image,
@@ -4485,6 +4838,8 @@ class RendererService:
 
         # Extract badge_style from scene graph if available
         badge_style = None
+        # The payload/context shape drives this branch because downstream serializers depend on consistent
+        # fields.
         if payload.scene_graph and hasattr(payload.scene_graph, 'elements'):
             proof_element = next(
                 (el for el in payload.scene_graph.elements if el.role == "proof_points"),
@@ -4504,6 +4859,8 @@ class RendererService:
             )
             for zone in [*proof_zones, *stat_zones]
         )
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if cta_text:
             text_fit_manifest.append(self._draw_text_block(
                 draw,
@@ -4552,6 +4909,8 @@ class RendererService:
 
     @staticmethod
     def _images_to_pdf_bytes(images: list[Image.Image]) -> bytes:
+        # Internal helper for images to pdf bytes; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if not images:
             return b""
         buffer = BytesIO()
@@ -4568,6 +4927,8 @@ class RendererService:
         size: dict[str, int],
         decorative_rendered: bool,
     ) -> dict[str, object]:
+        # Internal helper for assess render quality; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         page_count = len(render_flags)
         template_rendered = any(bool(flag.get("template_rendered")) for flag in render_flags)
         image_rendered = any(bool(flag.get("image_rendered")) for flag in render_flags)
@@ -4637,6 +4998,8 @@ class RendererService:
 
         fidelity_score = 0.66
         style_reference_only = self._template_is_style_reference_only(payload)
+        # The payload/context shape drives this branch because downstream serializers depend on consistent
+        # fields.
         if payload.blueprint.source_mode == "exact_template":
             fidelity_score = 0.9 if template_rendered else 0.28
             if not template_rendered:
@@ -4682,6 +5045,7 @@ class RendererService:
         if min_font_size is not None and min_font_size < 14:
             readability_score -= 0.1
             issues.append("font_too_small")
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if image_fit_score is not None and image_fit_score < 0.56:
             readability_score -= 0.06
             richness_score -= 0.05
@@ -4749,6 +5113,8 @@ class RendererService:
         }
 
     async def render(self, payload: RendererInput) -> RendererResponse:
+        # Runs the render service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         started_at = perf_counter()
         previous_payload = self.payload
         self.payload = payload
@@ -4769,6 +5135,8 @@ class RendererService:
         self._used_font_paths = set()
         self._used_font_families = set()
         self._requested_font_families = set()
+        # Keeps the risky I/O or integration boundary contained so callers receive project-level errors
+        # instead of raw library failures.
         try:
             template_sizing = (payload.template_metadata or {}).get("sizing_rules") or {}
             size = payload.studio_panel.get("size") or {

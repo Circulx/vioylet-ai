@@ -1,3 +1,4 @@
+# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
 import re
@@ -7,6 +8,8 @@ from app.ai.structured_prompt_parser import StructuredPromptParser
 
 
 class ResearchEditorialPlanningService:
+    # Business layer for research editorial planning; routes and workers pass validated inputs here and receive
+    # domain results back.
     DEFAULT_FACT_MODEL_LIMIT = 6
     DEFAULT_SOURCE_FACT_LIMIT = 4
     MAX_DATA_SURFACE_FACT_LIMIT = 10
@@ -162,6 +165,8 @@ class ResearchEditorialPlanningService:
         template_context: dict[str, Any] | None = None,
         reference_assets: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
+        # Runs the build service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         prompt_text = self._normalize_text(prompt, limit=520)
         parsed_prompt = StructuredPromptParser.parse_prompt(prompt)
         live_research = live_research if isinstance(live_research, dict) else {}
@@ -342,6 +347,8 @@ class ResearchEditorialPlanningService:
         research_status: str,
         format_family: str,
     ) -> dict[str, Any]:
+        # Internal helper for research guard; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         requires_verified_rows = self._requires_verified_row_data(
             prompt_text=prompt_text,
             format_family=format_family,
@@ -384,6 +391,8 @@ class ResearchEditorialPlanningService:
 
     @staticmethod
     def knowledge_brief_from_retrieved(retrieved_knowledge: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
+        # Runs the knowledge brief from retrieved service flow by coordinating repositories, validators, and
+        # integrations, then returns domain data.
         brief: list[dict[str, Any]] = []
         for channel, items in (retrieved_knowledge or {}).items():
             for item in (items or [])[:2]:
@@ -403,6 +412,8 @@ class ResearchEditorialPlanningService:
 
     @staticmethod
     def _normalize_text(value: Any, limit: int | None = None) -> str:
+        # Internal helper for text; it keeps the public service method focused on orchestration instead of low-
+        # level shaping.
         text = " ".join(str(value or "").split()).strip()
         if not text or limit is None:
             return text
@@ -417,12 +428,15 @@ class ResearchEditorialPlanningService:
         format_family: str,
         ordered_story_beats: list[str],
     ) -> bool:
+        # Internal helper for should activate; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if any(live_research.get(key) for key in ("summary", "sources", "verified_facts")):
             return True
         if self._requires_verified_row_data(prompt_text=prompt_text, format_family=format_family):
             return True
         if self.TIMELY_RESEARCH_SIGNAL_PATTERN.search(prompt_text):
             return True
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if (
             format_family in {"carousel", "infographic"}
             and ordered_story_beats
@@ -430,6 +444,8 @@ class ResearchEditorialPlanningService:
             and not self.TIMELY_RESEARCH_SIGNAL_PATTERN.search(prompt_text)
         ):
             return False
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if self.RESEARCH_SIGNAL_PATTERN.search(prompt_text):
             if (
                 format_family in {"carousel", "infographic"}
@@ -443,6 +459,8 @@ class ResearchEditorialPlanningService:
 
     @classmethod
     def _requires_verified_row_data(cls, *, prompt_text: str, format_family: str) -> bool:
+        # Internal helper for requires verified row data; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         normalized_family = cls._normalize_text(format_family, limit=32).casefold()
         if normalized_family not in {"static", "infographic", "carousel", "long_form", "short_form"}:
             return False
@@ -458,6 +476,8 @@ class ResearchEditorialPlanningService:
 
     @staticmethod
     def _ordered_story_beats(parsed_prompt: dict[str, Any]) -> list[str]:
+        # Internal helper for ordered story beats; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         return [
             str(item).strip()
             for item in (parsed_prompt.get("ordered_story_beats") or [])
@@ -472,6 +492,8 @@ class ResearchEditorialPlanningService:
         format_family: str,
         reference_assets: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
+        # Internal helper for sample editorial brief; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if format_family not in {"carousel", "infographic", "static"}:
             return {}
 
@@ -485,6 +507,8 @@ class ResearchEditorialPlanningService:
             for item in (sequence_pack.get("slides") or [])
             if isinstance(item, dict)
         ]
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if format_family in {"carousel", "infographic"} and len(sequence_slides) >= 3:
             story_roles = [
                 str(item.get("story_role") or "").strip()
@@ -531,6 +555,8 @@ class ResearchEditorialPlanningService:
             if isinstance(zone_map, dict) and isinstance(zone_map.get("editorial_dna"), dict)
             else {}
         )
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if template_editorial_dna and str(template_editorial_dna.get("format_family") or "").strip().casefold() == format_family:
             return {
                 "source": "template_editorial_dna",
@@ -594,6 +620,8 @@ class ResearchEditorialPlanningService:
             editorial_patterns.get("preferred_slide_count"),
             editorial_patterns.get("proof_module_count"),
         ]
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for key in (
             "headline_patterns",
             "sample_summaries",
@@ -645,6 +673,8 @@ class ResearchEditorialPlanningService:
 
     @staticmethod
     def _positive_int_or_none(value: Any) -> int | None:
+        # Internal helper for positive int or none; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         try:
             parsed = int(value or 0)
         except (TypeError, ValueError):
@@ -657,9 +687,13 @@ class ResearchEditorialPlanningService:
         reference_assets: list[dict[str, Any]] | None,
         format_family: str,
     ) -> dict[str, Any]:
+        # Internal helper for reference asset sample editorial brief; it keeps the public service method focused
+        # on orchestration instead of low-level shaping.
         if format_family not in {"carousel", "infographic", "static"}:
             return {}
         candidates = [item for item in (reference_assets or []) if isinstance(item, dict)]
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for asset in candidates:
             metadata = asset.get("metadata") if isinstance(asset.get("metadata"), dict) else {}
             role = str(asset.get("asset_role") or metadata.get("asset_role") or "").strip().casefold()
@@ -770,6 +804,8 @@ class ResearchEditorialPlanningService:
         *,
         format_family: str,
     ) -> list[str]:
+        # Internal helper for sample story beats; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if format_family not in {"carousel", "infographic"} or not isinstance(sample_editorial_brief, dict):
             return []
         story_roles = [
@@ -795,6 +831,8 @@ class ResearchEditorialPlanningService:
         index: int,
         slide_count: int,
     ) -> str:
+        # Internal helper for sample story beat for role; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         normalized_role = str(story_role or "").strip().casefold()
         cue_text = str(cue or "").strip()
         if normalized_role in {"hook", "cover", "opening", "title"}:
@@ -812,6 +850,8 @@ class ResearchEditorialPlanningService:
         return f"Advance the story with the next distinct teaching beat{f' using the sample cue: {cue_text}' if cue_text else ''}."
 
     def _topic_focus(self, prompt_text: str) -> str:
+        # Internal helper for topic focus; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         cleaned = re.sub(r"^[\"']+|[\"']+$", "", prompt_text).strip()
         cleaned = re.sub(
             r"^(?:write|create|generate|give me|draft|make)\s+(?:an?|the)?\s*(?:linkedin|instagram|x|youtube)?\s*(?:post|carousel|caption|thread|description|blog)?\s*(?:for [^,]+,)?\s*(?:on|about)\s+",
@@ -831,6 +871,8 @@ class ResearchEditorialPlanningService:
         return candidate[:180].strip() or "the topic"
 
     def _angle(self, prompt_text: str, *, live_research: dict[str, Any]) -> str:
+        # Internal helper for angle; it keeps the public service method focused on orchestration instead of low-
+        # level shaping.
         lowered = prompt_text.casefold()
         if self.PRACTICAL_FINANCE_JOURNEY_PATTERN.search(prompt_text) and not self.TIMELY_RESEARCH_SIGNAL_PATTERN.search(prompt_text):
             return "Turn the topic into a practical step-by-step financial planning journey with simple examples and clear progression."
@@ -845,6 +887,8 @@ class ResearchEditorialPlanningService:
         return "Lead with the most decision-useful insight, then explain what is structurally important and undercovered."
 
     def _thesis(self, *, topic_focus: str, angle: str, brand_context: dict[str, Any]) -> str:
+        # Internal helper for thesis; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         brand_name = self._normalize_text(brand_context.get("brand_name"), limit=80)
         if brand_name:
             return f"{topic_focus}: {angle} Keep the explanation intelligent, grounded, and native to {brand_name}'s brand voice."
@@ -857,8 +901,12 @@ class ResearchEditorialPlanningService:
         knowledge_brief: list[dict[str, Any]],
         objective_context: dict[str, Any],
     ) -> list[str]:
+        # Internal helper for insight hierarchy; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         insights: list[str] = []
         filtered_knowledge = self._filtered_analytical_knowledge(knowledge_brief)
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for fact in (live_research.get("verified_facts") or [])[:4]:
             if not isinstance(fact, dict):
                 continue
@@ -897,6 +945,8 @@ class ResearchEditorialPlanningService:
         preferred_slide_count: int | None,
         ordered_story_beats: list[str] | None = None,
     ) -> list[dict[str, str]]:
+        # Internal helper for outline; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         ordered_story_beats = [str(item).strip() for item in (ordered_story_beats or []) if str(item).strip()]
         if ordered_story_beats and format_family == "carousel":
             return self._outline_from_story_beats(ordered_story_beats)
@@ -916,6 +966,8 @@ class ResearchEditorialPlanningService:
         return outline
 
     def _outline_from_story_beats(self, ordered_story_beats: list[str]) -> list[dict[str, str]]:
+        # Internal helper for outline from story beats; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         outline: list[dict[str, str]] = []
         slide_count = len(ordered_story_beats)
         for index, beat in enumerate(ordered_story_beats, start=1):
@@ -931,6 +983,8 @@ class ResearchEditorialPlanningService:
 
     @staticmethod
     def _ordered_story_role(*, beat: str, index: int, slide_count: int) -> str:
+        # Internal helper for ordered story role; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         lowered = str(beat or "").casefold()
         if index == 1 or any(token in lowered for token in ("start with", "begin with", "open with", "lead with", "hook")):
             return "hook"
@@ -945,6 +999,8 @@ class ResearchEditorialPlanningService:
         return "detail"
 
     def _outline_note(self, *, role: str, prompt_text: str, thesis: str) -> str:
+        # Internal helper for outline note; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         lowered = prompt_text.casefold()
         if role == "hook":
             if "swipe" in lowered:
@@ -967,12 +1023,16 @@ class ResearchEditorialPlanningService:
         *,
         fact_limit: int | None = None,
     ) -> list[dict[str, str]]:
+        # Internal helper for source pack; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         packed: list[dict[str, str]] = []
         verified_fact_limit = max(
             self.DEFAULT_SOURCE_FACT_LIMIT,
             min(fact_limit or self.DEFAULT_SOURCE_FACT_LIMIT, self.MAX_DATA_SURFACE_FACT_LIMIT),
         )
         filtered_knowledge = self._filtered_analytical_knowledge(knowledge_brief)
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for source in ranked_source_pack[:3]:
             if source.get("label") or source.get("detail"):
                 packed.append(
@@ -983,6 +1043,8 @@ class ResearchEditorialPlanningService:
                         "source": self._normalize_text(source.get("source"), limit=180),
                     }
                 )
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for fact in verified_facts[:verified_fact_limit]:
             label = self._normalize_text(fact.get("label"), limit=120)
             value = self._normalize_text(fact.get("value"), limit=200)
@@ -1016,6 +1078,8 @@ class ResearchEditorialPlanningService:
         ranked_sources: list[dict[str, Any]],
         fallback_sources: list[dict[str, Any]],
     ) -> list[dict[str, str]]:
+        # Internal helper for ranked source pack; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         packed: list[dict[str, str]] = []
         for item in ranked_sources[:4]:
             title = self._normalize_text(item.get("title"), limit=140)
@@ -1045,12 +1109,15 @@ class ResearchEditorialPlanningService:
         live_research: dict[str, Any],
         knowledge_brief: list[dict[str, Any]],
     ) -> list[str]:
+        # Internal helper for inferences; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         inferred: list[str] = []
         filtered_knowledge = self._filtered_analytical_knowledge(knowledge_brief)
         for item in (live_research.get("inferences") or [])[:4]:
             text = self._normalize_text(item, limit=220)
             if text:
                 inferred.append(text)
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if not inferred:
             summary = self._normalize_text(live_research.get("summary"), limit=520)
             for sentence in re.split(r"(?<=[.!?])\s+", summary):
@@ -1075,6 +1142,8 @@ class ResearchEditorialPlanningService:
         return deduped[:4]
 
     def _uncertainties(self, *, live_research: dict[str, Any]) -> list[str]:
+        # Internal helper for uncertainties; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         items: list[str] = []
         for item in (live_research.get("uncertainties") or [])[:4]:
             text = self._normalize_text(item, limit=220)
@@ -1100,7 +1169,11 @@ class ResearchEditorialPlanningService:
         needs_live_research: bool,
         ranked_source_pack: list[dict[str, str]],
     ) -> dict[str, Any]:
+        # Internal helper for citation rules; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         deliverable = self._normalize_text(deliverable_type, limit=32).casefold()
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if format_family == "long_form" or deliverable in {"blog", "newsletter"}:
             style = "inline_source_cues"
             rules = [
@@ -1128,6 +1201,8 @@ class ResearchEditorialPlanningService:
         return {"style": style, "rules": rules[:4]}
 
     def _source_backing_rules(self) -> list[str]:
+        # Internal helper for source backing rules; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         return [
             "Treat verified_facts as the only claims that can be stated as confirmed facts.",
             "Treat inferences as interpretation or implication, not as confirmed fact.",
@@ -1136,6 +1211,8 @@ class ResearchEditorialPlanningService:
         ]
 
     def _preferred_slide_count(self, *, content_format_guide: dict[str, Any], studio_panel: dict[str, Any]) -> int | None:
+        # Internal helper for preferred slide count; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if not isinstance(content_format_guide, dict):
             return None
         format_name = self._normalize_text(studio_panel.get("format"), limit=32).casefold()
@@ -1158,6 +1235,8 @@ class ResearchEditorialPlanningService:
         sample_editorial_brief: dict[str, Any],
         format_family: str,
     ) -> int | None:
+        # Internal helper for sample sequence slide count; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if format_family != "carousel":
             return None
         sequence_pack = (
@@ -1178,6 +1257,8 @@ class ResearchEditorialPlanningService:
         return count if count > 0 else None
 
     def _explicit_slide_count(self, prompt_text: str) -> int | None:
+        # Internal helper for explicit slide count; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         text = self._normalize_text(prompt_text, limit=520).casefold()
         patterns = (
             r"\b(?:make|create|generate|write|use|with|in)\s+(\d{1,2})\s+(?:slides?|pages?|frames?|carousel\s+slides?)\b",
@@ -1199,6 +1280,8 @@ class ResearchEditorialPlanningService:
 
     @classmethod
     def _positive_count_from_token(cls, value: str) -> int | None:
+        # Internal helper for positive count from token; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         token = str(value or "").strip().casefold()
         if not token:
             return None
@@ -1209,6 +1292,8 @@ class ResearchEditorialPlanningService:
 
     @classmethod
     def _explicit_top_n_count(cls, prompt_text: str) -> int | None:
+        # Internal helper for explicit top n count; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         text = cls._normalize_text(prompt_text, limit=520)
         if not text:
             return None
@@ -1233,6 +1318,8 @@ class ResearchEditorialPlanningService:
         format_family: str,
         verified_fact_count: int = 0,
     ) -> int:
+        # Internal helper for requested fact limit; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         explicit_count = cls._explicit_top_n_count(prompt_text)
         if explicit_count:
             return min(max(explicit_count, 1), cls.MAX_DATA_SURFACE_FACT_LIMIT)
@@ -1245,6 +1332,8 @@ class ResearchEditorialPlanningService:
         return cls.DEFAULT_FACT_MODEL_LIMIT
 
     def _reader_payoff(self, prompt_text: str, angle: str) -> str:
+        # Internal helper for reader payoff; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         lowered = prompt_text.casefold()
         if self.PRACTICAL_FINANCE_JOURNEY_PATTERN.search(prompt_text) and not self.TIMELY_RESEARCH_SIGNAL_PATTERN.search(prompt_text):
             return "Reader should leave with a clear step-by-step planning takeaway they can mentally apply to their own finances."
@@ -1255,6 +1344,8 @@ class ResearchEditorialPlanningService:
         return f"Reader should leave with a clearer analytical understanding: {angle}"
 
     def _hook_strategy(self, format_family: str, prompt_text: str, angle: str) -> str:
+        # Internal helper for hook strategy; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         lowered = prompt_text.casefold()
         if format_family == "carousel" and self.PRACTICAL_FINANCE_JOURNEY_PATTERN.search(prompt_text) and not self.TIMELY_RESEARCH_SIGNAL_PATTERN.search(prompt_text):
             return "Open with a practical tension point or high-stakes planning question, then move through the journey one clear step at a time."
@@ -1265,6 +1356,8 @@ class ResearchEditorialPlanningService:
         return f"Open with the strongest non-obvious takeaway implied by the angle: {angle}"
 
     def _editorial_style(self, prompt_text: str, platform_preset: str) -> str:
+        # Internal helper for editorial style; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if self.PRACTICAL_FINANCE_JOURNEY_PATTERN.search(prompt_text) and not self.TIMELY_RESEARCH_SIGNAL_PATTERN.search(prompt_text):
             return "practical_finance_explainer"
         if self.CONVERSATIONAL_ANALYTICAL_PATTERN.search(prompt_text):
@@ -1274,10 +1367,14 @@ class ResearchEditorialPlanningService:
         return "research_led"
 
     def _summary(self, *, thesis: str, reader_payoff: str, insight_hierarchy: list[str]) -> str:
+        # Internal helper for summary; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         pieces = [thesis, reader_payoff, *insight_hierarchy[:2]]
         return " ".join(piece for piece in pieces if piece).strip()[:640]
 
     def _filtered_analytical_knowledge(self, knowledge_brief: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        # Internal helper for filtered analytical knowledge; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         return [
             item
             for item in (knowledge_brief or [])
@@ -1285,6 +1382,8 @@ class ResearchEditorialPlanningService:
         ]
 
     def _is_visual_or_template_knowledge(self, item: dict[str, Any]) -> bool:
+        # Internal helper for is visual or template knowledge; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         channel = self._normalize_text(item.get("channel"), limit=64)
         content = self._normalize_text(item.get("content"), limit=260)
         if self.VISUAL_OR_TEMPLATE_CHANNEL_PATTERN.search(channel):
@@ -1299,6 +1398,8 @@ class ResearchEditorialPlanningService:
         prompt_text: str,
         brief: dict[str, Any] | None,
     ) -> dict[str, Any]:
+        # Runs the enforce source backing service flow by coordinating repositories, validators, and
+        # integrations, then returns domain data.
         if not isinstance(payload, dict) or not isinstance(brief, dict) or not brief.get("active"):
             return payload
 
@@ -1314,6 +1415,8 @@ class ResearchEditorialPlanningService:
             format_family=format_family,
             verified_fact_count=len(verified_facts),
         )
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if verified_facts:
             return cls._enforce_verified_fact_grounding(
                 payload,
@@ -1368,6 +1471,8 @@ class ResearchEditorialPlanningService:
         verified_facts: list[dict[str, Any]],
         fact_limit: int | None = None,
     ) -> dict[str, Any]:
+        # Internal helper for enforce verified fact grounding; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         sanitized = dict(payload)
         metadata = dict(sanitized.get("metadata") or {}) if isinstance(sanitized.get("metadata"), dict) else {}
         allowed_snippets = cls._allowed_exact_snippets(prompt_text=prompt_text, verified_facts=verified_facts)
@@ -1414,6 +1519,8 @@ class ResearchEditorialPlanningService:
 
     @classmethod
     def _inject_sources_used(cls, payload: dict[str, Any], brief: dict[str, Any]) -> dict[str, Any]:
+        # Internal helper for inject sources used; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         metadata = dict(payload.get("metadata") or {}) if isinstance(payload.get("metadata"), dict) else {}
         if not metadata.get("sources_used"):
             metadata["sources_used"] = [
@@ -1430,6 +1537,8 @@ class ResearchEditorialPlanningService:
 
     @classmethod
     def _verified_fact_pairs(cls, verified_facts: list[dict[str, Any]]) -> list[dict[str, str]]:
+        # Internal helper for verified fact pairs; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         pairs: list[dict[str, str]] = []
         seen: set[str] = set()
         for fact in verified_facts:
@@ -1454,6 +1563,8 @@ class ResearchEditorialPlanningService:
 
     @classmethod
     def _verified_fact_lines(cls, pairs: list[dict[str, str]]) -> list[str]:
+        # Internal helper for verified fact lines; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         lines: list[str] = []
         for pair in pairs:
             claim = cls._normalize_text((pair or {}).get("claim"), limit=140)
@@ -1470,6 +1581,8 @@ class ResearchEditorialPlanningService:
 
     @classmethod
     def _allowed_exact_snippets(cls, *, prompt_text: str, verified_facts: list[dict[str, Any]]) -> set[str]:
+        # Internal helper for allowed exact snippets; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         allowed: set[str] = set()
         for match in cls.EXACT_CLAIM_PATTERN.findall(prompt_text or ""):
             text = cls._normalize_text(match, limit=80).casefold()
@@ -1484,6 +1597,8 @@ class ResearchEditorialPlanningService:
 
     @classmethod
     def _contains_unsupported_exact_claim(cls, text: str, allowed_snippets: set[str]) -> bool:
+        # Internal helper for contains unsupported exact claim; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         normalized = cls._normalize_text(text, limit=260)
         if not normalized:
             return False
@@ -1494,6 +1609,8 @@ class ResearchEditorialPlanningService:
 
     @classmethod
     def _safe_headline(cls, *, brief: dict[str, Any], prompt_text: str) -> str:
+        # Internal helper for safe headline; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         topic_focus = cls._normalize_text(brief.get("topic_focus"), limit=120)
         if topic_focus:
             return topic_focus
@@ -1502,6 +1619,8 @@ class ResearchEditorialPlanningService:
 
     @classmethod
     def _safe_body(cls, *, brief: dict[str, Any]) -> str:
+        # Internal helper for safe body; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         for candidate in (
             brief.get("thesis"),
             brief.get("reader_payoff"),
@@ -1516,6 +1635,8 @@ class ResearchEditorialPlanningService:
 
     @classmethod
     def _safe_body_from_verified_facts(cls, *, brief: dict[str, Any], verified_pairs: list[dict[str, str]]) -> str:
+        # Internal helper for safe body from verified facts; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         lines = cls._verified_fact_lines(verified_pairs)
         if lines:
             return " ".join(lines[:2])[:320]
@@ -1523,6 +1644,8 @@ class ResearchEditorialPlanningService:
 
     @classmethod
     def _safe_supporting_line(cls, *, brief: dict[str, Any]) -> str:
+        # Internal helper for safe supporting line; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         for candidate in (
             cls._first_list_item((brief.get("fact_model") or {}).get("inferences")),
             brief.get("angle"),
@@ -1535,6 +1658,8 @@ class ResearchEditorialPlanningService:
 
     @classmethod
     def _safe_supporting_line_from_verified_facts(cls, *, brief: dict[str, Any], verified_pairs: list[dict[str, str]]) -> str:
+        # Internal helper for safe supporting line from verified facts; it keeps the public service method
+        # focused on orchestration instead of low-level shaping.
         for pair in verified_pairs:
             for candidate in ((pair or {}).get("claim"), (pair or {}).get("evidence")):
                 text = cls._normalize_text(candidate, limit=180)
@@ -1544,6 +1669,8 @@ class ResearchEditorialPlanningService:
 
     @classmethod
     def _safe_proof_points(cls, *, brief: dict[str, Any]) -> list[str]:
+        # Internal helper for safe proof points; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         proof_points: list[str] = []
         for candidate in (
             (brief.get("fact_model") or {}).get("inferences"),
@@ -1560,6 +1687,8 @@ class ResearchEditorialPlanningService:
 
     @classmethod
     def _first_list_item(cls, values: Any) -> str:
+        # Internal helper for first list item; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         for item in values if isinstance(values, list) else []:
             text = cls._normalize_text(item, limit=220)
             if text:
@@ -1568,6 +1697,8 @@ class ResearchEditorialPlanningService:
 
     @staticmethod
     def _format_family(*, format_name: str, deliverable_type: str | None) -> str:
+        # Internal helper for format family; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         normalized_deliverable = ResearchEditorialPlanningService._normalize_text(deliverable_type, limit=32).casefold()
         if format_name == "carousel":
             return "carousel"

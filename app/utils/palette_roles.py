@@ -1,3 +1,4 @@
+# Utility helpers collect shared formatting, parsing, and normalization rules used across services.
 from __future__ import annotations
 
 import re
@@ -8,6 +9,7 @@ VALID_PALETTE_ROLES = {"primary", "secondary", "accent", "background", "surface"
 
 
 def normalize_hex(value: Any) -> str | None:
+    # Normalizes hex as a reusable helper for services that need the same formatting or normalization rule.
     text = str(value or "").strip().upper()
     if not text:
         return None
@@ -17,6 +19,7 @@ def normalize_hex(value: Any) -> str | None:
 
 
 def hex_to_rgb(value: Any) -> tuple[int, int, int] | None:
+    # Handles hex to rgb as a reusable helper for services that need the same formatting or normalization rule.
     normalized = normalize_hex(value)
     if not normalized:
         return None
@@ -25,22 +28,29 @@ def hex_to_rgb(value: Any) -> tuple[int, int, int] | None:
 
 
 def is_soft_neutral_color(rgb: tuple[int, int, int]) -> bool:
+    # Handles is soft neutral color as a reusable helper for services that need the same formatting or
+    # normalization rule.
     return max(rgb) - min(rgb) <= 24 or sum(rgb) >= 660
 
 
 def _entry_hex(entry: dict[str, Any]) -> str | None:
+    # Handles entry hex as a reusable helper for services that need the same formatting or normalization rule.
     return normalize_hex(entry.get("hex_code") or entry.get("hex") or entry.get("color_code") or entry.get("value"))
 
 
 def _entry_role(entry: dict[str, Any]) -> str:
+    # Handles entry role as a reusable helper for services that need the same formatting or normalization rule.
     return str(entry.get("role") or "").strip().lower()
 
 
 def _entry_name(entry: dict[str, Any]) -> str:
+    # Handles entry name as a reusable helper for services that need the same formatting or normalization rule.
     return str(entry.get("color_name") or entry.get("name") or "").strip().lower()
 
 
 def _collect_template_palette_entries(template_intelligence: object) -> list[dict[str, Any]]:
+    # Handles collect template palette entries as a reusable helper for services that need the same formatting
+    # or normalization rule.
     collected: list[dict[str, Any]] = []
     if not isinstance(template_intelligence, list):
         return collected
@@ -61,20 +71,24 @@ def _collect_template_palette_entries(template_intelligence: object) -> list[dic
 
 
 def _luminance(rgb: tuple[int, int, int]) -> float:
+    # Handles luminance as a reusable helper for services that need the same formatting or normalization rule.
     red, green, blue = rgb
     return (0.2126 * red) + (0.7152 * green) + (0.0722 * blue)
 
 
 def _saturation(rgb: tuple[int, int, int]) -> float:
+    # Handles saturation as a reusable helper for services that need the same formatting or normalization rule.
     return float(max(rgb) - min(rgb))
 
 
 def _warmth(rgb: tuple[int, int, int]) -> float:
+    # Handles warmth as a reusable helper for services that need the same formatting or normalization rule.
     red, green, blue = rgb
     return float((red + green) - (blue * 1.15))
 
 
 def _score_background(entry: dict[str, Any], rgb: tuple[int, int, int]) -> float:
+    # Scores background as a reusable helper for services that need the same formatting or normalization rule.
     role = _entry_role(entry)
     name = _entry_name(entry)
     score = 0.0
@@ -91,6 +105,7 @@ def _score_background(entry: dict[str, Any], rgb: tuple[int, int, int]) -> float
 
 
 def _score_primary(entry: dict[str, Any], rgb: tuple[int, int, int]) -> float:
+    # Scores primary as a reusable helper for services that need the same formatting or normalization rule.
     role = _entry_role(entry)
     name = _entry_name(entry)
     score = 0.0
@@ -104,6 +119,7 @@ def _score_primary(entry: dict[str, Any], rgb: tuple[int, int, int]) -> float:
 
 
 def _score_secondary(entry: dict[str, Any], rgb: tuple[int, int, int]) -> float:
+    # Scores secondary as a reusable helper for services that need the same formatting or normalization rule.
     role = _entry_role(entry)
     name = _entry_name(entry)
     score = 0.0
@@ -117,6 +133,7 @@ def _score_secondary(entry: dict[str, Any], rgb: tuple[int, int, int]) -> float:
 
 
 def _score_accent(entry: dict[str, Any], rgb: tuple[int, int, int]) -> float:
+    # Scores accent as a reusable helper for services that need the same formatting or normalization rule.
     role = _entry_role(entry)
     name = _entry_name(entry)
     score = 0.0
@@ -130,9 +147,13 @@ def _score_accent(entry: dict[str, Any], rgb: tuple[int, int, int]) -> float:
 
 
 def derive_palette_roles(visual_identity: dict[str, Any] | None) -> dict[str, str]:
+    # Handles derive palette roles as a reusable helper for services that need the same formatting or
+    # normalization rule.
     visual_identity = visual_identity or {}
     explicit_palette = visual_identity.get("brand_color_palette", {}) or {}
     explicit: dict[str, str] = {}
+    # This branch separates the special case from the normal path so later logic can work with cleaner
+    # assumptions.
     if isinstance(explicit_palette, dict):
         explicit = {
             str(key).strip().lower(): normalized
@@ -167,6 +188,8 @@ def derive_palette_roles(visual_identity: dict[str, Any] | None) -> dict[str, st
         *,
         avoid_light_for_non_background: bool = False,
     ) -> str | None:
+        # Handles choose best as a reusable helper for services that need the same formatting or normalization
+        # rule.
         best_hex: str | None = None
         best_score = float("-inf")
         for entry in candidates:

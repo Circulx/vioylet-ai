@@ -1,3 +1,4 @@
+# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
 import asyncio
@@ -18,20 +19,29 @@ from app.core.config import get_settings
 
 
 class _HTMLTextExtractor(HTMLParser):
+    # Business layer for htmltext extractor; routes and workers pass validated inputs here and receive domain
+    # results back.
     def __init__(self) -> None:
+        # Wires the repositories and helper services this workflow reuses across its public methods.
         super().__init__()
         self._chunks: list[str] = []
         self._skip_depth = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        # Runs the starttag service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         if tag in {"script", "style", "noscript"}:
             self._skip_depth += 1
 
     def handle_endtag(self, tag: str) -> None:
+        # Runs the endtag service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         if tag in {"script", "style", "noscript"} and self._skip_depth > 0:
             self._skip_depth -= 1
 
     def handle_data(self, data: str) -> None:
+        # Runs the data service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         if self._skip_depth > 0:
             return
         text = " ".join(data.split()).strip()
@@ -39,10 +49,14 @@ class _HTMLTextExtractor(HTMLParser):
             self._chunks.append(text)
 
     def text(self) -> str:
+        # Runs the text service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         return " ".join(self._chunks).strip()
 
 
 class LiveResearchService:
+    # Business layer for live research; routes and workers pass validated inputs here and receive domain results
+    # back.
     DEFAULT_VERIFIED_FACT_LIMIT = 8
     MAX_DATA_SURFACE_VERIFIED_FACT_LIMIT = 10
     NUMBER_WORDS = {
@@ -68,6 +82,7 @@ class LiveResearchService:
     URL_PATTERN = re.compile(r"https?://[^\s)>\]]+", re.IGNORECASE)
 
     def __init__(self) -> None:
+        # Wires the repositories and helper services this workflow reuses across its public methods.
         self.settings = get_settings()
         self.providers = ProviderRouter()
         self.research_provider = self.providers.get_text_provider("research")
@@ -76,6 +91,8 @@ class LiveResearchService:
 
     @staticmethod
     def _normalize_text(value: Any, limit: int | None = None) -> str:
+        # Internal helper for text; it keeps the public service method focused on orchestration instead of low-
+        # level shaping.
         text = " ".join(str(value or "").split()).strip()
         if limit is None or not text:
             return text
@@ -83,6 +100,8 @@ class LiveResearchService:
 
     @classmethod
     def _positive_count_from_token(cls, value: str) -> int | None:
+        # Internal helper for positive count from token; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         token = str(value or "").strip().casefold()
         if not token:
             return None
@@ -93,6 +112,8 @@ class LiveResearchService:
 
     @classmethod
     def _explicit_top_n_count(cls, prompt: str) -> int | None:
+        # Internal helper for explicit top n count; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         text = str(prompt or "")
         if not text.strip():
             return None
@@ -111,6 +132,8 @@ class LiveResearchService:
 
     @classmethod
     def _requested_verified_fact_limit(cls, prompt: str, studio_panel: dict[str, Any]) -> int:
+        # Internal helper for requested verified fact limit; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         explicit_count = cls._explicit_top_n_count(prompt)
         if explicit_count:
             return min(max(explicit_count, 1), cls.MAX_DATA_SURFACE_VERIFIED_FACT_LIMIT)
@@ -120,6 +143,8 @@ class LiveResearchService:
         return cls.DEFAULT_VERIFIED_FACT_LIMIT
 
     def _urls_from_context(self, prompt: str, compiled_context: dict[str, Any]) -> list[str]:
+        # Internal helper for urls from context; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         urls = self.URL_PATTERN.findall(prompt or "")
         knowledge_brief = compiled_context.get("knowledge_brief", []) or []
         for item in knowledge_brief:
@@ -139,6 +164,8 @@ class LiveResearchService:
         return deduped[:6]
 
     def _heuristic_query_plan(self, prompt: str, studio_panel: dict[str, Any], compiled_context: dict[str, Any]) -> dict[str, Any]:
+        # Internal helper for heuristic query plan; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         prompt_text = self._normalize_text(prompt, limit=300)
         platform = self._normalize_text(studio_panel.get("platform_preset"), limit=32)
         format_name = self._normalize_text(studio_panel.get("format"), limit=32)
@@ -166,6 +193,8 @@ class LiveResearchService:
         }
 
     def _has_live_search_backend(self) -> bool:
+        # Internal helper for has live search backend; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         backend = str(self.settings.live_research_search_backend or "openai").strip().lower()
         if backend == "openai":
             return self.openai_search_client is not None
@@ -174,6 +203,8 @@ class LiveResearchService:
         return self.openai_search_client is not None or bool(self.settings.brave_search_api_key)
 
     def _normalize_verified_facts(self, facts: Any, *, limit: int | None = None) -> list[dict[str, str]]:
+        # Internal helper for verified facts; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         normalized: list[dict[str, str]] = []
         seen: set[tuple[str, str, str]] = set()
         for fact in facts if isinstance(facts, list) else []:
@@ -207,6 +238,8 @@ class LiveResearchService:
         verified_facts: list[dict[str, str]],
         preferred_sources: list[str],
     ) -> list[dict[str, Any]]:
+        # Internal helper for rank sources; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         fact_title_hits = {
             self._normalize_text(fact.get("source_title"), limit=160).casefold()
             for fact in verified_facts
@@ -219,6 +252,8 @@ class LiveResearchService:
         }
         preferred = {self._normalize_text(item, limit=160).casefold() for item in preferred_sources if self._normalize_text(item, limit=160)}
         ranked: list[dict[str, Any]] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for index, source in enumerate(sources, start=1):
             title = self._normalize_text(source.get("title"), limit=180)
             url = self._normalize_text(source.get("url"), limit=400)
@@ -259,6 +294,8 @@ class LiveResearchService:
         return ranked[:6]
 
     def _build_inferences(self, *, summary: str, verified_facts: list[dict[str, str]]) -> list[str]:
+        # Internal helper for inferences; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         sentences = [self._normalize_text(part, limit=260) for part in re.split(r"(?<=[.!?])\s+", summary or "") if self._normalize_text(part, limit=260)]
         exact_fact_values = {
             self._normalize_text(fact.get("value"), limit=180).casefold()
@@ -314,6 +351,8 @@ class LiveResearchService:
         verified_facts: list[dict[str, str]],
         sources: list[dict[str, Any]],
     ) -> list[str]:
+        # Internal helper for uncertainties; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         uncertainties: list[str] = []
         lowered = (summary or "").casefold()
         if any(marker in lowered for marker in ("expected", "pending", "subject to", "phased", "not yet clear", "unclear")):
@@ -337,6 +376,8 @@ class LiveResearchService:
         return deduped[:4]
 
     async def _plan_queries(self, prompt: str, studio_panel: dict[str, Any], compiled_context: dict[str, Any]) -> dict[str, Any]:
+        # Internal helper for plan queries; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         fallback = self._heuristic_query_plan(prompt, studio_panel, compiled_context)
         if not getattr(self.research_provider, "client", None):
             return fallback
@@ -352,6 +393,8 @@ class LiveResearchService:
                 f"Compiled context: {compiled_context}"
             ),
         )
+        # Keeps the risky I/O or integration boundary contained so callers receive project-level errors
+        # instead of raw library failures.
         try:
             planned = await asyncio.to_thread(
                 self.research_provider.generate_structured_json,
@@ -376,6 +419,8 @@ class LiveResearchService:
         return planned
 
     async def _brave_search(self, client: httpx.AsyncClient, query: str) -> list[dict[str, str]]:
+        # Internal helper for brave search; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         if not self.settings.brave_search_api_key:
             return []
         response = await client.get(
@@ -402,6 +447,8 @@ class LiveResearchService:
 
     @classmethod
     def _collect_web_search_sources(cls, node: Any, results: list[dict[str, str]]) -> None:
+        # Internal helper for collect web search sources; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if isinstance(node, dict):
             source = None
             source_blob = node.get("url_citation")
@@ -427,6 +474,8 @@ class LiveResearchService:
                 cls._collect_web_search_sources(item, results)
 
     def _normalize_search_results(self, results: list[dict[str, str]]) -> list[dict[str, str]]:
+        # Internal helper for search results; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         deduped: list[dict[str, str]] = []
         seen: set[str] = set()
         for item in results:
@@ -449,6 +498,8 @@ class LiveResearchService:
         return deduped[: self.settings.live_research_max_results_per_query]
 
     def _openai_web_search_sync(self, query: str) -> list[dict[str, str]]:
+        # Internal helper for openai web search sync; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not self.openai_search_client:
             return []
         response = self.openai_search_client.responses.create(
@@ -475,12 +526,16 @@ class LiveResearchService:
         return self._normalize_search_results(results)
 
     async def _openai_web_search(self, query: str) -> list[dict[str, str]]:
+        # Internal helper for openai web search; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         try:
             return await asyncio.to_thread(self._openai_web_search_sync, query)
         except Exception:
             return []
 
     async def _search_web(self, client: httpx.AsyncClient, query: str) -> list[dict[str, str]]:
+        # Internal helper for search web; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         backend = str(self.settings.live_research_search_backend or "openai").strip().lower()
         if backend == "openai":
             return await self._openai_web_search(query)
@@ -493,6 +548,8 @@ class LiveResearchService:
 
     @staticmethod
     def _html_to_text(html: str) -> str:
+        # Internal helper for html to text; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         parser = _HTMLTextExtractor()
         parser.feed(html)
         text = parser.text()
@@ -501,6 +558,8 @@ class LiveResearchService:
         return " ".join(unescape(re.sub(r"<[^>]+>", " ", html)).split()).strip()
 
     async def _fetch_url_text(self, client: httpx.AsyncClient, url: str) -> dict[str, str] | None:
+        # Internal helper for url text; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         try:
             response = await client.get(url, follow_redirects=True)
             response.raise_for_status()
@@ -533,6 +592,8 @@ class LiveResearchService:
         *,
         force: bool = False,
     ) -> dict[str, Any]:
+        # Runs the gather sync service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         try:
             asyncio.get_running_loop()
         except RuntimeError:
@@ -548,6 +609,8 @@ class LiveResearchService:
         failure: dict[str, BaseException] = {}
 
         def _runner() -> None:
+            # Internal helper for runner; it keeps the public service method focused on orchestration instead of
+            # low-level shaping.
             try:
                 result["value"] = asyncio.run(
                     self.gather(
@@ -575,8 +638,11 @@ class LiveResearchService:
         *,
         force: bool = False,
     ) -> dict[str, Any]:
+        # Runs the gather service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         self.last_usage_events = []
         verified_fact_limit = self._requested_verified_fact_limit(prompt, studio_panel)
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if not self.settings.live_research_enabled:
             if force:
                 return {
@@ -595,6 +661,7 @@ class LiveResearchService:
             return {}
         plan = await self._plan_queries(prompt, studio_panel, compiled_context)
         prompt_urls = self._urls_from_context(prompt, compiled_context)
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if not force and not plan.get("needs_live_research") and not prompt_urls:
             return {
                 "status": "not_required",
@@ -606,6 +673,8 @@ class LiveResearchService:
                 "verified_fact_limit": verified_fact_limit,
                 "provider_usage": list(self.last_usage_events),
             }
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if force or plan.get("needs_live_research") or prompt_urls:
             if not self._has_live_search_backend() and not prompt_urls:
                 # "not_configured" means no search backend is set up at all — this is a

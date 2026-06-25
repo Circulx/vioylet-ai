@@ -1,3 +1,4 @@
+# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
 import logging
@@ -31,6 +32,8 @@ logger = logging.getLogger(__name__)
 
 
 class TemplateService:
+    # Business layer for template; routes and workers pass validated inputs here and receive domain results
+    # back.
     TEMPLATE_MATCH_STOPWORDS = {
         "a",
         "an",
@@ -105,6 +108,7 @@ class TemplateService:
     }
 
     def __init__(self, session: AsyncSession) -> None:
+        # Wires the repositories and helper services this workflow reuses across its public methods.
         self.session = session
         self.templates = TemplateRepository(session)
         self.metadata = TemplateMetadataRepository(session)
@@ -120,6 +124,8 @@ class TemplateService:
 
     @staticmethod
     def _tokenize(text: str) -> set[str]:
+        # Internal helper for tokenize; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         return {
             token
             for token in re.findall(r"[a-z0-9]+", text.lower())
@@ -128,6 +134,8 @@ class TemplateService:
 
     @classmethod
     def _specific_topic_tokens(cls, tokens: set[str]) -> set[str]:
+        # Internal helper for specific topic tokens; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         specific: set[str] = set()
         for token in tokens:
             normalized = str(token or "").strip().lower()
@@ -140,9 +148,13 @@ class TemplateService:
 
     @classmethod
     def _collect_analysis_text_fragments(cls, value: Any, *, limit: int = 80) -> list[str]:
+        # Internal helper for collect analysis text fragments; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         fragments: list[str] = []
 
         def visit(item: Any) -> None:
+            # Runs the visit service flow by coordinating repositories, validators, and integrations, then
+            # returns domain data.
             if len(fragments) >= limit:
                 return
             if isinstance(item, str):
@@ -167,6 +179,8 @@ class TemplateService:
 
     @staticmethod
     def _export_formats_for_template(storage_path: str) -> list[str]:
+        # Internal helper for formats for template; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         suffix = Path(storage_path).suffix.lower()
         if suffix in {".png", ".jpg", ".jpeg", ".webp"}:
             return ["png", "jpg", "pdf"]
@@ -176,6 +190,8 @@ class TemplateService:
 
     @staticmethod
     def _resolve_vision_source(absolute_path: str, extracted: dict) -> str | None:
+        # Internal helper for vision source; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         suffix = Path(absolute_path).suffix.lower()
         if suffix in {".png", ".jpg", ".jpeg", ".webp"} and Path(absolute_path).exists():
             return absolute_path
@@ -187,6 +203,8 @@ class TemplateService:
 
     @staticmethod
     def _default_template_zones(width: int, height: int) -> list[dict[str, int | str]]:
+        # Internal helper for default template zones; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         pad_x = max(48, int(width * 0.06))
         pad_y = max(40, int(height * 0.06))
         return [
@@ -204,6 +222,8 @@ class TemplateService:
         width: int,
         height: int,
     ) -> list[dict[str, Any]]:
+        # Internal helper for editable zones; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         defaults = cls._default_template_zones(width, height)
         fallback_by_role = {
             str(zone.get("role", "")): zone
@@ -214,6 +234,8 @@ class TemplateService:
             return defaults
 
         normalized: list[dict[str, Any]] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for index, zone in enumerate(editable_zones):
             if not isinstance(zone, dict):
                 continue
@@ -223,6 +245,8 @@ class TemplateService:
             fallback = fallback_by_role.get(role) or defaults[min(index, len(defaults) - 1)]
 
             def _value_for(key: str, fallback_key: str) -> int:
+                # Internal helper for value for; it keeps the public service method focused on orchestration
+                # instead of low-level shaping.
                 raw = zone.get(key)
                 if isinstance(raw, (int, float)):
                     numeric = float(raw)
@@ -247,6 +271,8 @@ class TemplateService:
 
     @staticmethod
     def _editable_fields_from_zones(zones: list[dict[str, Any]]) -> list[str]:
+        # Internal helper for editable fields from zones; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         allowed_roles = {"headline", "body", "cta", "logo", "image", "header", "footer"}
         roles = {
             str(zone.get("role", "")).strip().lower()
@@ -260,6 +286,8 @@ class TemplateService:
 
     @staticmethod
     def _extract_docx_text(absolute_path: str, extracted: dict[str, object]) -> str:
+        # Internal helper for extract docx text; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         source_format = str(extracted.get("source_format") or "").lower()
         if source_format != "docx" and not absolute_path.lower().endswith(".docx"):
             return ""
@@ -275,6 +303,8 @@ class TemplateService:
         zone_roles: set[str],
         rich_analysis: dict[str, Any],
     ) -> dict[str, Any]:
+        # Internal helper for template surface policy; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         word_count = len(re.findall(r"[A-Za-z0-9]+", text))
         text_length = len(text.strip())
         text_zone_count = len(zone_roles & {"headline", "body", "header", "footer", "proof_point", "stat_highlight", "cta"})
@@ -326,6 +356,8 @@ class TemplateService:
 
     @staticmethod
     def _read_analysis_text(analysis_path: str | None) -> str:
+        # Internal helper for read analysis text; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if not analysis_path:
             return ""
         path = Path(analysis_path)
@@ -345,6 +377,8 @@ class TemplateService:
 
     @classmethod
     def _extract_font_names(cls, families: list[dict[str, Any]] | list[str] | None) -> set[str]:
+        # Internal helper for extract font names; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         names: set[str] = set()
         for family in families or []:
             if isinstance(family, dict):
@@ -357,6 +391,8 @@ class TemplateService:
 
     @classmethod
     def _extract_palette_tokens(cls, entries: list[dict[str, Any]] | dict[str, Any] | None) -> set[str]:
+        # Internal helper for extract palette tokens; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         tokens: set[str] = set()
         if isinstance(entries, dict):
             iterable = [{"hex_code": value} for _key, value in entries.items()]
@@ -372,6 +408,8 @@ class TemplateService:
 
     @classmethod
     def _derive_content_patterns(cls, text: str, layout_type: str, zone_roles: set[str]) -> set[str]:
+        # Internal helper for derive content patterns; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         lowered = text.lower()
         patterns: set[str] = set()
         if layout_type:
@@ -398,6 +436,8 @@ class TemplateService:
 
     @classmethod
     def _prompt_signals(cls, prompt: str, studio_panel: dict[str, Any]) -> dict[str, Any]:
+        # Internal helper for prompt signals; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         lowered = prompt.lower()
         word_count = len(prompt.split())
         requested_patterns: set[str] = set()
@@ -431,6 +471,8 @@ class TemplateService:
         text_density = "high" if word_count > 28 else ("medium" if word_count > 14 else "low")
         section_count_hint = 1
         count_match = re.search(r"\b(\d+)\s+(?:steps|slides|cards|panels|sections|reasons|benefits|points)\b", lowered)
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if count_match:
             try:
                 section_count_hint = max(int(count_match.group(1)), 1)
@@ -456,6 +498,8 @@ class TemplateService:
 
     @classmethod
     def _brand_signals(cls, brand_context: dict[str, Any] | None) -> dict[str, Any]:
+        # Internal helper for brand signals; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         context = brand_context or {}
         identity = context.get("identity", {}) if isinstance(context.get("identity"), dict) else {}
         visual_identity = context.get("visual_identity", {}) if isinstance(context.get("visual_identity"), dict) else {}
@@ -474,6 +518,8 @@ class TemplateService:
 
     @staticmethod
     def _normalize_format_family(value: Any) -> str | None:
+        # Internal helper for format family; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         text = str(value or "").strip().lower()
         if not text:
             return None
@@ -495,6 +541,8 @@ class TemplateService:
         page_count: int,
         zone_roles: set[str],
     ) -> str:
+        # Internal helper for derive format family; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         explicit_candidates = [
             template.matcher_features_json.get("format_family") if isinstance(template.matcher_features_json, dict) else None,
             template.analysis_json.get("format_family"),
@@ -517,6 +565,8 @@ class TemplateService:
 
     @classmethod
     def _template_profile(cls, template: Template, metadata: TemplateMetadata | None) -> dict[str, Any]:
+        # Internal helper for template profile; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         matcher = template.matcher_features_json or {}
         zone_roles = {
             str(zone.get("role")).strip().lower()
@@ -562,6 +612,7 @@ class TemplateService:
         if layout_type:
             content_patterns.add(layout_type)
         page_count = 0
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if metadata and isinstance(getattr(metadata, "sizing_rules", None), dict):
             for raw_count in (
                 metadata.sizing_rules.get("page_count"),
@@ -574,6 +625,8 @@ class TemplateService:
                 if parsed > 0:
                     page_count = parsed
                     break
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if page_count <= 0:
             for raw_count in (
                 template.analysis_json.get("page_count"),
@@ -645,6 +698,8 @@ class TemplateService:
 
     @classmethod
     def _requested_carousel_slide_count_from_prompt(cls, prompt: str | None) -> int | None:
+        # Internal helper for requested carousel slide count from prompt; it keeps the public service method
+        # focused on orchestration instead of low-level shaping.
         raw = str(prompt or "")
         match = re.search(r"\b(\d{1,2})\s*(?:-| )?slides?\b", raw, re.IGNORECASE)
         if not match:
@@ -668,10 +723,14 @@ class TemplateService:
         score_breakdown: dict[str, float] | None = None,
         requested_slide_count: int | None = None,
     ) -> float:
+        # Internal helper for adaptation score for recommendation; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         adaptation_score = float(base_score)
         candidate_family = cls._normalize_format_family(template_profile.get("format_family"))
         if requested_format_family and candidate_family == requested_format_family:
             adaptation_score += 8.0
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if requested_format_family == "carousel":
             page_count = int(template_profile.get("page_count") or 0)
             if page_count >= 3:
@@ -706,6 +765,8 @@ class TemplateService:
 
     @staticmethod
     def _sequence_recommendation_signature(value: Any) -> tuple[str, int] | None:
+        # Internal helper for sequence recommendation signature; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         raw = str(value or "").strip()
         if not raw:
             return None
@@ -728,6 +789,8 @@ class TemplateService:
 
     @staticmethod
     def _humanize_recommendation_family(value: str) -> str:
+        # Internal helper for humanize recommendation family; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         normalized = re.sub(r"[-_\s]+", " ", str(value or "").strip()).strip()
         return normalized.title() if normalized else "Carousel Family"
 
@@ -736,6 +799,8 @@ class TemplateService:
         cls,
         recommendations: list[TemplateRecommendationResponse],
     ) -> list[TemplateRecommendationResponse]:
+        # Internal helper for collapse carousel recommendation families; it keeps the public service method
+        # focused on orchestration instead of low-level shaping.
         grouped: list[TemplateRecommendationResponse] = []
         seen_families: set[str] = set()
         family_members: dict[str, list[TemplateRecommendationResponse]] = {}
@@ -744,6 +809,8 @@ class TemplateService:
             if recommendation.format_family == "carousel" and family:
                 family_members.setdefault(family, []).append(recommendation)
 
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for recommendation in recommendations:
             family = str(recommendation.recommendation_group_key or "").strip()
             if recommendation.format_family != "carousel" or not family:
@@ -794,6 +861,8 @@ class TemplateService:
         *,
         requested_format_family: str | None,
     ) -> list[TemplateRecommendationResponse]:
+        # Internal helper for annotate recommendation selection; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         labeled: list[TemplateRecommendationResponse] = []
         fallback_reason = {
             "carousel": "Carousel Match",
@@ -817,6 +886,8 @@ class TemplateService:
         cls,
         recommendations: list[TemplateRecommendationResponse],
     ) -> list[TemplateRecommendationResponse]:
+        # Internal helper for calibrate recommendation confidence; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not recommendations:
             return []
         calibrated: list[TemplateRecommendationResponse] = []
@@ -830,6 +901,8 @@ class TemplateService:
         top_score = max(ranked_scores) if ranked_scores else 0.0
         bottom_score = min(ranked_scores) if ranked_scores else 0.0
         spread = max(top_score - bottom_score, 0.0)
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for index, (recommendation, ranked_score) in enumerate(zip(recommendations, ranked_scores, strict=False)):
             if any("user-pinned" in str(reason).casefold() for reason in (recommendation.reasons or [])):
                 confidence = 0.99
@@ -864,6 +937,8 @@ class TemplateService:
         metadata: TemplateMetadata | None,
         brand_context: dict[str, Any] | None = None,
     ) -> tuple[float, list[str], dict[str, float], dict, int]:
+        # Internal helper for template; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         score = 0.0
         reasons: list[str] = []
         breakdown = {
@@ -921,6 +996,8 @@ class TemplateService:
             breakdown["ocr_text_fit"] = ocr_score
             reasons.append(f"template text fit: {', '.join(sorted(ocr_overlap)[:5])}")
         specific_prompt_tokens = prompt_signals.get("specific_tokens", set())
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if isinstance(specific_prompt_tokens, set) and specific_prompt_tokens:
             title_specific_overlap = specific_prompt_tokens & template_profile.get("title_tokens", set())
             ocr_specific_overlap = specific_prompt_tokens & template_profile.get("ocr_tokens", set())
@@ -940,6 +1017,8 @@ class TemplateService:
         platform = prompt_signals["platform"]
         format_name = prompt_signals["format"]
         file_type = prompt_signals["file_type"]
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if template_profile["platform_hints"]:
             if platform in template_profile["platform_hints"]:
                 score += 4.0
@@ -956,6 +1035,8 @@ class TemplateService:
             breakdown["format_fit"] += 2.0
             reasons.append(f"kind matches {format_name}")
         page_count = int(template_profile.get("page_count") or 0)
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if format_name == "carousel":
             if page_count >= 3:
                 carousel_score = min(4.0 + (page_count * 0.15), 5.5)
@@ -1090,6 +1171,8 @@ class TemplateService:
 
     @staticmethod
     def _match_type_for_score(score: float, adaptation_plan: dict[str, object], critical_misses: int) -> str:
+        # Internal helper for match type for score; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         structural_flags = {
             "multi_section_flow",
             "cta_reposition",
@@ -1107,6 +1190,8 @@ class TemplateService:
         return "reference_only"
 
     async def upload(self, tenant_id: UUID, brand_space_id: UUID, payload: TemplateUploadRequest) -> Template:
+        # Runs the upload service flow and persists the resulting state before returning it to the route or
+        # worker.
         preflight = self.preflight.validate_base64_upload(
             filename=payload.filename,
             mime_type=payload.mime_type,
@@ -1152,6 +1237,8 @@ class TemplateService:
         return template
 
     async def analyze(self, template_id: UUID) -> Template:
+        # Runs the analyze service flow and persists the resulting state before returning it to the route or
+        # worker.
         template = await self.templates.get(template_id)
         if not template:
             raise NotFoundError("Template not found")
@@ -1167,6 +1254,8 @@ class TemplateService:
         template_kind = template.kind
         extracted = {"text": "", "images": [], "page_count": 0}
         page_count = 0
+        # Keeps the risky I/O or integration boundary contained so callers receive project-level errors
+        # instead of raw library failures.
         try:
             extracted = self.ocr.extract(absolute_path)
             text = extracted.get("text", "")
@@ -1314,6 +1403,8 @@ class TemplateService:
         }
         template.matcher_features_json = matcher_features
         metadata = await self.metadata.get_by_template(template.id)
+        # The payload/context shape drives this branch because downstream serializers depend on consistent
+        # fields.
         if metadata:
             metadata.zone_map = {
                 "layout_type": template.analysis_json["layout_type"],
@@ -1368,6 +1459,8 @@ class TemplateService:
         return template
 
     async def list(self, tenant_id: UUID, brand_space_id: UUID) -> list[Template]:
+        # Runs the list service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         return await self.templates.list_by_brand(brand_space_id, tenant_id)
 
     async def recommend(
@@ -1379,6 +1472,8 @@ class TemplateService:
         brand_context: dict[str, Any] | None = None,
         limit: int = 5,
     ) -> list[TemplateRecommendationResponse]:
+        # Runs the recommend service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         resolved_panel = resolve_studio_panel_defaults(studio_panel)
         if brand_context is None:
             brand = await self.brands.get_scoped(tenant_id, brand_space_id)
@@ -1389,6 +1484,8 @@ class TemplateService:
         pinned_template_id: str | None = str(studio_panel.get("pinned_template_id") or "").strip() or None
         requested_format_family = self._normalize_format_family(resolved_panel.get("format"))
 
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for template in templates:
             metadata = await self.metadata.get_by_template(template.id)
             template_profile = self._template_profile(template, metadata)
@@ -1531,6 +1628,8 @@ class TemplateService:
         return recommendations[:limit]
 
     async def detail(self, tenant_id: UUID, brand_space_id: UUID, template_id: UUID) -> tuple[Template, TemplateMetadata | None]:
+        # Runs the detail service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         template = await self.templates.get_scoped(template_id, tenant_id, brand_space_id)
         if not template:
             raise NotFoundError("Template not found")
@@ -1544,6 +1643,8 @@ class TemplateService:
         template_id: UUID,
         payload: TemplateMetadataUpsertRequest,
     ) -> TemplateMetadata:
+        # Runs the metadata service flow and persists the resulting state before returning it to the route or
+        # worker.
         template = await self.templates.get_scoped(template_id, tenant_id, brand_space_id)
         if not template:
             raise NotFoundError("Template not found")
@@ -1559,6 +1660,8 @@ class TemplateService:
         return metadata
 
     async def delete(self, tenant_id: UUID, brand_space_id: UUID, template_id: UUID) -> None:
+        # Runs the delete service flow and persists the resulting state before returning it to the route or
+        # worker.
         template = await self.templates.get_scoped(template_id, tenant_id, brand_space_id)
         if not template:
             raise NotFoundError("Template not found")

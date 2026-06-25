@@ -1,3 +1,4 @@
+# FastAPI route handlers live here; they validate request inputs, call services, and return response schemas.
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
@@ -22,6 +23,7 @@ router = APIRouter()
 
 
 def attach_assets(content, assets) -> ContentVersionResponse:
+    # Builds API response data from service or ORM objects, keeping persistence details out of route returns.
     response = ContentVersionResponse.model_validate(content)
     explainability = content.explainability_metadata or {}
     response.generation_decision = explainability.get("layout_decision", {})
@@ -50,6 +52,8 @@ async def generate_content(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> ContentVersionResponse:
+    # Serves the content generation endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
 
@@ -67,6 +71,8 @@ async def rewrite_content(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> ContentVersionResponse:
+    # Serves the content rewrite endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
 
@@ -83,6 +89,8 @@ async def tone_check(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> ToneEvaluationResponse:
+    # Serves the tone check endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
     result = await ContentService(session).tone_check(brand_scope, payload)
@@ -95,6 +103,8 @@ async def content_history(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> list[ContentVersionResponse]:
+    # Serves the content history endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
 
@@ -118,6 +128,8 @@ async def content_detail(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> ContentVersionResponse:
+    # Serves the content detail endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
 
@@ -135,6 +147,8 @@ async def export_content(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> RenderResponse:
+    # Serves the content export endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
 
@@ -157,6 +171,8 @@ async def copy_content(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    # Serves the content copy endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
 
@@ -170,6 +186,8 @@ async def archive_content(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> ContentVersionResponse:
+    # Serves the content archive endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
 
@@ -185,6 +203,8 @@ async def delete_content(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    # Serves the content deletion endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
 

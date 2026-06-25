@@ -1,3 +1,4 @@
+# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
 import base64
@@ -22,6 +23,8 @@ logger = logging.getLogger(__name__)
 
 
 class BrandScoringService:
+    # Business layer for brand scoring; routes and workers pass validated inputs here and receive domain results
+    # back.
     DIRNAME = "brand_scoring"
     WEIGHTING = {
         "on_brand": 0.4,
@@ -253,6 +256,7 @@ class BrandScoringService:
     )
 
     def __init__(self, session) -> None:
+        # Wires the repositories and helper services this workflow reuses across its public methods.
         self.session = session
         self.storage = get_object_storage()
         self.ocr = OCRService()
@@ -280,6 +284,8 @@ class BrandScoringService:
         output_assets: list[dict[str, Any]],
         reference_assets: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
+        # Runs the scorecard service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         copy_text = self._copy_text(generated_payload)
         tone_feedback = self.tone._heuristic_evaluate(
             copy_text,
@@ -391,6 +397,8 @@ class BrandScoringService:
             persona_context=persona_context,
             objective_context=objective_context,
         )
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if llm_prompt_relevance:
             self._apply_llm_prompt_relevance_explanation(
                 developer_explanation,
@@ -440,6 +448,8 @@ class BrandScoringService:
         output_id: str,
         scorecard: dict[str, Any],
     ) -> str:
+        # Runs the save scorecard service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         stored = self.storage.save_bytes(
             tenant_id=tenant_id,
             brand_space_id=brand_space_id,
@@ -464,6 +474,8 @@ class BrandScoringService:
         fallback_prompt_adherence: int,
         fallback_relevance: int,
     ) -> dict[str, Any] | None:
+        # Internal helper for llm prompt relevance analysis; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not self.llm_client:
             self.last_usage = None
             return None
@@ -672,6 +684,8 @@ class BrandScoringService:
             "- carousel_story_assessment: object with hook_strength, continuity, progression, and conclusion_or_promotion when evaluated_format is carousel"
         )
         content: list[dict[str, Any]] = [{"type": "text", "text": user_text}]
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for image_input in image_inputs:
             content.append(
                 {
@@ -689,6 +703,8 @@ class BrandScoringService:
                 }
             )
 
+        # Keeps the risky I/O or integration boundary contained so callers receive project-level errors
+        # instead of raw library failures.
         try:
             if getattr(self.llm_client, "responses", None):
                 responses_content: list[dict[str, Any]] = []
@@ -815,7 +831,11 @@ class BrandScoringService:
         }
 
     def _llm_image_inputs(self, output_assets: list[dict[str, Any]], *, limit: int = 10) -> list[dict[str, Any]]:
+        # Internal helper for llm image inputs; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         image_inputs: list[dict[str, Any]] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for asset in output_assets:
             if len(image_inputs) >= limit:
                 break
@@ -849,6 +869,8 @@ class BrandScoringService:
 
     @staticmethod
     def _image_data_url(path: str) -> str | None:
+        # Internal helper for image data URL; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         try:
             with Image.open(path) as raw_image:
                 image = raw_image.convert("RGB")
@@ -863,6 +885,8 @@ class BrandScoringService:
 
     @staticmethod
     def _coerce_score(value: Any, fallback: int) -> int:
+        # Internal helper for coerce score; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         try:
             score = int(round(float(value)))
         except (TypeError, ValueError):
@@ -871,6 +895,8 @@ class BrandScoringService:
 
     @staticmethod
     def _json_excerpt(value: Any, *, limit: int) -> str:
+        # Internal helper for json excerpt; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         text = json.dumps(value if value is not None else {}, ensure_ascii=True, default=str)
         if len(text) <= limit:
             return text
@@ -878,6 +904,8 @@ class BrandScoringService:
 
     @staticmethod
     def _string_list(value: Any, *, limit: int) -> list[str]:
+        # Internal helper for string list; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         if isinstance(value, list):
             items = value
         elif isinstance(value, str) and value.strip():
@@ -895,6 +923,8 @@ class BrandScoringService:
 
     @staticmethod
     def _generic_llm_score_explanation(label: str, score: int) -> str:
+        # Internal helper for generic llm score explanation; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if score >= 85:
             return f"{label} is strong based on the LLM vision review."
         if score >= 70:
@@ -903,6 +933,8 @@ class BrandScoringService:
 
     @classmethod
     def _llm_score_summary(cls, llm_prompt_relevance: dict[str, Any] | None, key: str) -> str | None:
+        # Internal helper for llm score summary; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if not llm_prompt_relevance:
             return None
         if key in {"prompt_adherence", "relevance"}:
@@ -920,6 +952,8 @@ class BrandScoringService:
 
     @classmethod
     def _llm_content_gap_summary(cls, llm_prompt_relevance: dict[str, Any]) -> str | None:
+        # Internal helper for llm content gap summary; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         contract = llm_prompt_relevance.get("prompt_content_contract")
         if not isinstance(contract, dict):
             return None
@@ -954,6 +988,8 @@ class BrandScoringService:
         prompt_adherence: int,
         relevance: int,
     ) -> None:
+        # Internal helper for llm prompt relevance explanation; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         explanations = llm_prompt_relevance.get("explanations") if isinstance(llm_prompt_relevance.get("explanations"), dict) else {}
         missing = self._string_list(llm_prompt_relevance.get("missing_content_or_visuals"), limit=8)
         improvements = self._string_list(llm_prompt_relevance.get("improvement_suggestions"), limit=8)
@@ -991,6 +1027,8 @@ class BrandScoringService:
         ).strip()
 
         prompt_block = developer_explanation.get("prompt_adherence")
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if isinstance(prompt_block, dict):
             fallback_rule_diagnostics = {
                 key: prompt_block.get(key)
@@ -1037,6 +1075,8 @@ class BrandScoringService:
             )
 
         relevance_block = developer_explanation.get("relevance")
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if isinstance(relevance_block, dict):
             fallback_rule_diagnostics = {
                 key: relevance_block.get(key)
@@ -1091,6 +1131,8 @@ class BrandScoringService:
             )
 
     def _llm_explanation_penalties(self, *, score: int, reason: str, layer: str) -> list[dict[str, Any]]:
+        # Internal helper for llm explanation penalties; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if score >= 75:
             return []
         return [
@@ -1123,6 +1165,8 @@ class BrandScoringService:
         persona_context: dict[str, Any],
         objective_context: dict[str, Any],
     ) -> dict[str, Any]:
+        # Internal helper for developer explanation; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         dimensions = (
             tone_feedback.get("persuasion_dimensions")
             if isinstance(tone_feedback.get("persuasion_dimensions"), dict)
@@ -1276,6 +1320,7 @@ class BrandScoringService:
             )
         )
         on_brand_after_rules = on_brand_base + sum(float(item["impact"]) for item in on_brand_penalties)
+        # This branch enforces tenant, brand, or role boundaries before shared data can be read or changed.
         if usage_score < 25 and on_brand_after_rules > 74:
             on_brand_penalties.append(
                 self._explanation_item(
@@ -1598,6 +1643,8 @@ class BrandScoringService:
         layer: str,
         rule: str,
     ) -> dict[str, Any]:
+        # Internal helper for explanation item; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         return {
             "reason": reason,
             "impact": round(float(impact), 2),
@@ -1607,8 +1654,12 @@ class BrandScoringService:
 
     @classmethod
     def _component_effects(cls, *, components: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        # Internal helper for component effects; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         boosts: list[dict[str, Any]] = []
         penalties: list[dict[str, Any]] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for component in components:
             try:
                 value = float(component.get("value") or 0.0)
@@ -1638,6 +1689,8 @@ class BrandScoringService:
 
     @classmethod
     def _explicit_rule_adjustments(cls, adjustments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        # Internal helper for explicit rule adjustments; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         items: list[dict[str, Any]] = []
         for adjustment in adjustments:
             if not adjustment.get("applies"):
@@ -1659,6 +1712,8 @@ class BrandScoringService:
         fields: list[tuple[str, str]],
         threshold: int = 60,
     ) -> list[dict[str, Any]]:
+        # Internal helper for visual check failures; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         failures: list[dict[str, Any]] = []
         for field, message in fields:
             if visual_review.get(field) is None:
@@ -1678,6 +1733,8 @@ class BrandScoringService:
 
     @staticmethod
     def _quality_dimension_failures(dimensions: dict[str, Any], *, threshold: int = 60) -> list[dict[str, Any]]:
+        # Internal helper for quality dimension failures; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         failures: list[dict[str, Any]] = []
         labels = {
             "clarity": "Message clarity was weak.",
@@ -1703,6 +1760,8 @@ class BrandScoringService:
 
     @staticmethod
     def _usage_details(explainability: dict[str, Any]) -> dict[str, Any]:
+        # Internal helper for usage details; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         input_access_summary = (
             explainability.get("input_access_summary")
             if isinstance(explainability.get("input_access_summary"), dict)
@@ -1727,6 +1786,8 @@ class BrandScoringService:
 
     @staticmethod
     def _prompt_vs_output_terms(prompt: str, visual_review: dict[str, Any]) -> tuple[list[str], list[str]]:
+        # Internal helper for prompt vs output terms; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         matched_terms: list[str] = []
         missing_terms: list[str] = []
         for page in visual_review.get("page_reviews") or []:
@@ -1751,6 +1812,8 @@ class BrandScoringService:
 
     @classmethod
     def _prompt_match_text(cls, text: str) -> str:
+        # Internal helper for prompt match text; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         normalized = str(text or "").lower()
         for canonical, aliases in cls.PROMPT_EQUIVALENT_PHRASES.items():
             alias_pattern = "|".join(re.escape(alias) for alias in sorted(aliases, key=len, reverse=True))
@@ -1759,6 +1822,8 @@ class BrandScoringService:
 
     @classmethod
     def _prompt_match_token(cls, token: str) -> str:
+        # Internal helper for prompt match token; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         lowered = str(token or "").strip().lower()
         if not lowered:
             return ""
@@ -1775,9 +1840,13 @@ class BrandScoringService:
         brand_context: dict[str, Any],
         reference_assets: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
+        # Internal helper for visual review for assets; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         blocks: list[dict[str, Any]] = []
         reference_style_profile = self._reference_style_profile(reference_assets or [])
 
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for index, asset in enumerate(output_assets, start=1):
             storage_path = str(asset.get("storage_path") or "").strip()
             mime_type = str(asset.get("mime_type") or "").strip()
@@ -1891,6 +1960,7 @@ class BrandScoringService:
                     "asset_kind": asset_kind,
                 }
             )
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if not blocks:
             return {
                 "asset_count": 0,
@@ -1919,9 +1989,13 @@ class BrandScoringService:
 
     @staticmethod
     def _copy_text(generated_payload: dict[str, Any]) -> str:
+        # Internal helper for text; it keeps the public service method focused on orchestration instead of low-
+        # level shaping.
         snippets: list[str] = []
 
         def visit(value: Any) -> None:
+            # Runs the visit service flow by coordinating repositories, validators, and integrations, then
+            # returns domain data.
             if isinstance(value, str):
                 text = value.strip()
                 if text:
@@ -1950,6 +2024,8 @@ class BrandScoringService:
 
     @staticmethod
     def _visual_text_excerpt(visual_review: dict[str, Any]) -> str:
+        # Internal helper for visual text excerpt; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         excerpts: list[str] = []
         for page in visual_review.get("page_reviews") or []:
             if not isinstance(page, dict):
@@ -1961,6 +2037,8 @@ class BrandScoringService:
 
     @staticmethod
     def _is_image_led_format(studio_panel: dict[str, Any], output_assets: list[dict[str, Any]]) -> bool:
+        # Internal helper for is image led format; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         format_name = str(studio_panel.get("format") or "").strip().lower()
         if format_name not in {"static", "infographic", "carousel"}:
             return False
@@ -1976,6 +2054,8 @@ class BrandScoringService:
         rendered_output_text: str,
         fallback_text: str,
     ) -> int:
+        # Internal helper for effective prompt alignment score; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not self._is_image_led_format(studio_panel, output_assets):
             return self._prompt_alignment_score(prompt, fallback_text, [])
         payload_score = float(self._prompt_alignment_score(prompt, payload_output_text, [])) if payload_output_text.strip() else 0.0
@@ -2001,6 +2081,8 @@ class BrandScoringService:
         rendered_output_text: str,
         fallback_text: str,
     ) -> int:
+        # Internal helper for effective context alignment score; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not self._is_image_led_format(studio_panel, output_assets):
             return self._context_alignment_score(context_reference, fallback_text)
         payload_score = float(self._context_alignment_score(context_reference, payload_output_text)) if payload_output_text.strip() else 0.0
@@ -2018,6 +2100,8 @@ class BrandScoringService:
 
     @staticmethod
     def _source_usage_score(explainability: dict[str, Any]) -> int:
+        # Internal helper for source usage score; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         input_access_summary = (
             explainability.get("input_access_summary")
             if isinstance(explainability.get("input_access_summary"), dict)
@@ -2051,6 +2135,8 @@ class BrandScoringService:
         visual_review: dict[str, Any],
         explainability: dict[str, Any],
     ) -> int:
+        # Internal helper for on brand score; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         dimensions = tone_feedback.get("persuasion_dimensions") if isinstance(tone_feedback.get("persuasion_dimensions"), dict) else {}
         text_brand = float(dimensions.get("brand_alignment") or 0.0)
         visual_brand = (
@@ -2081,6 +2167,8 @@ class BrandScoringService:
         output_assets: list[dict[str, Any]],
         generated_payload: dict[str, Any],
     ) -> int:
+        # Internal helper for prompt adherence score; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         text_prompt = float(
             self._effective_prompt_alignment_score(
                 prompt=prompt,
@@ -2121,11 +2209,15 @@ class BrandScoringService:
         brand_context: dict[str, Any],
         visual_review: dict[str, Any],
     ) -> int:
+        # Internal helper for relevance score; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         context_reference = self._context_reference_text(
             persona_context=persona_context,
             objective_context=objective_context,
             brand_context=brand_context,
         )
+        # The payload/context shape drives this branch because downstream serializers depend on consistent
+        # fields.
         if context_reference:
             context_score = float(
                 self._effective_context_alignment_score(
@@ -2181,14 +2273,20 @@ class BrandScoringService:
         objective_context: dict[str, Any],
         brand_context: dict[str, Any],
     ) -> str:
+        # Internal helper for context reference text; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         parts: list[str] = []
 
         def append_text(text: str) -> None:
+            # Runs the append text service flow by coordinating repositories, validators, and integrations, then
+            # returns domain data.
             normalized = str(text or "").strip()
             if normalized:
                 parts.append(normalized)
 
         def extend_from(value: Any) -> None:
+            # Runs the extend from service flow by coordinating repositories, validators, and integrations, then
+            # returns domain data.
             if isinstance(value, str):
                 append_text(value)
                 return
@@ -2203,6 +2301,8 @@ class BrandScoringService:
                     extend_from(nested)
 
         def extend_selected(mapping: dict[str, Any], keys: tuple[str, ...]) -> None:
+            # Runs the extend selected service flow by coordinating repositories, validators, and integrations,
+            # then returns domain data.
             for key in keys:
                 value = mapping.get(key)
                 if value is not None:
@@ -2278,6 +2378,8 @@ class BrandScoringService:
         output_assets: list[dict[str, Any]],
         generated_payload: dict[str, Any] | None = None,
     ) -> int:
+        # Internal helper for format fit score; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         diagnostics = cls._format_fit_details(
             prompt=prompt,
             studio_panel=studio_panel,
@@ -2297,6 +2399,8 @@ class BrandScoringService:
         output_assets: list[dict[str, Any]],
         generated_payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Internal helper for format fit details; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         format_name = str(studio_panel.get("format") or "").strip().lower()
         page_reviews = [
             page
@@ -2319,6 +2423,8 @@ class BrandScoringService:
         prompt_groups = cls._prompt_semantic_groups(prompt)
         checks: list[dict[str, Any]] = []
 
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if format_name == "carousel":
             checks = [
                 {
@@ -2491,6 +2597,8 @@ class BrandScoringService:
                 }
             ]
 
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if page_count <= 0 and asset_count <= 0:
             return {
                 "format": format_name or None,
@@ -2537,6 +2645,8 @@ class BrandScoringService:
         *,
         preferred_keys: tuple[str, ...],
     ) -> str:
+        # Internal helper for format primary text; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if not isinstance(payload, dict):
             return ""
         for key in preferred_keys:
@@ -2551,10 +2661,14 @@ class BrandScoringService:
 
     @staticmethod
     def _format_word_count(text: str) -> int:
+        # Internal helper for format word count; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         return len(re.findall(r"\b\w+\b", str(text or "")))
 
     @classmethod
     def _format_hook_strength_score(cls, page_review: dict[str, Any], headline: str, *, combined_excerpt: str = "") -> int:
+        # Internal helper for format hook strength score; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         visible_headline = str(headline or "").strip()
         if not visible_headline and combined_excerpt:
             first_line = next((line.strip() for line in combined_excerpt.splitlines() if line.strip()), "")
@@ -2581,6 +2695,8 @@ class BrandScoringService:
         prompt_group_count: int = 0,
         covered_group_count: int = 0,
     ) -> int:
+        # Internal helper for format single message score; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if page_count > 1:
             return 45
         word_count = int(page_review.get("word_count") or 0)
@@ -2602,6 +2718,8 @@ class BrandScoringService:
 
     @classmethod
     def _format_cta_score(cls, cta: str, *, combined_text: str = "", format_name: str = "") -> int:
+        # Internal helper for format CTA score; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         normalized = str(cta or "").strip()
         if not normalized and combined_text:
             match = cls.FORMAT_CTA_PATTERN.search(combined_text)
@@ -2627,6 +2745,8 @@ class BrandScoringService:
 
     @staticmethod
     def _format_token_overlap(left: str, right: str) -> float:
+        # Internal helper for format token overlap; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         left_tokens = {token.lower() for token in re.findall(r"[A-Za-z0-9]+", left or "") if len(token) > 2}
         right_tokens = {token.lower() for token in re.findall(r"[A-Za-z0-9]+", right or "") if len(token) > 2}
         if not left_tokens or not right_tokens:
@@ -2635,6 +2755,8 @@ class BrandScoringService:
 
     @classmethod
     def _format_narrative_continuity_score(cls, page_reviews: list[dict[str, Any]]) -> int:
+        # Internal helper for format narrative continuity score; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         excerpts = [str(page.get("ocr_text_excerpt") or "").strip() for page in page_reviews if str(page.get("ocr_text_excerpt") or "").strip()]
         if len(excerpts) <= 1:
             return 45
@@ -2662,7 +2784,11 @@ class BrandScoringService:
         asset_count: int,
         prompt_group_count: int = 0,
     ) -> int:
+        # Internal helper for format slide progression score; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         slide_count = max(len(page_reviews), asset_count)
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if prompt_group_count >= 5:
             if slide_count >= 5:
                 return 94
@@ -2673,6 +2799,8 @@ class BrandScoringService:
             if slide_count == 2:
                 return 52
             return 34
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if prompt_group_count >= 3:
             if slide_count >= 4:
                 return 92
@@ -2693,6 +2821,8 @@ class BrandScoringService:
 
     @staticmethod
     def _format_pacing_score(page_reviews: list[dict[str, Any]]) -> int:
+        # Internal helper for format pacing score; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         word_counts = [int(page.get("word_count") or 0) for page in page_reviews if int(page.get("word_count") or 0) > 0]
         if not word_counts:
             return 45
@@ -2710,6 +2840,8 @@ class BrandScoringService:
 
     @classmethod
     def _format_transition_logic_score(cls, page_reviews: list[dict[str, Any]]) -> int:
+        # Internal helper for format transition logic score; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         excerpts = [str(page.get("ocr_text_excerpt") or "").strip() for page in page_reviews if str(page.get("ocr_text_excerpt") or "").strip()]
         if len(excerpts) <= 1:
             return 45
@@ -2730,6 +2862,8 @@ class BrandScoringService:
         *,
         prompt_group_count: int = 0,
     ) -> int:
+        # Internal helper for format infographic density score; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         word_count = int(page_review.get("word_count") or 0)
         density_score = float(visual_review.get("density_score") or 70.0)
         if word_count == 0:
@@ -2746,6 +2880,8 @@ class BrandScoringService:
 
     @classmethod
     def _format_infographic_proof_score(cls, generated_payload: dict[str, Any] | None, combined_excerpt: str) -> int:
+        # Internal helper for format infographic proof score; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         text_parts: list[str] = [combined_excerpt]
         if isinstance(generated_payload, dict):
             for key in ("body", "headline", "proof_points", "stat_highlights", "supporting_line"):
@@ -2770,6 +2906,8 @@ class BrandScoringService:
         *,
         prompt_group_count: int = 0,
     ) -> int:
+        # Internal helper for format infographic section score; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         text_boxes = int(page_review.get("text_box_count") or 0)
         hierarchy = float(visual_review.get("hierarchy_score") or 70.0)
         balance = float(visual_review.get("page_balance_score") or 70.0)
@@ -2789,6 +2927,8 @@ class BrandScoringService:
 
     @classmethod
     def _format_prompt_group_match_count(cls, prompt_groups: list[dict[str, Any]], combined_text: str) -> int:
+        # Internal helper for format prompt group match count; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not prompt_groups or not combined_text.strip():
             return 0
         observed_blob = cls._prompt_match_text(combined_text)
@@ -2802,6 +2942,8 @@ class BrandScoringService:
         *,
         format_name: str,
     ) -> int:
+        # Internal helper for format prompt coverage score; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not prompt_groups:
             return 78
         observed_blob = cls._prompt_match_text(combined_text)
@@ -2837,6 +2979,8 @@ class BrandScoringService:
 
     @staticmethod
     def _metric_phrase(label: str) -> str:
+        # Internal helper for metric phrase; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         return label.replace("_", " ")
 
     @classmethod
@@ -2847,6 +2991,8 @@ class BrandScoringService:
         visual_review: dict[str, Any],
         tone_feedback: dict[str, Any],
     ) -> str:
+        # Internal helper for on brand summary; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         text_brand = float(
             (
                 tone_feedback.get("persuasion_dimensions")
@@ -2896,6 +3042,8 @@ class BrandScoringService:
         output_assets: list[dict[str, Any]],
         generated_payload: dict[str, Any] | None = None,
     ) -> str:
+        # Internal helper for prompt adherence summary; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         format_score = cls._format_fit_score(
             prompt=prompt,
             studio_panel=studio_panel,
@@ -2904,6 +3052,8 @@ class BrandScoringService:
             generated_payload=generated_payload,
         )
         missing_terms: list[str] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for page in visual_review.get("page_reviews") or []:
             if not isinstance(page, dict):
                 continue
@@ -2931,6 +3081,8 @@ class BrandScoringService:
         *,
         tone_feedback: dict[str, Any],
     ) -> str:
+        # Internal helper for relevance summary; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         dimensions = (
             tone_feedback.get("persuasion_dimensions")
             if isinstance(tone_feedback.get("persuasion_dimensions"), dict)
@@ -2962,6 +3114,8 @@ class BrandScoringService:
 
     @classmethod
     def _prompt_topic_tokens(cls, prompt: str, *, limit: int = 12) -> list[str]:
+        # Internal helper for prompt topic tokens; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         tokens: list[str] = []
         seen: set[str] = set()
         normalized_prompt = cls._prompt_match_text(prompt)
@@ -2977,6 +3131,8 @@ class BrandScoringService:
 
     @staticmethod
     def _extract_brand_name_tokens(brand_context: dict[str, Any]) -> list[str]:
+        # Internal helper for extract brand name tokens; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         tokens: list[str] = []
         for candidate in (
             brand_context.get("brand_name"),
@@ -2990,10 +3146,14 @@ class BrandScoringService:
 
     @staticmethod
     def _extract_brand_palette_hexes(brand_context: dict[str, Any]) -> list[str]:
+        # Internal helper for extract brand palette hexes; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         results: list[str] = []
         seen: set[str] = set()
 
         def visit(value: Any) -> None:
+            # Runs the visit service flow by coordinating repositories, validators, and integrations, then
+            # returns domain data.
             if isinstance(value, dict):
                 for key, nested in value.items():
                     if key in {"hex", "hex_code"}:
@@ -3022,13 +3182,19 @@ class BrandScoringService:
 
     @classmethod
     def _normalized_signal(cls, value: Any) -> str:
+        # Internal helper for normalized signal; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         return " ".join(re.findall(r"[A-Za-z0-9]+", str(value or "").strip().lower()))
 
     @classmethod
     def _normalized_signal_list(cls, values: Any, *, limit: int = 12) -> list[str]:
+        # Internal helper for normalized signal list; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         items: list[str] = []
 
         def visit(value: Any) -> None:
+            # Runs the visit service flow by coordinating repositories, validators, and integrations, then
+            # returns domain data.
             if len(items) >= limit:
                 return
             if isinstance(value, str):
@@ -3053,6 +3219,8 @@ class BrandScoringService:
 
     @classmethod
     def _string_alignment_score(cls, observed: Any, expected_values: list[str]) -> int:
+        # Internal helper for string alignment score; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         expected = [item for item in (cls._normalized_signal_list(expected_values, limit=12)) if item]
         if not expected:
             return 70
@@ -3076,6 +3244,8 @@ class BrandScoringService:
 
     @classmethod
     def _set_alignment_score(cls, observed_values: set[str], expected_values: set[str]) -> int:
+        # Internal helper for alignment score; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if not expected_values:
             return 70
         if not observed_values:
@@ -3089,6 +3259,8 @@ class BrandScoringService:
 
     @classmethod
     def _expected_visual_identity(cls, brand_context: dict[str, Any]) -> dict[str, Any]:
+        # Internal helper for expected visual IDentity; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         visual_identity = brand_context.get("visual_identity") if isinstance(brand_context.get("visual_identity"), dict) else {}
         voice_tone = brand_context.get("voice_tone") if isinstance(brand_context.get("voice_tone"), dict) else {}
         typography_preferences = (
@@ -3154,6 +3326,8 @@ class BrandScoringService:
 
     @classmethod
     def _reference_style_profile(cls, reference_assets: list[dict[str, Any]]) -> dict[str, Any]:
+        # Internal helper for reference style profile; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         design_styles: list[str] = []
         visual_moods: list[str] = []
         composition_styles: list[str] = []
@@ -3164,6 +3338,8 @@ class BrandScoringService:
         font_families: list[str] = []
         motif_keys: set[str] = set()
 
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for asset in reference_assets:
             if not isinstance(asset, dict):
                 continue
@@ -3209,6 +3385,8 @@ class BrandScoringService:
         design_style: str,
         composition_style: str,
     ) -> int:
+        # Internal helper for style alignment score; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         expected = cls._expected_visual_identity(brand_context)
         scores = []
         if expected["design_styles"]:
@@ -3221,6 +3399,8 @@ class BrandScoringService:
 
     @classmethod
     def _mood_alignment_score(cls, *, brand_context: dict[str, Any], visual_mood: str) -> int:
+        # Internal helper for mood alignment score; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         expected = cls._expected_visual_identity(brand_context)
         if not expected["visual_moods"]:
             return 70
@@ -3234,6 +3414,8 @@ class BrandScoringService:
         typography_dna: dict[str, Any],
         font_families: list[str],
     ) -> int:
+        # Internal helper for typography alignment score; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         expected = cls._expected_visual_identity(brand_context)
         scores = []
         if expected["heading_styles"]:
@@ -3262,6 +3444,8 @@ class BrandScoringService:
         brand_context: dict[str, Any],
         component_motifs: dict[str, Any],
     ) -> int:
+        # Internal helper for motif alignment score; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         expected = cls._expected_visual_identity(brand_context)
         observed = {
             cls._normalized_signal(str(key).replace("_", " "))
@@ -3282,6 +3466,8 @@ class BrandScoringService:
         component_motifs: dict[str, Any],
         font_families: list[str],
     ) -> int:
+        # Internal helper for reference similarity score; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not reference_style_profile:
             return 70
         scores = []
@@ -3304,6 +3490,8 @@ class BrandScoringService:
             for item in (reference_style_profile.get("font_families") or [])
             if cls._normalized_signal(item)
         }
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if reference_fonts:
             observed_fonts = {
                 cls._normalized_signal(item)
@@ -3316,6 +3504,8 @@ class BrandScoringService:
             for item in (reference_style_profile.get("motif_keys") or set())
             if cls._normalized_signal(item)
         }
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if reference_motifs:
             observed_motifs = {
                 cls._normalized_signal(str(key).replace("_", " "))
@@ -3329,6 +3519,8 @@ class BrandScoringService:
 
     @staticmethod
     def _read_visual_analysis_path(analysis_path: str) -> dict[str, Any]:
+        # Internal helper for read visual analysis path; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not analysis_path:
             return {}
         path = Path(analysis_path)
@@ -3341,6 +3533,8 @@ class BrandScoringService:
         return parsed if isinstance(parsed, dict) else {}
 
     def _read_visual_analysis_for_image_path(self, image_path: str) -> dict[str, Any]:
+        # Internal helper for read visual analysis for image path; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         image = Path(image_path)
         direct = image.with_name(f"{image.stem}_analysis.json")
         analysis = self._read_visual_analysis_path(str(direct))
@@ -3354,6 +3548,8 @@ class BrandScoringService:
 
     @staticmethod
     def _image_canvas_size(image_path: str) -> tuple[int, int] | None:
+        # Internal helper for image canvas size; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         try:
             with Image.open(image_path) as image:
                 return int(image.width or 0), int(image.height or 0)
@@ -3362,6 +3558,8 @@ class BrandScoringService:
 
     @classmethod
     def _prompt_term_diagnostics(cls, expected_prompt: str, observed_text: str, labels: list[str]) -> tuple[list[str], list[str]]:
+        # Internal helper for prompt term diagnostics; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         semantic_groups = cls._prompt_semantic_groups(expected_prompt)
         observed_blob = cls._prompt_match_text(f"{observed_text} {' '.join(labels)}")
         matched: list[str] = []
@@ -3385,11 +3583,15 @@ class BrandScoringService:
 
     @classmethod
     def _prompt_semantic_groups(cls, prompt: str) -> list[dict[str, Any]]:
+        # Internal helper for prompt semantic groups; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         prompt_text = cls._prompt_match_text(prompt)
         groups: list[dict[str, Any]] = []
         seen: set[str] = set()
 
         def add_group(label: str, aliases: tuple[str, ...], weight: float) -> None:
+            # Runs the group service flow by coordinating repositories, validators, and integrations, then
+            # returns domain data.
             normalized_label = cls._normalized_signal(label)
             if not normalized_label or normalized_label in seen:
                 return
@@ -3427,6 +3629,8 @@ class BrandScoringService:
 
     @classmethod
     def _semantic_group_matches(cls, group: dict[str, Any], observed_blob: str) -> bool:
+        # Internal helper for semantic group matches; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         aliases = tuple(str(alias).strip().lower() for alias in (group.get("aliases") or ()) if str(alias).strip())
         if not aliases:
             return False
@@ -3453,6 +3657,8 @@ class BrandScoringService:
 
     @classmethod
     def _context_alignment_score(cls, context_reference: str, observed_text: str) -> int:
+        # Internal helper for context alignment score; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         semantic_groups = cls._prompt_semantic_groups(context_reference)
         observed_blob = cls._prompt_match_text(observed_text)
         if semantic_groups:
@@ -3479,6 +3685,8 @@ class BrandScoringService:
         canvas_width: int,
         canvas_height: int,
     ) -> dict[str, Any]:
+        # Internal helper for layout region diagnostics; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if canvas_width <= 0 or canvas_height <= 0:
             return {
                 "edge_crowding_count": 0,
@@ -3493,6 +3701,8 @@ class BrandScoringService:
         edge_crowding_count = 0
         margin_x = canvas_width * 0.05
         margin_y = canvas_height * 0.05
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for entry in structured_text:
             bbox = entry.get("bounding_box") if isinstance(entry.get("bounding_box"), dict) else {}
             x = int(bbox.get("x", bbox.get("left", 0)) or 0)
@@ -3536,6 +3746,8 @@ class BrandScoringService:
 
     @staticmethod
     def _hierarchy_score(*, hierarchy_signal: float, headline_prominence: float) -> int:
+        # Internal helper for hierarchy score; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         score = 100.0
         if hierarchy_signal < 1.2:
             score -= 26.0
@@ -3551,6 +3763,8 @@ class BrandScoringService:
 
     @staticmethod
     def _crowding_score(*, text_box_count: int, edge_crowding_count: int, overlap_count: int, text_coverage_ratio: float) -> int:
+        # Internal helper for crowding score; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         score = 100.0
         if text_box_count > 8:
             score -= min((text_box_count - 8) * 4.0, 18.0)
@@ -3564,6 +3778,8 @@ class BrandScoringService:
 
     @staticmethod
     def _page_balance_score(vertical_distribution: dict[str, int]) -> int:
+        # Internal helper for page balance score; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         counts = [int(vertical_distribution.get(key) or 0) for key in ("top", "middle", "bottom")]
         total = sum(counts)
         if total <= 1:
@@ -3586,6 +3802,8 @@ class BrandScoringService:
         page_balance_score: int,
         missing_prompt_terms: list[str],
     ) -> list[str]:
+        # Internal helper for page findings; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         findings: list[str] = []
         if prompt_alignment_score < 60 and missing_prompt_terms:
             findings.append(f"Important prompt themes seem underrepresented: {', '.join(missing_prompt_terms[:4])}.")
@@ -3608,6 +3826,8 @@ class BrandScoringService:
         *,
         use_semantic_groups: bool = True,
     ) -> int:
+        # Internal helper for prompt alignment score; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         prompt_tokens = set(cls._prompt_topic_tokens(expected_prompt))
         if not prompt_tokens:
             return 100
@@ -3619,6 +3839,8 @@ class BrandScoringService:
             return max(0, min(100, int(round(token_score))))
 
         semantic_groups = cls._prompt_semantic_groups(expected_prompt)
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if semantic_groups:
             observed_blob = cls._prompt_match_text(f"{observed_text} {' '.join(labels)}")
             total_weight = sum(float(group.get("weight") or 1.0) for group in semantic_groups) or 1.0
@@ -3635,6 +3857,8 @@ class BrandScoringService:
 
     @staticmethod
     def _layout_readability_score(*, word_count: int, line_count: int, text_box_count: int, hierarchy_signal: float) -> int:
+        # Internal helper for layout readability score; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         score = 100.0
         if word_count > 90:
             score -= min((word_count - 90) * 0.7, 35.0)
@@ -3652,6 +3876,8 @@ class BrandScoringService:
 
     @staticmethod
     def _density_score(*, word_count: int, text_box_count: int, box_area: int) -> int:
+        # Internal helper for density score; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         score = 100.0
         if word_count > 75:
             score -= min((word_count - 75) * 0.9, 40.0)
@@ -3675,6 +3901,8 @@ class BrandScoringService:
         motif_alignment_score: int,
         reference_similarity_score: int,
     ) -> int:
+        # Internal helper for brand alignment score; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         base_score = 70.0
         brand_name_tokens = cls._extract_brand_name_tokens(brand_context)
         observed_tokens = set(cls._prompt_topic_tokens(f"{observed_text} {' '.join(labels)}", limit=24))
@@ -3704,6 +3932,8 @@ class BrandScoringService:
 
     @classmethod
     def _categorical_consistency_score(cls, values: list[str]) -> int:
+        # Internal helper for categorical consistency score; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         normalized = [cls._normalized_signal(value) for value in values if cls._normalized_signal(value)]
         if not normalized:
             return 75
@@ -3717,6 +3947,8 @@ class BrandScoringService:
 
     @classmethod
     def _motif_consistency_score(cls, motif_lists: list[set[str]]) -> int:
+        # Internal helper for motif consistency score; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         normalized_sets = [item for item in motif_lists if item]
         if not normalized_sets:
             return 75
@@ -3735,6 +3967,8 @@ class BrandScoringService:
 
     @classmethod
     def _aesthetic_consistency_score(cls, page_reviews: list[dict[str, Any]]) -> int:
+        # Internal helper for aesthetic consistency score; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not page_reviews:
             return 75
         return int(
@@ -3775,6 +4009,8 @@ class BrandScoringService:
 
     @staticmethod
     def _average_visual_metric(page_reviews: list[dict[str, Any]], field: str) -> int:
+        # Internal helper for average visual metric; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         values = [
             float(page.get(field) or 0.0)
             for page in page_reviews
@@ -3786,6 +4022,8 @@ class BrandScoringService:
 
     @staticmethod
     def _visual_findings_from_pages(page_reviews: list[dict[str, Any]], *, expected_prompt: str) -> list[str]:
+        # Internal helper for visual findings from pages; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         findings: list[str] = []
         low_alignment = [page["page_index"] for page in page_reviews if int(page.get("prompt_alignment_score") or 0) < 50]
         if low_alignment:
@@ -3832,6 +4070,8 @@ class BrandScoringService:
         *,
         asset_kind: str,
     ) -> list[dict[str, Any]]:
+        # Internal helper for document segments from page reviews; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if asset_kind not in {"document", "presentation", "image"}:
             return []
         segments: list[dict[str, Any]] = []
@@ -3854,6 +4094,8 @@ class BrandScoringService:
 
     @staticmethod
     def _region_overview_from_pages(page_reviews: list[dict[str, Any]]) -> dict[str, Any]:
+        # Internal helper for region overview from pages; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         overview = {
             "dominant_regions": [],
             "top_region_count": 0,
@@ -3891,6 +4133,8 @@ class BrandScoringService:
         brand_context: dict[str, Any],
         reference_style_profile: dict[str, Any],
     ) -> dict[str, Any]:
+        # Internal helper for visual page review; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         labels = [
             str(item.get("desc") or "").strip()
             for item in (analysis.get("labels") or [])
@@ -3932,6 +4176,8 @@ class BrandScoringService:
         line_count = max(len([line for line in observed_text.splitlines() if line.strip()]), 1) if observed_text else 0
         box_heights: list[int] = []
         box_area = 0
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for entry in structured_text:
             bbox = entry.get("bounding_box") if isinstance(entry.get("bounding_box"), dict) else {}
             width = int(bbox.get("w", bbox.get("width", 0)) or 0)
@@ -4084,7 +4330,11 @@ class BrandScoringService:
         observed_text: str,
         warning_count: int,
     ) -> int:
+        # Internal helper for ocr confidence score; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         confidence_values: list[float] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for entry in structured_text:
             raw = entry.get("confidence", entry.get("score"))
             try:
@@ -4094,6 +4344,8 @@ class BrandScoringService:
             if value <= 1.0:
                 value *= 100.0
             confidence_values.append(max(0.0, min(100.0, value)))
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if confidence_values:
             base = sum(confidence_values) / max(len(confidence_values), 1)
         else:
@@ -4113,11 +4365,14 @@ class BrandScoringService:
 
     @classmethod
     def _visual_review_report(cls, asset_review_blocks: list[dict[str, Any]]) -> dict[str, Any]:
+        # Internal helper for visual review report; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         visual_blocks = [
             block
             for block in asset_review_blocks
             if isinstance(block.get("visual_review"), dict) and block.get("visual_review")
         ]
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if not visual_blocks:
             return {
                 "asset_count": 0,
@@ -4159,6 +4414,8 @@ class BrandScoringService:
                 if text and text not in findings:
                     findings.append(text)
         def avg(field: str) -> int:
+            # Runs the avg service flow by coordinating repositories, validators, and integrations, then returns
+            # domain data.
             return max(
                 0,
                 min(

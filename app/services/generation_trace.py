@@ -1,3 +1,4 @@
+# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
 from datetime import datetime
@@ -11,6 +12,8 @@ from app.core.config import BASE_DIR, get_settings
 
 
 class GenerationTraceService:
+    # Business layer for generation trace; routes and workers pass validated inputs here and receive domain
+    # results back.
     BRAND_USAGE_DIRNAME = "Brand usage"
     READABLE_VISUAL_TRACE_DIRNAME = "readable_generation_traces"
     MOJIBAKE_TOKENS = (
@@ -40,6 +43,7 @@ class GenerationTraceService:
     )
 
     def __init__(self, base_dir: str | Path | None = None, enabled: bool | None = None) -> None:
+        # Wires the repositories and helper services this workflow reuses across its public methods.
         settings = get_settings()
         self.settings = settings
         self.enabled = settings.generation_trace_enabled if enabled is None else enabled
@@ -52,6 +56,8 @@ class GenerationTraceService:
         ]
 
     def _write_debug_record(self, event: str, payload: dict[str, Any]) -> None:
+        # Internal helper for write debug record; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         record = {
             "timestamp": datetime.now().isoformat(),
             "event": event,
@@ -68,6 +74,8 @@ class GenerationTraceService:
                 continue
 
     def write_debug_event(self, event: str, payload: dict[str, Any] | None = None) -> None:
+        # Runs the write debug event service flow by coordinating repositories, validators, and integrations,
+        # then returns domain data.
         self._write_debug_record(
             event,
             {
@@ -79,6 +87,8 @@ class GenerationTraceService:
 
     @classmethod
     def _repair_encoding_noise(cls, value: str) -> str:
+        # Internal helper for repair encoding noise; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         text = value or ""
         if not any(token in text for token in cls.MOJIBAKE_TOKENS):
             return text
@@ -103,6 +113,8 @@ class GenerationTraceService:
 
     @classmethod
     def _sanitize_payload(cls, payload: Any) -> Any:
+        # Internal helper for sanitize payload; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if isinstance(payload, str):
             return cls._repair_encoding_noise(payload)
         if isinstance(payload, dict):
@@ -118,6 +130,8 @@ class GenerationTraceService:
 
     @staticmethod
     def _slug(value: str, limit: int = 56) -> str:
+        # Internal helper for slug; it keeps the public service method focused on orchestration instead of low-
+        # level shaping.
         normalized = re.sub(r"[^a-zA-Z0-9]+", "-", str(value or "").strip()).strip("-").lower()
         return normalized[:limit] or "generation"
 
@@ -130,6 +144,8 @@ class GenerationTraceService:
         session_id: Any = None,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, str] | None:
+        # Runs the start trace service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         if not self.enabled:
             self.write_debug_event(
                 "trace.start.skipped",
@@ -155,6 +171,8 @@ class GenerationTraceService:
             "session_id": str(session_id) if session_id else None,
             "metadata": metadata or {},
         }
+        # Keeps the risky I/O or integration boundary contained so callers receive project-level errors
+        # instead of raw library failures.
         try:
             trace_dir.mkdir(parents=True, exist_ok=True)
             self.write_payload(trace_id, "manifest", manifest)
@@ -190,15 +208,23 @@ class GenerationTraceService:
         return {"trace_id": trace_id, "trace_dir": str(trace_dir)}
 
     def trace_dir(self, trace_id: str) -> Path:
+        # Runs the trace dir service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         return self.base_dir / str(trace_id)
 
     def brand_usage_dir(self) -> Path:
+        # Runs the brand usage dir service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         return self.base_dir / self.BRAND_USAGE_DIRNAME
 
     def readable_visual_trace_dir(self, trace_id: str) -> Path:
+        # Runs the readable visual trace dir service flow by coordinating repositories, validators, and
+        # integrations, then returns domain data.
         return self.readable_visual_trace_base_dir / str(trace_id)
 
     def _write_json_file(self, file_path: Path, payload: Any) -> str | None:
+        # Internal helper for write json file; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         try:
             file_path.parent.mkdir(parents=True, exist_ok=True)
             sanitized_payload = self._sanitize_payload(payload)
@@ -219,6 +245,8 @@ class GenerationTraceService:
         return str(file_path)
 
     def _read_json_file(self, file_path: Path) -> Any:
+        # Internal helper for read json file; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         try:
             return json.loads(file_path.read_text(encoding="utf-8"))
         except Exception:
@@ -226,12 +254,16 @@ class GenerationTraceService:
 
     @staticmethod
     def _compact_list(value: Any, *, limit: int = 5) -> list[Any]:
+        # Internal helper for compact list; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         if not isinstance(value, list):
             return []
         return value[: max(limit, 0)]
 
     @classmethod
     def _compact_generation_asset(cls, asset: Any) -> Any:
+        # Internal helper for compact generation asset; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not isinstance(asset, dict):
             return asset
         metadata = asset.get("metadata") if isinstance(asset.get("metadata"), dict) else {}
@@ -254,6 +286,8 @@ class GenerationTraceService:
             )
             if metadata.get(key) not in (None, "", [], {})
         }
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for key in ("quality_assessment", "output_quality_assessment"):
             report = metadata.get(key)
             if isinstance(report, dict):
@@ -271,6 +305,8 @@ class GenerationTraceService:
 
     @classmethod
     def _compact_explainability_for_trace(cls, explainability: Any) -> Any:
+        # Internal helper for compact explainability for trace; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not isinstance(explainability, dict):
             return explainability
         compact = {
@@ -312,6 +348,8 @@ class GenerationTraceService:
         if isinstance(final_assets, list):
             compact["final_render_assets"] = [cls._compact_generation_asset(asset) for asset in final_assets[:20]]
         refs = explainability.get("selected_reference_images")
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if isinstance(refs, list):
             compact["selected_reference_images"] = [
                 {
@@ -326,6 +364,8 @@ class GenerationTraceService:
 
     @classmethod
     def _compact_trace_payload_for_file(cls, filename: str, payload: Any) -> Any:
+        # Internal helper for compact trace payload for file; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not isinstance(payload, dict):
             return payload
         name = str(filename or "")
@@ -351,6 +391,8 @@ class GenerationTraceService:
 
     @classmethod
     def _compact_brand_usage_report(cls, report: dict[str, Any]) -> dict[str, Any]:
+        # Internal helper for compact brand usage report; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         compact = dict(report)
         for key in (
             "section_payloads",
@@ -372,6 +414,8 @@ class GenerationTraceService:
         return compact
 
     def _write_text_file(self, file_path: Path, text: str) -> str | None:
+        # Internal helper for write text file; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         try:
             file_path.parent.mkdir(parents=True, exist_ok=True)
             sanitized_text = self._repair_encoding_noise(str(text or "").strip())
@@ -389,6 +433,8 @@ class GenerationTraceService:
         return str(file_path)
 
     def write_payload(self, trace_id: str | None, filename: str, payload: Any) -> str | None:
+        # Runs the write payload service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         if not self.enabled or not trace_id:
             if trace_id:
                 self.write_debug_event(
@@ -415,11 +461,15 @@ class GenerationTraceService:
 
     @staticmethod
     def _estimated_token_count(value: Any) -> int:
+        # Internal helper for estimated token count; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
         return max(0, (len(str(text or "")) + 3) // 4)
 
     @staticmethod
     def _trace_phase_from_filename(filename: str) -> str:
+        # Internal helper for trace phase from filename; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         name = str(filename or "").removesuffix(".json")
         if name.startswith("research_summary"):
             return "research_summary"
@@ -445,6 +495,8 @@ class GenerationTraceService:
 
     @classmethod
     def _usage_kind(cls, usage: dict[str, Any], *, phase: str = "") -> str:
+        # Internal helper for usage kind; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         operation = str(usage.get("operation") or "").casefold()
         model = str(usage.get("model") or "").casefold()
         phase_text = str(phase or "").casefold()
@@ -459,6 +511,8 @@ class GenerationTraceService:
 
     @classmethod
     def _normalize_provider_usage(cls, usage: Any, *, source_file: str, phase: str) -> dict[str, Any] | None:
+        # Internal helper for provider usage; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if not isinstance(usage, dict) or not usage:
             return None
         input_tokens = usage.get("input_tokens", usage.get("prompt_tokens"))
@@ -504,6 +558,8 @@ class GenerationTraceService:
         phase: str,
         records: list[dict[str, Any]],
     ) -> None:
+        # Internal helper for collect provider usage records; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if isinstance(node, dict):
             if isinstance(node.get("provider_usage"), dict):
                 usage = cls._normalize_provider_usage(node.get("provider_usage"), source_file=source_file, phase=phase)
@@ -526,6 +582,8 @@ class GenerationTraceService:
 
     @classmethod
     def _prompt_input_tokens_from_payload(cls, payload: Any) -> int:
+        # Internal helper for prompt input tokens from payload; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not isinstance(payload, dict):
             return 0
         prompt = payload.get("prompt") if isinstance(payload.get("prompt"), dict) else payload
@@ -535,9 +593,13 @@ class GenerationTraceService:
 
     @classmethod
     def _estimated_usage_records_from_trace_payloads(cls, trace_dir: Path) -> list[dict[str, Any]]:
+        # Internal helper for estimated usage records from trace payloads; it keeps the public service method
+        # focused on orchestration instead of low-level shaping.
         records: list[dict[str, Any]] = []
 
         def _load_json(path: Path) -> Any:
+            # Internal helper for load json; it keeps the public service method focused on orchestration instead
+            # of low-level shaping.
             try:
                 return json.loads(path.read_text(encoding="utf-8"))
             except Exception:
@@ -547,6 +609,8 @@ class GenerationTraceService:
             "message_strategy_prompt.json": "message_strategy_response.json",
             "planning_prompt.json": "planning_response.json",
         }
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for prompt_file, response_file in response_pairs.items():
             prompt_path = trace_dir / prompt_file
             response_path = trace_dir / response_file
@@ -563,6 +627,8 @@ class GenerationTraceService:
                     "output_tokens": cls._estimated_token_count(_load_json(response_path)) if response_path.exists() else 0,
                 }
             )
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for path in sorted(trace_dir.glob("research_summary_prompt.json")):
             records.append(
                 {
@@ -574,6 +640,8 @@ class GenerationTraceService:
                     "output_tokens": 0,
                 }
             )
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for path in sorted(list(trace_dir.glob("repair_*.json")) + list(trace_dir.glob("quality_retry_*.json")) + list(trace_dir.glob("fresh_replan_*.json")) + list(trace_dir.glob("content_semantic_repair_*.json"))):
             payload = _load_json(path)
             if not isinstance(payload, dict):
@@ -592,15 +660,21 @@ class GenerationTraceService:
 
     @classmethod
     def _estimated_image_call_records_from_trace_payloads(cls, trace_dir: Path) -> list[dict[str, Any]]:
+        # Internal helper for estimated image call records from trace payloads; it keeps the public service
+        # method focused on orchestration instead of low-level shaping.
         records: list[dict[str, Any]] = []
 
         def _load_json(path: Path) -> Any:
+            # Internal helper for load json; it keeps the public service method focused on orchestration instead
+            # of low-level shaping.
             try:
                 return json.loads(path.read_text(encoding="utf-8"))
             except Exception:
                 return None
 
         image_generation = trace_dir / "image_generation.json"
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if image_generation.exists():
             payload = _load_json(image_generation)
             records.append(
@@ -615,6 +689,8 @@ class GenerationTraceService:
             )
         final_render = trace_dir / "final_render_generation.json"
         payload = _load_json(final_render) if final_render.exists() else None
+        # The payload/context shape drives this branch because downstream serializers depend on consistent
+        # fields.
         if isinstance(payload, dict):
             assets = payload.get("assets")
             call_count = len(assets) if isinstance(assets, list) else int(payload.get("slide_count") or 0)
@@ -631,6 +707,8 @@ class GenerationTraceService:
         return records
 
     def build_cost_estimation(self, trace_id: str | None) -> dict[str, Any] | None:
+        # Runs the cost estimation service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         if not self.enabled or not trace_id or not self.settings.generation_cost_estimation_enabled:
             return None
         trace_dir = self.trace_dir(trace_id)
@@ -655,6 +733,8 @@ class GenerationTraceService:
             self._collect_provider_usage_records(payload, source_file=path.name, phase=phase, records=exact_records)
         deduped_exact: list[dict[str, Any]] = []
         seen: set[tuple[Any, ...]] = set()
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for record in exact_records:
             key = (
                 str(record.get("phase")),
@@ -688,6 +768,8 @@ class GenerationTraceService:
             "estimated_usd": 0.0,
         }
         by_phase: dict[str, dict[str, Any]] = {}
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for record in records:
             phase = str(record.get("phase") or "unknown")
             phase_total = by_phase.setdefault(
@@ -776,12 +858,16 @@ class GenerationTraceService:
         return payload
 
     def write_cost_estimation(self, trace_id: str | None) -> str | None:
+        # Runs the write cost estimation service flow by coordinating repositories, validators, and
+        # integrations, then returns domain data.
         payload = self.build_cost_estimation(trace_id)
         if not payload:
             return None
         return self.write_payload(trace_id, "cost_estimation", payload)
 
     def append_event(self, trace_id: str | None, event: str, payload: Any | None = None) -> str | None:
+        # Runs the append event service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         if not self.enabled or not trace_id:
             return None
         target = self.trace_dir(trace_id)
@@ -812,6 +898,8 @@ class GenerationTraceService:
 
     @staticmethod
     def _has_meaningful_value(value: Any) -> bool:
+        # Internal helper for has meaningful value; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if value is None:
             return False
         if isinstance(value, str):
@@ -824,6 +912,8 @@ class GenerationTraceService:
 
     @classmethod
     def _value_preview(cls, value: Any, *, limit: int = 180) -> Any:
+        # Internal helper for value preview; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         if isinstance(value, str):
             text = " ".join(value.split())
             return text[:limit].rstrip(" ,.;:") if len(text) > limit else text
@@ -831,6 +921,8 @@ class GenerationTraceService:
             return value
         if isinstance(value, (int, float)):
             return value
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if isinstance(value, dict):
             preview: dict[str, Any] = {}
             for key, item in value.items():
@@ -842,6 +934,8 @@ class GenerationTraceService:
                 if len(preview) >= 4:
                     break
             return preview
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if isinstance(value, (list, tuple, set)):
             items: list[Any] = []
             for item in value:
@@ -861,13 +955,19 @@ class GenerationTraceService:
         prefix: str = "",
         limit: int = 18,
     ) -> list[dict[str, Any]]:
+        # Internal helper for collect field previews; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if limit <= 0 or not cls._has_meaningful_value(value):
             return []
         records: list[dict[str, Any]] = []
 
         def visit(candidate: Any, path: str) -> None:
+            # Runs the visit service flow by coordinating repositories, validators, and integrations, then
+            # returns domain data.
             if len(records) >= limit or not cls._has_meaningful_value(candidate):
                 return
+            # This branch separates the special case from the normal path so later logic can work with cleaner
+            # assumptions.
             if isinstance(candidate, dict):
                 for key, item in candidate.items():
                     next_path = f"{path}.{key}" if path else str(key)
@@ -875,6 +975,8 @@ class GenerationTraceService:
                     if len(records) >= limit:
                         break
                 return
+            # This branch separates the special case from the normal path so later logic can work with cleaner
+            # assumptions.
             if isinstance(candidate, (list, tuple, set)):
                 if not candidate:
                     return
@@ -909,6 +1011,8 @@ class GenerationTraceService:
 
     @classmethod
     def _value_at_path(cls, value: Any, path: str) -> Any:
+        # Internal helper for value at path; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         current = value
         for match in re.finditer(r"([^[.\]]+)|\[(\d+)\]", str(path or "")):
             dict_key = match.group(1)
@@ -933,6 +1037,8 @@ class GenerationTraceService:
         *,
         limit: int = 18,
     ) -> list[dict[str, Any]]:
+        # Internal helper for collect path previews; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         previews: list[dict[str, Any]] = []
         seen: set[str] = set()
         for raw_path in paths:
@@ -957,6 +1063,8 @@ class GenerationTraceService:
 
     @classmethod
     def _asset_summary(cls, asset: dict[str, Any]) -> dict[str, Any]:
+        # Internal helper for asset summary; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         metadata = asset.get("metadata") if isinstance(asset.get("metadata"), dict) else {}
         source_metadata = metadata.get("source_metadata") if isinstance(metadata.get("source_metadata"), dict) else {}
         normalized_metadata = metadata.get("normalized_metadata") if isinstance(metadata.get("normalized_metadata"), dict) else {}
@@ -977,6 +1085,8 @@ class GenerationTraceService:
 
     @classmethod
     def _asset_content_summary(cls, asset: dict[str, Any]) -> dict[str, Any]:
+        # Internal helper for asset content summary; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         metadata = asset.get("metadata") if isinstance(asset.get("metadata"), dict) else {}
         source_metadata = metadata.get("source_metadata") if isinstance(metadata.get("source_metadata"), dict) else {}
         normalized_metadata = metadata.get("normalized_metadata") if isinstance(metadata.get("normalized_metadata"), dict) else {}
@@ -994,6 +1104,8 @@ class GenerationTraceService:
 
     @staticmethod
     def _evidence(stage: str, artifact: str, usage_type: str, details: str | None = None) -> dict[str, Any]:
+        # Internal helper for evidence; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         payload = {
             "stage": stage,
             "artifact": artifact,
@@ -1017,6 +1129,8 @@ class GenerationTraceService:
         logo_selection: dict[str, Any] | None,
         selected_template: dict[str, Any],
     ) -> list[dict[str, Any]]:
+        # Internal helper for section usage evidence; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         evidence: list[dict[str, Any]] = []
         copy_brief = compiled_context.get("brand_copy_brief") if isinstance(compiled_context.get("brand_copy_brief"), dict) else {}
         visual_brief = compiled_context.get("brand_visual_brief") if isinstance(compiled_context.get("brand_visual_brief"), dict) else {}
@@ -1040,6 +1154,8 @@ class GenerationTraceService:
         content_plan = compiled_context.get("content_plan") if isinstance(compiled_context.get("content_plan"), dict) else {}
         visual_plan = compiled_context.get("visual_plan") if isinstance(compiled_context.get("visual_plan"), dict) else {}
 
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if section_code in {"identity", "foundations", "voice_tone", "guardrails"} and cls._has_meaningful_value(copy_brief):
             evidence.append(
                 cls._evidence(
@@ -1049,6 +1165,8 @@ class GenerationTraceService:
                     "Copy guidance is compiled from this section for downstream text generation.",
                 )
             )
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if section_code in {"personas", "knowledge"} and cls._has_meaningful_value(audience_brief):
             evidence.append(
                 cls._evidence(
@@ -1058,6 +1176,8 @@ class GenerationTraceService:
                     "Audience and persona guidance is compiled before strategy and copy planning.",
                 )
             )
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if section_code == "personas" and cls._has_meaningful_value(copy_brief):
             evidence.append(
                 cls._evidence(
@@ -1204,11 +1324,15 @@ class GenerationTraceService:
 
     @staticmethod
     def _source_access_summary(input_access_summary: dict[str, Any], source_name: str) -> dict[str, Any]:
+        # Internal helper for source access summary; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         source_summary = input_access_summary.get(source_name)
         return source_summary if isinstance(source_summary, dict) else {}
 
     @staticmethod
     def _relative_access_paths(paths: list[str], prefix: str) -> list[str]:
+        # Internal helper for relative access paths; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         relative: list[str] = []
         normalized_prefix = str(prefix or "").strip()
         dotted_prefix = f"{normalized_prefix}."
@@ -1229,6 +1353,8 @@ class GenerationTraceService:
         section_code: str,
         input_access_summary: dict[str, Any],
     ) -> dict[str, Any]:
+        # Internal helper for section access snapshot; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if section_code == "personas":
             source_summary = cls._source_access_summary(input_access_summary, "persona_context")
             return {
@@ -1238,6 +1364,8 @@ class GenerationTraceService:
                 "access_types": dict(source_summary.get("access_types") or {}),
                 "events": list(source_summary.get("events") or []),
             }
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if section_code == "objectives":
             source_summary = cls._source_access_summary(input_access_summary, "objective_context")
             return {
@@ -1305,11 +1433,15 @@ class GenerationTraceService:
         logo_candidates: list[dict[str, Any]] | None = None,
         logo_selection: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Runs the brand usage report service flow by coordinating repositories, validators, and integrations,
+        # then returns domain data.
         persona_context = persona_context if isinstance(persona_context, dict) else {}
         objective_context = objective_context if isinstance(objective_context, dict) else {}
         reference_assets = [item for item in (reference_assets or []) if isinstance(item, dict)]
         template_candidates = [item for item in (template_candidates or []) if isinstance(item, dict)]
         template_context = template_context if isinstance(template_context, dict) else {}
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if isinstance(retrieved_knowledge, dict):
             retrieved_knowledge = {
                 str(channel): [item for item in items if isinstance(item, dict)]
@@ -1350,6 +1482,8 @@ class GenerationTraceService:
                 section_keys.append(normalized)
 
         brand_form_data: dict[str, Any] = {}
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for section_code in section_keys:
             if section_code == "personas":
                 raw_section = section_payloads.get(section_code) or persona_context
@@ -1639,6 +1773,8 @@ class GenerationTraceService:
         }
 
     def write_brand_usage_report(self, trace_id: str | None, report: dict[str, Any]) -> str | None:
+        # Runs the write brand usage report service flow by coordinating repositories, validators, and
+        # integrations, then returns domain data.
         if not self.enabled or not trace_id:
             return None
         stored_report = (
@@ -1669,10 +1805,14 @@ class GenerationTraceService:
 
     @staticmethod
     def _normalize_format_name(studio_panel: dict[str, Any] | None) -> str:
+        # Internal helper for format name; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         return str((studio_panel or {}).get("format") or "").strip().lower() or "static"
 
     @staticmethod
     def _dedupe_preserve_order(values: list[Any], *, limit: int = 8) -> list[Any]:
+        # Internal helper for dedupe preserve order; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         deduped: list[Any] = []
         seen: set[str] = set()
         for value in values:
@@ -1687,6 +1827,8 @@ class GenerationTraceService:
 
     @classmethod
     def _is_technical_key(cls, key: str) -> bool:
+        # Internal helper for is technical key; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         text = str(key or "").strip().lower()
         if not text:
             return False
@@ -1716,6 +1858,8 @@ class GenerationTraceService:
 
     @classmethod
     def _path_is_technical(cls, path: str) -> bool:
+        # Internal helper for path is technical; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         text = str(path or "").strip()
         if not text:
             return False
@@ -1724,6 +1868,8 @@ class GenerationTraceService:
 
     @classmethod
     def _top_level_field_names(cls, paths: list[str], *, limit: int = 10) -> list[str]:
+        # Internal helper for top level field names; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         field_names: list[str] = []
         seen: set[str] = set()
         for path in paths:
@@ -1748,8 +1894,12 @@ class GenerationTraceService:
         objective_context: dict[str, Any],
         input_access_summary: dict[str, Any],
     ) -> dict[str, Any]:
+        # Internal helper for brand data used summary; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         summary: dict[str, Any] = {}
         brand_access = cls._source_access_summary(input_access_summary, "brand_context")
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for section_code, section_value in runtime_brand_context.items():
             if not isinstance(section_value, dict):
                 continue
@@ -1772,6 +1922,8 @@ class GenerationTraceService:
 
         persona_access = cls._source_access_summary(input_access_summary, "persona_context")
         persona_used_paths = list(persona_access.get("used_paths") or [])
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if persona_used_paths:
             summary["persona_context"] = {
                 "content_focus": cls._top_level_field_names(persona_used_paths, limit=6),
@@ -1788,6 +1940,8 @@ class GenerationTraceService:
 
         objective_access = cls._source_access_summary(input_access_summary, "objective_context")
         objective_used_paths = list(objective_access.get("used_paths") or [])
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if objective_used_paths:
             summary["objective_context"] = {
                 "content_focus": cls._top_level_field_names(objective_used_paths, limit=6),
@@ -1813,6 +1967,8 @@ class GenerationTraceService:
         persona_context: dict[str, Any],
         objective_context: dict[str, Any],
     ) -> dict[str, Any]:
+        # Internal helper for form data used summary; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         inheritance_policy = request_payload.get("inheritance_policy") if isinstance(request_payload.get("inheritance_policy"), dict) else {}
         active_inheritance = {
             key: value
@@ -1868,6 +2024,8 @@ class GenerationTraceService:
 
     @classmethod
     def _sequence_pack_summary(cls, template_context: dict[str, Any]) -> dict[str, Any]:
+        # Internal helper for sequence pack summary; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         sequence_pack = template_context.get("sequence_pack") if isinstance(template_context.get("sequence_pack"), dict) else {}
         slides = [item for item in (sequence_pack.get("slides") or []) if isinstance(item, dict)]
         if not sequence_pack and not slides:
@@ -1898,6 +2056,8 @@ class GenerationTraceService:
         research_editorial_brief: dict[str, Any],
         explainability: dict[str, Any],
     ) -> dict[str, Any]:
+        # Internal helper for template sample data summary; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         template_context = template_context if isinstance(template_context, dict) else {}
         layout_decision = explainability.get("layout_decision") if isinstance(explainability.get("layout_decision"), dict) else {}
         creative_decision = explainability.get("creative_decision") if isinstance(explainability.get("creative_decision"), dict) else {}
@@ -1937,6 +2097,8 @@ class GenerationTraceService:
 
     @classmethod
     def _validation_summary(cls, explainability: dict[str, Any]) -> dict[str, Any]:
+        # Internal helper for validation summary; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         validation_report = explainability.get("validation_report") if isinstance(explainability.get("validation_report"), dict) else {}
         content_semantic = (
             explainability.get("content_semantic_validation")
@@ -1970,6 +2132,8 @@ class GenerationTraceService:
 
     @classmethod
     def _planning_strategy_output(cls, research_editorial_brief: dict[str, Any]) -> dict[str, Any]:
+        # Internal helper for planning strategy output; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         outline = [
             {
                 "title": str(item.get("title") or "").strip() or None,
@@ -1994,6 +2158,8 @@ class GenerationTraceService:
 
     @classmethod
     def _metadata_structure_summary(cls, metadata: dict[str, Any], format_name: str) -> dict[str, Any]:
+        # Internal helper for metadata structure summary; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         carousel_specs = [item for item in (metadata.get("carousel_slide_specs") or []) if isinstance(item, dict)]
         infographic_specs = [item for item in (metadata.get("infographic_section_specs") or []) if isinstance(item, dict)]
         static_panel_spec = metadata.get("static_panel_spec") if isinstance(metadata.get("static_panel_spec"), dict) else {}
@@ -2016,6 +2182,8 @@ class GenerationTraceService:
         explainability: dict[str, Any],
         format_name: str,
     ) -> dict[str, Any]:
+        # Internal helper for content generation output; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         metadata = generated_payload.get("metadata") if isinstance(generated_payload.get("metadata"), dict) else {}
         message_strategy = explainability.get("message_strategy") if isinstance(explainability.get("message_strategy"), dict) else {}
         return {
@@ -2047,6 +2215,8 @@ class GenerationTraceService:
 
     @classmethod
     def _scene_graph_asset_bindings(cls, scene_graph: dict[str, Any]) -> list[dict[str, Any]]:
+        # Internal helper for scene graph asset bindings; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         bindings: list[dict[str, Any]] = []
         for element in (scene_graph.get("elements") or []) if isinstance(scene_graph, dict) else []:
             if not isinstance(element, dict):
@@ -2072,6 +2242,8 @@ class GenerationTraceService:
         blueprint_payload: dict[str, Any],
         explainability: dict[str, Any],
     ) -> dict[str, Any]:
+        # Internal helper for layout planning output; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         creative_decision = explainability.get("creative_decision") if isinstance(explainability.get("creative_decision"), dict) else {}
         zones = [item for item in (blueprint_payload.get("zones") or []) if isinstance(item, dict)]
         return {
@@ -2106,10 +2278,14 @@ class GenerationTraceService:
         explainability: dict[str, Any],
         format_name: str,
     ) -> dict[str, Any]:
+        # Internal helper for visual content used summary; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         metadata = generated_payload.get("metadata") if isinstance(generated_payload.get("metadata"), dict) else {}
         scene_graph = explainability.get("scene_graph") if isinstance(explainability.get("scene_graph"), dict) else {}
         infographic_sections = [item for item in (metadata.get("infographic_section_specs") or []) if isinstance(item, dict)]
         chart_graph_signals = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for section in infographic_sections[:6]:
             signal = {
                 "section_role": str(section.get("section_role") or "").strip() or None,
@@ -2118,6 +2294,8 @@ class GenerationTraceService:
             }
             if cls._has_meaningful_value(signal):
                 chart_graph_signals.append(signal)
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for element in (scene_graph.get("elements") or [])[:20]:
             if not isinstance(element, dict):
                 continue
@@ -2173,6 +2351,8 @@ class GenerationTraceService:
         content_plan: dict[str, Any],
         template_context: dict[str, Any],
     ) -> dict[str, Any]:
+        # Internal helper for slide trace output; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         metadata = generated_payload.get("metadata") if isinstance(generated_payload.get("metadata"), dict) else {}
         sample_editorial_brief = (
             research_editorial_brief.get("sample_editorial_brief")
@@ -2189,6 +2369,8 @@ class GenerationTraceService:
             for index, item in enumerate(sequence_slides)
         }
 
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if format_name == "carousel":
             units = []
             for index, slide in enumerate((metadata.get("carousel_slide_specs") or [])[:12], start=1):
@@ -2223,6 +2405,8 @@ class GenerationTraceService:
                 "units": units,
             }
 
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if format_name == "infographic":
             sections = []
             for index, section in enumerate((metadata.get("infographic_section_specs") or [])[:12], start=1):
@@ -2286,12 +2470,16 @@ class GenerationTraceService:
         max_list_items: int = 6,
         string_limit: int = 220,
     ) -> Any:
+        # Internal helper for for llm; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         if depth >= max_depth:
             return cls._value_preview(value, limit=string_limit)
         if isinstance(value, str):
             return cls._value_preview(value, limit=string_limit)
         if isinstance(value, (int, float, bool)) or value is None:
             return value
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if isinstance(value, dict):
             trimmed: dict[str, Any] = {}
             count = 0
@@ -2310,6 +2498,8 @@ class GenerationTraceService:
                 if count >= max_dict_keys:
                     break
             return trimmed
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if isinstance(value, (list, tuple, set)):
             items: list[Any] = []
             for item in list(value)[:max_list_items]:
@@ -2330,14 +2520,20 @@ class GenerationTraceService:
 
     @classmethod
     def _client_summary_prompt_payload(cls, payload: dict[str, Any]) -> dict[str, Any]:
+        # Internal helper for client summary prompt payload; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         return cls._trim_for_llm(payload, max_depth=5, max_dict_keys=8, max_list_items=6, string_limit=220)
 
     @staticmethod
     def _stage_title(stage_name: str) -> str:
+        # Internal helper for stage title; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         return str(stage_name or "").replace("_", " ").strip().title()
 
     @classmethod
     def _is_noise_text(cls, value: str) -> bool:
+        # Internal helper for is noise text; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         text = str(value or "").strip()
         lowered = text.casefold()
         if not text:
@@ -2346,6 +2542,7 @@ class GenerationTraceService:
             return True
         if re.search(r"\.(png|jpg|jpeg|pdf|webp)\b", lowered):
             return True
+        # This branch enforces tenant, brand, or role boundaries before shared data can be read or changed.
         if lowered in {
             "reference_creative",
             "template",
@@ -2379,6 +2576,8 @@ class GenerationTraceService:
         *,
         limit: int = 8,
     ) -> list[str]:
+        # Internal helper for collect client text fragments; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         fragments: list[str] = []
 
         preferred_keys = (
@@ -2416,6 +2615,8 @@ class GenerationTraceService:
         )
 
         def add_fragment(candidate: Any) -> None:
+            # Runs the fragment service flow by coordinating repositories, validators, and integrations, then
+            # returns domain data.
             if len(fragments) >= limit:
                 return
             preview = cls._value_preview(candidate, limit=220)
@@ -2433,6 +2634,8 @@ class GenerationTraceService:
                         return
 
         def visit(candidate: Any) -> None:
+            # Runs the visit service flow by coordinating repositories, validators, and integrations, then
+            # returns domain data.
             if len(fragments) >= limit or not cls._has_meaningful_value(candidate):
                 return
             if isinstance(candidate, str):
@@ -2466,6 +2669,8 @@ class GenerationTraceService:
 
     @classmethod
     def _dedupe_texts(cls, values: list[str], *, limit: int = 6) -> list[str]:
+        # Internal helper for dedupe texts; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         seen: set[str] = set()
         cleaned_values: list[str] = []
         for value in values:
@@ -2483,6 +2688,8 @@ class GenerationTraceService:
 
     @classmethod
     def _list_sentence(cls, values: list[str]) -> str:
+        # Internal helper for sentence; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         items = cls._dedupe_texts(values, limit=4)
         if not items:
             return ""
@@ -2494,6 +2701,8 @@ class GenerationTraceService:
 
     @classmethod
     def _clean_reference_content(cls, value: str) -> str:
+        # Internal helper for clean reference content; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         text = cls._repair_encoding_noise(str(value or "").strip())
         if not text:
             return ""
@@ -2509,6 +2718,8 @@ class GenerationTraceService:
             "primary ",
             "accent ",
         )
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for part in parts:
             fragment = " ".join(part.split()).strip(" -,:")
             lowered = fragment.casefold()
@@ -2521,6 +2732,8 @@ class GenerationTraceService:
             if len(fragment) < 6:
                 continue
             keep.append(fragment)
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if keep:
             heading = keep[0]
             lowered = heading.casefold()
@@ -2540,6 +2753,8 @@ class GenerationTraceService:
 
     @classmethod
     def _extract_request_context(cls, payload: dict[str, Any]) -> dict[str, str]:
+        # Internal helper for extract request context; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         data_used = payload.get("data_passed_for_image_generation") if isinstance(payload.get("data_passed_for_image_generation"), dict) else {}
         form_data = data_used.get("form_data_used") if isinstance(data_used.get("form_data_used"), dict) else {}
         request_content = form_data.get("requested_content") if isinstance(form_data.get("requested_content"), dict) else {}
@@ -2562,6 +2777,8 @@ class GenerationTraceService:
 
     @classmethod
     def _extract_brand_context(cls, payload: dict[str, Any]) -> dict[str, Any]:
+        # Internal helper for extract brand context; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         data_used = payload.get("data_passed_for_image_generation") if isinstance(payload.get("data_passed_for_image_generation"), dict) else {}
         brand_data = data_used.get("brand_data_used") if isinstance(data_used.get("brand_data_used"), dict) else {}
         identity = brand_data.get("identity") if isinstance(brand_data.get("identity"), dict) else {}
@@ -2575,6 +2792,8 @@ class GenerationTraceService:
         audience_goals: list[str] = []
         objections: list[str] = []
 
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for item in identity.get("content_used") or []:
             if not isinstance(item, dict):
                 continue
@@ -2594,6 +2813,8 @@ class GenerationTraceService:
                 elif isinstance(content, str):
                     differentiators.append(cls._repair_encoding_noise(content.strip()))
 
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for item in personas.get("content_used") or []:
             if not isinstance(item, dict):
                 continue
@@ -2620,6 +2841,8 @@ class GenerationTraceService:
 
     @classmethod
     def _extract_sample_influence(cls, payload: dict[str, Any]) -> list[str]:
+        # Internal helper for extract sample influence; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         data_used = payload.get("data_passed_for_image_generation") if isinstance(payload.get("data_passed_for_image_generation"), dict) else {}
         sample_data = data_used.get("template_or_sample_data_used") if isinstance(data_used.get("template_or_sample_data_used"), dict) else {}
         influences: list[str] = []
@@ -2636,6 +2859,8 @@ class GenerationTraceService:
 
     @classmethod
     def _sentence_block(cls, sentences: list[str]) -> str:
+        # Internal helper for sentence block; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         cleaned: list[str] = []
         for sentence in sentences:
             text = cls._repair_encoding_noise(str(sentence or "").strip())
@@ -2648,12 +2873,16 @@ class GenerationTraceService:
 
     @classmethod
     def _append_key_value(cls, lines: list[str], label: str, value: Any) -> None:
+        # Internal helper for append key value; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         text = cls._repair_encoding_noise(str(value or "").strip())
         if text:
             lines.append(f"- {label}: {text}")
 
     @classmethod
     def _append_list_values(cls, lines: list[str], label: str, values: list[str], *, item_label: str | None = None) -> None:
+        # Internal helper for append list values; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         cleaned = cls._dedupe_texts(values, limit=8)
         if not cleaned:
             return
@@ -2667,12 +2896,16 @@ class GenerationTraceService:
 
     @classmethod
     def _start_section(cls, lines: list[str], title: str) -> None:
+        # Internal helper for start section; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         if lines and lines[-1] != "":
             lines.append("")
         lines.append(f"{title}:")
 
     @classmethod
     def _friendly_field_label(cls, field_name: str) -> str:
+        # Internal helper for friendly field label; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         text = str(field_name or "").strip()
         if not text:
             return "Content"
@@ -2725,6 +2958,8 @@ class GenerationTraceService:
 
     @classmethod
     def _preview_text_for_client(cls, value: Any, *, limit: int = 180) -> str:
+        # Internal helper for preview text for client; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         preview = cls._value_preview(value, limit=limit)
         if isinstance(preview, list):
             return cls._list_sentence([
@@ -2740,6 +2975,8 @@ class GenerationTraceService:
 
     @classmethod
     def _should_skip_brand_data_point(cls, section_name: str, field_path: str, label: str, value_text: str) -> bool:
+        # Internal helper for should skip brand data point; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         lowered_path = str(field_path or "").strip().lower()
         lowered_label = str(label or "").strip().lower()
         lowered_value = str(value_text or "").strip().lower()
@@ -2777,10 +3014,14 @@ class GenerationTraceService:
         content: Any,
         limit: int = 6,
     ) -> list[dict[str, str]]:
+        # Internal helper for extract brand data points; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         data_points: list[dict[str, str]] = []
         seen: set[tuple[str, str]] = set()
 
         def add_point(path: str, candidate: Any) -> None:
+            # Runs the point service flow by coordinating repositories, validators, and integrations, then
+            # returns domain data.
             if len(data_points) >= limit:
                 return
             label = cls._friendly_field_label(path or field_name)
@@ -2802,6 +3043,8 @@ class GenerationTraceService:
             add_point(field_name, content)
             return data_points
 
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if isinstance(content, (dict, list, tuple, set)):
             records = cls._collect_field_previews(content, prefix=field_name, limit=limit * 2)
             for record in records:
@@ -2821,9 +3064,13 @@ class GenerationTraceService:
 
     @classmethod
     def _brand_section_usage(cls, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        # Internal helper for brand section usage; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         data_used = payload.get("data_passed_for_image_generation") if isinstance(payload.get("data_passed_for_image_generation"), dict) else {}
         brand_data = data_used.get("brand_data_used") if isinstance(data_used.get("brand_data_used"), dict) else {}
         usage: list[dict[str, Any]] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for section_name, section_payload in brand_data.items():
             if not isinstance(section_payload, dict):
                 continue
@@ -2871,6 +3118,8 @@ class GenerationTraceService:
         *,
         heading: str,
     ) -> None:
+        # Internal helper for append brand section usage lines; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         lines.append(heading)
         if not section_usage:
             lines.append("  - No used brand-space sections were identified in the trace JSON.")
@@ -2894,6 +3143,8 @@ class GenerationTraceService:
 
     @classmethod
     def _append_brand_space_sections_used(cls, lines: list[str], payload: dict[str, Any]) -> None:
+        # Internal helper for append brand space sections used; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         cls._append_brand_section_usage_lines(
             lines,
             cls._brand_section_usage(payload),
@@ -2902,11 +3153,15 @@ class GenerationTraceService:
 
     @classmethod
     def _stage_brand_section_allowlist(cls, stage_name: str) -> dict[str, list[str]]:
+        # Internal helper for stage brand section allowlist; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         stage = str(stage_name or "").strip().lower()
         shared_identity = ["audience_type", "brand_description", "brand_name", "industry_category", "key_differentiators"]
         shared_persona = ["name", "role", "objections", "audience_goals"]
         shared_objective = ["name", "description", "content_type", "market_positioning", "platform_scope"]
         shared_voice = ["primary_emotion", "secondary_emotion", "perspective", "content_complexity", "avoided_emotion"]
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if stage == "planning_strategy":
             return {
                 "identity": shared_identity,
@@ -2917,6 +3172,8 @@ class GenerationTraceService:
                 "foundations": ["brand_mission", "brand_promise", "brand_vision", "business_problem_or_opportunity"],
                 "audience_insights": ["desired_outcomes", "motivations", "comparison_points"],
             }
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if stage == "content_generation":
             return {
                 "identity": shared_identity,
@@ -2927,6 +3184,8 @@ class GenerationTraceService:
                 "foundations": ["brand_promise", "brand_mission", "brand_advantage"],
                 "brand_assets": ["legal_disclaimers", "applies_to_formats"],
             }
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if stage == "layout_planning":
             return {
                 "identity": ["brand_name", "audience_type"],
@@ -2959,6 +3218,8 @@ class GenerationTraceService:
 
     @classmethod
     def _field_matches_allowlist(cls, field_path: str, allowed_fields: list[str]) -> bool:
+        # Internal helper for field matches allowlist; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         path = str(field_path or "").strip().lower()
         if not path:
             return False
@@ -2978,6 +3239,8 @@ class GenerationTraceService:
 
     @classmethod
     def _brand_stage_section_map(cls, payload: dict[str, Any], stage_name: str) -> dict[str, list[dict[str, str]]]:
+        # Internal helper for brand stage section map; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         section_map: dict[str, list[dict[str, str]]] = {}
         for item in cls._brand_section_usage_for_stage(payload, stage_name):
             if not isinstance(item, dict):
@@ -2995,6 +3258,8 @@ class GenerationTraceService:
         section_name: str,
         labels: list[str],
     ) -> list[str]:
+        # Internal helper for section values by label; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         points = section_map.get(str(section_name or "").strip().lower(), [])
         allowed = {str(label or "").strip().casefold() for label in labels if str(label or "").strip()}
         values: list[str] = []
@@ -3007,6 +3272,8 @@ class GenerationTraceService:
 
     @classmethod
     def _palette_usage_summary(cls, payload: dict[str, Any], stage_name: str) -> dict[str, Any]:
+        # Internal helper for palette usage summary; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         section_map = cls._brand_stage_section_map(payload, stage_name)
         colors: dict[str, Any] = {}
         visual_points = section_map.get("visual_identity", [])
@@ -3031,6 +3298,8 @@ class GenerationTraceService:
             if not colors.get(key) and str(palette_roles.get(key) or "").strip():
                 colors[key] = str(palette_roles.get(key) or "").strip()
         additional = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for item in (palette_roles.get("additional") or [])[:4] if isinstance(palette_roles, dict) else []:
             if not isinstance(item, dict):
                 continue
@@ -3049,6 +3318,8 @@ class GenerationTraceService:
 
     @classmethod
     def _intelligence_evidence(cls, stage_name: str, payload: dict[str, Any]) -> dict[str, list[str]]:
+        # Internal helper for intelligence evidence; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         request = cls._extract_request_context(payload)
         brand = cls._extract_brand_context(payload)
         stage = str(stage_name or "").strip().lower()
@@ -3059,6 +3330,8 @@ class GenerationTraceService:
         visual_output = payload.get("visual_content_used_for_image_generation") if isinstance(payload.get("visual_content_used_for_image_generation"), dict) else {}
         slide_output = payload.get("slide_or_section_trace") if isinstance(payload.get("slide_or_section_trace"), dict) else {}
 
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if stage == "planning_strategy":
             return {
                 "strategic_reasoning": cls._dedupe_texts([
@@ -3088,6 +3361,8 @@ class GenerationTraceService:
                 ], limit=4),
             }
 
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if stage == "content_generation":
             message_strategy = content_output.get("message_strategy_used") if isinstance(content_output.get("message_strategy_used"), dict) else {}
             generated = content_output.get("generated_content_for_image") if isinstance(content_output.get("generated_content_for_image"), dict) else {}
@@ -3120,6 +3395,8 @@ class GenerationTraceService:
                 ], limit=6),
             }
 
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if stage == "layout_planning":
             decision = layout_output.get("layout_decision_used") if isinstance(layout_output.get("layout_decision_used"), dict) else {}
             blueprint = layout_output.get("blueprint_used") if isinstance(layout_output.get("blueprint_used"), dict) else {}
@@ -3216,6 +3493,8 @@ class GenerationTraceService:
 
     @classmethod
     def _append_intelligence_evidence(cls, lines: list[str], payload: dict[str, Any], stage_name: str) -> None:
+        # Internal helper for append intelligence evidence; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         evidence = cls._intelligence_evidence(stage_name, payload)
         section_titles = {
             "strategic_reasoning": "Strategic Reasoning Used",
@@ -3227,6 +3506,8 @@ class GenerationTraceService:
             "advertising_behavior": "Advertising Behavior Used",
             "color_system": "Color System Used",
         }
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for key in (
             "strategic_reasoning",
             "audience_intelligence",
@@ -3247,11 +3528,15 @@ class GenerationTraceService:
 
     @classmethod
     def _brand_section_usage_for_stage(cls, payload: dict[str, Any], stage_name: str) -> list[dict[str, Any]]:
+        # Internal helper for brand section usage for stage; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         allowlist = cls._stage_brand_section_allowlist(stage_name)
         section_usage = cls._brand_section_usage(payload)
         if not allowlist:
             return section_usage
         filtered_usage: list[dict[str, Any]] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for item in section_usage:
             if not isinstance(item, dict):
                 continue
@@ -3281,11 +3566,15 @@ class GenerationTraceService:
 
     @classmethod
     def _ensure_section_content(cls, lines: list[str], section_start_index: int, *, empty_message: str = "None identified from the trace JSON.") -> None:
+        # Internal helper for section content; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if len(lines) == section_start_index + 1:
             lines.append(f"- {empty_message}")
 
     @classmethod
     def _brand_following_score(cls, payload: dict[str, Any]) -> dict[str, Any]:
+        # Internal helper for brand following score; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         brand = cls._extract_brand_context(payload)
         compliance = payload.get("brand_evaluation_and_compliance") if isinstance(payload.get("brand_evaluation_and_compliance"), dict) else {}
         scene = compliance.get("scene_graph_validation") if isinstance(compliance.get("scene_graph_validation"), dict) else {}
@@ -3322,6 +3611,7 @@ class GenerationTraceService:
 
         scene_status = str(scene.get("status") or "").strip().lower()
         scene_issue_count = int(scene.get("issue_count") or 0)
+        # Lifecycle state decides which path is safe here, especially before mutating stored records.
         if scene_status in {"ok", "pass", "passed", "clean"}:
             score += 10
             reasons.append("Scene graph validation did not report major brand-following issues.")
@@ -3332,6 +3622,7 @@ class GenerationTraceService:
 
         semantic_status = str(semantic.get("status") or "").strip().lower()
         semantic_issues = semantic.get("issues") if isinstance(semantic.get("issues"), list) else []
+        # Lifecycle state decides which path is safe here, especially before mutating stored records.
         if semantic_status in {"ok", "pass", "passed", "clean"}:
             score += 10
             reasons.append("Content semantic validation stayed aligned with the intended content.")
@@ -3355,6 +3646,8 @@ class GenerationTraceService:
 
     @classmethod
     def _append_brand_following_score(cls, lines: list[str], payload: dict[str, Any]) -> None:
+        # Internal helper for append brand following score; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         score_summary = cls._brand_following_score(payload)
         cls._start_section(lines, "Brand Following Score")
         cls._append_key_value(lines, "Score", f"{score_summary['score']}/100")
@@ -3364,6 +3657,8 @@ class GenerationTraceService:
 
     @classmethod
     def _humanize_goal(cls, request: dict[str, str]) -> str:
+        # Internal helper for humanize goal; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         parts: list[str] = []
         if request.get("format"):
             parts.append(request["format"])
@@ -3375,6 +3670,8 @@ class GenerationTraceService:
 
     @classmethod
     def _planning_stage_summary(cls, payload: dict[str, Any]) -> str:
+        # Internal helper for planning stage summary; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         request = cls._extract_request_context(payload)
         brand = cls._extract_brand_context(payload)
         sample_influence = cls._extract_sample_influence(payload)
@@ -3432,6 +3729,8 @@ class GenerationTraceService:
 
     @classmethod
     def _content_stage_summary(cls, payload: dict[str, Any]) -> str:
+        # Internal helper for content stage summary; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         request = cls._extract_request_context(payload)
         brand = cls._extract_brand_context(payload)
         sample_influence = cls._extract_sample_influence(payload)
@@ -3488,6 +3787,8 @@ class GenerationTraceService:
 
     @classmethod
     def _layout_stage_summary(cls, payload: dict[str, Any]) -> str:
+        # Internal helper for layout stage summary; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         output = payload.get("layout_planning_output") if isinstance(payload.get("layout_planning_output"), dict) else {}
         sample_influence = cls._extract_sample_influence(payload)
         decision = output.get("layout_decision_used") if isinstance(output.get("layout_decision_used"), dict) else {}
@@ -3551,6 +3852,8 @@ class GenerationTraceService:
 
     @classmethod
     def _visual_stage_summary(cls, payload: dict[str, Any]) -> str:
+        # Internal helper for visual stage summary; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         visual = payload.get("visual_content_used_for_image_generation") if isinstance(payload.get("visual_content_used_for_image_generation"), dict) else {}
         plan = visual.get("visual_plan_used") if isinstance(visual.get("visual_plan_used"), dict) else {}
         content = visual.get("visual_content_used") if isinstance(visual.get("visual_content_used"), dict) else {}
@@ -3561,6 +3864,7 @@ class GenerationTraceService:
             if isinstance(value, str) and value.strip():
                 generated_direction = cls._repair_encoding_noise(value.strip())
                 break
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if not generated_direction:
             selected = content.get("selected_reference_images")
             if isinstance(selected, list):
@@ -3571,6 +3875,8 @@ class GenerationTraceService:
                             break
 
         reference_notes: list[str] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for key in ("selected_reference_images", "conditioning_reference_images", "provided_reference_content"):
             items = content.get(key)
             if not isinstance(items, list):
@@ -3632,6 +3938,8 @@ class GenerationTraceService:
 
     @classmethod
     def _slide_stage_summary(cls, payload: dict[str, Any]) -> str:
+        # Internal helper for slide stage summary; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         trace = payload.get("slide_or_section_trace") if isinstance(payload.get("slide_or_section_trace"), dict) else {}
         unit_type = str(trace.get("unit_type") or "panel").strip()
         units = trace.get("units") if isinstance(trace.get("units"), list) else []
@@ -3670,6 +3978,8 @@ class GenerationTraceService:
         cls._append_key_value(lines, "Unit type", unit_type)
         cls._ensure_section_content(lines, section_start)
 
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for index, unit in enumerate(units, start=1):
             if not isinstance(unit, dict):
                 continue
@@ -3705,6 +4015,8 @@ class GenerationTraceService:
 
     @classmethod
     def _build_stage_text_summary(cls, *, stage_name: str, payload: dict[str, Any]) -> str:
+        # Internal helper for stage text summary; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if stage_name == "planning_strategy":
             return cls._planning_stage_summary(payload)
         elif stage_name == "content_generation":
@@ -3718,6 +4030,8 @@ class GenerationTraceService:
         return cls._repair_encoding_noise(cls._stage_title(stage_name))
 
     def _generate_stage_text_summary(self, *, stage_name: str, payload: dict[str, Any]) -> str:
+        # Internal helper for stage text summary; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         return self._build_stage_text_summary(stage_name=stage_name, payload=payload)
 
     def write_visual_generation_readable_text_bundle(
@@ -3725,10 +4039,14 @@ class GenerationTraceService:
         trace_id: str | None,
         bundle: dict[str, dict[str, Any]] | None,
     ) -> list[str]:
+        # Runs the write visual generation readable text bundle service flow by coordinating repositories,
+        # validators, and integrations, then returns domain data.
         if not self.enabled or not trace_id or not isinstance(bundle, dict):
             return []
         target_dir = self.readable_visual_trace_dir(trace_id)
         written_files: list[str] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for filename in (
             "planning_strategy",
             "content_generation",
@@ -3743,6 +4061,8 @@ class GenerationTraceService:
             written = self._write_text_file(target_dir / f"{filename}.txt", summary)
             if written:
                 written_files.append(written)
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if written_files:
             self.write_debug_event(
                 "trace.write_visual_generation_text_bundle.succeeded",
@@ -3779,6 +4099,8 @@ class GenerationTraceService:
         blueprint_payload: dict[str, Any],
         explainability: dict[str, Any],
     ) -> dict[str, dict[str, Any]]:
+        # Runs the visual generation readable bundle service flow by coordinating repositories, validators, and
+        # integrations, then returns domain data.
         explainability = explainability if isinstance(explainability, dict) else {}
         template_context = template_context if isinstance(template_context, dict) else {}
         research_editorial_brief = (
@@ -3891,6 +4213,8 @@ class GenerationTraceService:
             "validation_summary": compliance_summary,
             "explainability_snapshot": explainability,
         }
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if compact_readable:
             full_trace_logs = {
                 "trace_manifest": full_trace_logs["trace_manifest"],
@@ -4003,10 +4327,14 @@ class GenerationTraceService:
         trace_id: str | None,
         bundle: dict[str, dict[str, Any]] | None,
     ) -> list[str]:
+        # Runs the write visual generation readable bundle service flow by coordinating repositories,
+        # validators, and integrations, then returns domain data.
         if not self.enabled or not trace_id or not isinstance(bundle, dict):
             return []
         target_dir = self.readable_visual_trace_dir(trace_id)
         written_files: list[str] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for filename in (
             "planning_strategy",
             "content_generation",
@@ -4032,6 +4360,8 @@ class GenerationTraceService:
                   written_files.append(written)
         text_files = self.write_visual_generation_readable_text_bundle(trace_id, bundle)
         written_files.extend(text_files)
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if written_files:
             self.write_debug_event(
                 "trace.write_visual_generation_bundle.succeeded",

@@ -1,3 +1,4 @@
+# FastAPI route handlers live here; they validate request inputs, call services, and return response schemas.
 from __future__ import annotations
 
 import mimetypes
@@ -15,6 +16,8 @@ router = APIRouter()
 
 @router.get("/download")
 async def download_asset(token: str = Query(..., min_length=1)) -> FileResponse:
+    # Serves the download asset endpoint; it uses FastAPI dependencies, delegates work to services, and returns
+    # the response schema.
     delivery = AssetDeliveryService()
     storage = LocalObjectStorage()
     try:

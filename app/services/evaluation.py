@@ -1,3 +1,4 @@
+# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
 import base64
@@ -14,9 +15,12 @@ from app.services.text_content import TextContentService
 
 
 class EvaluationService:
+    # Business layer for evaluation; routes and workers pass validated inputs here and receive domain results
+    # back.
     MAX_MULTIMODAL_IMAGES = 3
 
     def __init__(self, session) -> None:
+        # Wires the repositories and helper services this workflow reuses across its public methods.
         self.session = session
         self.helper = TextContentService(session)
         self.providers = self.helper.providers
@@ -37,6 +41,8 @@ class EvaluationService:
         objective_id=None,
         reference_asset_ids=None,
     ) -> dict[str, Any]:
+        # Runs the evaluate service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         brand = await self.brands.get_scoped(tenant_id, brand_space_id)
         if not brand:
             raise NotFoundError("Brand Space not found")
@@ -121,6 +127,8 @@ class EvaluationService:
             prompt=prompt,
             asset_review_blocks=[item for item in asset_review_blocks if isinstance(item, dict)],
         )
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if multimodal_review:
             response["multimodal_review"] = multimodal_review
             response["scorecard"]["multimodal_visual_score"] = int(multimodal_review.get("score") or 0)
@@ -154,6 +162,8 @@ class EvaluationService:
         prompt: str,
         asset_review_blocks: list[dict[str, Any]],
     ) -> dict[str, Any] | None:
+        # Internal helper for multimodal visual review; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         provider = self.providers.get_text_provider("generation")
         client = getattr(provider, "client", None)
         if client is None or getattr(provider, "provider_name", "") != "openai":
@@ -161,6 +171,8 @@ class EvaluationService:
 
         image_contents: list[dict[str, Any]] = []
         reviewed_asset_ids: list[str] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for block in asset_review_blocks:
             asset_kind = str(block.get("asset_kind") or "").strip().lower()
             storage_path = str(block.get("storage_path") or "").strip()
@@ -189,6 +201,8 @@ class EvaluationService:
             f"Prompt: {prompt}"
         )
         fallback = {"score": 0, "strengths": [], "issues": [], "alignment_summary": ""}
+        # Keeps the risky I/O or integration boundary contained so callers receive project-level errors
+        # instead of raw library failures.
         try:
             response = client.responses.create(
                 model=getattr(provider.settings, "llm_model", None),

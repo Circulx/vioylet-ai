@@ -1,3 +1,4 @@
+# Pydantic schemas define the API contracts used by routes, services, and frontend callers.
 from __future__ import annotations
 
 from datetime import datetime
@@ -7,6 +8,7 @@ from app.schemas.common import APIModel
 
 
 class JobResponse(APIModel):
+    # Response contract for job; routes serialize service or ORM results into this frontend-facing shape.
     id: UUID
     tenant_id: UUID
     brand_space_id: UUID | None = None

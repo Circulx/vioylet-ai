@@ -1,3 +1,4 @@
+# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -12,7 +13,9 @@ from app.repositories.collaboration import JobRepository
 
 
 class JobService:
+    # Business layer for job; routes and workers pass validated inputs here and receive domain results back.
     def __init__(self, session: AsyncSession) -> None:
+        # Wires the repositories and helper services this workflow reuses across its public methods.
         self.session = session
         self.jobs = JobRepository(session)
         self.settings = get_settings()
@@ -26,6 +29,8 @@ class JobService:
         knowledge_asset_id: UUID | None = None,
         content_version_id: UUID | None = None,
     ) -> JobRecord:
+        # Runs the create service flow and persists the resulting state before returning it to the route or
+        # worker.
         job = JobRecord(
             tenant_id=tenant_id,
             brand_space_id=brand_space_id,
@@ -46,6 +51,8 @@ class JobService:
         return job
 
     async def claim_pending(self, worker_id: str, limit: int | None = None) -> list[JobRecord]:
+        # Runs the pending service flow and persists the resulting state before returning it to the route or
+        # worker.
         now = datetime.now(timezone.utc)
         jobs = await self.jobs.claim_available(
             worker_id=worker_id,
@@ -65,6 +72,8 @@ class JobService:
         *,
         worker_id: str | None = None,
     ) -> JobRecord:
+        # Runs the status service flow and persists the resulting state before returning it to the route or
+        # worker.
         job = await self.jobs.get(job_id)
         if not job:
             raise ValueError("Job not found")
@@ -86,6 +95,8 @@ class JobService:
         return job
 
     async def heartbeat(self, job_id: UUID, worker_id: str) -> JobRecord | None:
+        # Runs the heartbeat service flow and persists the resulting state before returning it to the route or
+        # worker.
         job = await self.jobs.get(job_id)
         if not job or job.status != JobStatus.PROCESSING:
             return None
@@ -100,15 +111,23 @@ class JobService:
         return job
 
     async def list_for_tenant(self, tenant_id: UUID) -> list[JobRecord]:
+        # Runs the for tenant service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         return await self.jobs.list_by_tenant(tenant_id)
 
     async def get(self, job_id: UUID) -> JobRecord | None:
+        # Runs the get service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         return await self.jobs.get(job_id)
 
     async def get_scoped(self, job_id: UUID, tenant_id: UUID) -> JobRecord | None:
+        # Runs the scoped service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         return await self.jobs.get_scoped(job_id, tenant_id)
 
     async def fail_or_retry(self, job_id: UUID, error_message: str, *, worker_id: str | None = None) -> JobRecord:
+        # Runs the fail or retry service flow and persists the resulting state before returning it to the route
+        # or worker.
         job = await self.jobs.get(job_id)
         if not job:
             raise ValueError("Job not found")

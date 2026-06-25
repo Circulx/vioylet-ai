@@ -1,3 +1,4 @@
+# API wiring for the backend surface; routers in this package expose service workflows over HTTP.
 from fastapi import APIRouter
 
 from app.api.routes import analytics, auth, brand, brand_assets, chat, content, folder, jobs, knowledge, render, review, social, storage, template, tenant

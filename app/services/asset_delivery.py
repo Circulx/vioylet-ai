@@ -1,3 +1,4 @@
+# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
 import base64
@@ -12,19 +13,28 @@ from app.core.config import get_settings
 
 
 class AssetDeliveryService:
+    # Business layer for asset delivery; routes and workers pass validated inputs here and receive domain
+    # results back.
     def __init__(self) -> None:
+        # Wires the repositories and helper services this workflow reuses across its public methods.
         self.settings = get_settings()
 
     @staticmethod
     def _b64encode(raw: bytes) -> str:
+        # Internal helper for b64encode; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         return base64.urlsafe_b64encode(raw).decode("utf-8").rstrip("=")
 
     @staticmethod
     def _b64decode(raw: str) -> bytes:
+        # Internal helper for b64decode; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         padding = "=" * (-len(raw) % 4)
         return base64.urlsafe_b64decode(f"{raw}{padding}".encode("utf-8"))
 
     def _signature(self, payload: bytes) -> str:
+        # Internal helper for signature; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         digest = hmac.new(
             self.settings.secret_key.encode("utf-8"),
             payload,
@@ -40,6 +50,8 @@ class AssetDeliveryService:
         download: bool = False,
         expires_in: int | None = None,
     ) -> str:
+        # Runs the issue token service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         expiry = datetime.now(timezone.utc) + timedelta(
             seconds=expires_in or self.settings.signed_asset_url_ttl_seconds
         )
@@ -60,6 +72,8 @@ class AssetDeliveryService:
         download: bool = False,
         expires_in: int | None = None,
     ) -> str:
+        # Runs the signed URL service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         token = self.issue_token(
             storage_path=storage_path,
             filename=filename,
@@ -69,6 +83,8 @@ class AssetDeliveryService:
         return f"{self.settings.asset_download_base_url}?token={token}"
 
     def verify_token(self, token: str) -> dict[str, Any]:
+        # Runs the token service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         try:
             encoded_payload, encoded_signature = token.split(".", 1)
         except ValueError as exc:

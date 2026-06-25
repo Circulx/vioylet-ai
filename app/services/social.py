@@ -1,3 +1,4 @@
+# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
 from uuid import UUID
@@ -12,13 +13,17 @@ from app.repositories.collaboration import SocialConnectionRepository
 
 
 class SocialService:
+    # Business layer for social; routes and workers pass validated inputs here and receive domain results back.
     def __init__(self, session: AsyncSession) -> None:
+        # Wires the repositories and helper services this workflow reuses across its public methods.
         self.session = session
         self.connections = SocialConnectionRepository(session)
         self.contents = ContentRepository(session)
         self.assets = AssetRepository(session)
 
     async def list_connections(self, tenant_id: UUID, brand_space_id: UUID) -> list[SocialConnection]:
+        # Runs the connections service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         return await self.connections.list_by_brand(tenant_id, brand_space_id)
 
     async def connect(
@@ -32,7 +37,10 @@ class SocialService:
         refresh_token: str | None,
         scopes: list[str],
     ) -> SocialConnection:
+        # Runs the connect service flow and persists the resulting state before returning it to the route or
+        # worker.
         connection = await self.connections.get_by_platform(brand_space_id, platform)
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if not connection:
             connection = SocialConnection(
                 tenant_id=tenant_id,
@@ -59,6 +67,8 @@ class SocialService:
         return connection
 
     async def disconnect(self, brand_space_id: UUID, platform: str) -> SocialConnection:
+        # Runs the disconnect service flow and persists the resulting state before returning it to the route or
+        # worker.
         connection = await self.connections.get_by_platform(brand_space_id, platform)
         if not connection:
             raise NotFoundError("Social connection not found")
@@ -67,6 +77,8 @@ class SocialService:
         return connection
 
     async def publish(self, tenant_id: UUID, brand_space_id: UUID, platform: str, payload: dict) -> dict:
+        # Runs the publish service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         connection = await self.connections.get_by_platform(brand_space_id, platform)
         if not connection or not connection.is_connected:
             raise NotFoundError("Platform not connected")

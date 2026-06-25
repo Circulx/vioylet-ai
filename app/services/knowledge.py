@@ -1,3 +1,4 @@
+# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -23,7 +24,10 @@ from app.services.usage import UsageLimitService
 
 
 class KnowledgeService:
+    # Business layer for knowledge; routes and workers pass validated inputs here and receive domain results
+    # back.
     def __init__(self, session: AsyncSession) -> None:
+        # Wires the repositories and helper services this workflow reuses across its public methods.
         self.session = session
         self.assets = KnowledgeAssetRepository(session)
         self.storage = LocalObjectStorage()
@@ -35,6 +39,8 @@ class KnowledgeService:
 
     @staticmethod
     def _extract_docx_text(absolute_path: str, extracted: dict[str, object]) -> str:
+        # Internal helper for extract docx text; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         source_format = str(extracted.get("source_format") or "").lower()
         if source_format != "docx" and not absolute_path.lower().endswith(".docx"):
             return ""
@@ -43,6 +49,8 @@ class KnowledgeService:
 
     @staticmethod
     def _read_analysis_text(analysis_path: str | None) -> str:
+        # Internal helper for read analysis text; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if not analysis_path:
             return ""
         path = Path(analysis_path)
@@ -61,6 +69,8 @@ class KnowledgeService:
         return json.dumps(parsed, ensure_ascii=False, indent=2)
 
     async def upload(self, tenant_id: UUID, brand_space_id: UUID, payload: KnowledgeUploadRequest) -> KnowledgeAsset:
+        # Runs the upload service flow and persists the resulting state before returning it to the route or
+        # worker.
         preflight = self.preflight.validate_base64_upload(
             filename=payload.filename,
             mime_type=payload.mime_type,
@@ -89,6 +99,7 @@ class KnowledgeService:
             asset.page_count = preflight.page_count or (1 if preflight.normalized_mime_type.startswith("image/") else 0)
         await self.assets.add(asset)
         await self.session.commit()
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if not payload.skip_processing:
             await self.jobs.create(
                 tenant_id=tenant_id,
@@ -100,6 +111,8 @@ class KnowledgeService:
         return asset
 
     async def process_asset(self, asset_id: UUID) -> KnowledgeAsset:
+        # Runs the asset service flow and persists the resulting state before returning it to the route or
+        # worker.
         asset = await self.assets.get(asset_id)
         if not asset:
             raise NotFoundError("Knowledge asset not found")
@@ -109,6 +122,8 @@ class KnowledgeService:
         asset.processing_error = None
         await self.session.commit()
 
+        # Keeps the risky I/O or integration boundary contained so callers receive project-level errors
+        # instead of raw library failures.
         try:
             absolute_path = self.storage.absolute_path(asset.storage_path)
             extracted = self.ocr.extract(absolute_path)
@@ -161,9 +176,13 @@ class KnowledgeService:
             raise
 
     async def list(self, tenant_id: UUID, brand_space_id: UUID) -> list[KnowledgeAsset]:
+        # Runs the list service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         return await self.assets.list_by_brand(brand_space_id, tenant_id)
 
     async def delete(self, asset_id: UUID) -> KnowledgeAsset:
+        # Runs the delete service flow and persists the resulting state before returning it to the route or
+        # worker.
         asset = await self.assets.get(asset_id)
         if not asset:
             raise NotFoundError("Knowledge asset not found")
@@ -174,15 +193,21 @@ class KnowledgeService:
         return asset
 
     async def reprocess(self, asset_id: UUID) -> KnowledgeAsset:
+        # Runs the reprocess service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         return await self.process_asset(asset_id)
 
     async def get_scoped(self, tenant_id: UUID, brand_space_id: UUID, asset_id: UUID) -> KnowledgeAsset:
+        # Runs the scoped service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         asset = await self.assets.get_scoped(asset_id, tenant_id, brand_space_id)
         if not asset:
             raise NotFoundError("Knowledge asset not found")
         return asset
 
     async def delete_scoped(self, tenant_id: UUID, brand_space_id: UUID, asset_id: UUID) -> KnowledgeAsset:
+        # Runs the scoped service flow and persists the resulting state before returning it to the route or
+        # worker.
         asset = await self.get_scoped(tenant_id, brand_space_id, asset_id)
         self.retrieval.delete_asset(str(asset.tenant_id), str(asset.brand_space_id), asset.channel, str(asset.id))
         asset.lifecycle_state = AssetLifecycle.DELETED
@@ -191,5 +216,7 @@ class KnowledgeService:
         return asset
 
     async def reprocess_scoped(self, tenant_id: UUID, brand_space_id: UUID, asset_id: UUID) -> KnowledgeAsset:
+        # Runs the reprocess scoped service flow by coordinating repositories, validators, and integrations,
+        # then returns domain data.
         await self.get_scoped(tenant_id, brand_space_id, asset_id)
         return await self.process_asset(asset_id)

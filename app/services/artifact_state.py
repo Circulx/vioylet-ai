@@ -1,3 +1,4 @@
+# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
 from copy import deepcopy
@@ -5,6 +6,8 @@ from typing import Any
 
 
 class ArtifactStateService:
+    # Business layer for artifact state; routes and workers pass validated inputs here and receive domain
+    # results back.
     SCHEMA_VERSION = 1
 
     def build_content_state(
@@ -19,6 +22,8 @@ class ArtifactStateService:
         revision_lineage: dict[str, Any] | None = None,
         source_linked_artifacts: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Runs the content state service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         return {
             "schema_version": self.SCHEMA_VERSION,
             "mode": str(mode or "").strip() or "unknown",
@@ -32,6 +37,8 @@ class ArtifactStateService:
         }
 
     def build_evaluation_entry(self, review_result: dict[str, Any] | None) -> dict[str, Any]:
+        # Runs the evaluation entry service flow by coordinating repositories, validators, and integrations,
+        # then returns domain data.
         review_result = review_result if isinstance(review_result, dict) else {}
         scorecard = review_result.get("scorecard") if isinstance(review_result.get("scorecard"), dict) else {}
         return {
@@ -54,6 +61,8 @@ class ArtifactStateService:
         revision_scope: dict[str, Any] | None = None,
         prior_lineage: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Runs the revision lineage service flow by coordinating repositories, validators, and integrations,
+        # then returns domain data.
         prior_lineage = prior_lineage if isinstance(prior_lineage, dict) else {}
         ancestor_version_ids = [
             str(item).strip()
@@ -83,6 +92,8 @@ class ArtifactStateService:
         content_artifact_state: dict[str, Any] | None = None,
         evaluation_entry: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Runs the session state service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         session_context = session_context if isinstance(session_context, dict) else {}
         existing = deepcopy(session_context.get("artifact_state")) if isinstance(session_context.get("artifact_state"), dict) else {}
         state = {
@@ -107,6 +118,8 @@ class ArtifactStateService:
 
     @classmethod
     def _clean_dict(cls, value: Any) -> dict[str, Any]:
+        # Internal helper for clean dict; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         if not isinstance(value, dict):
             return {}
         cleaned: dict[str, Any] = {}
@@ -127,6 +140,8 @@ class ArtifactStateService:
 
     @classmethod
     def _clean_list(cls, value: list[Any]) -> list[Any]:
+        # Internal helper for clean list; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         cleaned: list[Any] = []
         for item in value:
             if item is None:

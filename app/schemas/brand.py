@@ -1,3 +1,4 @@
+# Pydantic schemas define the API contracts used by routes, services, and frontend callers.
 from __future__ import annotations
 
 from datetime import datetime
@@ -10,6 +11,7 @@ from app.schemas.common import APIModel
 
 
 class BrandIdentityPayload(APIModel):
+    # Shared schema for brand IDentity; it keeps route payloads, service data, and serialized responses aligned.
     brand_name: str
     brand_description: str
     industry_category: str | None = None
@@ -24,6 +26,8 @@ class BrandIdentityPayload(APIModel):
 
 
 class BrandFoundationsPayload(APIModel):
+    # Shared schema for brand foundations; it keeps route payloads, service data, and serialized responses
+    # aligned.
     brand_mission: str | None = None
     brand_vision: str | None = None
     brand_promise: str | None = None
@@ -38,6 +42,7 @@ class BrandFoundationsPayload(APIModel):
 
 
 class BrandVoicePayload(APIModel):
+    # Shared schema for brand voice; it keeps route payloads, service data, and serialized responses aligned.
     tone_attributes: list[str] = Field(default_factory=list)
     tone_intensity: dict[str, int] = Field(default_factory=dict)
     primary_emotion: str
@@ -49,6 +54,7 @@ class BrandVoicePayload(APIModel):
 
 
 class PersonaPayload(APIModel):
+    # Shared schema for persona; it keeps route payloads, service data, and serialized responses aligned.
     name: str
     role: str | None = None
     psychographics: dict[str, Any] = Field(default_factory=dict)
@@ -63,6 +69,7 @@ class PersonaPayload(APIModel):
 
 
 class GuardrailPayload(APIModel):
+    # Shared schema for guardrail; it keeps route payloads, service data, and serialized responses aligned.
     positive_word_bank: list[str] = Field(default_factory=list)
     replaceable_words: list[str] = Field(default_factory=list)
     negative_word_bank: list[str] = Field(default_factory=list)
@@ -79,6 +86,7 @@ class GuardrailPayload(APIModel):
 
 
 class ObjectivePayload(APIModel):
+    # Shared schema for objective; it keeps route payloads, service data, and serialized responses aligned.
     name: str
     description: str | None = None
     content_type: str | None = None
@@ -99,6 +107,8 @@ LOGO_PLACEMENT_OPTIONS = {
 
 
 def normalize_logo_placement_option(value: Any) -> str:
+    # Checks or reshapes logo placement option while Pydantic prepares the model for validation or
+    # serialization.
     raw_value = str(value or "").strip().lower()
     if not raw_value:
         return ""
@@ -125,11 +135,13 @@ def normalize_logo_placement_option(value: Any) -> str:
 
 
 class LogoPlacementPayload(APIModel):
+    # Shared schema for logo placement; it keeps route payloads, service data, and serialized responses aligned.
     allowed_positions: list[Any] = Field(default_factory=list)
     default_position: Any = ""
 
     @model_validator(mode="after")
     def normalize_policy(self) -> "LogoPlacementPayload":
+        # Checks or reshapes policy while Pydantic prepares the model for validation or serialization.
         allowed_positions: list[str] = []
         for raw_position in self.allowed_positions:
             normalized = normalize_logo_placement_option(raw_position)
@@ -152,6 +164,8 @@ class LogoPlacementPayload(APIModel):
 
 
 class VisualIdentityPayload(APIModel):
+    # Shared schema for visual IDentity; it keeps route payloads, service data, and serialized responses
+    # aligned.
     brand_mood: str | None = None
     visual_style: str | None = None
     logo_placement: LogoPlacementPayload = Field(default_factory=LogoPlacementPayload)
@@ -164,17 +178,22 @@ class VisualIdentityPayload(APIModel):
 
 
 class PromptIntelligencePayload(APIModel):
+    # Shared schema for prompt intelligence; it keeps route payloads, service data, and serialized responses
+    # aligned.
     prompt_starters: list[dict[str, Any]] = Field(default_factory=list)
     platform_rules: dict[str, Any] = Field(default_factory=dict)
 
 
 class BrandSectionUpsertRequest(APIModel):
+    # Request contract for brand section upsert; FastAPI validates incoming JSON against these fields before
+    # service code runs.
     section_code: str
     payload: dict[str, Any]
     completion_percent: int = Field(default=100, ge=0, le=100)
 
     @model_validator(mode="after")
     def normalize_section_payload(self) -> "BrandSectionUpsertRequest":
+        # Checks or reshapes section payload while Pydantic prepares the model for validation or serialization.
         if self.section_code != "visual_identity":
             return self
         payload = dict(self.payload or {})
@@ -186,26 +205,35 @@ class BrandSectionUpsertRequest(APIModel):
 
 
 class BrandSectionsUpsertRequest(APIModel):
+    # Request contract for brand sections upsert; FastAPI validates incoming JSON against these fields before
+    # service code runs.
     sections: list[BrandSectionUpsertRequest] = Field(default_factory=list)
 
 
 class BrandCreateRequest(APIModel):
+    # Request contract for brand create; FastAPI validates incoming JSON against these fields before service
+    # code runs.
     identity: BrandIdentityPayload
     foundations: BrandFoundationsPayload | None = None
     voice_tone: BrandVoicePayload | None = None
 
 
 class BrandUpdateRequest(APIModel):
+    # Request contract for brand update; FastAPI validates incoming JSON against these fields before service
+    # code runs.
     description: str | None = None
     lifecycle_state: str | None = None
     overview_snapshot: dict[str, Any] | None = None
 
 
 class BrandFinalizeRequest(APIModel):
+    # Request contract for brand finalize; FastAPI validates incoming JSON against these fields before service
+    # code runs.
     review_notes: str | None = None
 
 
 class BrandResponse(APIModel):
+    # Response contract for brand; routes serialize service or ORM results into this frontend-facing shape.
     id: UUID
     tenant_id: UUID
     name: str
@@ -219,6 +247,8 @@ class BrandResponse(APIModel):
 
 
 class BrandUsageMetricResponse(APIModel):
+    # Response contract for brand usage metric; routes serialize service or ORM results into this frontend-
+    # facing shape.
     code: str
     used: int = 0
     allocated_limit: float = 0
@@ -226,6 +256,8 @@ class BrandUsageMetricResponse(APIModel):
 
 
 class BrandUsageResponse(APIModel):
+    # Response contract for brand usage; routes serialize service or ORM results into this frontend-facing
+    # shape.
     brand_space_id: UUID
     tenant_id: UUID
     capacity_percent: int = 0
@@ -234,6 +266,8 @@ class BrandUsageResponse(APIModel):
 
 
 class BrandOverviewResponse(APIModel):
+    # Response contract for brand overview; routes serialize service or ORM results into this frontend-facing
+    # shape.
     brand: BrandResponse
     sections: list[dict[str, Any]]
     personas: list[dict[str, Any]]

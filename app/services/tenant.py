@@ -1,3 +1,4 @@
+# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -41,7 +42,9 @@ USAGE_METRIC_BRAND_SPACES = "brand_spaces"
 
 
 class TenantService:
+    # Business layer for tenant; routes and workers pass validated inputs here and receive domain results back.
     def __init__(self, session: AsyncSession) -> None:
+        # Wires the repositories and helper services this workflow reuses across its public methods.
         self.session = session
         self.tenants = TenantRepository(session)
         self.users = UserRepository(session)
@@ -57,16 +60,22 @@ class TenantService:
         self.email = EmailService()
 
     async def _ensure_unique_tenant_slug(self, slug: str, *, current_tenant_id: UUID | None = None) -> None:
+        # Internal helper for unique tenant slug; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         existing = await self.tenants.get_by_slug(slug)
         if existing and existing.id != current_tenant_id:
             raise DuplicateResourceError(f"Tenant slug '{slug}' already exists. Use a different slug.")
 
     async def _ensure_unique_user_email(self, email: str, *, current_user_id: UUID | None = None) -> None:
+        # Internal helper for unique user email; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         existing = await self.users.get_by_email(email)
         if existing and existing.id != current_user_id:
             raise DuplicateResourceError(f"A user with email '{email}' already exists.")
 
     async def create_tenant(self, payload: TenantCreateRequest) -> tuple[Tenant, EmailDeliveryResult]:
+        # Runs the tenant service flow and persists the resulting state before returning it to the route or
+        # worker.
         await self._ensure_unique_tenant_slug(payload.slug)
         await self._ensure_unique_user_email(payload.admin_email)
         tenant = Tenant(
@@ -120,6 +129,8 @@ class TenantService:
         tenant_id: UUID,
         payload: TenantUserCreateRequest,
     ) -> tuple[User, EmailDeliveryResult]:
+        # Runs the tenant user service flow and persists the resulting state before returning it to the route or
+        # worker.
         await self._ensure_unique_user_email(payload.email)
         await self.usage.enforce(tenant_id, "users")
         role = await self.roles.get_by_code(payload.role_code)
@@ -135,6 +146,8 @@ class TenantService:
         )
         await self.users.add(user)
         await self.user_roles.add(UserRole(user_id=user.id, role_id=role.id, brand_space_id=None))
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for brand_space_id in payload.brand_space_ids:
             await self.brand_members.add(
                 __import__("app.models.brand", fromlist=["BrandSpaceMember"]).BrandSpaceMember(
@@ -159,6 +172,8 @@ class TenantService:
         return user, delivery
 
     async def _get_primary_tenant_admin(self, tenant_id: UUID) -> User | None:
+        # Internal helper for primary tenant admin; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         users = await self.users.list_by_tenant(tenant_id)
         for user in users:
             roles = await self.user_roles.list_for_user(user.id)
@@ -169,12 +184,18 @@ class TenantService:
         return None
 
     async def list_users(self, tenant_id: UUID) -> list[User]:
+        # Runs the users service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         return await self.users.list_by_tenant(tenant_id)
 
     async def list_tenants(self) -> list[Tenant]:
+        # Runs the tenants service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         return await self.tenants.list()
 
     async def get_tenant(self, tenant_id: UUID) -> Tenant:
+        # Runs the tenant service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         tenant = await self.tenants.get(tenant_id)
         if not tenant:
             raise NotFoundError("Tenant not found")
@@ -182,12 +203,16 @@ class TenantService:
 
     @staticmethod
     def _month_key(value: object) -> str:
+        # Internal helper for month key; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         if isinstance(value, datetime):
             return value.strftime("%Y-%m")
         return str(value)[:7]
 
     @staticmethod
     def _brand_usage_targets(tenant: Tenant | None) -> dict[str, float]:
+        # Internal helper for brand usage targets; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if not tenant or not isinstance(tenant.metadata_json, dict):
             return {}
         raw_targets = tenant.metadata_json.get("brand_usage_targets")
@@ -203,6 +228,8 @@ class TenantService:
 
     @staticmethod
     def _usage_limit_values(usage_limit: UsageLimit) -> dict[str, int]:
+        # Internal helper for usage limit values; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         return {
             "max_users": usage_limit.max_users,
             "max_brand_spaces": usage_limit.max_brand_spaces,
@@ -212,6 +239,8 @@ class TenantService:
         }
 
     async def _real_usage_consumption(self, tenant_id: UUID) -> dict[str, int]:
+        # Internal helper for real usage consumption; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         users = int(
             await self.session.scalar(select(func.count(User.id)).where(User.tenant_id == tenant_id))
             or 0
@@ -254,9 +283,13 @@ class TenantService:
         }
 
     async def _monthly_usage(self, tenant_id: UUID) -> list[dict[str, int | str]]:
+        # Internal helper for monthly usage; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         rows_by_month: dict[str, dict[str, int | str]] = {}
 
         async def add_month_rows(query, metric_key: str) -> None:
+            # Runs the month rows service flow by coordinating repositories, validators, and integrations, then
+            # returns domain data.
             result = await self.session.execute(query)
             for month_value, amount in result.all():
                 month_key = self._month_key(month_value)
@@ -303,9 +336,13 @@ class TenantService:
         return [rows_by_month[key] for key in sorted(rows_by_month)]
 
     async def _brand_usage(self, tenant_id: UUID, tenant: Tenant | None) -> list[dict[str, object]]:
+        # Internal helper for brand usage; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         brands = await self.brand_spaces.list_by_tenant(tenant_id)
         targets = self._brand_usage_targets(tenant)
         rows: list[dict[str, object]] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for brand in brands:
             if brand.lifecycle_state == "deleted":
                 continue
@@ -339,6 +376,8 @@ class TenantService:
             monthly_rows: dict[str, dict[str, int | str]] = {}
 
             async def add_brand_month_rows(query, metric_key: str) -> None:
+                # Runs the brand month rows service flow by coordinating repositories, validators, and
+                # integrations, then returns domain data.
                 result = await self.session.execute(query)
                 for month_value, amount in result.all():
                     month_key = self._month_key(month_value)
@@ -401,6 +440,8 @@ class TenantService:
         return rows
 
     async def get_usage_summary(self, tenant_id: UUID) -> dict:
+        # Runs the usage summary service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         usage_limit = await self.usage_limits.get_by_tenant(tenant_id)
         if not usage_limit:
             raise NotFoundError("Usage limit record not found")
@@ -414,6 +455,8 @@ class TenantService:
         }
 
     async def get_tenant_summary(self, tenant_id: UUID) -> dict:
+        # Runs the tenant summary service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         tenant = await self.get_tenant(tenant_id)
         usage_limit = await self.usage_limits.get_by_tenant(tenant_id)
         usage_limits = self._usage_limit_values(usage_limit) if usage_limit else None
@@ -455,10 +498,14 @@ class TenantService:
         }
 
     async def list_tenant_brand_space_summaries(self, tenant_id: UUID) -> list[dict]:
+        # Runs the tenant brand space summaries service flow by coordinating repositories, validators, and
+        # integrations, then returns domain data.
         brands = await self.brand_spaces.list_by_tenant(tenant_id)
         active_threshold = datetime.now(timezone.utc) - timedelta(days=30)
         summaries: list[dict] = []
 
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for brand in brands:
             content_generations = await self.session.scalar(
                 select(func.count(ContentVersion.id)).where(
@@ -508,6 +555,8 @@ class TenantService:
         return summaries
 
     async def build_user_summary(self, user: User) -> dict:
+        # Runs the user summary service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         roles = await self.user_roles.list_for_user(user.id)
         role_codes: list[str] = []
         brand_space_ids: list[UUID] = []
@@ -534,12 +583,16 @@ class TenantService:
         }
 
     async def get_user_summary(self, tenant_id: UUID, user_id: UUID) -> dict:
+        # Runs the user summary service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         user = await self.users.get(user_id)
         if not user or user.tenant_id != tenant_id:
             raise NotFoundError("User not found")
         return await self.build_user_summary(user)
 
     async def deactivate_user(self, tenant_id: UUID, user_id: UUID) -> User:
+        # Runs the deactivate user service flow and persists the resulting state before returning it to the
+        # route or worker.
         user = await self.users.get(user_id)
         if not user or user.tenant_id != tenant_id:
             raise NotFoundError("User not found")
@@ -548,6 +601,8 @@ class TenantService:
         return user
 
     async def update_tenant(self, tenant_id: UUID, payload: TenantUpdateRequest) -> Tenant:
+        # Runs the tenant service flow and persists the resulting state before returning it to the route or
+        # worker.
         tenant = await self.get_tenant(tenant_id)
         if payload.slug is not None and payload.slug != tenant.slug:
             await self._ensure_unique_tenant_slug(payload.slug, current_tenant_id=tenant.id)
@@ -567,6 +622,8 @@ class TenantService:
             tenant.is_active = payload.is_active
 
         admin_user = await self._get_primary_tenant_admin(tenant_id)
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if admin_user:
             if payload.admin_email is not None and payload.admin_email != admin_user.email:
                 await self._ensure_unique_user_email(payload.admin_email, current_user_id=admin_user.id)
@@ -585,6 +642,8 @@ class TenantService:
         return tenant
 
     async def update_brand_usage_targets(self, tenant_id: UUID, targets: dict[str, float]) -> dict[str, float]:
+        # Runs the brand usage targets service flow and persists the resulting state before returning it to the
+        # route or worker.
         tenant = await self.get_tenant(tenant_id)
         brand_ids = set(
             str(brand_id)
@@ -610,6 +669,8 @@ class TenantService:
         return targets
 
     async def delete_tenant(self, tenant_id: UUID) -> None:
+        # Runs the tenant service flow and persists the resulting state before returning it to the route or
+        # worker.
         tenant = await self.get_tenant(tenant_id)
         if tenant.logo_asset_path:
             self.storage.delete(tenant.logo_asset_path)
@@ -652,6 +713,8 @@ class TenantService:
         await self.session.commit()
 
     async def upload_logo(self, tenant_id: UUID, payload: TenantLogoUploadRequest) -> Tenant:
+        # Runs the logo service flow and persists the resulting state before returning it to the route or
+        # worker.
         tenant = await self.get_tenant(tenant_id)
         content = decode_base64_content(payload.content_base64)
         if tenant.logo_asset_path:
@@ -663,6 +726,8 @@ class TenantService:
         return tenant
 
     async def update_tenant_user(self, tenant_id: UUID, user_id: UUID, payload: TenantUserUpdateRequest) -> User:
+        # Runs the tenant user service flow and persists the resulting state before returning it to the route or
+        # worker.
         user = await self.users.get(user_id)
         if not user or user.tenant_id != tenant_id:
             raise NotFoundError("User not found")
@@ -684,6 +749,7 @@ class TenantService:
             await self.session.execute(delete(UserRole).where(UserRole.user_id == user.id))
             self.session.add(UserRole(user_id=user.id, role_id=role.id, brand_space_id=None))
 
+        # This branch enforces tenant, brand, or role boundaries before shared data can be read or changed.
         if payload.brand_space_ids is not None:
             brand_space_ids = list(dict.fromkeys(payload.brand_space_ids))
             if brand_space_ids:
@@ -731,6 +797,8 @@ class TenantService:
         *,
         auto_commit: bool = True,
     ) -> UsageLimit:
+        # Runs the usage limits service flow and persists the resulting state before returning it to the route
+        # or worker.
         usage_limit = await self.usage_limits.get_by_tenant(tenant_id)
         if not usage_limit:
             raise NotFoundError("Usage limit record not found")

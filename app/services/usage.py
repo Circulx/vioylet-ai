@@ -1,3 +1,4 @@
+# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
 from uuid import UUID
@@ -12,6 +13,8 @@ from app.utils.text import current_period_key
 
 
 class UsageLimitService:
+    # Business layer for usage limit; routes and workers pass validated inputs here and receive domain results
+    # back.
     FIELD_MAP = {
         UsageMetricCode.USERS: "max_users",
         UsageMetricCode.BRAND_SPACES: "max_brand_spaces",
@@ -21,11 +24,14 @@ class UsageLimitService:
     }
 
     def __init__(self, session: AsyncSession) -> None:
+        # Wires the repositories and helper services this workflow reuses across its public methods.
         self.session = session
         self.limits = UsageLimitRepository(session)
         self.consumption = UsageConsumptionRepository(session)
 
     async def enforce(self, tenant_id: UUID, metric_code: str, amount: int = 1) -> None:
+        # Runs the enforce service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         usage_limit = await self.limits.get_by_tenant(tenant_id)
         if not usage_limit:
             return
@@ -38,6 +44,8 @@ class UsageLimitService:
             raise UsageLimitExceededError(f"Usage limit exceeded for {metric_code}")
 
     async def increment(self, tenant_id: UUID, metric_code: str, amount: int = 1) -> None:
+        # Runs the increment service flow and persists the resulting state before returning it to the route or
+        # worker.
         period_key = current_period_key()
         metric = await self.consumption.get_metric(tenant_id, metric_code, period_key)
         if not metric:
@@ -53,6 +61,8 @@ class UsageLimitService:
         await self.session.flush()
 
     async def decrement(self, tenant_id: UUID, metric_code: str, amount: int = 1) -> None:
+        # Runs the decrement service flow and persists the resulting state before returning it to the route or
+        # worker.
         period_key = current_period_key()
         metric = await self.consumption.get_metric(tenant_id, metric_code, period_key)
         if not metric:
@@ -61,6 +71,8 @@ class UsageLimitService:
         await self.session.flush()
 
     async def summary(self, tenant_id: UUID) -> dict[str, int]:
+        # Runs the summary service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         period_key = current_period_key()
         values: dict[str, int] = {}
         for metric_code in self.FIELD_MAP:

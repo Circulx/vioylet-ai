@@ -1,3 +1,4 @@
+# Pydantic schemas define the API contracts used by routes, services, and frontend callers.
 from __future__ import annotations
 
 from uuid import UUID
@@ -8,6 +9,8 @@ from app.schemas.common import APIModel
 
 
 class KnowledgeUploadRequest(APIModel):
+    # Request contract for knowledge upload; FastAPI validates incoming JSON against these fields before service
+    # code runs.
     name: str
     filename: str
     mime_type: str
@@ -18,6 +21,8 @@ class KnowledgeUploadRequest(APIModel):
 
 
 class KnowledgeAssetResponse(APIModel):
+    # Response contract for knowledge asset; routes serialize service or ORM results into this frontend-facing
+    # shape.
     id: UUID
     brand_space_id: UUID | None = None
     name: str
@@ -40,4 +45,6 @@ class KnowledgeAssetResponse(APIModel):
 
 
 class KnowledgeReprocessRequest(APIModel):
+    # Request contract for knowledge reprocess; FastAPI validates incoming JSON against these fields before
+    # service code runs.
     channel: str | None = None

@@ -1,3 +1,4 @@
+# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
 from sqlalchemy import select
@@ -37,6 +38,7 @@ ROLE_PERMISSION_MAP = {
 
 
 async def seed_rbac(session: AsyncSession) -> None:
+    # Runs the rbac service flow and persists the resulting state before returning it to the route or worker.
     for code, name in DEFAULT_ROLES:
         result = await session.execute(select(Role).where(Role.code == code))
         if not result.scalar_one_or_none():
@@ -62,6 +64,8 @@ async def seed_rbac(session: AsyncSession) -> None:
 
 
 async def seed_demo_owner(session: AsyncSession) -> None:
+    # Runs the demo owner service flow and persists the resulting state before returning it to the route or
+    # worker.
     settings = get_settings()
     if not settings.enable_demo_owner or settings.environment.lower() == "production":
         return
@@ -71,6 +75,7 @@ async def seed_demo_owner(session: AsyncSession) -> None:
         return
 
     user = (await session.execute(select(User).where(User.email == settings.demo_owner_email))).scalar_one_or_none()
+    # This guard handles missing or invalid input early so the main workflow can stay straightforward.
     if not user:
         user = User(
             tenant_id=None,

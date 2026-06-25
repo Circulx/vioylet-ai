@@ -1,3 +1,4 @@
+# Operational scripts run one-off maintenance, smoke checks, and local debugging workflows.
 from __future__ import annotations
 
 import argparse
@@ -16,6 +17,7 @@ from app.services.chat import ChatService
 
 
 def _parse_args() -> argparse.Namespace:
+    # Parses args for the script workflow, usually preparing inputs or calling backend services directly.
     parser = argparse.ArgumentParser(description="Debug a chat prompt directly against ChatService.")
     parser.add_argument("--session-id", help="Existing chat session UUID")
     parser.add_argument("--tenant-id", help="Tenant UUID for creating a fresh session")
@@ -37,6 +39,8 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _load_message(args: argparse.Namespace) -> str:
+    # Handles load message for the script workflow, usually preparing inputs or calling backend services
+    # directly.
     if args.message:
         return args.message.strip()
     if args.prompt_file:
@@ -45,12 +49,15 @@ def _load_message(args: argparse.Namespace) -> str:
 
 
 def _print_json(label: str, value: object) -> None:
+    # Handles print json for the script workflow, usually preparing inputs or calling backend services directly.
     print(f"\n=== {label} ===")
     print(json.dumps(value, indent=2, ensure_ascii=False, default=str))
 
 
 async def _run(args: argparse.Namespace) -> int:
+    # Runs _run for the script workflow, usually preparing inputs or calling backend services directly.
     message = _load_message(args)
+    # Scopes the resource lifetime tightly around the operation that needs it.
     async with AsyncSessionLocal() as db:
         sessions = SessionRepository(db)
         contents = ContentRepository(db)
@@ -176,6 +183,7 @@ async def _run(args: argparse.Namespace) -> int:
 
 
 def main() -> None:
+    # Command-line entrypoint that wires arguments and configuration into this script workflow.
     args = _parse_args()
     logging.basicConfig(
         level=getattr(logging, str(args.log_level).upper(), logging.INFO),

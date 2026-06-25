@@ -1,3 +1,4 @@
+# Utility helpers collect shared formatting, parsing, and normalization rules used across services.
 from __future__ import annotations
 
 from collections import defaultdict
@@ -7,18 +8,23 @@ from typing import Any
 
 
 class InputAccessTracker:
+    # Groups the input access tracker behavior used by this part of the backend flow.
     def __init__(self) -> None:
+        # Stores the initial state InputAccessTracker needs before its other methods are called.
         self._registered_paths: dict[str, set[str]] = defaultdict(set)
         self._read_counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
         self._access_types: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
         self._events: dict[str, list[dict[str, Any]]] = defaultdict(list)
 
     def wrap_source(self, source_name: str, value: Any) -> Any:
+        # Handles wrap source as a reusable helper for services that need the same formatting or normalization
+        # rule.
         normalized_source = str(source_name or "").strip() or "unknown"
         self._registered_paths[normalized_source].update(self._collect_paths(value))
         return self._wrap(normalized_source, value, "")
 
     def build_summary(self) -> dict[str, Any]:
+        # Builds summary as a reusable helper for services that need the same formatting or normalization rule.
         summary: dict[str, Any] = {}
         for source_name, registered in self._registered_paths.items():
             read_counts = dict(self._read_counts.get(source_name, {}))
@@ -37,6 +43,7 @@ class InputAccessTracker:
         return summary
 
     def _wrap(self, source_name: str, value: Any, path: str) -> Any:
+        # Handles wrap as a reusable helper for services that need the same formatting or normalization rule.
         if isinstance(value, TrackedDict) or isinstance(value, TrackedList):
             return value
         if isinstance(value, dict):
@@ -46,6 +53,7 @@ class InputAccessTracker:
         return value
 
     def record_access(self, source_name: str, path: str, access_type: str) -> None:
+        # Records access as a reusable helper for services that need the same formatting or normalization rule.
         normalized_path = str(path or "").strip()
         if not normalized_path:
             return
@@ -63,6 +71,8 @@ class InputAccessTracker:
         )
 
     def _collect_paths(self, value: Any, prefix: str = "") -> set[str]:
+        # Handles collect paths as a reusable helper for services that need the same formatting or normalization
+        # rule.
         paths: set[str] = set()
         if isinstance(value, dict):
             for key, item in value.items():
@@ -82,73 +92,92 @@ class InputAccessTracker:
 
 
 class TrackedDict(dict):
+    # Groups the tracked dict behavior used by this part of the backend flow.
     def __init__(self, initial: dict[str, Any], *, tracker: InputAccessTracker, source_name: str, path: str) -> None:
+        # Stores the initial state TrackedDict needs before its other methods are called.
         super().__init__(initial)
         self._tracker = tracker
         self._source_name = source_name
         self._path = path
 
     def _child_path(self, key: Any) -> str:
+        # Handles child path as a reusable helper for services that need the same formatting or normalization
+        # rule.
         key_text = str(key)
         return f"{self._path}.{key_text}" if self._path else key_text
 
     def _track(self, key: Any, access_type: str) -> str:
+        # Handles track as a reusable helper for services that need the same formatting or normalization rule.
         child_path = self._child_path(key)
         self._tracker.record_access(self._source_name, child_path, access_type)
         return child_path
 
     def __getitem__(self, key: Any) -> Any:
+        # Handles getitem as a reusable helper for services that need the same formatting or normalization rule.
         child_path = self._track(key, "__getitem__")
         return self._tracker._wrap(self._source_name, super().__getitem__(key), child_path)
 
     def get(self, key: Any, default: Any = None) -> Any:
+        # Mirrors dict.get while recording the exact path read from the wrapped input source.
         if key in self:
             child_path = self._track(key, "get")
             return self._tracker._wrap(self._source_name, super().get(key), child_path)
         return default
 
     def items(self) -> Iterator[tuple[Any, Any]]:
+        # Handles items as a reusable helper for services that need the same formatting or normalization rule.
         for key in super().keys():
             child_path = self._track(key, "items")
             yield key, self._tracker._wrap(self._source_name, super().__getitem__(key), child_path)
 
     def values(self) -> Iterator[Any]:
+        # Handles values as a reusable helper for services that need the same formatting or normalization rule.
         for key in super().keys():
             child_path = self._track(key, "values")
             yield self._tracker._wrap(self._source_name, super().__getitem__(key), child_path)
 
     def keys(self) -> Iterator[Any]:
+        # Handles keys as a reusable helper for services that need the same formatting or normalization rule.
         for key in super().keys():
             self._track(key, "keys")
             yield key
 
     def __iter__(self) -> Iterator[Any]:
+        # Handles iter as a reusable helper for services that need the same formatting or normalization rule.
         for key in super().keys():
             self._track(key, "__iter__")
             yield key
 
     def __contains__(self, key: object) -> bool:
+        # Handles contains as a reusable helper for services that need the same formatting or normalization
+        # rule.
         if super().__contains__(key):
             self._track(key, "__contains__")
         return super().__contains__(key)
 
 
 class TrackedList(list):
+    # Groups the tracked list behavior used by this part of the backend flow.
     def __init__(self, initial: list[Any], *, tracker: InputAccessTracker, source_name: str, path: str) -> None:
+        # Stores the initial state TrackedList needs before its other methods are called.
         super().__init__(initial)
         self._tracker = tracker
         self._source_name = source_name
         self._path = path
 
     def _child_path(self, index: int) -> str:
+        # Handles child path as a reusable helper for services that need the same formatting or normalization
+        # rule.
         return f"{self._path}[{index}]" if self._path else f"[{index}]"
 
     def _track(self, index: int, access_type: str) -> str:
+        # Handles track as a reusable helper for services that need the same formatting or normalization rule.
         child_path = self._child_path(index)
         self._tracker.record_access(self._source_name, child_path, access_type)
         return child_path
 
     def __getitem__(self, index: Any) -> Any:
+        # Handles getitem as a reusable helper for services that need the same formatting or normalization rule.
         value = super().__getitem__(index)
         if isinstance(index, slice):
             result: list[Any] = []
@@ -162,6 +191,7 @@ class TrackedList(list):
         return self._tracker._wrap(self._source_name, value, child_path)
 
     def __iter__(self) -> Iterator[Any]:
+        # Handles iter as a reusable helper for services that need the same formatting or normalization rule.
         for index, item in enumerate(super().__iter__()):
             child_path = self._track(index, "__iter__")
             yield self._tracker._wrap(self._source_name, item, child_path)

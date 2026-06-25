@@ -1,3 +1,4 @@
+# Operational scripts run one-off maintenance, smoke checks, and local debugging workflows.
 from __future__ import annotations
 
 import argparse
@@ -26,6 +27,7 @@ from app.services.renderer import RendererService
 
 @dataclass(slots=True)
 class Scenario:
+    # Small state object for the scenario script so the command-line workflow can pass structured data around.
     name: str
     prompt: str
     message_strategy: dict[str, Any]
@@ -41,12 +43,17 @@ class Scenario:
 
 
 class StubTextProvider:
+    # Small state object for the stub text provider script so the command-line workflow can pass structured data
+    # around.
     provider_name = "stub-demo-text"
 
     def __init__(self, scenario: Scenario) -> None:
+        # Stores the initial state StubTextProvider needs before its other methods are called.
         self.scenario = scenario
 
     def generate_structured_json(self, envelope, fallback):  # noqa: ANN001
+        # Generates structured json for the script workflow, usually preparing inputs or calling backend
+        # services directly.
         system_text = str(envelope.system or "")
         if "senior brand content strategist" in system_text:
             return self.scenario.message_strategy
@@ -58,17 +65,23 @@ class StubTextProvider:
         return self.scenario.planning
 
     def generate_text(self, envelope, fallback):  # noqa: ANN001
+        # Generates text for the script workflow, usually preparing inputs or calling backend services directly.
         return "Stubbed supporting research summary."
 
 
 class StubImageProvider:
+    # Small state object for the stub image provider script so the command-line workflow can pass structured
+    # data around.
     provider_name = "stub-demo-image"
 
     def __init__(self, storage: LocalObjectStorage, scenario_name: str) -> None:
+        # Stores the initial state StubImageProvider needs before its other methods are called.
         self.storage = storage
         self.scenario_name = scenario_name
 
     def generate(self, tenant_id: UUID, brand_space_id: UUID, prompt: str) -> dict[str, Any]:
+        # Generates generate for the script workflow, usually preparing inputs or calling backend services
+        # directly.
         prompt_lower = prompt.lower()
         image = Image.new("RGB", (1080, 1080), "#F8F7F2")
         draw = ImageDraw.Draw(image)
@@ -99,6 +112,8 @@ class StubImageProvider:
 
     @staticmethod
     def _draw_travel_visual(draw: ImageDraw.ImageDraw) -> None:
+        # Handles draw travel visual for the script workflow, usually preparing inputs or calling backend
+        # services directly.
         draw.rectangle((0, 0, 1080, 1080), fill="#EAE6DD")
         draw.rounded_rectangle((560, 70, 1020, 1010), radius=36, fill="#DDEAF3")
         draw.ellipse((690, 70, 1035, 350), fill="#00CB91")
@@ -111,6 +126,8 @@ class StubImageProvider:
 
     @staticmethod
     def _draw_finance_visual(draw: ImageDraw.ImageDraw) -> None:
+        # Handles draw finance visual for the script workflow, usually preparing inputs or calling backend
+        # services directly.
         draw.rectangle((0, 0, 1080, 1080), fill="#F4F1EA")
         draw.rounded_rectangle((70, 90, 1010, 1000), radius=42, fill="#F8F5EF")
         draw.rounded_rectangle((620, 145, 990, 945), radius=30, fill="#003975")
@@ -125,6 +142,8 @@ class StubImageProvider:
 
     @staticmethod
     def _draw_generic_brand_visual(draw: ImageDraw.ImageDraw) -> None:
+        # Handles draw generic brand visual for the script workflow, usually preparing inputs or calling backend
+        # services directly.
         draw.rectangle((0, 0, 1080, 1080), fill="#EEF6FF")
         draw.rounded_rectangle((80, 120, 1000, 980), radius=42, fill="#FFFFFF")
         draw.ellipse((640, 100, 1030, 430), fill="#00CB91")
@@ -134,6 +153,8 @@ class StubImageProvider:
 
 
 def _base_brand_context(logo_asset_id: UUID) -> dict[str, Any]:
+    # Handles base brand context for the script workflow, usually preparing inputs or calling backend services
+    # directly.
     return {
         "brand_name": "Jiraaf",
         "brand_description": "Curated fixed-income investments for modern Indian investors.",
@@ -177,6 +198,8 @@ def _base_brand_context(logo_asset_id: UUID) -> dict[str, Any]:
 
 
 def _scenario_travel_low_cost() -> Scenario:
+    # Handles scenario travel low cost for the script workflow, usually preparing inputs or calling backend
+    # services directly.
     return Scenario(
         name="travel_low_cost_image_led",
         prompt="Create an engaging Instagram post that shares tips and strategies to book flights at a lower cost.",
@@ -245,6 +268,8 @@ def _scenario_travel_low_cost() -> Scenario:
 
 
 def _scenario_bonds_support_fallback() -> Scenario:
+    # Handles scenario bonds support fallback for the script workflow, usually preparing inputs or calling
+    # backend services directly.
     return Scenario(
         name="bonds_support_fallback",
         prompt="Create an engaging Instagram post about why investors are shifting from fixed deposits to bonds in 2026.",
@@ -301,6 +326,8 @@ def _scenario_bonds_support_fallback() -> Scenario:
 
 
 def _scenario_flattened_template_reference() -> Scenario:
+    # Handles scenario flattened template reference for the script workflow, usually preparing inputs or calling
+    # backend services directly.
     return Scenario(
         name="flattened_template_style_reference",
         prompt="Create an engaging Instagram post that shares tips and strategies to book flights at a lower cost.",
@@ -386,6 +413,7 @@ def _scenario_flattened_template_reference() -> Scenario:
 
 
 def _long_body(sentences: list[str]) -> str:
+    # Handles long body for the script workflow, usually preparing inputs or calling backend services directly.
     return " ".join(sentence.strip().rstrip(".") + "." for sentence in sentences if sentence.strip())
 
 
@@ -404,6 +432,8 @@ def _generic_scene_graph(
     template_surface_policy: str | None = None,
     selected_template_id: str | None = None,
 ) -> dict[str, Any]:
+    # Handles generic scene graph for the script workflow, usually preparing inputs or calling backend services
+    # directly.
     studio_panel = resolve_studio_panel_defaults(
         {"platform_preset": platform_preset, "format": format_name, "file_type": file_type}
     )
@@ -493,6 +523,8 @@ def _generic_scenario(
     selected_template_id: str | None = None,
     logo_mode: str = "actual",
 ) -> Scenario:
+    # Handles generic scenario for the script workflow, usually preparing inputs or calling backend services
+    # directly.
     body = _long_body(body_sentences)
     metadata = {
         "supporting_line": supporting_line,
@@ -502,6 +534,8 @@ def _generic_scenario(
         "design_style": "premium editorial branded creative",
         "image_prompt": "A premium branded marketing visual with no text, no fake logos, no stickers, no clip-art",
     }
+    # This branch separates the special case from the normal path so later logic can work with cleaner
+    # assumptions.
     if "travel" in prompt.lower() or "flight" in prompt.lower():
         metadata["visual_direction"] = "Premium travel image-led composition with elegant negative space"
         metadata["design_style"] = "travel editorial campaign creative"
@@ -570,6 +604,8 @@ def _generic_scenario(
 
 
 def _all_scenarios() -> list[Scenario]:
+    # Handles all scenarios for the script workflow, usually preparing inputs or calling backend services
+    # directly.
     return [
         _scenario_travel_low_cost(),
         _scenario_bonds_support_fallback(),
@@ -785,6 +821,8 @@ def _all_scenarios() -> list[Scenario]:
 
 
 def _studio_panel_for_scenario(scenario: Scenario) -> dict[str, Any]:
+    # Handles studio panel for scenario for the script workflow, usually preparing inputs or calling backend
+    # services directly.
     return resolve_studio_panel_defaults(
         {
             "platform_preset": scenario.platform_preset,
@@ -803,6 +841,7 @@ def _build_request(
     logo_asset_id: UUID,
     trace_id: str,
 ) -> AIOrchestrationRequest:
+    # Builds request for the script workflow, usually preparing inputs or calling backend services directly.
     studio_panel = _studio_panel_for_scenario(scenario)
     return AIOrchestrationRequest(
         tenant_id=tenant_id,
@@ -848,6 +887,8 @@ def _prepare_orchestrator(
     storage: LocalObjectStorage,
     tracer: GenerationTraceService,
 ) -> AIOrchestratorService:
+    # Handles prepare orchestrator for the script workflow, usually preparing inputs or calling backend services
+    # directly.
     service = AIOrchestratorService()
     service.trace = tracer
     service.guardrails = SimpleNamespace(
@@ -877,6 +918,7 @@ def _create_logo_asset(
     tenant_id: UUID,
     brand_space_id: UUID,
 ) -> str:
+    # Creates logo asset for the script workflow, usually preparing inputs or calling backend services directly.
     image = Image.new("RGBA", (360, 116), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
     draw.rounded_rectangle((0, 0, 359, 115), radius=18, fill="#003975")
@@ -896,6 +938,8 @@ def _create_logo_asset(
 
 
 def _brand_visual_rules(brand_context: dict[str, Any]) -> dict[str, Any]:
+    # Handles brand visual rules for the script workflow, usually preparing inputs or calling backend services
+    # directly.
     visual_identity = dict(brand_context.get("visual_identity", {}) or {})
     return {
         "brand_name": brand_context.get("brand_name"),
@@ -916,6 +960,7 @@ async def _render_output(
     actual_logo_path: str,
     requested_logo_path: str | None,
 ) -> dict[str, Any]:
+    # Renders output for the script workflow, usually preparing inputs or calling backend services directly.
     renderer = RendererService(session=None)  # type: ignore[arg-type]
     renderer.storage = storage
 
@@ -958,6 +1003,8 @@ async def _render_output(
 
 
 def _scenario_input_payload(scenario: Scenario, request: AIOrchestrationRequest) -> dict[str, Any]:
+    # Handles scenario input payload for the script workflow, usually preparing inputs or calling backend
+    # services directly.
     return {
         "scenario": scenario.name,
         "prompt": scenario.prompt,
@@ -973,6 +1020,7 @@ def _run_scenario(
     scenario: Scenario,
     run_root: Path,
 ) -> dict[str, Any]:
+    # Runs scenario for the script workflow, usually preparing inputs or calling backend services directly.
     tenant_id = uuid4()
     brand_space_id = uuid4()
     user_id = uuid4()
@@ -1058,6 +1106,7 @@ def _run_scenario(
 
 
 def main() -> int:
+    # Command-line entrypoint that wires arguments and configuration into this script workflow.
     parser = argparse.ArgumentParser(description="Run a stubbed end-to-end Violyt generation demo.")
     parser.add_argument(
         "--scenario",
@@ -1078,6 +1127,8 @@ def main() -> int:
     run_root.mkdir(parents=True, exist_ok=True)
 
     summaries: list[dict[str, Any]] = []
+    # Builds the grouped response or persistence payload one record at a time because later steps expect this
+    # exact shape.
     for scenario in scenarios:
         try:
             summaries.append(_run_scenario(scenario=scenario, run_root=run_root))
@@ -1099,6 +1150,8 @@ def main() -> int:
 
     print(f"Stub demo run root: {run_root}")
     print(f"Run summary: {summary_path}")
+    # Builds the grouped response or persistence payload one record at a time because later steps expect this
+    # exact shape.
     for summary in summaries:
         print(
             json.dumps(

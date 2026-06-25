@@ -1,3 +1,4 @@
+# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -25,6 +26,8 @@ logger = logging.getLogger(__name__)
 
 
 class ConversationMemoryService:
+    # Business layer for conversation memory; routes and workers pass validated inputs here and receive domain
+    # results back.
     IMAGE_ASSET_ROLES = {
         AssetRole.AI_IMAGE,
         AssetRole.RENDER_PREVIEW,
@@ -58,6 +61,7 @@ class ConversationMemoryService:
     )
 
     def __init__(self, session) -> None:
+        # Wires the repositories and helper services this workflow reuses across its public methods.
         self.session = session
         self.entries = ConversationMemoryRepository(session)
         self.assets = AssetRepository(session)
@@ -68,6 +72,8 @@ class ConversationMemoryService:
 
     @staticmethod
     def _namespace(tenant_id: UUID, brand_space_id: UUID) -> str:
+        # Internal helper for namespace; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         return FaissVectorStoreProvider().namespace(
             str(tenant_id),
             str(brand_space_id),
@@ -76,6 +82,8 @@ class ConversationMemoryService:
 
     @staticmethod
     def _clean_text(value: Any, *, limit: int | None = None) -> str:
+        # Internal helper for clean text; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         text = " ".join(str(value or "").split()).strip()
         if limit is None or len(text) <= limit:
             return text
@@ -83,6 +91,8 @@ class ConversationMemoryService:
 
     @classmethod
     def _tokens(cls, value: str | None) -> set[str]:
+        # Internal helper for tokens; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         return {
             token
             for token in cls.TOKEN_PATTERN.findall(str(value or "").casefold())
@@ -91,12 +101,16 @@ class ConversationMemoryService:
 
     @staticmethod
     def _isoformat(value: datetime | None) -> str | None:
+        # Internal helper for isoformat; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         if value is None:
             return None
         return value.astimezone(timezone.utc).isoformat()
 
     @staticmethod
     def _search_score(result: SearchResult | None) -> float:
+        # Internal helper for search score; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         if result is None:
             return 0.0
         score = float(result.score)
@@ -106,6 +120,8 @@ class ConversationMemoryService:
 
     @classmethod
     def _overlap_score(cls, query: str, memory_text: str) -> float:
+        # Internal helper for overlap score; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         query_tokens = cls._tokens(query)
         if not query_tokens:
             return 0.0
@@ -116,6 +132,8 @@ class ConversationMemoryService:
 
     @staticmethod
     def _recency_score(*, position: int, total: int) -> float:
+        # Internal helper for recency score; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         if total <= 1:
             return 1.0
         return 1.0 - (position / max(total - 1, 1))
@@ -127,12 +145,16 @@ class ConversationMemoryService:
         candidates: list[dict[str, Any]],
         limit: int,
     ) -> dict[str, Any] | None:
+        # Internal helper for llm select candidate indexes; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         provider = self.providers.get_text_provider("generation")
         fallback = {
             "selected_indexes": [],
             "reason": "provider_unavailable",
             "selection_state": "provider_unavailable",
         }
+        # Keeps the risky I/O or integration boundary contained so callers receive project-level errors
+        # instead of raw library failures.
         try:
             response = provider.generate_structured_json(
                 PromptEnvelope(
@@ -170,6 +192,8 @@ class ConversationMemoryService:
             return None
         selected: list[int] = []
         seen: set[int] = set()
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for value in raw_indexes:
             try:
                 index = int(value)
@@ -195,7 +219,11 @@ class ConversationMemoryService:
         candidate: dict[str, Any],
         fallback: str,
     ) -> str:
+        # Internal helper for llm describe selected asset; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         provider = self.providers.get_text_provider("generation")
+        # Keeps the risky I/O or integration boundary contained so callers receive project-level errors
+        # instead of raw library failures.
         try:
             response = provider.generate_text(
                 PromptEnvelope(
@@ -222,6 +250,8 @@ class ConversationMemoryService:
 
     @classmethod
     def _remove_display_inability_claims(cls, value: str | None) -> str:
+        # Internal helper for display inability claims; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         text = str(value or "")
         text = re.sub(
             r"\b(?:unfortunately|sorry|however)?,?\s*(?:i\s+)?(?:can(?:not|'t)|am unable to)\s+"
@@ -237,6 +267,8 @@ class ConversationMemoryService:
 
     @classmethod
     def _message_memory_text(cls, message: ChatMessage, session: ContentSession) -> str:
+        # Internal helper for message memory text; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         payload = message.structured_payload or {}
         mode = cls._clean_text(payload.get("mode") or payload.get("intent_mode"), limit=40)
         assistant_assets = payload.get("assets") if isinstance(payload.get("assets"), list) else []
@@ -260,6 +292,8 @@ class ConversationMemoryService:
 
     @classmethod
     def _content_memory_text(cls, content_version: ContentVersion, session: ContentSession) -> str:
+        # Internal helper for content memory text; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         payload = content_version.generated_payload or {}
         headline = cls._clean_text(payload.get("headline"), limit=220)
         body = cls._clean_text(payload.get("body"), limit=420)
@@ -284,6 +318,8 @@ class ConversationMemoryService:
         content_version: ContentVersion,
         session: ContentSession,
     ) -> str:
+        # Internal helper for asset memory text; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         payload = content_version.generated_payload or {}
         headline = cls._clean_text(payload.get("headline"), limit=220)
         body = cls._clean_text(payload.get("body"), limit=320)
@@ -313,6 +349,8 @@ class ConversationMemoryService:
         content_version: ContentVersion,
         session: ContentSession,
     ) -> str:
+        # Internal helper for displayed asset memory text; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         payload = content_version.generated_payload or {}
         headline = cls._clean_text(payload.get("headline"), limit=220)
         body = cls._clean_text(payload.get("body"), limit=320)
@@ -352,7 +390,10 @@ class ConversationMemoryService:
         asset_role: str | None = None,
         metadata_json: dict[str, Any] | None = None,
     ) -> ConversationMemoryEntry:
+        # Internal helper for entry; it keeps the public service method focused on orchestration instead of low-
+        # level shaping.
         entry = await self.entries.get_by_source_key(source_key)
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if entry is None:
             entry = ConversationMemoryEntry(
                 tenant_id=tenant_id,
@@ -407,6 +448,8 @@ class ConversationMemoryService:
         return entry
 
     async def index_chat_message(self, *, message: ChatMessage, session: ContentSession) -> ConversationMemoryEntry:
+        # Runs the index chat message service flow by coordinating repositories, validators, and integrations,
+        # then returns domain data.
         return await self._upsert_entry(
             tenant_id=message.tenant_id,
             brand_space_id=message.brand_space_id,
@@ -428,6 +471,8 @@ class ConversationMemoryService:
         session: ContentSession,
         content_version: ContentVersion,
     ) -> ConversationMemoryEntry:
+        # Runs the index content version summary service flow by coordinating repositories, validators, and
+        # integrations, then returns domain data.
         return await self._upsert_entry(
             tenant_id=content_version.tenant_id,
             brand_space_id=content_version.brand_space_id,
@@ -449,7 +494,11 @@ class ConversationMemoryService:
         content_version: ContentVersion,
         assets: Iterable[GeneratedAsset | dict[str, Any]],
     ) -> list[ConversationMemoryEntry]:
+        # Runs the index generated assets service flow by coordinating repositories, validators, and
+        # integrations, then returns domain data.
         indexed: list[ConversationMemoryEntry] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for asset in assets:
             if isinstance(asset, dict):
                 storage_path = self._clean_text(asset.get("storage_path"), limit=512)
@@ -535,6 +584,8 @@ class ConversationMemoryService:
         return indexed
 
     def _serialize_entry_asset(self, entry: ConversationMemoryEntry) -> dict[str, Any] | None:
+        # Internal helper for entry asset; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         storage_path = self._clean_text(entry.storage_path, limit=512)
         if not storage_path or not self.storage.exists(storage_path):
             return None
@@ -563,6 +614,8 @@ class ConversationMemoryService:
         }
 
     def _serialize_generated_asset(self, asset: GeneratedAsset) -> dict[str, Any] | None:
+        # Internal helper for generated asset; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         storage_path = self._clean_text(asset.storage_path, limit=512)
         if not storage_path or not self.storage.exists(storage_path):
             return None
@@ -584,6 +637,8 @@ class ConversationMemoryService:
 
     @classmethod
     def _asset_slide_index(cls, asset: GeneratedAsset, *, fallback: int) -> int:
+        # Internal helper for asset slide index; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         metadata = getattr(asset, "metadata_json", None) or {}
         for key in ("slide_index", "page_index", "page_number", "reference_slide_index"):
             try:
@@ -607,6 +662,8 @@ class ConversationMemoryService:
 
     @staticmethod
     def _asset_role_priority_value(role: str | None) -> int:
+        # Internal helper for asset role priority value; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         role = str(role or "")
         if role == AssetRole.RENDER_PREVIEW.value:
             return 0
@@ -618,10 +675,14 @@ class ConversationMemoryService:
 
     @classmethod
     def _asset_role_priority(cls, asset: GeneratedAsset) -> int:
+        # Internal helper for asset role priority; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         return cls._asset_role_priority_value(str(asset.asset_role or ""))
 
     @classmethod
     def _sorted_slide_assets(cls, assets: list[GeneratedAsset]) -> list[GeneratedAsset]:
+        # Internal helper for sorted slide assets; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         position_by_identity = {id(asset): index for index, asset in enumerate(assets, start=1)}
         return sorted(
             assets,
@@ -635,6 +696,8 @@ class ConversationMemoryService:
 
     @classmethod
     def _serialized_asset_slide_index(cls, asset: dict[str, Any], *, fallback: int) -> int:
+        # Internal helper for serialized asset slide index; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         metadata = asset.get("metadata") if isinstance(asset.get("metadata"), dict) else {}
         for key in ("slide_index", "page_index", "page_number", "reference_slide_index"):
             try:
@@ -658,6 +721,8 @@ class ConversationMemoryService:
 
     @classmethod
     def _sorted_serialized_assets(cls, assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        # Internal helper for sorted serialized assets; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         position_by_identity = {id(asset): index for index, asset in enumerate(assets, start=1)}
         return sorted(
             assets,
@@ -669,6 +734,8 @@ class ConversationMemoryService:
         )
 
     async def _expand_assets_for_content_version(self, asset: dict[str, Any]) -> list[dict[str, Any]]:
+        # Internal helper for expand assets for content version; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         content_version_id = asset.get("content_version_id")
         if not content_version_id:
             return [asset]
@@ -716,6 +783,8 @@ class ConversationMemoryService:
         seen_storage_paths: set[str] = set()
         lead_memory_entry_id = asset.get("memory_entry_id")
         lead_memory_text = asset.get("memory_text")
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for item in preferred_assets:
             serialized = self._serialize_generated_asset(item)
             if not serialized:
@@ -734,6 +803,8 @@ class ConversationMemoryService:
         *,
         displayed_assets_by_content_version: dict[str, list[dict[str, Any]]],
     ) -> list[dict[str, Any]]:
+        # Internal helper for expand selected asset; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         content_version_id = str(asset.get("content_version_id") or "").strip()
         displayed_assets = displayed_assets_by_content_version.get(content_version_id)
         if displayed_assets:
@@ -742,6 +813,8 @@ class ConversationMemoryService:
 
     @staticmethod
     def _selection_option_for_asset(asset: dict[str, Any], *, rank: int) -> dict[str, Any]:
+        # Internal helper for selection option for asset; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         return {
             "rank": rank,
             "asset_id": asset.get("asset_id"),
@@ -757,6 +830,8 @@ class ConversationMemoryService:
         }
 
     def _serialize_session_visual_asset(self, asset: dict[str, Any]) -> dict[str, Any] | None:
+        # Internal helper for session visual asset; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         storage_path = self._clean_text(asset.get("storage_path"), limit=512)
         if not storage_path or not self.storage.exists(storage_path):
             return None
@@ -785,6 +860,8 @@ class ConversationMemoryService:
         }
 
     def _session_visual_memory_text(self, visual_state: dict[str, Any]) -> str:
+        # Internal helper for session visual memory text; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         return self._clean_text(
             (
                 "Last generated visual summary. "
@@ -801,6 +878,8 @@ class ConversationMemoryService:
 
     @staticmethod
     def _requested_visual_format(query: str | None) -> str | None:
+        # Internal helper for requested visual format; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         lowered = str(query or "").casefold()
         if "infographic" in lowered:
             return "infographic"
@@ -812,6 +891,8 @@ class ConversationMemoryService:
 
     @staticmethod
     def _missing_visual_format_response(format_name: str) -> dict[str, Any]:
+        # Internal helper for missing visual format response; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         label = {
             "static": "static image",
             "infographic": "infographic",
@@ -835,6 +916,8 @@ class ConversationMemoryService:
         visual_state: dict[str, Any],
         requested_format: str | None,
     ) -> bool:
+        # Internal helper for visual state matches requested format; it keeps the public service method focused
+        # on orchestration instead of low-level shaping.
         if not requested_format:
             return True
         format_name = cls._clean_text(visual_state.get("format"), limit=40).casefold()
@@ -845,6 +928,8 @@ class ConversationMemoryService:
         except (TypeError, ValueError):
             stored_asset_count = 0
         max_slide_count = 0
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for asset in raw_assets:
             if not isinstance(asset, dict):
                 continue
@@ -865,6 +950,8 @@ class ConversationMemoryService:
         )
         if "carousel" in combined_text or "slides" in combined_text or "slide " in combined_text:
             looks_like_carousel = True
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if looks_like_carousel:
             actual_format = "carousel"
         elif "infographic" in combined_text:
@@ -881,6 +968,8 @@ class ConversationMemoryService:
         *,
         requested_format: str | None = None,
     ) -> list[dict[str, Any]]:
+        # Internal helper for session visual candidates; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not isinstance(session_context, dict):
             return []
         raw_candidates: list[tuple[str, dict[str, Any]]] = []
@@ -933,6 +1022,8 @@ class ConversationMemoryService:
 
         candidates: list[dict[str, Any]] = []
         seen_keys: set[str] = set()
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for source_key, visual_state in raw_candidates:
             if not self._visual_state_matches_requested_format(
                 visual_state=visual_state,
@@ -985,6 +1076,8 @@ class ConversationMemoryService:
         session_context: dict[str, Any] | None,
         limit: int,
     ) -> dict[str, Any] | None:
+        # Internal helper for select session visual candidate; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         requested_format = self._requested_visual_format(query)
         candidates = self._session_visual_candidates(
             session_context,
@@ -998,6 +1091,8 @@ class ConversationMemoryService:
             return None
         for candidate in candidates:
             candidate["overlap_score"] = round(self._overlap_score(query, candidate.get("memory_text", "")), 4)
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if requested_format and len(candidates) == 1:
             selected = candidates[0]
             assets = selected.get("assets") if isinstance(selected.get("assets"), list) else []
@@ -1086,6 +1181,8 @@ class ConversationMemoryService:
         session_context: dict[str, Any] | None = None,
         limit: int = 3,
     ) -> dict[str, Any]:
+        # Runs the retrieve image assets service flow by coordinating repositories, validators, and
+        # integrations, then returns domain data.
         query_text = self._clean_text(query, limit=600)
         requested_format = self._requested_visual_format(query_text)
         session_visual_result = self._select_session_visual_candidate(
@@ -1102,6 +1199,7 @@ class ConversationMemoryService:
             session_id=session_id,
             limit=max(limit * 10, 40),
         )
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if not entries:
             if requested_format and isinstance(session_context, dict):
                 return self._missing_visual_format_response(requested_format)
@@ -1122,6 +1220,8 @@ class ConversationMemoryService:
 
         scored_entries: list[tuple[float, float, ConversationMemoryEntry]] = []
         total = len(entries)
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for position, entry in enumerate(entries):
             search_result = search_by_entry_id.get(str(entry.id))
             vector_score = self._search_score(search_result)
@@ -1142,6 +1242,8 @@ class ConversationMemoryService:
         candidate_entries: list[ConversationMemoryEntry] = []
         seen_candidate_entry_ids: set[str] = set()
         candidate_limit = max(limit * 8, 20)
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for entry in entries:
             entry_id = str(entry.id)
             if entry_id in seen_candidate_entry_ids:

@@ -1,3 +1,4 @@
+# Utility helpers collect shared formatting, parsing, and normalization rules used across services.
 from __future__ import annotations
 
 from contextlib import contextmanager
@@ -14,11 +15,15 @@ except Exception:  # noqa: BLE001
 
 
 def _looks_like_svg_bytes(content: bytes) -> bool:
+    # Handles looks like svg bytes as a reusable helper for services that need the same formatting or
+    # normalization rule.
     sample = content[:256].lstrip().lower()
     return sample.startswith(b"<svg") or b"<svg" in sample
 
 
 def _svg_to_png_bytes(source: str | Path | bytes) -> bytes:
+    # Handles svg to png bytes as a reusable helper for services that need the same formatting or normalization
+    # rule.
     if cairosvg is None:
         raise OSError("SVG support requires cairosvg to be installed.")
     if isinstance(source, (bytes, bytearray)):
@@ -28,6 +33,8 @@ def _svg_to_png_bytes(source: str | Path | bytes) -> bytes:
 
 @contextmanager
 def open_image_asset(source: str | Path | bytes | bytearray) -> Iterator[Image.Image]:
+    # Handles open image asset as a reusable helper for services that need the same formatting or normalization
+    # rule.
     if isinstance(source, (bytes, bytearray)):
         content = bytes(source)
         if _looks_like_svg_bytes(content):

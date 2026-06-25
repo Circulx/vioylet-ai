@@ -1,3 +1,4 @@
+# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -37,6 +38,7 @@ CHAT_HISTORY_MESSAGE_LIMIT = 150
 
 
 class ChatService:
+    # Business layer for chat; routes and workers pass validated inputs here and receive domain results back.
     VISUAL_REGENERATION_MARKER = "Revise the existing creative with this instruction:"
     VISUAL_REGENERATION_POLICY = (
         "Treat this as a fresh full visual regeneration that keeps the same topic and format while applying the revision."
@@ -93,6 +95,7 @@ class ChatService:
     VISUAL_TEXT_DELIVERABLE_OVERRIDES = {"linkedin_post", "instagram_caption", "social_caption", "x_post"}
 
     def __init__(self, session: AsyncSession) -> None:
+        # Wires the repositories and helper services this workflow reuses across its public methods.
         self.session = session
         self.sessions = SessionRepository(session)
         self.messages = ChatMessageRepository(session)
@@ -122,6 +125,8 @@ class ChatService:
         inherit_copy_context: bool | None = None,
         inherit_layout_context: bool | None = None,
     ) -> RequestInheritancePolicy:
+        # Internal helper for generation inheritance policy; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         normalized_mode = str(request_mode or "").strip().casefold()
         inherit_previous_defaults = normalized_mode in {"modify_previous", "variant_of_previous"}
         return RequestInheritancePolicy(
@@ -140,6 +145,8 @@ class ChatService:
         user_id: UUID,
         payload: ChatSessionCreateRequest,
     ) -> ContentSession:
+        # Runs the session service flow and persists the resulting state before returning it to the route or
+        # worker.
         brand = await self.brands.get_scoped(tenant_id, brand_space_id)
         if not brand:
             raise NotFoundError("Brand Space not found")
@@ -165,9 +172,13 @@ class ChatService:
         return session
 
     async def list_sessions(self, tenant_id: UUID, brand_space_id: UUID) -> list[ContentSession]:
+        # Runs the sessions service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         return await self.sessions.list_by_brand(brand_space_id, session_kind="chat", tenant_id=tenant_id)
 
     async def get_session(self, session_id: UUID, tenant_id: UUID | None = None, brand_space_id: UUID | None = None) -> ContentSession:
+        # Runs the session service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         session = (
             await self.sessions.get_scoped(session_id, tenant_id, brand_space_id)
             if tenant_id
@@ -188,6 +199,8 @@ class ChatService:
         brand_space_id: UUID,
         payload: ChatSessionUpdateRequest,
     ) -> ContentSession:
+        # Runs the session service flow and persists the resulting state before returning it to the route or
+        # worker.
         session = await self.get_session(session_id, tenant_id=tenant_id, brand_space_id=brand_space_id)
         if session.session_kind != "chat":
             raise NotFoundError("Chat session not found")
@@ -201,6 +214,8 @@ class ChatService:
         return session
 
     async def delete_session(self, session_id: UUID, tenant_id: UUID, brand_space_id: UUID) -> dict[str, str]:
+        # Runs the session service flow and persists the resulting state before returning it to the route or
+        # worker.
         session = await self.get_session(session_id, tenant_id=tenant_id, brand_space_id=brand_space_id)
         if session.session_kind != "chat":
             raise NotFoundError("Chat session not found")
@@ -209,6 +224,8 @@ class ChatService:
         return {"message": "Chat session deleted", "chat_session_id": str(session_id)}
 
     async def cancel_generation(self, session_id: UUID, tenant_id: UUID, brand_space_id: UUID) -> dict[str, str]:
+        # Runs the cancel generation service flow by coordinating repositories, validators, and integrations,
+        # then returns domain data.
         session = await self.get_session(session_id, tenant_id=tenant_id, brand_space_id=brand_space_id)
         if session.session_kind != "chat":
             raise NotFoundError("Chat session not found")
@@ -217,6 +234,8 @@ class ChatService:
 
     @staticmethod
     def _raise_if_generation_cancelled(tenant_id: UUID, brand_space_id: UUID, session_id: UUID) -> None:
+        # Internal helper for raise if generation cancelled; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not chat_cancellation_registry.is_cancelled(tenant_id, brand_space_id, session_id):
             return
         chat_cancellation_registry.clear(tenant_id, brand_space_id, session_id)
@@ -230,6 +249,8 @@ class ChatService:
         before_created_at: datetime | None = None,
         before_id: UUID | None = None,
     ) -> list[ChatMessage]:
+        # Runs the messages service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         await self.get_session(session_id)
         items = await self.messages.list_recent_by_session(
             session_id,
@@ -242,6 +263,8 @@ class ChatService:
         return items
 
     async def delete_message(self, message_id: UUID, tenant_id: UUID, brand_space_id: UUID) -> dict[str, str]:
+        # Runs the message service flow and persists the resulting state before returning it to the route or
+        # worker.
         message = await self.messages.get(message_id)
         if not message or message.tenant_id != tenant_id or message.brand_space_id != brand_space_id:
             raise NotFoundError("Chat message not found")
@@ -260,6 +283,8 @@ class ChatService:
         session: ContentSession,
         existing_messages: list[ChatMessage],
     ) -> bool:
+        # Runs the content history messages service flow by coordinating repositories, validators, and
+        # integrations, then returns domain data.
         existing_content_ids = {
             item.content_version_id
             for item in existing_messages
@@ -274,6 +299,8 @@ class ChatService:
         if not missing_versions:
             return False
 
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for content_version in missing_versions:
             content_assets = await self.assets.list_by_content(content_version.id)
             serialized_assets = [self.serialize_asset(asset) for asset in content_assets]
@@ -318,10 +345,14 @@ class ChatService:
         session_id: UUID,
         payload: ChatMessageCreateRequest,
     ) -> tuple[ChatMessage, ChatMessage]:
+        # Runs the send message service flow and persists the resulting state before returning it to the route
+        # or worker.
         chat_cancellation_registry.clear(tenant_id, brand_space_id, session_id)
         session = await self.get_session(session_id, tenant_id=tenant_id, brand_space_id=brand_space_id)
         studio_panel = self._resolve_studio_panel(payload, session)
         intent = self.intent_router.route(payload.message, session.conversational_context)
+        # The payload/context shape drives this branch because downstream serializers depend on consistent
+        # fields.
         if self._should_override_text_intent_to_visual(intent=intent, payload=payload, studio_panel=studio_panel):
             intent = ChatIntentDecision(
                 mode="visual_generation",
@@ -377,6 +408,8 @@ class ChatService:
         review_result = None
         workflow_context = None
 
+        # Keeps the risky I/O or integration boundary contained so callers receive project-level errors
+        # instead of raw library failures.
         try:
             if intent.mode in {"small_talk", "strategy_chat"}:
                 if intent.mode == "small_talk" and intent.direct_reply:
@@ -842,6 +875,7 @@ class ChatService:
             )
         self._raise_if_generation_cancelled(tenant_id, brand_space_id, session_id)
         await self.messages.add(assistant_message)
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if memory_service is not None:
             await memory_service.index_chat_message(message=assistant_message, session=session)
             if content_version is not None:
@@ -973,12 +1007,16 @@ class ChatService:
 
     @staticmethod
     def _resolve_studio_panel(payload: ChatMessageCreateRequest, session: ContentSession) -> StudioPanelSelection:
+        # Internal helper for studio panel; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         base = payload.studio_panel.model_dump() if payload.studio_panel else dict(session.studio_panel or {})
         resolved = resolve_studio_panel_defaults(base)
         return StudioPanelSelection.model_validate(resolved)
 
     @staticmethod
     def _recent_conversation_messages(messages: list[ChatMessage], *, limit: int = 3) -> list[dict[str, str]]:
+        # Internal helper for recent conversation messages; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         return [
             {
                 "role": str(item.role),
@@ -996,6 +1034,8 @@ class ChatService:
         payload: ChatMessageCreateRequest,
         studio_panel: StudioPanelSelection,
     ) -> bool:
+        # Internal helper for should override text intent to visual; it keeps the public service method focused
+        # on orchestration instead of low-level shaping.
         if intent.mode != "content_only":
             return False
         if intent.uses_previous_output or intent.workflow_plan:
@@ -1008,6 +1048,8 @@ class ChatService:
 
     @staticmethod
     def build_assistant_message_text(generated_payload: dict) -> str:
+        # Runs the assistant message text service flow by coordinating repositories, validators, and
+        # integrations, then returns domain data.
         return "\n".join(
             [
                 generated_payload.get("headline", ""),
@@ -1018,10 +1060,14 @@ class ChatService:
 
     @staticmethod
     def _normalize_storage_path(value: str | None) -> str:
+        # Internal helper for storage path; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         return str(value or "").strip()
 
     @staticmethod
     def _memory_asset_ref_id(asset: GeneratedAsset | dict[str, Any]) -> str | None:
+        # Internal helper for memory asset ref ID; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if isinstance(asset, dict):
             asset_id = str(asset.get("asset_id") or "").strip()
             return asset_id or None
@@ -1029,6 +1075,8 @@ class ChatService:
 
     @classmethod
     def _memory_asset_ref_storage_path(cls, asset: GeneratedAsset | dict[str, Any]) -> str | None:
+        # Internal helper for memory asset ref storage path; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if isinstance(asset, dict):
             storage_path = cls._normalize_storage_path(asset.get("storage_path"))
         else:
@@ -1037,14 +1085,20 @@ class ChatService:
 
     @staticmethod
     def _compact_context_text(value: Any, *, limit: int = 500) -> str:
+        # Internal helper for compact context text; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         text = " ".join(str(value or "").split()).strip()
         return text[:limit].rstrip(" ,.;:")
 
     @classmethod
     def _memory_asset_context_ref(cls, asset: GeneratedAsset | dict[str, Any]) -> dict[str, Any] | None:
+        # Internal helper for memory asset context ref; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         storage_path = cls._memory_asset_ref_storage_path(asset)
         if not storage_path:
             return None
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if isinstance(asset, dict):
             metadata = asset.get("metadata") if isinstance(asset.get("metadata"), dict) else {}
             metadata_json = asset.get("metadata_json") if isinstance(asset.get("metadata_json"), dict) else {}
@@ -1083,6 +1137,8 @@ class ChatService:
         content_version: Any,
         assets: list[GeneratedAsset | dict[str, Any]],
     ) -> dict[str, Any] | None:
+        # Internal helper for last generated visual state; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         asset_refs = [
             asset_ref
             for asset in assets
@@ -1125,9 +1181,13 @@ class ChatService:
         generated_payload: dict[str, Any],
         asset_refs: list[dict[str, Any]],
     ) -> str:
+        # Internal helper for resolved visual memory format; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         panel_format_name = cls._compact_context_text(panel_format, limit=40).casefold()
         if len(asset_refs) > 1:
             return "carousel"
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for asset_ref in asset_refs:
             try:
                 slide_count = int(asset_ref.get("slide_count") or 0)
@@ -1165,6 +1225,8 @@ class ChatService:
         *,
         visual_memory_state: dict[str, Any] | None,
     ) -> dict[str, Any]:
+        # Internal helper for updated visuals by format; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         visuals_by_format = dict(existing) if isinstance(existing, dict) else {}
         if not visual_memory_state:
             return visuals_by_format
@@ -1175,6 +1237,8 @@ class ChatService:
 
     @staticmethod
     def _visual_memory_format(value: dict[str, Any] | None) -> str:
+        # Internal helper for visual memory format; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         return str((value or {}).get("format") or "").strip().casefold()
 
     @classmethod
@@ -1184,6 +1248,8 @@ class ChatService:
         *,
         visual_memory_state: dict[str, Any] | None,
     ) -> dict[str, Any]:
+        # Internal helper for updated generated asset memory; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         memory = dict(existing) if isinstance(existing, dict) else {}
         for key in ("static", "infographic", "carousel"):
             if key in memory and not isinstance(memory.get(key), dict):
@@ -1207,11 +1273,15 @@ class ChatService:
         session: ContentSession,
         memory_service: ConversationMemoryService,
     ) -> dict[str, Any] | None:
+        # Internal helper for displayed asset memory from history; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         list_recent_messages = getattr(self.messages, "list_recent_by_session", None)
         if list_recent_messages is None:
             return None
         messages = await list_recent_messages(session.id, limit=CHAT_HISTORY_MESSAGE_LIMIT)
         latest_visual_state: dict[str, Any] | None = None
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for message in messages:
             payload = message.structured_payload if isinstance(message.structured_payload, dict) else {}
             if payload.get("mode") != "visual_generation" or not message.content_version_id:
@@ -1250,6 +1320,8 @@ class ChatService:
         content_assets: list[GeneratedAsset],
         render_payload: dict | None,
     ) -> list[GeneratedAsset | dict[str, Any]]:
+        # Internal helper for displayed memory assets; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         asset_by_key: dict[tuple[str, str], GeneratedAsset] = {}
         asset_by_path: dict[str, GeneratedAsset] = {}
         for asset in content_assets:
@@ -1260,8 +1332,12 @@ class ChatService:
             asset_by_path.setdefault(storage_path, asset)
 
         def resolve_refs(refs: list[dict] | None) -> list[GeneratedAsset | dict[str, Any]]:
+            # Runs the refs service flow by coordinating repositories, validators, and integrations, then
+            # returns domain data.
             resolved: list[GeneratedAsset | dict[str, Any]] = []
             seen_keys: set[tuple[str, str]] = set()
+            # Builds the grouped response or persistence payload one record at a time because later steps
+            # expect this exact shape.
             for ref in refs or []:
                 if not isinstance(ref, dict):
                     continue
@@ -1292,6 +1368,8 @@ class ChatService:
             return resolved
 
         def is_image_ref(asset: GeneratedAsset | dict[str, Any]) -> bool:
+            # Runs the is image ref service flow by coordinating repositories, validators, and integrations,
+            # then returns domain data.
             if isinstance(asset, dict):
                 return str(asset.get("mime_type") or "").startswith("image/")
             return str(asset.mime_type or "").startswith("image/")
@@ -1346,6 +1424,8 @@ class ChatService:
 
     @staticmethod
     def build_generation_failure_message_text(exc: Exception) -> str:
+        # Runs the generation failure message text service flow by coordinating repositories, validators, and
+        # integrations, then returns domain data.
         if isinstance(exc, GenerationFailureError):
             return exc.user_safe_message
         if isinstance(exc, GuardrailViolationError):
@@ -1359,6 +1439,8 @@ class ChatService:
         generate_image: bool,
         content_version_id: str | None,
     ) -> dict:
+        # Runs the generation failure payload service flow by coordinating repositories, validators, and
+        # integrations, then returns domain data.
         if isinstance(exc, GenerationFailureError):
             failure = exc.to_payload()
         elif isinstance(exc, GuardrailViolationError):
@@ -1394,6 +1476,8 @@ class ChatService:
 
     @classmethod
     def build_content_history_payload(cls, content_version, serialized_assets: list[dict]) -> dict:
+        # Runs the content history payload service flow by coordinating repositories, validators, and
+        # integrations, then returns domain data.
         explainability = content_version.explainability_metadata or {}
         raw_generation_decision = explainability.get("creative_decision", {}) or explainability.get("layout_decision", {})
         image_asset_count = len(
@@ -1424,6 +1508,8 @@ class ChatService:
 
     @staticmethod
     def decorate_generation_decision(decision: dict | None) -> dict:
+        # Runs the decorate generation decision service flow by coordinating repositories, validators, and
+        # integrations, then returns domain data.
         if not isinstance(decision, dict):
             return {}
         payload = dict(decision)
@@ -1442,6 +1528,7 @@ class ChatService:
             ),
             None,
         )
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if matched is None and template_name:
             matched = next(
                 (
@@ -1462,6 +1549,8 @@ class ChatService:
 
     @staticmethod
     def serialize_asset(asset: GeneratedAsset) -> dict:
+        # Runs the asset service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         delivery = AssetDeliveryService()
         return {
             "asset_id": str(asset.id),
@@ -1478,6 +1567,8 @@ class ChatService:
 
     @staticmethod
     def _decorate_asset_ref(asset: dict) -> dict:
+        # Internal helper for decorate asset ref; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if not isinstance(asset, dict):
             return asset
         storage_path = str(asset.get("storage_path", "")).strip()
@@ -1500,9 +1591,13 @@ class ChatService:
 
     @classmethod
     def decorate_structured_payload_assets(cls, payload: dict) -> dict:
+        # Runs the decorate structured payload assets service flow by coordinating repositories, validators, and
+        # integrations, then returns domain data.
         if not isinstance(payload, dict):
             return payload
         decorated = dict(payload)
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for heavy_key in (
             "blueprint_payload",
             "creative_decision",
@@ -1514,6 +1609,8 @@ class ChatService:
         if isinstance(decorated.get("preview_asset"), dict):
             preview_asset = cls._decorate_asset_ref(decorated["preview_asset"])
             decorated["preview_asset"] = preview_asset if preview_asset.get("asset_url") else None
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if isinstance(decorated.get("assets"), list):
             decorated["assets"] = [
                 refreshed
@@ -1522,6 +1619,8 @@ class ChatService:
                 for refreshed in [cls._decorate_asset_ref(asset)]
                 if refreshed.get("asset_url")
             ]
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if isinstance(decorated.get("export_assets"), list):
             decorated["export_assets"] = [
                 refreshed
@@ -1534,10 +1633,14 @@ class ChatService:
 
     @staticmethod
     def make_json_safe(value):
+        # Runs the make json safe service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         return jsonable_encoder(value)
 
     @staticmethod
     def build_citations(explainability_metadata: dict) -> list[dict]:
+        # Runs the citations service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         return [
             {"channel": channel}
             for channel in explainability_metadata.get("retrieval_channels", [])
@@ -1545,6 +1648,8 @@ class ChatService:
 
     @staticmethod
     def _last_content_version_id(session: ContentSession) -> UUID | None:
+        # Internal helper for last content version ID; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         raw_value = (session.conversational_context or {}).get("last_content_version_id")
         try:
             return UUID(str(raw_value))
@@ -1553,6 +1658,8 @@ class ChatService:
 
     @staticmethod
     def _should_regenerate_visual_follow_up(revision_scope: dict[str, object] | None) -> bool:
+        # Internal helper for should regenerate visual follow up; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not isinstance(revision_scope, dict):
             return False
         targeted_fields = {
@@ -1577,6 +1684,8 @@ class ChatService:
 
     @classmethod
     def _base_visual_prompt(cls, prompt: str | None) -> str:
+        # Internal helper for base visual prompt; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         text = str(prompt or "").strip()
         if not text:
             return ""
@@ -1586,6 +1695,8 @@ class ChatService:
 
     @classmethod
     def _topic_tokens(cls, text: str | None) -> set[str]:
+        # Internal helper for topic tokens; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         tokens = {
             token
             for token in re.findall(r"[a-z0-9']+", str(text or "").casefold())
@@ -1601,6 +1712,8 @@ class ChatService:
         *,
         revision_scope: dict[str, object] | None = None,
     ) -> bool:
+        # Internal helper for looks like distinct new visual topic; it keeps the public service method focused
+        # on orchestration instead of low-level shaping.
         instruction = str(follow_up_instruction or "").strip()
         if previous_content is None or not instruction:
             return False
@@ -1611,6 +1724,8 @@ class ChatService:
             return True
         if cls.VISUAL_FOLLOW_UP_REFERENCE_PATTERN.search(instruction):
             return False
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if isinstance(revision_scope, dict):
             if revision_scope.get("slide_indexes") or revision_scope.get("slide_targets"):
                 return False
@@ -1645,6 +1760,8 @@ class ChatService:
         previous_content: ContentVersion | None,
         follow_up_instruction: str,
     ) -> str:
+        # Internal helper for compose visual regeneration prompt; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         instruction = str(follow_up_instruction or "").strip()
         if previous_content is None:
             return instruction

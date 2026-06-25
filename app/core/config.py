@@ -1,3 +1,4 @@
+# Core application plumbing lives here: settings, security helpers, dependency gates, and shared errors.
 from functools import lru_cache
 from pathlib import Path
 import base64
@@ -11,6 +12,8 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 
 
 class Settings(BaseSettings):
+    # Core runtime shape for settings; dependency and security helpers share this instead of passing loose
+    # dictionaries.
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -133,10 +136,12 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
+    # Returns shared settings used by dependency injection and service initialization.
     return Settings()
 
 
 def get_social_encryption_key() -> bytes:
+    # Returns shared social encryption key used by dependency injection and service initialization.
     settings = get_settings()
     if settings.social_encryption_key:
         return settings.social_encryption_key.encode("utf-8")

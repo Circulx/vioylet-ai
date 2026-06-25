@@ -1,3 +1,4 @@
+# Core application plumbing lives here: settings, security helpers, dependency gates, and shared errors.
 from __future__ import annotations
 
 import base64
@@ -24,10 +25,12 @@ def _bcrypt_secret(password: str) -> bytes:
 
 
 def hash_password(password: str) -> str:
+    # Hashes credential data using shared security settings before auth services consume the result.
     return pwd_context.hash(_bcrypt_secret(password))
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
+    # Verifies credential data using shared security settings before auth services consume the result.
     return pwd_context.verify(_bcrypt_secret(plain_password), hashed_password)
 
 
@@ -36,6 +39,7 @@ def create_token(
     expires_delta: timedelta,
     extra: dict[str, Any] | None = None,
 ) -> str:
+    # Creates token data for authentication middleware and route dependencies.
     settings = get_settings()
     payload: dict[str, Any] = {
         "sub": subject,
@@ -47,6 +51,7 @@ def create_token(
 
 
 def create_access_token(user_id: UUID, extra: dict[str, Any] | None = None) -> str:
+    # Creates token data for authentication middleware and route dependencies.
     settings = get_settings()
     payload_extra = {"typ": "access"}
     if extra:
@@ -59,6 +64,7 @@ def create_access_token(user_id: UUID, extra: dict[str, Any] | None = None) -> s
 
 
 def create_refresh_token(user_id: UUID, extra: dict[str, Any] | None = None) -> str:
+    # Creates token data for authentication middleware and route dependencies.
     settings = get_settings()
     payload_extra = {"typ": "refresh"}
     if extra:
@@ -71,15 +77,18 @@ def create_refresh_token(user_id: UUID, extra: dict[str, Any] | None = None) -> 
 
 
 def decode_token(token: str) -> dict[str, Any]:
+    # Decodes token data for authentication middleware and route dependencies.
     settings = get_settings()
     return jwt.decode(token, settings.secret_key, algorithms=[settings.jwt_algorithm])
 
 
 def generate_totp_secret() -> str:
+    # Generates credential data using shared security settings before auth services consume the result.
     return base64.b32encode(py_secrets.token_bytes(20)).decode("utf-8").rstrip("=")
 
 
 def _decode_totp_secret(secret: str) -> bytes:
+    # Decodes credential data using shared security settings before auth services consume the result.
     normalized = secret.strip().replace(" ", "").upper()
     padding = "=" * ((8 - len(normalized) % 8) % 8)
     return base64.b32decode(normalized + padding, casefold=True)
@@ -92,6 +101,7 @@ def generate_totp_code(
     period: int = 30,
     digits: int = 6,
 ) -> str:
+    # Generates credential data using shared security settings before auth services consume the result.
     current_time = for_time or datetime.now(timezone.utc)
     counter = int(current_time.timestamp()) // period
     counter_bytes = counter.to_bytes(8, "big")
@@ -110,6 +120,7 @@ def verify_totp_code(
     digits: int = 6,
     window: int = 1,
 ) -> bool:
+    # Verifies credential data using shared security settings before auth services consume the result.
     if not code.isdigit() or len(code) != digits:
         return False
     current_time = at_time or datetime.now(timezone.utc)

@@ -1,3 +1,4 @@
+# Core application plumbing lives here: settings, security helpers, dependency gates, and shared errors.
 from __future__ import annotations
 
 from copy import deepcopy
@@ -26,6 +27,7 @@ CAROUSEL_OVERRIDES: dict[str, dict[str, int]] = {
 
 
 def resolve_studio_panel_defaults(panel: dict) -> dict:
+    # Resolves studio panel defaults for shared backend configuration, dependency injection, or error handling.
     resolved = deepcopy(panel or {})
     format_name = str(resolved.get("format") or "static").lower()
     platform = str(resolved.get("platform_preset") or "instagram").lower()

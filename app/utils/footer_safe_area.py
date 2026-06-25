@@ -1,3 +1,4 @@
+# Utility helpers collect shared formatting, parsing, and normalization rules used across services.
 from __future__ import annotations
 
 from typing import Any, Callable
@@ -9,6 +10,8 @@ FooterFontLoader = Callable[[int], ImageFont.ImageFont]
 
 
 def _load_default_footer_font(size: int) -> ImageFont.ImageFont:
+    # Handles load default footer font as a reusable helper for services that need the same formatting or
+    # normalization rule.
     for font_name in ("arial.ttf", "Arial.ttf", "DejaVuSans.ttf", "LiberationSans-Regular.ttf"):
         try:
             return ImageFont.truetype(font_name, size=size)
@@ -24,6 +27,8 @@ def wrap_footer_lines(
     *,
     max_width: int,
 ) -> list[str]:
+    # Handles wrap footer lines as a reusable helper for services that need the same formatting or normalization
+    # rule.
     words = text.split()
     lines: list[str] = []
     current = ""
@@ -47,9 +52,12 @@ def calculate_footer_safe_area(
     footer_text: Any,
     font_loader: FooterFontLoader | None = None,
 ) -> dict[str, Any]:
+    # Calculates footer safe area as a reusable helper for services that need the same formatting or
+    # normalization rule.
     text = " ".join(str(footer_text or "").split())
     width = max(int(canvas_width or 0), 1)
     height = max(int(canvas_height or 0), 1)
+    # This guard handles missing or invalid input early so the main workflow can stay straightforward.
     if not text:
         return {
             "enabled": False,

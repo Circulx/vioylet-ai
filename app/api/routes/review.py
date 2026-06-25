@@ -1,3 +1,4 @@
+# FastAPI route handlers live here; they validate request inputs, call services, and return response schemas.
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
@@ -29,6 +30,8 @@ async def create_share_link(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> ReviewLinkResponse:
+    # Serves the share link creation endpoint; it checks brand scope, delegates work to services, and returns
+    # the response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
     link = await ReviewService(session).create_link(principal.tenant_id, brand_scope, payload.content_version_id, principal.user_id, payload.title, payload.allow_external_comments)
@@ -37,6 +40,8 @@ async def create_share_link(
 
 @router.get("/{token}", response_model=ReviewDetailResponse)
 async def get_review(token: str, session: AsyncSession = Depends(get_db_session)) -> dict:
+    # Serves the review detail lookup endpoint; it uses FastAPI dependencies, delegates work to services, and
+    # returns the response schema.
     link, comments = await ReviewService(session).get_by_token(token)
     content = await ContentRepository(session).get_scoped(link.content_version_id, link.tenant_id, link.brand_space_id)
     assets = await AssetRepository(session).list_by_content(link.content_version_id)
@@ -74,6 +79,8 @@ async def get_review(token: str, session: AsyncSession = Depends(get_db_session)
 
 @router.post("/{token}/comment", response_model=ReviewCommentResponse)
 async def add_comment(token: str, payload: ReviewCommentCreateRequest, session: AsyncSession = Depends(get_db_session)) -> dict:
+    # Serves the add comment endpoint; it uses FastAPI dependencies, delegates work to services, and returns the
+    # response schema.
     service = ReviewService(session)
     link, _ = await service.get_by_token(token)
     comment = await service.add_comment(link.id, link.tenant_id, link.brand_space_id, payload.body, None, payload.external_author_name)
@@ -87,6 +94,8 @@ async def add_comment(token: str, payload: ReviewCommentCreateRequest, session: 
 
 @router.post("/{token}/status", response_model=ReviewLinkResponse)
 async def update_review_status(token: str, payload: ReviewStatusUpdateRequest, session: AsyncSession = Depends(get_db_session)) -> ReviewLinkResponse:
+    # Serves the review status update endpoint; it uses FastAPI dependencies, delegates work to services, and
+    # returns the response schema.
     service = ReviewService(session)
     link, _ = await service.get_by_token(token)
     updated = await service.update_status(link.id, payload.status)

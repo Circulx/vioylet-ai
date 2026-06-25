@@ -1,3 +1,4 @@
+# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
 from typing import Any
@@ -7,7 +8,10 @@ from app.ai.providers.router import ProviderRouter
 
 
 class ConversationService:
+    # Business layer for conversation; routes and workers pass validated inputs here and receive domain results
+    # back.
     def __init__(self) -> None:
+        # Wires the repositories and helper services this workflow reuses across its public methods.
         self.providers = ProviderRouter()
 
     def reply(
@@ -20,6 +24,8 @@ class ConversationService:
         recent_messages: list[dict[str, str]] | None = None,
         mode: str = "small_talk",
     ) -> dict[str, Any]:
+        # Runs the reply service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         recent_messages = recent_messages or []
         provider = self.providers.get_text_provider("generation")
         fallback = self._fallback_reply(message=message, brand_name=brand_name, mode=mode)
@@ -57,6 +63,8 @@ class ConversationService:
 
     @staticmethod
     def _fallback_reply(*, message: str, brand_name: str | None, mode: str) -> str:
+        # Internal helper for fallback reply; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if mode == "small_talk":
             return (
                 f"Hi! I'm ready to help with {brand_name or 'your brand'} content. "

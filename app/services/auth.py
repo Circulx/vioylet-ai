@@ -1,3 +1,4 @@
+# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -31,12 +32,14 @@ from app.services.email import EmailService
 
 
 class AuthService:
+    # Business layer for auth; routes and workers pass validated inputs here and receive domain results back.
     TWO_FACTOR_ENABLED_KEY = "two_factor_enabled"
     TWO_FACTOR_SECRET_KEY = "two_factor_secret"
     TWO_FACTOR_PENDING_SECRET_KEY = "two_factor_pending_secret"
     TWO_FACTOR_VERIFIED_AT_KEY = "two_factor_verified_at"
 
     def __init__(self, session: AsyncSession) -> None:
+        # Wires the repositories and helper services this workflow reuses across its public methods.
         self.session = session
         self.users = UserRepository(session)
         self.user_roles = UserRoleRepository(session)
@@ -44,6 +47,8 @@ class AuthService:
         self.email = EmailService()
 
     async def login(self, email: str, password: str) -> TokenPairResponse | TwoFactorChallengeResponse:
+        # Runs the login service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         user = await self.users.get_by_email(email)
         if not user or not user.hashed_password or not verify_password(password, user.hashed_password):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
@@ -62,6 +67,8 @@ class AuthService:
         return await self._complete_login(user)
 
     async def verify_two_factor_login(self, ticket: str, code: str) -> TokenPairResponse:
+        # Runs the two factor login service flow by coordinating repositories, validators, and integrations,
+        # then returns domain data.
         try:
             payload = decode_token(ticket)
             if payload.get("typ") != "two_factor":
@@ -78,6 +85,8 @@ class AuthService:
         return await self._complete_login(user)
 
     async def refresh_access_token(self, refresh_token: str) -> TokenPairResponse:
+        # Runs the refresh access token service flow by coordinating repositories, validators, and integrations,
+        # then returns domain data.
         try:
             payload = decode_token(refresh_token)
             token_type = str(payload.get("typ") or "").strip().lower()
@@ -94,6 +103,8 @@ class AuthService:
         return await self._complete_login(user)
 
     async def get_two_factor_status(self, user_id) -> TwoFactorSetupResponse:
+        # Runs the two factor status service flow by coordinating repositories, validators, and integrations,
+        # then returns domain data.
         user = await self.users.get(user_id)
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -104,6 +115,8 @@ class AuthService:
         )
 
     async def initiate_two_factor_setup(self, user_id) -> TwoFactorSetupResponse:
+        # Runs the initiate two factor setup service flow and persists the resulting state before returning it
+        # to the route or worker.
         user = await self.users.get(user_id)
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -124,6 +137,8 @@ class AuthService:
         )
 
     async def enable_two_factor(self, user_id, code: str) -> TwoFactorSetupResponse:
+        # Runs the two factor service flow and persists the resulting state before returning it to the route or
+        # worker.
         user = await self.users.get(user_id)
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -145,6 +160,8 @@ class AuthService:
         return TwoFactorSetupResponse(enabled=True, pending_setup=False)
 
     async def disable_two_factor(self, user_id, code: str) -> TwoFactorSetupResponse:
+        # Runs the two factor service flow and persists the resulting state before returning it to the route or
+        # worker.
         user = await self.users.get(user_id)
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -163,6 +180,8 @@ class AuthService:
         return TwoFactorSetupResponse(enabled=False, pending_setup=False)
 
     async def _complete_login(self, user) -> TokenPairResponse:
+        # Internal helper for complete login; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         user.last_login_at = datetime.now(timezone.utc)
         await self.session.commit()
         access = create_access_token(user.id, extra={"tenant_id": str(user.tenant_id) if user.tenant_id else None})
@@ -170,6 +189,8 @@ class AuthService:
         return TokenPairResponse(access_token=access, refresh_token=refresh)
 
     async def activate(self, token: str, password: str) -> TokenPairResponse:
+        # Runs the activate service flow and persists the resulting state before returning it to the route or
+        # worker.
         activation = await self.tokens.get_by_token(token)
         if not activation or activation.used_at or activation.expires_at < datetime.now(timezone.utc):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid activation token")
@@ -185,6 +206,8 @@ class AuthService:
         return TokenPairResponse(access_token=access, refresh_token=refresh)
 
     async def forgot_password(self, email: str) -> PasswordResetResponse:
+        # Runs the forgot password service flow and persists the resulting state before returning it to the
+        # route or worker.
         user = await self.users.get_by_email(email)
         if not user or not user.is_active:
             return PasswordResetResponse(message="If the email exists, a reset token has been issued.", reset_token=None)
@@ -205,6 +228,8 @@ class AuthService:
         )
 
     async def reset_password(self, token: str, password: str) -> TokenPairResponse:
+        # Runs the reset password service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         return await self.activate(token, password)
 
     async def update_profile(
@@ -215,6 +240,8 @@ class AuthService:
         phone_number: str | None,
         notifications_enabled: bool | None,
     ):
+        # Runs the profile service flow and persists the resulting state before returning it to the route or
+        # worker.
         user = await self.users.get(user_id)
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -237,6 +264,8 @@ class AuthService:
         return user
 
     async def change_password(self, user_id, current_password: str, new_password: str) -> PasswordResetResponse:
+        # Runs the change password service flow and persists the resulting state before returning it to the
+        # route or worker.
         user = await self.users.get(user_id)
         if not user or not user.hashed_password:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -247,6 +276,8 @@ class AuthService:
         return PasswordResetResponse(message="Password updated successfully.")
 
     async def delete_profile(self, user_id) -> PasswordResetResponse:
+        # Runs the profile service flow and persists the resulting state before returning it to the route or
+        # worker.
         user = await self.users.get(user_id)
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -255,6 +286,8 @@ class AuthService:
         return PasswordResetResponse(message="Account deleted successfully.")
 
     async def build_current_user_response(self, user_id, role_codes: list[str], brand_space_ids: list) -> CurrentUserResponse:
+        # Runs the current user response service flow by coordinating repositories, validators, and
+        # integrations, then returns domain data.
         user = await self.users.get(user_id)
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -273,16 +306,22 @@ class AuthService:
         )
 
     def is_two_factor_enabled(self, user) -> bool:
+        # Runs the is two factor enabled service flow by coordinating repositories, validators, and
+        # integrations, then returns domain data.
         metadata = user.metadata_json or {}
         return bool(metadata.get(self.TWO_FACTOR_ENABLED_KEY) and metadata.get(self.TWO_FACTOR_SECRET_KEY))
 
     def get_two_factor_secret(self, user) -> str | None:
+        # Runs the two factor secret service flow by coordinating repositories, validators, and integrations,
+        # then returns domain data.
         metadata = user.metadata_json or {}
         secret = metadata.get(self.TWO_FACTOR_SECRET_KEY)
         return secret if isinstance(secret, str) else None
 
     @staticmethod
     def build_otpauth_url(email: str, secret: str) -> str:
+        # Runs the otpauth URL service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         issuer = "Violyt"
         return (
             f"otpauth://totp/{quote(issuer)}:{quote(email)}"
@@ -291,4 +330,6 @@ class AuthService:
 
     @staticmethod
     def build_qr_code_url(otpauth_url: str) -> str:
+        # Runs the qr code URL service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         return f"https://api.qrserver.com/v1/create-qr-code/?size=220x220&data={quote(otpauth_url, safe='')}"

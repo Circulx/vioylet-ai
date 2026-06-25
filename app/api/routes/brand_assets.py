@@ -1,3 +1,4 @@
+# FastAPI route handlers live here; they validate request inputs, call services, and return response schemas.
 from __future__ import annotations
 
 from uuid import UUID
@@ -25,6 +26,8 @@ router = APIRouter()
 
 
 def trust_level_for_validation_state(validation_state: str | None) -> str:
+    # Serves the trust level for validation state endpoint; it uses FastAPI dependencies, delegates work to
+    # services, and returns the response schema.
     normalized = str(validation_state or "pending").lower()
     if normalized == "clean":
         return "trusted"
@@ -36,6 +39,7 @@ def trust_level_for_validation_state(validation_state: str | None) -> str:
 
 
 async def serialize_attachment(service: BrandAssetService, asset) -> BrandAttachmentResponse:
+    # Builds API response data from service or ORM objects, keeping persistence details out of route returns.
     delivery = AssetDeliveryService()
     await service.session.refresh(asset)
     status = await service.processing_status.get_by_asset(asset.id)
@@ -84,6 +88,8 @@ async def upload_brand_attachment(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> BrandAttachmentResponse:
+    # Serves the brand attachment upload endpoint; it checks brand scope, delegates work to services, and
+    # returns the response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
     service = BrandAssetService(session)
@@ -97,6 +103,8 @@ async def list_brand_attachments(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> list[BrandAttachmentListResponse]:
+    # Serves the brand attachments listing endpoint; it checks brand scope, delegates work to services, and
+    # returns the response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
     service = BrandAssetService(session)
@@ -122,6 +130,8 @@ async def list_brand_attachments_by_field(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> BrandAttachmentListResponse:
+    # Serves the brand attachments by field listing endpoint; it checks brand scope, delegates work to services,
+    # and returns the response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
     service = BrandAssetService(session)
@@ -139,6 +149,8 @@ async def get_brand_attachment(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> BrandAttachmentResponse:
+    # Serves the brand attachment detail lookup endpoint; it checks brand scope, delegates work to services, and
+    # returns the response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
     service = BrandAssetService(session)
@@ -153,6 +165,8 @@ async def reprocess_brand_attachment(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> BrandAttachmentStatusUpdateResponse:
+    # Serves the reprocess brand attachment endpoint; it checks brand scope, delegates work to services, and
+    # returns the response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
     service = BrandAssetService(session)
@@ -170,6 +184,8 @@ async def unsync_brand_attachment(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> BrandAttachmentStatusUpdateResponse:
+    # Serves the unsync brand attachment endpoint; it checks brand scope, delegates work to services, and
+    # returns the response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
     service = BrandAssetService(session)
@@ -187,6 +203,8 @@ async def delete_brand_attachment(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> BrandAttachmentStatusUpdateResponse:
+    # Serves the brand attachment deletion endpoint; it checks brand scope, delegates work to services, and
+    # returns the response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
     service = BrandAssetService(session)

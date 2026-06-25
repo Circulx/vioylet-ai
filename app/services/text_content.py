@@ -1,3 +1,4 @@
+# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -33,12 +34,16 @@ from app.services.research_editorial_planning import ResearchEditorialPlanningSe
 
 @dataclass(slots=True)
 class TextGenerationResult:
+    # Business layer for text generation result; routes and workers pass validated inputs here and receive
+    # domain results back.
     content_version: ContentVersion
     assistant_payload: dict[str, Any]
     assistant_text: str
 
 
 class TextContentService:
+    # Business layer for text content; routes and workers pass validated inputs here and receive domain results
+    # back.
     DELIVERABLE_CONTRACTS: dict[str, dict[str, Any]] = {
         "blog": {
             "label": "blog article",
@@ -139,6 +144,7 @@ class TextContentService:
     }
 
     def __init__(self, session) -> None:
+        # Wires the repositories and helper services this workflow reuses across its public methods.
         self.session = session
         self.providers = ProviderRouter()
         self.brands = BrandSpaceRepository(session)
@@ -171,6 +177,8 @@ class TextContentService:
         deliverable_type: str | None = None,
         uses_previous_output: bool = False,
     ) -> TextGenerationResult:
+        # Runs the generate service flow and persists the resulting state before returning it to the route or
+        # worker.
         artifact_service = getattr(self, "artifacts", ArtifactStateService())
         brand = await self.brands.get_scoped(tenant_id, brand_space_id)
         if not brand:
@@ -333,6 +341,8 @@ class TextContentService:
         objective_id: UUID | None = None,
         reference_asset_ids: list[UUID] | None = None,
     ) -> dict[str, Any]:
+        # Runs the evaluate service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         from app.services.evaluation import EvaluationService
 
         evaluation_service = EvaluationService(getattr(self, "session", None))
@@ -352,6 +362,8 @@ class TextContentService:
 
     @staticmethod
     def _assert_research_guard(*, prompt: str, brief: dict[str, Any], stage: str) -> None:
+        # Internal helper for assert research guard; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         guard = brief.get("research_guard") if isinstance(brief.get("research_guard"), dict) else {}
         if not guard or not bool(guard.get("hard_fail")):
             return
@@ -381,6 +393,8 @@ class TextContentService:
         studio_panel: StudioPanelSelection,
         revision_scope: dict[str, Any] | None = None,
     ) -> TextGenerationResult:
+        # Runs the rewrite service flow and persists the resulting state before returning it to the route or
+        # worker.
         artifact_service = getattr(self, "artifacts", ArtifactStateService())
         original = await self.contents.get_scoped(content_version_id, tenant_id, brand_space_id)
         if not original:
@@ -560,6 +574,8 @@ class TextContentService:
         previous_output: str | None,
         revision_scope: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Internal helper for payload; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         provider = self.providers.get_text_provider("generation")
         contract = self._deliverable_contract(deliverable_type)
         prompt_safe_research_brief = self._prompt_safe_research_editorial_brief(research_editorial_brief)
@@ -628,6 +644,8 @@ class TextContentService:
 
     @staticmethod
     def _prompt_safe_research_editorial_brief(value: dict[str, Any]) -> dict[str, Any]:
+        # Internal helper for prompt safe research editorial brief; it keeps the public service method focused
+        # on orchestration instead of low-level shaping.
         brief = dict(value or {})
         outline: list[dict[str, Any]] = []
         for item in (brief.get("outline") or [])[:8]:
@@ -645,12 +663,16 @@ class TextContentService:
 
     @staticmethod
     def _prompt_safe_plan(value: dict[str, Any]) -> dict[str, Any]:
+        # Internal helper for prompt safe plan; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         plan = dict(value or {})
         plan.pop("notes", None)
         return plan
 
     @staticmethod
     def _revision_scope_instruction(revision_scope: dict[str, Any] | None) -> str:
+        # Internal helper for revision scope instruction; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not isinstance(revision_scope, dict) or not revision_scope:
             return "No granular revision scope is active."
         instructions: list[str] = []
@@ -688,6 +710,8 @@ class TextContentService:
 
     @staticmethod
     def _fallback_payload(*, prompt: str, deliverable_type: str, previous_output: str | None) -> dict[str, Any]:
+        # Internal helper for fallback payload; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         headline = prompt.strip().splitlines()[0][:120].strip() or "Content Draft"
         body = previous_output or ""
         return {
@@ -708,6 +732,8 @@ class TextContentService:
         previous_output: str | None,
         stage: str,
     ) -> None:
+        # Internal helper for assert not model fallback; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         metadata = normalized_payload.get("metadata") if isinstance(normalized_payload.get("metadata"), dict) else {}
         if str(metadata.get("source") or "").strip().lower() != "fallback":
             return
@@ -732,6 +758,8 @@ class TextContentService:
 
     @staticmethod
     def _normalize_payload(payload: dict[str, Any], *, fallback: dict[str, Any], deliverable_type: str) -> dict[str, Any]:
+        # Internal helper for payload; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         if not isinstance(payload, dict):
             payload = {}
         metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
@@ -752,6 +780,8 @@ class TextContentService:
         rewritten_payload: dict[str, Any],
         revision_scope: dict[str, Any] | None,
     ) -> dict[str, Any]:
+        # Internal helper for revision scope to payload; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not isinstance(rewritten_payload, dict):
             return rewritten_payload
         if not isinstance(revision_scope, dict) or not revision_scope:
@@ -769,6 +799,8 @@ class TextContentService:
             return rewritten_payload
 
         merged_payload = deepcopy(rewritten_payload)
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for field in ("headline", "body", "cta", "hashtags", "metadata"):
             if field in targeted_fields and not preserve_copy:
                 continue
@@ -787,10 +819,14 @@ class TextContentService:
 
     @classmethod
     def _deliverable_contract(cls, deliverable_type: str) -> dict[str, Any]:
+        # Internal helper for deliverable contract; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         return dict(cls.DELIVERABLE_CONTRACTS.get(deliverable_type, cls.DELIVERABLE_CONTRACTS["general_copy"]))
 
     @staticmethod
     def _assistant_text(payload: dict[str, Any]) -> str:
+        # Internal helper for assistant text; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         parts = [
             str(payload.get("headline") or "").strip(),
             str(payload.get("body") or "").strip(),
@@ -803,6 +839,8 @@ class TextContentService:
 
     @staticmethod
     def _content_text(payload: dict[str, Any]) -> str:
+        # Internal helper for content text; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         return "\n\n".join(
             part
             for part in [
@@ -815,6 +853,8 @@ class TextContentService:
 
     @staticmethod
     def _knowledge_brief(retrieved_knowledge: dict[str, list[dict]]) -> list[dict[str, Any]]:
+        # Internal helper for knowledge brief; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         brief: list[dict[str, Any]] = []
         for channel, items in (retrieved_knowledge or {}).items():
             for item in items[:2]:
@@ -831,6 +871,8 @@ class TextContentService:
 
     @staticmethod
     def _parse_uuid_or_none(value: Any) -> UUID | None:
+        # Internal helper for uuid or none; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         try:
             return UUID(str(value))
         except (TypeError, ValueError):
@@ -843,6 +885,8 @@ class TextContentService:
         session: ContentSession,
         asset_review_blocks: list[dict[str, str]] | None = None,
     ) -> str:
+        # Internal helper for evaluation target text; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         text = str(prompt or "").strip()
         for fence in ('"""', "```"):
             if fence in text:
@@ -870,7 +914,11 @@ class TextContentService:
         review_prompt: str,
         brand_context: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
+        # Internal helper for review text from assets; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         blocks: list[dict[str, Any]] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for asset_id in reference_asset_ids:
             generated_asset = await self.assets.get_scoped(asset_id, tenant_id, brand_space_id)
             if generated_asset:
@@ -960,6 +1008,8 @@ class TextContentService:
         expected_prompt: str,
         brand_context: dict[str, Any],
     ) -> dict[str, Any]:
+        # Internal helper for visual review from storage path; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not storage_path or asset_kind not in {"image", "document", "presentation"}:
             return {}
         storage = getattr(self, "storage", None)
@@ -969,6 +1019,8 @@ class TextContentService:
         if not storage.exists(storage_path):
             return {}
         absolute_path = storage.absolute_path(storage_path)
+        # Keeps the risky I/O or integration boundary contained so callers receive project-level errors
+        # instead of raw library failures.
         try:
             extracted = ocr.extract(absolute_path)
         except Exception as exc:  # noqa: BLE001
@@ -996,6 +1048,8 @@ class TextContentService:
         if not page_images and asset_kind == "image":
             page_images = [absolute_path]
         page_reviews: list[dict[str, Any]] = []
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if page_images:
             for index, image_path in enumerate(page_images, start=1):
                 page_text = ocr_text if len(page_images) == 1 else ""
@@ -1089,6 +1143,8 @@ class TextContentService:
 
     @staticmethod
     def _read_visual_analysis_path(analysis_path: str) -> dict[str, Any]:
+        # Internal helper for read visual analysis path; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not analysis_path:
             return {}
         path = Path(analysis_path)
@@ -1101,6 +1157,8 @@ class TextContentService:
         return parsed if isinstance(parsed, dict) else {}
 
     def _read_visual_analysis_for_image_path(self, image_path: str) -> dict[str, Any]:
+        # Internal helper for read visual analysis for image path; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         image = Path(image_path)
         direct = image.with_name(f"{image.stem}_analysis.json")
         analysis = self._read_visual_analysis_path(str(direct))
@@ -1117,6 +1175,8 @@ class TextContentService:
 
     @staticmethod
     def _prompt_topic_tokens(prompt: str, *, limit: int = 12) -> list[str]:
+        # Internal helper for prompt topic tokens; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         stopwords = set(ContentService.TOPIC_STOPWORDS) | {
             "about",
             "against",
@@ -1144,6 +1204,8 @@ class TextContentService:
 
     @staticmethod
     def _extract_brand_name_tokens(brand_context: dict[str, Any]) -> list[str]:
+        # Internal helper for extract brand name tokens; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         tokens: list[str] = []
         for candidate in (
             brand_context.get("brand_name"),
@@ -1157,10 +1219,14 @@ class TextContentService:
 
     @staticmethod
     def _extract_brand_palette_hexes(brand_context: dict[str, Any]) -> list[str]:
+        # Internal helper for extract brand palette hexes; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         results: list[str] = []
         seen: set[str] = set()
 
         def visit(value: Any) -> None:
+            # Runs the visit service flow by coordinating repositories, validators, and integrations, then
+            # returns domain data.
             if isinstance(value, dict):
                 for key, nested in value.items():
                     if key in {"hex", "hex_code"}:
@@ -1198,6 +1264,8 @@ class TextContentService:
         page_text: str,
         brand_context: dict[str, Any],
     ) -> dict[str, Any]:
+        # Internal helper for visual page review; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         labels = [
             str(item.get("desc") or "").strip()
             for item in (analysis.get("labels") or [])
@@ -1229,6 +1297,8 @@ class TextContentService:
         line_count = max(len([line for line in observed_text.splitlines() if line.strip()]), 1) if observed_text else 0
         box_heights = []
         box_area = 0
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for entry in structured_text:
             bbox = entry.get("bounding_box") if isinstance(entry.get("bounding_box"), dict) else {}
             width = int(bbox.get("w", bbox.get("width", 0)) or 0)
@@ -1341,7 +1411,11 @@ class TextContentService:
         observed_text: str,
         warning_count: int,
     ) -> int:
+        # Internal helper for ocr confidence score; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         confidence_values: list[float] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for entry in structured_text:
             raw = entry.get("confidence", entry.get("score"))
             try:
@@ -1351,6 +1425,8 @@ class TextContentService:
             if value <= 1.0:
                 value *= 100.0
             confidence_values.append(max(0.0, min(100.0, value)))
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if confidence_values:
             base = sum(confidence_values) / max(len(confidence_values), 1)
         else:
@@ -1370,6 +1446,8 @@ class TextContentService:
 
     @staticmethod
     def _ocr_confidence_label(score: int) -> str:
+        # Internal helper for ocr confidence label; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if score >= 85:
             return "high"
         if score >= 65:
@@ -1384,6 +1462,8 @@ class TextContentService:
         *,
         asset_kind: str,
     ) -> list[dict[str, Any]]:
+        # Internal helper for document segments from page reviews; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if asset_kind not in {"document", "presentation", "image"}:
             return []
         segments: list[dict[str, Any]] = []
@@ -1406,6 +1486,8 @@ class TextContentService:
 
     @staticmethod
     def _region_overview_from_pages(page_reviews: list[dict[str, Any]]) -> dict[str, Any]:
+        # Internal helper for region overview from pages; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         overview = {
             "dominant_regions": [],
             "top_region_count": 0,
@@ -1433,6 +1515,8 @@ class TextContentService:
 
     @staticmethod
     def _image_canvas_size(image_path: str) -> tuple[int, int] | None:
+        # Internal helper for image canvas size; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         try:
             with Image.open(image_path) as image:
                 return int(image.width or 0), int(image.height or 0)
@@ -1441,6 +1525,8 @@ class TextContentService:
 
     @classmethod
     def _prompt_term_diagnostics(cls, expected_prompt: str, observed_text: str, labels: list[str]) -> tuple[list[str], list[str]]:
+        # Internal helper for prompt term diagnostics; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         prompt_tokens = []
         for token in cls._prompt_topic_tokens(expected_prompt):
             if token not in prompt_tokens:
@@ -1457,6 +1543,8 @@ class TextContentService:
         canvas_width: int,
         canvas_height: int,
     ) -> dict[str, Any]:
+        # Internal helper for layout region diagnostics; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if canvas_width <= 0 or canvas_height <= 0:
             return {
                 "edge_crowding_count": 0,
@@ -1471,6 +1559,8 @@ class TextContentService:
         edge_crowding_count = 0
         margin_x = canvas_width * 0.05
         margin_y = canvas_height * 0.05
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for entry in structured_text:
             bbox = entry.get("bounding_box") if isinstance(entry.get("bounding_box"), dict) else {}
             x = int(bbox.get("x", bbox.get("left", 0)) or 0)
@@ -1514,6 +1604,8 @@ class TextContentService:
 
     @staticmethod
     def _hierarchy_score(*, hierarchy_signal: float, headline_prominence: float) -> int:
+        # Internal helper for hierarchy score; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         score = 100.0
         if hierarchy_signal < 1.2:
             score -= 26.0
@@ -1529,6 +1621,8 @@ class TextContentService:
 
     @staticmethod
     def _crowding_score(*, text_box_count: int, edge_crowding_count: int, overlap_count: int, text_coverage_ratio: float) -> int:
+        # Internal helper for crowding score; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         score = 100.0
         if text_box_count > 8:
             score -= min((text_box_count - 8) * 4.0, 18.0)
@@ -1542,6 +1636,8 @@ class TextContentService:
 
     @staticmethod
     def _page_balance_score(vertical_distribution: dict[str, int]) -> int:
+        # Internal helper for page balance score; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         counts = [int(vertical_distribution.get(key) or 0) for key in ("top", "middle", "bottom")]
         total = sum(counts)
         if total <= 1:
@@ -1564,6 +1660,8 @@ class TextContentService:
         page_balance_score: int,
         missing_prompt_terms: list[str],
     ) -> list[str]:
+        # Internal helper for page findings; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         findings: list[str] = []
         if prompt_alignment_score < 60 and missing_prompt_terms:
             findings.append(f"Important prompt themes seem underrepresented: {', '.join(missing_prompt_terms[:4])}.")
@@ -1579,6 +1677,8 @@ class TextContentService:
 
     @classmethod
     def _prompt_alignment_score(cls, expected_prompt: str, observed_text: str, labels: list[str]) -> int:
+        # Internal helper for prompt alignment score; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         prompt_tokens = set(cls._prompt_topic_tokens(expected_prompt))
         if not prompt_tokens:
             return 100
@@ -1590,6 +1690,8 @@ class TextContentService:
 
     @staticmethod
     def _layout_readability_score(*, word_count: int, line_count: int, text_box_count: int, hierarchy_signal: float) -> int:
+        # Internal helper for layout readability score; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         score = 100.0
         if word_count > 90:
             score -= min((word_count - 90) * 0.7, 35.0)
@@ -1607,6 +1709,8 @@ class TextContentService:
 
     @staticmethod
     def _density_score(*, word_count: int, text_box_count: int, box_area: int) -> int:
+        # Internal helper for density score; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         score = 100.0
         if word_count > 75:
             score -= min((word_count - 75) * 0.9, 40.0)
@@ -1625,6 +1729,8 @@ class TextContentService:
         labels: list[str],
         dominant_colors: list[str],
     ) -> int:
+        # Internal helper for brand alignment score; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         score = 70.0
         brand_name_tokens = cls._extract_brand_name_tokens(brand_context)
         observed_tokens = set(cls._prompt_topic_tokens(f"{observed_text} {' '.join(labels)}", limit=24))
@@ -1646,6 +1752,8 @@ class TextContentService:
 
     @staticmethod
     def _average_visual_metric(page_reviews: list[dict[str, Any]], field: str) -> int:
+        # Internal helper for average visual metric; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         values = [
             float(page.get(field) or 0.0)
             for page in page_reviews
@@ -1657,6 +1765,8 @@ class TextContentService:
 
     @staticmethod
     def _visual_findings_from_pages(page_reviews: list[dict[str, Any]], *, expected_prompt: str) -> list[str]:
+        # Internal helper for visual findings from pages; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         findings: list[str] = []
         low_alignment = [page["page_index"] for page in page_reviews if int(page.get("prompt_alignment_score") or 0) < 50]
         if low_alignment:
@@ -1698,9 +1808,13 @@ class TextContentService:
         return findings[:6]
 
     def _knowledge_asset_review_text(self, asset) -> str:
+        # Internal helper for knowledge asset review text; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         return str(self._knowledge_asset_review_detail(asset).get("content") or "")
 
     def _knowledge_asset_review_detail(self, asset) -> dict[str, Any]:
+        # Internal helper for knowledge asset review detail; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         extracted_text = str(getattr(asset, "extracted_text", "") or "").strip()
         if extracted_text:
             return {
@@ -1716,6 +1830,8 @@ class TextContentService:
                 "gap_note": "Using summary-level extraction instead of full OCR text.",
             }
         normalized = getattr(asset, "normalized_data_json", None)
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if isinstance(normalized, dict) and normalized:
             return {
                 "content": "\n".join(
@@ -1727,6 +1843,8 @@ class TextContentService:
                 "gap_note": "No extracted text was available; using normalized structured data.",
             }
         structured = getattr(asset, "structured_data_json", None)
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if isinstance(structured, dict) and structured:
             return {
                 "content": "\n".join(
@@ -1751,11 +1869,15 @@ class TextContentService:
         }
 
     def _on_demand_asset_text(self, asset) -> str:
+        # Internal helper for on demand asset text; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         storage_path = str(getattr(asset, "storage_path", "") or "").strip()
         if not storage_path or not self.storage.exists(storage_path):
             return ""
         absolute_path = self.storage.absolute_path(storage_path)
         suffix = Path(str(getattr(asset, "original_filename", "") or absolute_path)).suffix.lower()
+        # Keeps the risky I/O or integration boundary contained so callers receive project-level errors
+        # instead of raw library failures.
         try:
             if suffix in {".txt", ".md", ".csv"}:
                 return Path(absolute_path).read_text(encoding="utf-8", errors="replace").strip()
@@ -1785,6 +1907,8 @@ class TextContentService:
 
     @staticmethod
     def _asset_kind_from_mime(mime_type: str) -> str:
+        # Internal helper for asset kind from mime; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         lowered = str(mime_type or "").lower()
         if lowered.startswith("image/"):
             return "image"
@@ -1799,6 +1923,8 @@ class TextContentService:
         return "asset"
 
     def _knowledge_asset_kind(self, asset) -> str:
+        # Internal helper for knowledge asset kind; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         mime_type = str(getattr(asset, "mime_type", "") or "").strip()
         kind = self._asset_kind_from_mime(mime_type)
         if kind != "asset":
@@ -1812,6 +1938,8 @@ class TextContentService:
 
     @staticmethod
     def _quality_value(*sources: Any, key: str, default: float = 0.0) -> float:
+        # Internal helper for quality value; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         for source in sources:
             if not isinstance(source, dict):
                 continue
@@ -1825,6 +1953,8 @@ class TextContentService:
 
     @staticmethod
     def _quality_list(*sources: Any, key: str) -> list[str]:
+        # Internal helper for quality list; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         items: list[str] = []
         for source in sources:
             if not isinstance(source, dict):
@@ -1840,6 +1970,8 @@ class TextContentService:
         return items
 
     def _knowledge_asset_diagnostics(self, asset) -> dict[str, Any]:
+        # Internal helper for knowledge asset diagnostics; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         metadata = getattr(asset, "metadata_json", None)
         normalized = getattr(asset, "normalized_data_json", None)
         structured = getattr(asset, "structured_data_json", None)
@@ -1866,6 +1998,8 @@ class TextContentService:
 
     @classmethod
     def _asset_diagnostics(cls, asset_review_blocks: list[dict[str, Any]]) -> dict[str, Any]:
+        # Internal helper for asset diagnostics; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if not asset_review_blocks:
             return {
                 "asset_types": [],
@@ -1902,6 +2036,8 @@ class TextContentService:
         crowding_components: list[float] = []
         balance_components: list[float] = []
         ocr_confidence_components: list[float] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for block in asset_review_blocks:
             diagnostics = block.get("diagnostics") if isinstance(block.get("diagnostics"), dict) else {}
             analysis_quality_score = float(diagnostics.get("analysis_quality_score") or 0.0)
@@ -1975,11 +2111,14 @@ class TextContentService:
 
     @staticmethod
     def _visual_review_report(asset_review_blocks: list[dict[str, Any]]) -> dict[str, Any]:
+        # Internal helper for visual review report; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         visual_blocks = [
             block
             for block in asset_review_blocks
             if isinstance(block.get("visual_review"), dict) and block.get("visual_review")
         ]
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if not visual_blocks:
             return {
                 "asset_count": 0,
@@ -2058,6 +2197,8 @@ class TextContentService:
 
     @staticmethod
     def _asset_coverage_score(asset_review_blocks: list[dict[str, Any]]) -> int:
+        # Internal helper for asset coverage score; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if not asset_review_blocks:
             return 100
         strong_methods = {"generated_payload", "extracted_text", "on_demand_file_read"}
@@ -2068,6 +2209,8 @@ class TextContentService:
 
     @staticmethod
     def _source_observations(asset_review_blocks: list[dict[str, Any]]) -> list[str]:
+        # Internal helper for source observations; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         observations: list[str] = []
         if not asset_review_blocks:
             return observations
@@ -2099,6 +2242,8 @@ class TextContentService:
         asset_review_blocks: list[dict[str, Any]] | None = None,
         asset_coverage_score: int | None = None,
     ) -> str:
+        # Internal helper for evaluation summary; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         score = int(report.get("score") or 0)
         matched = report.get("matched_signals") if isinstance(report.get("matched_signals"), list) else []
         deviations = report.get("deviations") if isinstance(report.get("deviations"), list) else []

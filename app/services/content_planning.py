@@ -1,3 +1,4 @@
+# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
 from typing import Any
@@ -7,12 +8,17 @@ from app.services.research_editorial_planning import ResearchEditorialPlanningSe
 
 
 class ContentPlanningService:
+    # Business layer for content planning; routes and workers pass validated inputs here and receive domain
+    # results back.
     def __init__(self) -> None:
+        # Wires the repositories and helper services this workflow reuses across its public methods.
         self.research_editorial = ResearchEditorialPlanningService()
         self.format_family_planning = FormatFamilyPlanningService()
 
     @staticmethod
     def _normalized_text_list(value: Any, *, limit: int = 8) -> list[str]:
+        # Internal helper for normalized text list; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if not isinstance(value, list):
             return []
         items: list[str] = []
@@ -27,6 +33,8 @@ class ContentPlanningService:
 
     @classmethod
     def _normalized_outline(cls, value: Any, *, limit: int = 8) -> list[dict[str, Any]]:
+        # Internal helper for normalized outline; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if not isinstance(value, list):
             return []
         outline: list[dict[str, Any]] = []
@@ -52,6 +60,8 @@ class ContentPlanningService:
 
     @staticmethod
     def _tokenize_text_fragments(*values: Any) -> set[str]:
+        # Internal helper for tokenize text fragments; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         tokens: set[str] = set()
         for value in values:
             if isinstance(value, list):
@@ -80,6 +90,8 @@ class ContentPlanningService:
         required_components: list[str],
         notes: list[str],
     ) -> str:
+        # Internal helper for infer carousel archetype; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         ordered_story_beats = cls._normalized_text_list(research_brief.get("ordered_story_beats"), limit=8)
         if ordered_story_beats or str(research_brief.get("narrative_contract") or "").strip().casefold() == "preserve_user_order":
             return "ordered_story"
@@ -109,6 +121,8 @@ class ContentPlanningService:
         )
         text_blob = " ".join(sorted(tokens))
 
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if any(
             keyword in text_blob
             for keyword in (
@@ -127,6 +141,8 @@ class ContentPlanningService:
             )
         ):
             return "list_teaching"
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if any(
             keyword in text_blob
             for keyword in (
@@ -143,6 +159,8 @@ class ContentPlanningService:
             )
         ):
             return "comparison_framework"
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if any(
             keyword in text_blob
             for keyword in (
@@ -178,7 +196,11 @@ class ContentPlanningService:
 
     @staticmethod
     def _carousel_slide_grammar(archetype: str) -> list[dict[str, str]]:
+        # Internal helper for carousel slide grammar; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         normalized = str(archetype or "").strip().casefold()
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if normalized == "editorial_reveal":
             return [
                 {"role": "hook", "job": "Open with the undercovered or surprising angle only."},
@@ -205,6 +227,8 @@ class ContentPlanningService:
                 {"role": "comparison_item", "job": "Cover one option per slide using what it is, how it works, and where it fits."},
                 {"role": "takeaway", "job": "Close with the comparison takeaway or decision lens."},
             ]
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if normalized == "problem_solution_feature":
             return [
                 {"role": "problem_frame", "job": "Define the pain point or problem clearly first."},
@@ -220,6 +244,8 @@ class ContentPlanningService:
 
     @classmethod
     def _carousel_archetype_rules(cls, archetype: str) -> list[str]:
+        # Internal helper for carousel archetype rules; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         normalized = str(archetype or "").strip().casefold()
         if normalized == "editorial_reveal":
             return [
@@ -255,6 +281,8 @@ class ContentPlanningService:
 
     @classmethod
     def _semantic_carousel_slide_grammar(cls, plan: dict[str, Any]) -> list[dict[str, str]]:
+        # Internal helper for semantic carousel slide grammar; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         story_map = [item for item in (plan.get("story_map") or []) if isinstance(item, dict)]
         grammar: list[dict[str, str]] = []
         for item in story_map[:8]:
@@ -266,6 +294,8 @@ class ContentPlanningService:
 
     @classmethod
     def _semantic_carousel_slide_contracts(cls, plan: dict[str, Any]) -> list[dict[str, str]]:
+        # Internal helper for semantic carousel slide contracts; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         story_map = [item for item in (plan.get("story_map") or []) if isinstance(item, dict)]
         contracts: list[dict[str, str]] = []
         for item in story_map[:8]:
@@ -296,6 +326,8 @@ class ContentPlanningService:
         planning_family: str = "text",
         enable_semantic_carousel_plan: bool = False,
     ) -> dict[str, Any]:
+        # Runs the derive content plan service flow by coordinating repositories, validators, and integrations,
+        # then returns domain data.
         format_plan = format_family_plan if isinstance(format_family_plan, dict) else {}
         research_brief = research_editorial_brief if isinstance(research_editorial_brief, dict) else {}
         format_family = str(format_plan.get("family") or "").strip() or "short_form"
@@ -329,6 +361,8 @@ class ContentPlanningService:
         carousel_slide_contracts: list[dict[str, str]] = []
         carousel_archetype_rules: list[str] = []
 
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if format_family == "carousel":
             sequence_contract = "native_carousel_metadata"
             sequence_expectation = "slide_by_slide_progression"
@@ -450,6 +484,8 @@ class ContentPlanningService:
         deliverable_type: str | None,
         enable_semantic_carousel_plan: bool = False,
     ) -> dict[str, Any]:
+        # Runs the text plan service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         research_editorial_brief = self.research_editorial.build(
             prompt=prompt,
             studio_panel=studio_panel,

@@ -1,3 +1,4 @@
+# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
 import asyncio
@@ -75,6 +76,7 @@ logger = logging.getLogger(__name__)
 
 
 class ContentService:
+    # Business layer for content; routes and workers pass validated inputs here and receive domain results back.
     AI_FINAL_RENDER_FORMATS = {"static", "story", "poster", "carousel", "infographic"}
     AI_FINAL_RENDER_OVERLAY_FORMATS = {"static", "carousel", "infographic"}
     TOPIC_STOPWORDS = {
@@ -205,6 +207,7 @@ class ContentService:
     }
 
     def __init__(self, session: AsyncSession) -> None:
+        # Wires the repositories and helper services this workflow reuses across its public methods.
         self.session = session
         self.sessions = SessionRepository(session)
         self.contents = ContentRepository(session)
@@ -249,8 +252,11 @@ class ContentService:
         content_version_id: UUID,
         generated_image_count: int,
     ) -> str:
+        # Internal helper for enqueue RAGAS evaluation after generation; it keeps the public service method
+        # focused on orchestration instead of low-level shaping.
         if not trace_id or generated_image_count <= 0:
             return "skipped"
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if not bool(getattr(self.settings, "automatic_ragas_evaluation_enabled", False)):
             self.trace.write_payload(
                 trace_id,
@@ -267,6 +273,8 @@ class ContentService:
             )
             return "disabled"
 
+        # Keeps the risky I/O or integration boundary contained so callers receive project-level errors
+        # instead of raw library failures.
         try:
             job = await JobService(self.session).create(
                 tenant_id=tenant_id,
@@ -290,6 +298,8 @@ class ContentService:
 
     @staticmethod
     def _merge_studio_panel(base: dict | None, override: dict | None) -> dict:
+        # Internal helper for merge studio panel; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         merged = deepcopy(base or {})
         if not override:
             return resolve_studio_panel_defaults(merged)
@@ -302,6 +312,8 @@ class ContentService:
 
     @staticmethod
     def _knowledge_channels() -> list[str]:
+        # Internal helper for knowledge channels; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         return [
             KnowledgeChannel.BRAND,
             KnowledgeChannel.STRATEGY,
@@ -318,6 +330,8 @@ class ContentService:
 
     @classmethod
     def _knowledge_channels_for_panel(cls, studio_panel: dict | None) -> list[str]:
+        # Internal helper for knowledge channels for panel; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         channels = list(cls._knowledge_channels())
         studio_panel = studio_panel or {}
         format_name = str(studio_panel.get("format") or "").strip().lower()
@@ -333,6 +347,8 @@ class ContentService:
 
     @classmethod
     def _topic_query_terms(cls, prompt: str, *, limit: int = 6) -> list[str]:
+        # Internal helper for topic query terms; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         terms: list[str] = []
         seen: set[str] = set()
         for token in re.findall(r"[A-Za-z0-9][A-Za-z0-9+#-]*", str(prompt or "").lower()):
@@ -348,6 +364,8 @@ class ContentService:
 
     @classmethod
     def _sequence_pack_relevance_tokens(cls, value: object) -> set[str]:
+        # Internal helper for sequence pack relevance tokens; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         tokens: set[str] = set()
         text = re.sub(r"[^a-z0-9]+", " ", str(value or "").casefold())
         high_signal_short_tokens = {
@@ -410,6 +428,8 @@ class ContentService:
             "template",
             "visual",
         }
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for raw_token in text.split():
             token = raw_token.strip()
             if token.endswith("s") and len(token) > 4:
@@ -428,6 +448,8 @@ class ContentService:
         prompt: str | None,
         sequence_pack: dict[str, Any] | None,
     ) -> bool:
+        # Internal helper for sequence pack is relevant to prompt; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not isinstance(sequence_pack, dict):
             return False
         prompt_tokens = set(cls._topic_query_terms(str(prompt or ""), limit=8))
@@ -454,6 +476,8 @@ class ContentService:
         template_recommendations: list[dict[str, Any]],
         reference_assets: list[dict[str, Any]],
     ) -> list[str]:
+        # Internal helper for selected template context evidence texts; it keeps the public service method
+        # focused on orchestration instead of low-level shaping.
         selected_name_key = str(selected_template_name or "").strip().casefold()
         selected_id = str(selected_template_id or "").strip()
         selected_signature = cls._sequence_pack_signature(selected_template_name)
@@ -463,6 +487,8 @@ class ContentService:
         ]
 
         def _append_metadata_text(source: dict[str, Any]) -> None:
+            # Internal helper for append metadata text; it keeps the public service method focused on
+            # orchestration instead of low-level shaping.
             metadata = source.get("metadata") if isinstance(source.get("metadata"), dict) else {}
             for key in (
                 "name",
@@ -491,6 +517,8 @@ class ContentService:
             if (selected_id and candidate_id == selected_id) or (selected_name_key and candidate_name == selected_name_key):
                 _append_metadata_text(recommendation)
 
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for asset in reference_assets or []:
             if not isinstance(asset, dict):
                 continue
@@ -518,9 +546,13 @@ class ContentService:
         base_context: dict[str, Any] | None,
         evidence_texts: list[str],
     ) -> bool:
+        # Internal helper for template context layout semantically conflicts; it keeps the public service method
+        # focused on orchestration instead of low-level shaping.
         if not isinstance(base_context, dict) or not evidence_texts:
             return False
         context_fragments: list[str] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for key in (
             "editorial_dna",
             "subject_semantics",
@@ -545,6 +577,8 @@ class ContentService:
 
     @classmethod
     def _strip_conflicting_template_layout_context(cls, base_context: dict[str, Any]) -> dict[str, Any]:
+        # Internal helper for strip conflicting template layout context; it keeps the public service method
+        # focused on orchestration instead of low-level shaping.
         cleaned = deepcopy(base_context or {})
         for key in (
             "icons",
@@ -569,6 +603,8 @@ class ContentService:
         template_context: dict[str, Any] | None,
         studio_panel: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Internal helper for template context surface policy to planning hints; it keeps the public service
+        # method focused on orchestration instead of low-level shaping.
         hints = deepcopy(planning_hints if isinstance(planning_hints, dict) else {})
         context = template_context if isinstance(template_context, dict) else {}
         sequence_pack = context.get("sequence_pack") if isinstance(context.get("sequence_pack"), dict) else {}
@@ -594,6 +630,8 @@ class ContentService:
 
     @classmethod
     def _knowledge_queries_for_channel(cls, prompt: str, channel: str) -> list[str]:
+        # Internal helper for knowledge queries for channel; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         base_prompt = " ".join(str(prompt or "").split()).strip()
         topic_terms = cls._topic_query_terms(base_prompt)
         topic_suffix = f" relevant to {' '.join(topic_terms)}" if topic_terms else ""
@@ -642,6 +680,8 @@ class ContentService:
 
     @staticmethod
     def _merge_retrieval_results(result_sets: list[list[dict]], *, limit: int) -> list[dict]:
+        # Internal helper for merge retrieval results; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         merged: dict[str, dict] = {}
         for results in result_sets:
             for item in results:
@@ -667,6 +707,8 @@ class ContentService:
 
     @staticmethod
     def _is_missing_brand_value(value: object) -> bool:
+        # Internal helper for is missing brand value; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if value is None:
             return True
         if isinstance(value, str):
@@ -677,6 +719,8 @@ class ContentService:
 
     @classmethod
     def _merge_brand_context_missing(cls, preferred: object, fallback: object) -> object:
+        # Internal helper for merge brand context missing; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if isinstance(preferred, dict) and isinstance(fallback, dict):
             merged = deepcopy(preferred)
             for key, fallback_value in fallback.items():
@@ -696,6 +740,8 @@ class ContentService:
 
     @staticmethod
     def _reusable_asset_record(asset: object) -> dict[str, object]:
+        # Internal helper for reusable asset record; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         source_asset_id = getattr(asset, "source_asset_id", None)
         return {
             "id": str(getattr(asset, "id", "") or ""),
@@ -716,6 +762,8 @@ class ContentService:
 
     @staticmethod
     def _palette_entries_from_logo_metadata(metadata: dict[str, object] | None) -> list[dict[str, object]]:
+        # Internal helper for palette entries from logo metadata; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         metadata = metadata or {}
         candidate_lists = [
             metadata.get("logo_colors"),
@@ -724,6 +772,8 @@ class ContentService:
         ]
         entries: list[dict[str, object]] = []
         seen: set[str] = set()
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for candidate_list in candidate_lists:
             if not isinstance(candidate_list, list):
                 continue
@@ -747,6 +797,8 @@ class ContentService:
 
     @staticmethod
     def _asset_ref(asset: GeneratedAsset) -> GeneratedImageAsset:
+        # Internal helper for asset ref; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         return GeneratedImageAsset(
             asset_id=asset.id,
             mime_type=asset.mime_type,
@@ -759,6 +811,8 @@ class ContentService:
 
     @staticmethod
     def _generated_asset_payload(asset: GeneratedAsset) -> dict:
+        # Internal helper for generated asset payload; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         return {
             "asset_id": str(asset.id),
             "asset_role": asset.asset_role,
@@ -773,6 +827,8 @@ class ContentService:
 
     @staticmethod
     def _chat_message_payload(message) -> dict:
+        # Internal helper for chat message payload; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         return {
             "id": str(message.id),
             "role": message.role,
@@ -783,6 +839,8 @@ class ContentService:
 
     @staticmethod
     def _content_prompt_lineage(content: ContentVersion) -> dict[str, object]:
+        # Internal helper for content prompt lineage; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         explainability = content.explainability_metadata if isinstance(content.explainability_metadata, dict) else {}
         prompt_lineage = explainability.get("prompt_lineage") if isinstance(explainability.get("prompt_lineage"), dict) else {}
         source_prompt = str(explainability.get("source_prompt") or "").strip()
@@ -805,6 +863,8 @@ class ContentService:
 
     @staticmethod
     def _content_version_memory_payload(content: ContentVersion) -> dict:
+        # Internal helper for content version memory payload; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         generated_payload = content.generated_payload or {}
         explainability = content.explainability_metadata or {}
         prompt_lineage = ContentService._content_prompt_lineage(content)
@@ -831,6 +891,8 @@ class ContentService:
 
     @staticmethod
     def _rewrite_payload_for_prompt(content: ContentVersion) -> dict:
+        # Internal helper for payload for prompt; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         generated_payload = content.generated_payload if isinstance(content.generated_payload, dict) else {}
         metadata = generated_payload.get("metadata") if isinstance(generated_payload.get("metadata"), dict) else {}
         return {
@@ -852,6 +914,8 @@ class ContentService:
 
     @staticmethod
     def _rewrite_strategy_for_prompt(content: ContentVersion) -> dict:
+        # Internal helper for strategy for prompt; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         explainability = content.explainability_metadata if isinstance(content.explainability_metadata, dict) else {}
         strategy = explainability.get("message_strategy") if isinstance(explainability.get("message_strategy"), dict) else {}
         return {
@@ -861,6 +925,8 @@ class ContentService:
 
     @staticmethod
     def _rewrite_tone_feedback_for_prompt(content: ContentVersion) -> dict:
+        # Internal helper for tone feedback for prompt; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         tone_feedback = content.tone_feedback if isinstance(content.tone_feedback, dict) else {}
         return {
             "score": tone_feedback.get("score", content.tone_score),
@@ -874,6 +940,8 @@ class ContentService:
 
     @classmethod
     def _tone_check_content_string(cls, content_payload: dict[str, object] | None) -> str:
+        # Internal helper for tone check content string; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         payload = content_payload if isinstance(content_payload, dict) else {}
         headline = str(payload.get("headline") or "").strip().rstrip(".!? ")
         body = str(payload.get("body") or "").strip().rstrip(".!? ")
@@ -882,6 +950,8 @@ class ContentService:
 
     @classmethod
     def _rewrite_field_plan_for_prompt(cls, content: ContentVersion) -> dict:
+        # Internal helper for field plan for prompt; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         rewrite_payload = cls._rewrite_payload_for_prompt(content)
         tone_feedback = cls._rewrite_tone_feedback_for_prompt(content)
         metadata = rewrite_payload.get("metadata", {}) if isinstance(rewrite_payload.get("metadata"), dict) else {}
@@ -889,6 +959,8 @@ class ContentService:
         field_guidance = tone_feedback.get("field_guidance", {}) if isinstance(tone_feedback.get("field_guidance"), dict) else {}
 
         must_preserve: list[str] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for label, values in (
             ("proof_point", metadata.get("proof_points", []) or []),
             ("stat_highlight", metadata.get("stat_highlights", []) or []),
@@ -899,6 +971,8 @@ class ContentService:
                 if not value:
                     continue
                 must_preserve.append(f"{label}: {value}")
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for pair in metadata.get("claim_evidence_pairs", []) or []:
             if not isinstance(pair, dict):
                 continue
@@ -936,6 +1010,8 @@ class ContentService:
 
     @staticmethod
     def _dedupe_preserved_lines(values: list[str]) -> list[str]:
+        # Internal helper for dedupe preserved lines; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         seen: set[str] = set()
         output: list[str] = []
         for value in values:
@@ -951,10 +1027,14 @@ class ContentService:
 
     @staticmethod
     def _normalized_rewrite_instruction(value: str) -> str:
+        # Internal helper for normalized rewrite instruction; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         return " ".join(str(value or "").casefold().split())
 
     @classmethod
     def _source_prompt_for_rewrite(cls, content: ContentVersion) -> str:
+        # Internal helper for source prompt for rewrite; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         prompt_lineage = cls._content_prompt_lineage(content)
         source_prompt = str(prompt_lineage.get("user_prompt_raw") or prompt_lineage.get("source_prompt_snapshot") or "").strip()
         if source_prompt:
@@ -975,6 +1055,8 @@ class ContentService:
 
     @classmethod
     def _rewrite_instruction_targets_field(cls, field: str, rewrite_instruction: str) -> bool:
+        # Internal helper for instruction targets field; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         normalized_instruction = cls._normalized_rewrite_instruction(rewrite_instruction)
         if not normalized_instruction:
             return False
@@ -1003,6 +1085,8 @@ class ContentService:
             "updated",
             "changed",
         )
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for hint in field_hints:
             escaped_hint = re.escape(hint)
             for marker in action_markers:
@@ -1020,6 +1104,8 @@ class ContentService:
 
     @classmethod
     def _rewrite_instruction_targets_value(cls, value: str, rewrite_instruction: str) -> bool:
+        # Internal helper for instruction targets value; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         normalized_instruction = cls._normalized_rewrite_instruction(rewrite_instruction)
         normalized_value = cls._normalized_rewrite_instruction(value)
         if not normalized_instruction or not normalized_value or len(normalized_value) < 5:
@@ -1031,6 +1117,8 @@ class ContentService:
 
     @classmethod
     def _rewrite_targeted_core_fields(cls, rewrite_instruction: str) -> set[str]:
+        # Internal helper for targeted core fields; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         targeted_fields = {
             field
             for field in cls.REWRITE_CORE_FIELDS
@@ -1040,6 +1128,8 @@ class ContentService:
 
     @classmethod
     def _rewrite_targeted_fields(cls, rewrite_instruction: str) -> list[str]:
+        # Internal helper for targeted fields; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         return sorted(
             field
             for field in cls.REWRITE_FIELD_HINTS
@@ -1048,6 +1138,8 @@ class ContentService:
 
     @classmethod
     def _revision_scope_targeted_fields(cls, revision_scope: dict[str, object] | None) -> set[str]:
+        # Internal helper for revision scope targeted fields; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not isinstance(revision_scope, dict):
             return set()
         return {
@@ -1058,6 +1150,8 @@ class ContentService:
 
     @classmethod
     def _revision_scope_targeted_core_fields(cls, revision_scope: dict[str, object] | None) -> set[str]:
+        # Internal helper for revision scope targeted core fields; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         return cls._revision_scope_targeted_fields(revision_scope) & set(cls.REWRITE_CORE_FIELDS)
 
     @classmethod
@@ -1067,6 +1161,8 @@ class ContentService:
         *,
         original_slide_specs: list[dict[str, object]],
     ) -> set[int]:
+        # Internal helper for revision scope targeted slide indexes; it keeps the public service method focused
+        # on orchestration instead of low-level shaping.
         if not isinstance(revision_scope, dict):
             return set()
         slide_indexes = {
@@ -1097,6 +1193,8 @@ class ContentService:
         rewritten_metadata: dict[str, object],
         revision_scope: dict[str, object] | None,
     ) -> tuple[dict[str, object], list[int]]:
+        # Internal helper for merge selective carousel slide specs; it keeps the public service method focused
+        # on orchestration instead of low-level shaping.
         original_specs_raw = original_metadata.get("carousel_slide_specs")
         if not isinstance(original_specs_raw, list) or not original_specs_raw:
             return dict(rewritten_metadata), []
@@ -1116,6 +1214,8 @@ class ContentService:
         }
         merged_specs: list[dict[str, object]] = []
         updated_indexes: list[int] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for position, original_spec in enumerate(original_specs, start=1):
             slide_index = int(original_spec.get("slide_index") or position)
             if slide_index in targeted_slide_indexes and slide_index in rewritten_by_index:
@@ -1134,6 +1234,8 @@ class ContentService:
         original: ContentVersion,
         revision_scope: dict[str, object] | None,
     ) -> dict[str, object]:
+        # Internal helper for selective regeneration plan; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not isinstance(revision_scope, dict):
             return {}
         targeted_fields = sorted(cls._revision_scope_targeted_fields(revision_scope))
@@ -1156,6 +1258,7 @@ class ContentService:
             )
         )
         slide_count = len([spec for spec in original_slide_specs if isinstance(spec, dict)])
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if (
             not targeted_slide_indexes
             and slide_count
@@ -1186,6 +1289,8 @@ class ContentService:
 
     @classmethod
     def _rewrite_context_tokens(cls, *values: object, limit: int = 24) -> set[str]:
+        # Internal helper for context tokens; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         tokens: list[str] = []
         for value in values:
             for word in re.findall(r"[A-Za-z][A-Za-z0-9'-]{2,}", str(value or "")):
@@ -1205,6 +1310,8 @@ class ContentService:
         rewritten_payload: dict[str, object],
         rewrite_instruction: str,
     ) -> bool:
+        # Internal helper for has material angle shift; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         original_metadata = original_payload.get("metadata") if isinstance(original_payload.get("metadata"), dict) else {}
         rewritten_metadata = rewritten_payload.get("metadata") if isinstance(rewritten_payload.get("metadata"), dict) else {}
         original_tokens = cls._rewrite_context_tokens(
@@ -1229,6 +1336,8 @@ class ContentService:
 
     @classmethod
     def _rewrite_item_matches_context(cls, value: object, rewrite_context_tokens: set[str]) -> bool:
+        # Internal helper for item matches context; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         text = str(value or "").strip()
         if not text or not rewrite_context_tokens:
             return bool(text)
@@ -1257,6 +1366,8 @@ class ContentService:
         rewrite_context_tokens: set[str],
         enforce_context_match: bool,
     ) -> tuple[list[str], bool, list[str]]:
+        # Internal helper for merge rewrite text items; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         rewritten = AIOrchestratorService._normalize_metadata_list(rewritten_items, limit=limit)
         if cls._rewrite_instruction_targets_field(field, rewrite_instruction):
             return rewritten, False, []
@@ -1265,6 +1376,8 @@ class ContentService:
         ]
         preserved_original: list[str] = []
         stale_drops: list[str] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for item in original:
             if cls._rewrite_instruction_targets_value(item, rewrite_instruction):
                 continue
@@ -1289,12 +1402,16 @@ class ContentService:
         rewrite_context_tokens: set[str],
         enforce_context_match: bool,
     ) -> tuple[list[dict[str, str]], bool, list[str]]:
+        # Internal helper for merge rewrite claim evidence pairs; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         rewritten = AIOrchestratorService._normalize_claim_evidence_pairs(rewritten_pairs, limit=limit)
         if cls._rewrite_instruction_targets_field("claim_evidence_pairs", rewrite_instruction):
             return rewritten, False, []
 
         preserved_original: list[dict[str, str]] = []
         stale_drops: list[str] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for pair in AIOrchestratorService._normalize_claim_evidence_pairs(original_pairs, limit=limit * 2):
             claim = str(pair.get("claim") or "").strip()
             evidence = str(pair.get("evidence") or "").strip()
@@ -1338,9 +1455,13 @@ class ContentService:
         rewrite_instruction: str,
         revision_scope: dict[str, object] | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]:
+        # Internal helper for repair rewrite payload; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         original_payload = cls._rewrite_payload_for_prompt(original)
         targeted_core_fields = cls._rewrite_targeted_core_fields(rewrite_instruction)
         explicit_targeted_core_fields = cls._revision_scope_targeted_core_fields(revision_scope)
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if explicit_targeted_core_fields:
             targeted_core_fields = explicit_targeted_core_fields
         elif isinstance(revision_scope, dict) and (
@@ -1362,6 +1483,8 @@ class ContentService:
         )
         revision_targeted_fields = cls._revision_scope_targeted_fields(revision_scope)
         preserve_copy = bool((revision_scope or {}).get("preserve_copy")) if isinstance(revision_scope, dict) else False
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if revision_targeted_fields or (isinstance(revision_scope, dict) and revision_scope.get("only_targeted")) or preserve_copy:
             for field in cls.REWRITE_CORE_FIELDS:
                 if field in targeted_core_fields and not preserve_copy:
@@ -1391,6 +1514,8 @@ class ContentService:
             rewritten_metadata.get("section_label"),
         )
 
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for field, limit in (
             ("proof_points", 4),
             ("stat_highlights", 3),
@@ -1480,6 +1605,8 @@ class ContentService:
 
     @staticmethod
     def _sync_rewrite_scene_graph(explainability_metadata: dict[str, object], payload: dict[str, object]) -> dict[str, object]:
+        # Internal helper for sync rewrite scene graph; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         explainability = deepcopy(explainability_metadata if isinstance(explainability_metadata, dict) else {})
         for key in ("scene_graph", "final_render_scene_graph"):
             scene_graph = explainability.get(key)
@@ -1498,6 +1625,8 @@ class ContentService:
 
     @classmethod
     def _rewrite_fallback_payload(cls, original: ContentVersion, rewrite_instruction: str) -> dict[str, object]:
+        # Internal helper for fallback payload; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         original_payload = deepcopy(cls._rewrite_payload_for_prompt(original))
         fallback_payload = deepcopy(original_payload)
         targeted_core_fields = cls._rewrite_targeted_core_fields(rewrite_instruction)
@@ -1531,8 +1660,12 @@ class ContentService:
         content_plan: dict[str, Any] | None = None,
         visual_plan: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Internal helper for compiled context; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         explainability = original.explainability_metadata if isinstance(original.explainability_metadata, dict) else {}
         stored_compiled_context = explainability.get("compiled_context")
+        # The payload/context shape drives this branch because downstream serializers depend on consistent
+        # fields.
         if isinstance(stored_compiled_context, dict) and stored_compiled_context:
             stored_copy = deepcopy(stored_compiled_context)
             stored_content_format_brief = (
@@ -1621,6 +1754,8 @@ class ContentService:
         message_strategy: dict[str, object],
         studio_panel: dict[str, object],
     ) -> dict[str, object]:
+        # Internal helper for rewrite candidate payload; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         current_payload = self._rewrite_payload_for_prompt(original)
         tone_feedback = self._rewrite_tone_feedback_for_prompt(original)
         rewrite_field_plan = self._rewrite_field_plan_for_prompt(original)
@@ -1671,6 +1806,8 @@ class ContentService:
         rewritten_payload: dict[str, object],
         rewrite_preservation: dict[str, object],
     ) -> dict[str, object]:
+        # Internal helper for message strategy; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         strategy = deepcopy(original_strategy if isinstance(original_strategy, dict) else {})
         metadata = rewritten_payload.get("metadata") if isinstance(rewritten_payload.get("metadata"), dict) else {}
         headline = AIOrchestratorService._normalize_metadata_text(rewritten_payload.get("headline"), limit=160)
@@ -1692,6 +1829,7 @@ class ContentService:
             strategy["primary_campaign_theme"] = supporting_line or headline or body
         if angle_shift_detected or not str(strategy.get("core_audience_message") or "").strip():
             strategy["core_audience_message"] = body or supporting_line or headline
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if angle_shift_detected or not str(strategy.get("key_value_proposition") or "").strip():
             first_claim = next(
                 (
@@ -1725,6 +1863,8 @@ class ContentService:
         explainability_metadata: dict[str, object],
         session: ContentSession | None,
     ) -> dict[str, object]:
+        # Internal helper for validation report; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         scene_graph_payload = explainability_metadata.get("scene_graph")
         if not isinstance(scene_graph_payload, dict):
             return dict(
@@ -1740,6 +1880,8 @@ class ContentService:
             if isinstance(explainability_metadata.get("layout_decision"), dict)
             else {}
         )
+        # Keeps the risky I/O or integration boundary contained so callers receive project-level errors
+        # instead of raw library failures.
         try:
             scene_graph = GenerationSceneGraph.model_validate(scene_graph_payload)
             creative_decision = CreativeDecisionPayload.model_validate(creative_decision_payload or {})
@@ -1803,7 +1945,11 @@ class ContentService:
         studio_panel: dict[str, object],
         resolved_brand_context: dict[str, object],
     ) -> dict[str, object]:
+        # Internal helper for blueprint payload; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         scene_graph_payload = explainability_metadata.get("scene_graph")
+        # The payload/context shape drives this branch because downstream serializers depend on consistent
+        # fields.
         if isinstance(scene_graph_payload, dict):
             try:
                 scene_graph = GenerationSceneGraph.model_validate(scene_graph_payload)
@@ -1818,6 +1964,8 @@ class ContentService:
                 pass
 
         stored_blueprint = getattr(original, "blueprint_payload", None)
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if isinstance(stored_blueprint, dict) and stored_blueprint:
             blueprint_payload = deepcopy(stored_blueprint)
             blueprint_payload["text_blocks"] = [
@@ -1848,6 +1996,8 @@ class ContentService:
         brand_space_id: UUID,
         content: ContentVersion,
     ) -> None:
+        # Internal helper for refresh content tone feedback; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         brand = await self.brands.get(brand_space_id)
         if not brand:
             return
@@ -1871,6 +2021,8 @@ class ContentService:
 
     @classmethod
     def _build_rewrite_prompt(cls, content: ContentVersion, rewrite_instruction: str) -> str:
+        # Internal helper for rewrite prompt; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         rewrite_payload = cls._rewrite_payload_for_prompt(content)
         rewrite_strategy = cls._rewrite_strategy_for_prompt(content)
         tone_feedback = cls._rewrite_tone_feedback_for_prompt(content)
@@ -1901,6 +2053,8 @@ class ContentService:
 
     @staticmethod
     def _knowledge_asset_payload(asset) -> dict:
+        # Internal helper for knowledge asset payload; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         metadata = dict(asset.metadata_json or {})
         structured = asset.structured_data_json if isinstance(asset.structured_data_json, dict) else {}
         normalized = asset.normalized_data_json if isinstance(asset.normalized_data_json, dict) else {}
@@ -1962,6 +2116,8 @@ class ContentService:
 
     @staticmethod
     def _reusable_asset_payload(asset: dict[str, object]) -> dict[str, object]:
+        # Internal helper for reusable asset payload; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         review_status = str(asset.get("review_status") or "reference_only")
         review_class = str(asset.get("review_class") or asset.get("asset_kind") or "fragment")
         return {
@@ -1988,6 +2144,8 @@ class ContentService:
 
     @staticmethod
     def _trust_level_for_validation_state(validation_state: str | None) -> str:
+        # Internal helper for trust level for validation state; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         normalized = str(validation_state or "pending").lower()
         if normalized == "clean":
             return "trusted"
@@ -1998,6 +2156,8 @@ class ContentService:
         return "reference_only"
 
     def _decorate_asset_reference(self, asset: dict | None) -> dict | None:
+        # Internal helper for decorate asset reference; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not isinstance(asset, dict):
             return asset
         storage_path = str(asset.get("storage_path", "")).strip()
@@ -2013,6 +2173,8 @@ class ContentService:
 
     @classmethod
     def _normalize_topic_token(cls, token: str) -> str:
+        # Internal helper for topic token; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         text = str(token or "").strip().casefold()
         text = re.sub(r"^[^a-z0-9]+|[^a-z0-9]+$", "", text)
         if len(text) <= 3:
@@ -2029,6 +2191,8 @@ class ContentService:
 
     @classmethod
     def _topic_tokens(cls, value: object, *, limit: int = 8) -> set[str]:
+        # Internal helper for topic tokens; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         words = re.findall(r"[A-Za-z][A-Za-z0-9'-]{2,}", str(value or ""))
         tokens: list[str] = []
         for word in words:
@@ -2042,6 +2206,8 @@ class ContentService:
 
     @classmethod
     def _asset_topic_label(cls, asset: dict[str, object]) -> str:
+        # Internal helper for asset topic label; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         metadata = asset.get("metadata") if isinstance(asset.get("metadata"), dict) else {}
         source_metadata = metadata.get("source_metadata") if isinstance(metadata.get("source_metadata"), dict) else {}
         normalized_metadata = metadata.get("normalized_metadata") if isinstance(metadata.get("normalized_metadata"), dict) else {}
@@ -2060,6 +2226,8 @@ class ContentService:
 
     @classmethod
     def _prompt_requests_uploaded_sample_authority(cls, prompt: str) -> bool:
+        # Internal helper for prompt requests uploaded sample authority; it keeps the public service method
+        # focused on orchestration instead of low-level shaping.
         text = str(prompt or "").casefold()
         if "uploaded sample" not in text and "uploaded retirement sample" not in text:
             return False
@@ -2076,6 +2244,8 @@ class ContentService:
 
     @classmethod
     def _prompt_requests_uploaded_sample_only(cls, prompt: str) -> bool:
+        # Internal helper for prompt requests uploaded sample only; it keeps the public service method focused
+        # on orchestration instead of low-level shaping.
         text = str(prompt or "").casefold()
         strict_markers = (
             "uploaded sample only",
@@ -2092,6 +2262,8 @@ class ContentService:
         cls,
         request_assets: list[dict[str, object]],
     ) -> list[dict[str, object]]:
+        # Internal helper for authoritative request reference assets; it keeps the public service method focused
+        # on orchestration instead of low-level shaping.
         authoritative: list[dict[str, object]] = []
         for asset in request_assets:
             role = str(asset.get("asset_role") or "").strip().casefold()
@@ -2118,6 +2290,8 @@ class ContentService:
 
     @staticmethod
     def _normalize_recommendation_format_family(value: Any) -> str | None:
+        # Internal helper for recommendation format family; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         text = str(value or "").strip().lower()
         if not text:
             return None
@@ -2131,6 +2305,8 @@ class ContentService:
 
     @classmethod
     def _infer_reference_asset_format_family(cls, asset: dict[str, Any]) -> str | None:
+        # Internal helper for infer reference asset format family; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         metadata = asset.get("metadata") if isinstance(asset.get("metadata"), dict) else {}
         editorial_dna = metadata.get("editorial_dna") if isinstance(metadata.get("editorial_dna"), dict) else {}
         normalized_metadata = metadata.get("normalized_metadata") if isinstance(metadata.get("normalized_metadata"), dict) else {}
@@ -2139,6 +2315,8 @@ class ContentService:
             if isinstance(normalized_metadata.get("editorial_dna"), dict)
             else {}
         )
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for candidate in (
             asset.get("format_family"),
             metadata.get("format_family"),
@@ -2180,6 +2358,8 @@ class ContentService:
 
     @classmethod
     def _enrich_reference_asset_payload(cls, asset: dict[str, Any]) -> dict[str, Any]:
+        # Internal helper for enrich reference asset payload; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not isinstance(asset, dict):
             return {}
         payload = dict(asset)
@@ -2212,10 +2392,14 @@ class ContentService:
 
     @classmethod
     def _requested_template_format_family(cls, studio_panel: dict[str, Any] | None) -> str | None:
+        # Internal helper for requested template format family; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         return cls._normalize_recommendation_format_family((studio_panel or {}).get("format"))
 
     @classmethod
     def _template_recommendation_format_family(cls, recommendation: object) -> str | None:
+        # Internal helper for template recommendation format family; it keeps the public service method focused
+        # on orchestration instead of low-level shaping.
         payload = recommendation.model_dump(mode="json") if hasattr(recommendation, "model_dump") else dict(recommendation)
         metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
         explicit = cls._normalize_recommendation_format_family(metadata.get("format_family"))
@@ -2239,6 +2423,8 @@ class ContentService:
 
     @classmethod
     def _template_recommendation_adaptation_score(cls, recommendation: object) -> float:
+        # Internal helper for template recommendation adaptation score; it keeps the public service method
+        # focused on orchestration instead of low-level shaping.
         payload = recommendation.model_dump(mode="json") if hasattr(recommendation, "model_dump") else dict(recommendation)
         metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
         try:
@@ -2253,11 +2439,15 @@ class ContentService:
         *,
         studio_panel: dict[str, Any] | None,
     ) -> list[object]:
+        # Internal helper for sort template recommendations for format; it keeps the public service method
+        # focused on orchestration instead of low-level shaping.
         requested_format_family = cls._requested_template_format_family(studio_panel)
         if not recommendations:
             return []
 
         def _rank(item: object) -> tuple[int, float, float]:
+            # Internal helper for rank; it keeps the public service method focused on orchestration instead of
+            # low-level shaping.
             payload = item.model_dump(mode="json") if hasattr(item, "model_dump") else dict(item)
             try:
                 score = float(payload.get("score") or 0.0)
@@ -2279,6 +2469,8 @@ class ContentService:
         *,
         studio_panel: dict[str, Any] | None,
     ) -> list[dict[str, object]]:
+        # Internal helper for filter reference assets for studio format; it keeps the public service method
+        # focused on orchestration instead of low-level shaping.
         requested_format_family = cls._requested_template_format_family(studio_panel)
         if not requested_format_family:
             return [cls._enrich_reference_asset_payload(dict(asset)) for asset in assets if isinstance(asset, dict)]
@@ -2304,6 +2496,8 @@ class ContentService:
         *,
         studio_panel: dict[str, Any] | None,
     ) -> list[object]:
+        # Internal helper for collapse carousel template recommendations; it keeps the public service method
+        # focused on orchestration instead of low-level shaping.
         if cls._requested_template_format_family(studio_panel) != "carousel":
             return recommendations
         normalized: list[dict[str, Any]] = [
@@ -2311,6 +2505,8 @@ class ContentService:
             for item in recommendations
         ]
         family_members: dict[str, list[dict[str, Any]]] = {}
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for item in normalized:
             metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
             family_key = str(
@@ -2328,6 +2524,8 @@ class ContentService:
 
         collapsed: list[dict[str, Any]] = []
         seen_families: set[str] = set()
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for item in normalized:
             metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
             format_family = str(item.get("format_family") or metadata.get("format_family") or "").strip().lower()
@@ -2350,6 +2548,8 @@ class ContentService:
             members = family_members.get(family_key, [item])
 
             def _position(member: dict[str, Any]) -> int:
+                # Internal helper for position; it keeps the public service method focused on orchestration
+                # instead of low-level shaping.
                 member_metadata = member.get("metadata") if isinstance(member.get("metadata"), dict) else {}
                 try:
                     return int(member_metadata.get("sequence_position") or 0)
@@ -2357,6 +2557,8 @@ class ContentService:
                     return 0
 
             def _adaptation(member: dict[str, Any]) -> float:
+                # Internal helper for adaptation; it keeps the public service method focused on orchestration
+                # instead of low-level shaping.
                 member_metadata = member.get("metadata") if isinstance(member.get("metadata"), dict) else {}
                 try:
                     return float(member_metadata.get("adaptation_score") or member.get("score") or 0.0)
@@ -2382,6 +2584,8 @@ class ContentService:
         *,
         studio_panel: dict[str, Any] | None,
     ) -> list[object]:
+        # Internal helper for annotate template recommendation selection; it keeps the public service method
+        # focused on orchestration instead of low-level shaping.
         requested_format_family = cls._requested_template_format_family(studio_panel)
         fallback_reason = {
             "carousel": "Carousel Match",
@@ -2406,6 +2610,8 @@ class ContentService:
         *,
         studio_panel: dict[str, Any] | None,
     ) -> list[object]:
+        # Internal helper for filter template recommendations for studio format; it keeps the public service
+        # method focused on orchestration instead of low-level shaping.
         requested_format_family = cls._requested_template_format_family(studio_panel)
         if not requested_format_family:
             return recommendations
@@ -2423,7 +2629,11 @@ class ContentService:
         *,
         strict_sample_only: bool,
     ) -> list[dict[str, object]]:
+        # Internal helper for request asset template recommendations; it keeps the public service method focused
+        # on orchestration instead of low-level shaping.
         recommendations: list[dict[str, object]] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for index, asset in enumerate(request_assets):
             if not isinstance(asset, dict):
                 continue
@@ -2502,6 +2712,8 @@ class ContentService:
 
     @classmethod
     def _is_generic_reference_label(cls, label: str) -> bool:
+        # Internal helper for is generic reference label; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         text = str(label or "").strip().casefold()
         if not text:
             return True
@@ -2521,6 +2733,8 @@ class ContentService:
         follow_up_mode: str,
         studio_panel: dict[str, Any] | None = None,
     ) -> list[dict[str, object]]:
+        # Internal helper for filter brand reference assets for prompt; it keeps the public service method
+        # focused on orchestration instead of low-level shaping.
         if str(follow_up_mode or "").strip().casefold() != "new_content":
             return assets
         prompt_tokens = cls._topic_tokens(prompt, limit=8)
@@ -2532,6 +2746,8 @@ class ContentService:
         )
         filtered: list[dict[str, object]] = []
         safe_supporting_assets: list[dict[str, object]] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for asset in assets:
             role = str(asset.get("asset_role") or "").strip().casefold()
             if role in {"logo", "logo_variant"}:
@@ -2563,6 +2779,8 @@ class ContentService:
         prompt: str,
         studio_panel: dict[str, Any] | None,
     ) -> bool:
+        # Internal helper for prompt needs infographic surface reference match; it keeps the public service
+        # method focused on orchestration instead of low-level shaping.
         if cls._requested_template_format_family(studio_panel) != "infographic":
             return False
         text = str(prompt or "").strip().casefold()
@@ -2578,6 +2796,8 @@ class ContentService:
 
     @classmethod
     def _asset_is_safe_infographic_support(cls, asset: dict[str, object]) -> bool:
+        # Internal helper for asset is safe infographic support; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         role = str(asset.get("asset_role") or "").strip().casefold()
         if role in {"logo", "logo_variant", "icon", "icon_set", "decorative_asset", "illustration"}:
             return True
@@ -2598,6 +2818,8 @@ class ContentService:
         request_reference_assets: list[dict[str, object]],
         brand_reference_assets: list[dict[str, object]],
     ) -> list[dict[str, object]]:
+        # Internal helper for merge reference assets for prompt; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         authoritative_request_assets = cls._authoritative_request_reference_assets(request_reference_assets)
         if not authoritative_request_assets:
             return [*brand_reference_assets, *request_reference_assets]
@@ -2605,6 +2827,8 @@ class ContentService:
         if cls._prompt_requests_uploaded_sample_only(prompt):
             return list(authoritative_request_assets)
 
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if cls._prompt_requests_uploaded_sample_authority(prompt):
             seen: set[str] = set()
             merged: list[dict[str, object]] = []
@@ -2629,6 +2853,8 @@ class ContentService:
         request_reference_assets: list[dict[str, object]],
         template_recommendations: list[object],
     ) -> list[object]:
+        # Internal helper for merge template recommendations for prompt; it keeps the public service method
+        # focused on orchestration instead of low-level shaping.
         authoritative_request_assets = cls._authoritative_request_reference_assets(request_reference_assets)
         if not authoritative_request_assets or not cls._prompt_requests_uploaded_sample_authority(prompt):
             return template_recommendations
@@ -2649,6 +2875,8 @@ class ContentService:
         follow_up_mode: str,
         studio_panel: dict[str, Any] | None = None,
     ) -> list[object]:
+        # Internal helper for filter template recommendations for prompt; it keeps the public service method
+        # focused on orchestration instead of low-level shaping.
         recommendations = cls._filter_template_recommendations_for_studio_format(
             recommendations,
             studio_panel=studio_panel,
@@ -2665,6 +2893,8 @@ class ContentService:
                 studio_panel=studio_panel,
             )
         filtered: list[object] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for recommendation in recommendations:
             payload = recommendation.model_dump(mode="json") if hasattr(recommendation, "model_dump") else dict(recommendation)
             metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
@@ -2688,6 +2918,8 @@ class ContentService:
 
     @staticmethod
     def _parse_uuid_or_none(value: str | UUID | None) -> UUID | None:
+        # Internal helper for uuid or none; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         if not value:
             return None
         if isinstance(value, UUID):
@@ -2704,6 +2936,8 @@ class ContentService:
         payload: ContentGenerateRequest,
         session_memory: dict[str, object] | None,
     ) -> str:
+        # Internal helper for effective request mode; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         explicit_mode = str(getattr(payload, "request_mode", "") or "").strip().casefold()
         if explicit_mode:
             return explicit_mode
@@ -2712,6 +2946,8 @@ class ContentService:
 
     @staticmethod
     def _inheritance_policy_value(payload: ContentGenerateRequest, field_name: str) -> bool | None:
+        # Internal helper for inheritance policy value; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         policy = getattr(payload, "inheritance_policy", None)
         if policy is None:
             return None
@@ -2729,6 +2965,8 @@ class ContentService:
         session_memory: dict[str, object] | None,
         field_name: str,
     ) -> bool:
+        # Internal helper for should inherit generation selection; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         explicit_policy = cls._inheritance_policy_value(payload, field_name)
         if explicit_policy is not None:
             return bool(explicit_policy)
@@ -2742,6 +2980,8 @@ class ContentService:
         payload: ContentGenerateRequest,
         session_memory: dict[str, object] | None,
     ) -> dict[str, object]:
+        # Internal helper for request lineage payload; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         return {
             "request_mode": cls._effective_request_mode(payload=payload, session_memory=session_memory),
             "source_content_version_id": str(getattr(payload, "source_content_version_id", None) or "").strip() or None,
@@ -2762,6 +3002,8 @@ class ContentService:
         payload: ContentGenerateRequest,
         session_memory: dict[str, object] | None,
     ) -> dict[str, object]:
+        # Internal helper for request prompt lineage payload; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         request_lineage = cls._request_lineage_payload(payload=payload, session_memory=session_memory)
         raw_user_prompt = str(getattr(payload, "raw_user_prompt", None) or payload.prompt or "").strip()
         effective_prompt = str(payload.prompt or "").strip()
@@ -2783,6 +3025,8 @@ class ContentService:
         *,
         request_lineage: dict[str, object],
     ) -> dict[str, object]:
+        # Internal helper for sanitize latest content for request; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         sanitized = deepcopy(latest_content)
         inheritance_policy = request_lineage.get("inheritance_policy") if isinstance(request_lineage.get("inheritance_policy"), dict) else {}
         if not inheritance_policy.get("inherit_copy_context", False):
@@ -2811,6 +3055,8 @@ class ContentService:
         payload: ContentGenerateRequest,
         session_memory: dict[str, object] | None,
     ) -> tuple[str, UUID | None, UUID | None, UUID | None]:
+        # Internal helper for generation selection IDs; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         memory = session_memory or {}
         follow_up_mode = cls._effective_request_mode(payload=payload, session_memory=session_memory)
         inherited_persona_id = memory.get("inherited_persona_id")
@@ -2849,6 +3095,8 @@ class ContentService:
         payload: ContentGenerateRequest,
         session_memory: dict[str, object] | None,
     ) -> dict[str, object]:
+        # Internal helper for request lineage; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         memory = deepcopy(session_memory or {})
         request_lineage = self._request_lineage_payload(payload=payload, session_memory=memory)
         follow_up_intent = dict(memory.get("follow_up_intent") or {})
@@ -2881,6 +3129,8 @@ class ContentService:
         ):
             memory["inherited_template_id"] = None
 
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if source_content_version_id:
             latest_content = memory.get("latest_content_version") if isinstance(memory.get("latest_content_version"), dict) else {}
             latest_id = self._parse_uuid_or_none(latest_content.get("id")) if latest_content else None
@@ -2905,6 +3155,8 @@ class ContentService:
         prompt: str,
         session_memory: dict[str, object] | None,
     ) -> dict[str, object]:
+        # Internal helper for prompt diagnostics; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         text = str(prompt or "").strip()
         memory = session_memory or {}
         latest_content = memory.get("latest_content_version") if isinstance(memory.get("latest_content_version"), dict) else {}
@@ -2938,6 +3190,8 @@ class ContentService:
         payload: ContentGenerateRequest,
         session_memory: dict[str, object] | None,
     ) -> tuple[str, dict[str, object]]:
+        # Internal helper for sanitize prompt for request; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         effective_prompt = str(payload.prompt or "").strip()
         raw_user_prompt = str(getattr(payload, "raw_user_prompt", None) or "").strip()
         request_mode = cls._effective_request_mode(payload=payload, session_memory=session_memory)
@@ -2963,6 +3217,8 @@ class ContentService:
 
     @staticmethod
     def _normalize_hex(value: str | None) -> str | None:
+        # Internal helper for hex; it keeps the public service method focused on orchestration instead of low-
+        # level shaping.
         text = str(value or "").strip().upper()
         if not text:
             return None
@@ -2972,6 +3228,8 @@ class ContentService:
 
     @classmethod
     def _hex_to_rgb(cls, value: str | None) -> tuple[int, int, int] | None:
+        # Internal helper for hex to rgb; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         normalized = cls._normalize_hex(value)
         if not normalized:
             return None
@@ -2980,11 +3238,15 @@ class ContentService:
 
     @classmethod
     def _brand_palette_roles(cls, brand_context: dict) -> dict[str, str]:
+        # Internal helper for brand palette roles; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         visual_identity = brand_context.get("visual_identity", {}) or {}
         return derive_palette_roles(visual_identity)
 
     @classmethod
     def _desired_logo_variant(cls, brand_context: dict, studio_panel: dict | None) -> dict[str, str]:
+        # Internal helper for desired logo variant; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         panel = resolve_studio_panel_defaults(deepcopy(studio_panel or {}))
         size = panel.get("size", {}) or {}
         width = int(size.get("width") or 1080)
@@ -3013,6 +3275,8 @@ class ContentService:
 
     @staticmethod
     def _logo_traits_from_metadata(storage_path: str, metadata: dict[str, object] | None) -> dict[str, object]:
+        # Internal helper for logo traits from metadata; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         metadata = metadata or {}
         normalized_metadata = metadata.get("normalized_metadata") if isinstance(metadata.get("normalized_metadata"), dict) else {}
         normalized_data = metadata.get("normalized_data") if isinstance(metadata.get("normalized_data"), dict) else {}
@@ -3070,6 +3334,8 @@ class ContentService:
 
     @staticmethod
     def _normalize_logo_variant_hint(variant_hint: str | None) -> str:
+        # Internal helper for logo variant hint; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         text = str(variant_hint or "").strip().casefold()
         if not text:
             return ""
@@ -3100,6 +3366,8 @@ class ContentService:
         desired: dict[str, str],
         requested_variant: str | None = None,
     ) -> int:
+        # Internal helper for logo candidate; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         score = int(candidate.get("source_priority") or 0)
         traits = candidate.get("traits", {}) or {}
         orientation = str(traits.get("orientation") or "flex")
@@ -3116,6 +3384,8 @@ class ContentService:
         elif trust_level in {"usable_with_warning", "usable-with-warning"}:
             score += 1
 
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if background_tone == "light":
             if background_variant == "light":
                 score += 18
@@ -3127,6 +3397,8 @@ class ContentService:
             elif background_variant == "light":
                 score -= 8
 
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if preferred_orientation == "horizontal":
             if orientation == "horizontal":
                 score += 14
@@ -3165,6 +3437,8 @@ class ContentService:
             score += 1
 
         hint = cls._normalize_logo_variant_hint(requested_variant)
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if hint:
             if "dark_on_light" in hint:
                 if background_variant == "light":
@@ -3188,6 +3462,8 @@ class ContentService:
 
     @staticmethod
     def _candidate_prefers_exact_logo_overlay(candidate: dict[str, object]) -> bool:
+        # Internal helper for candidate prefers exact logo overlay; it keeps the public service method focused
+        # on orchestration instead of low-level shaping.
         storage_path = str(candidate.get("storage_path") or "").strip().casefold()
         source = str(candidate.get("source") or "").strip().casefold()
         traits = candidate.get("traits") if isinstance(candidate.get("traits"), dict) else {}
@@ -3210,6 +3486,8 @@ class ContentService:
 
     @staticmethod
     def _logo_mark_luminance(image: Image.Image) -> float:
+        # Internal helper for logo mark luminance; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         rgba = image.convert("RGBA")
         pixels = rgba.load()
         width, height = rgba.size
@@ -3230,6 +3508,8 @@ class ContentService:
 
     @staticmethod
     def _logo_box_background_luminance(image: Image.Image, box: tuple[int, int, int, int]) -> float:
+        # Internal helper for logo box background luminance; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         x, y, width, height = box
         crop = image.crop((x, y, min(x + width, image.width), min(y + height, image.height))).convert("RGB")
         if crop.width <= 0 or crop.height <= 0:
@@ -3254,6 +3534,8 @@ class ContentService:
         *,
         format_name: str | None = None,
     ) -> tuple[int, int, int, int]:
+        # Internal helper for expanded logo clearance box; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         x, y, width, height = box
         pad_x = max(int(width * 0.14), 12)
         pad_y = max(int(height * 0.2), 14)
@@ -3267,6 +3549,8 @@ class ContentService:
             pad_x = max(pad_x, int(width * 0.2))
         left_pad = pad_x
         right_pad = pad_x
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if y <= int(image.height * 0.14) and (x + width) >= int(image.width * 0.8):
             left_pad = max(left_pad, int(width * 0.7))
             right_pad = max(right_pad, int(width * 0.1))
@@ -3282,6 +3566,8 @@ class ContentService:
 
     @staticmethod
     def _median_channel(values: list[int]) -> int:
+        # Internal helper for median channel; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if not values:
             return 255
         ordered = sorted(values)
@@ -3292,6 +3578,8 @@ class ContentService:
         image: Image.Image,
         clear_box: tuple[int, int, int, int],
     ) -> str:
+        # Internal helper for logo clearance anchor; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         left, top, width, height = clear_box
         right = min(left + width, image.width)
         bottom = min(top + height, image.height)
@@ -3309,6 +3597,8 @@ class ContentService:
         *,
         anchor_hint: str | None = None,
     ) -> tuple[int, int, int, int]:
+        # Internal helper for sample logo clearance color; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         rgba = image.convert("RGBA")
         left, top, width, height = clear_box
         right = min(left + width, rgba.width)
@@ -3326,6 +3616,8 @@ class ContentService:
         green_values: list[int] = []
         blue_values: list[int] = []
         alpha_values: list[int] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for sample_y in range(sample_top, sample_bottom, step):
             for sample_x in range(sample_left, sample_right, step):
                 if left <= sample_x < right and top <= sample_y < bottom:
@@ -3362,6 +3654,8 @@ class ContentService:
         *,
         anchor_hint: str | None = None,
     ) -> Image.Image | None:
+        # Internal helper for synthesize logo clearance patch; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         rgba = image.convert("RGBA")
         left, top, width, height = clear_box
         right = min(left + width, rgba.width)
@@ -3417,6 +3711,8 @@ class ContentService:
         *,
         anchor_hint: str | None = None,
     ) -> Image.Image:
+        # Internal helper for feathered clearance mask; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         safe_width = max(int(width), 1)
         safe_height = max(int(height), 1)
         anchor = str(anchor_hint or "").strip().lower()
@@ -3460,6 +3756,8 @@ class ContentService:
         format_name: str | None = None,
         avoid_boxes: list[tuple[int, int, int, int]] | None = None,
     ) -> tuple[Image.Image, bool]:
+        # Internal helper for clear AI logo overlay region; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if image.width <= 0 or image.height <= 0:
             return image, False
         left, top, width, height = cls._expanded_logo_clearance_box(image, box, format_name=format_name)
@@ -3477,6 +3775,8 @@ class ContentService:
         original_region = cleared.crop((left, top, right, bottom))
 
         def protect_avoid_boxes(mask: Image.Image) -> None:
+            # Runs the protect avoid boxes service flow by coordinating repositories, validators, and
+            # integrations, then returns domain data.
             if not avoid_boxes:
                 return
             mask_draw = ImageDraw.Draw(mask)
@@ -3497,6 +3797,7 @@ class ContentService:
                     fill=0,
                 )
 
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if patch is not None:
             mask = cls._feathered_clearance_mask(patch.width, patch.height, anchor_hint=anchor)
             protect_avoid_boxes(mask)
@@ -3520,6 +3821,8 @@ class ContentService:
         pixel: tuple[int, int, int, int],
         matte: tuple[int, int, int],
     ) -> bool:
+        # Internal helper for logo pixel is mark; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         red, green, blue, alpha = pixel
         if alpha <= 24:
             return False
@@ -3529,6 +3832,8 @@ class ContentService:
 
     @staticmethod
     def _logo_pixel_is_high_signal_mark(pixel: tuple[int, int, int, int]) -> bool:
+        # Internal helper for logo pixel is high signal mark; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         red, green, blue, alpha = pixel
         if alpha <= 24:
             return False
@@ -3538,6 +3843,8 @@ class ContentService:
 
     @staticmethod
     def _median_edge_color(image: Image.Image) -> tuple[int, int, int] | None:
+        # Internal helper for median edge color; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         rgba = image.convert("RGBA")
         width, height = rgba.size
         if width <= 0 or height <= 0:
@@ -3565,6 +3872,8 @@ class ContentService:
         image: Image.Image,
         matte: tuple[int, int, int],
     ) -> tuple[int, int, int, int] | None:
+        # Internal helper for visual logo mark bbox; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         rgba = image.convert("RGBA")
         pixels = rgba.load()
         left = rgba.width
@@ -3585,6 +3894,8 @@ class ContentService:
 
     @classmethod
     def _visual_logo_high_signal_bbox(cls, image: Image.Image) -> tuple[int, int, int, int] | None:
+        # Internal helper for visual logo high signal bbox; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         rgba = image.convert("RGBA")
         pixels = rgba.load()
         left = rgba.width
@@ -3609,6 +3920,8 @@ class ContentService:
         image: Image.Image,
         matte: tuple[int, int, int],
     ) -> Image.Image:
+        # Internal helper for logo matte pixels; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         cleaned = image.convert("RGBA").copy()
         pixels = cleaned.load()
         for y in range(cleaned.height):
@@ -3621,6 +3934,8 @@ class ContentService:
 
     @classmethod
     def _remove_low_signal_logo_pixels(cls, image: Image.Image) -> Image.Image:
+        # Internal helper for low signal logo pixels; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         cleaned = image.convert("RGBA").copy()
         pixels = cleaned.load()
         for y in range(cleaned.height):
@@ -3638,6 +3953,8 @@ class ContentService:
         image_height: int,
         bbox: tuple[int, int, int, int],
     ) -> bool:
+        # Internal helper for logo bbox has large margins; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         visual_width = bbox[2] - bbox[0]
         visual_height = bbox[3] - bbox[1]
         visual_area = visual_width * visual_height
@@ -3650,6 +3967,8 @@ class ContentService:
 
     @classmethod
     def _trim_transparent_logo_margins(cls, image: Image.Image) -> Image.Image:
+        # Internal helper for transparent logo margins; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         rgba = image.convert("RGBA")
         alpha = rgba.getchannel("A")
         bbox = alpha.getbbox()
@@ -3659,6 +3978,7 @@ class ContentService:
         matte = cls._edge_matte_color(cropped)
         if matte is None and cls._edge_background_should_strip(cropped, threshold=235):
             matte = cls._median_edge_color(cropped)
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if matte is not None:
             visual_bbox = cls._visual_logo_mark_bbox(cropped, matte)
             if visual_bbox is not None:
@@ -3672,6 +3992,7 @@ class ContentService:
                     if cleaned_bbox:
                         return cleaned.crop(cleaned_bbox)
         visual_bbox = cls._visual_logo_high_signal_bbox(cropped)
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if visual_bbox is not None and cls._logo_bbox_has_large_margins(
             image_width=cropped.width,
             image_height=cropped.height,
@@ -3692,6 +4013,8 @@ class ContentService:
         logo_width: int,
         logo_height: int,
     ) -> tuple[int, int, int, int]:
+        # Internal helper for logo footprint clearance box; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         safe_logo_width = max(int(logo_width), 1)
         safe_logo_height = max(int(logo_height), 1)
         halo_x = max(int(safe_logo_width * 0.08), 6)
@@ -3712,6 +4035,8 @@ class ContentService:
         offset_y: int,
         clear_box: tuple[int, int, int, int],
     ) -> tuple[Image.Image, bool]:
+        # Internal helper for clear AI logo footprint region; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         left, top, width, height = clear_box
         right = min(left + width, image.width)
         bottom = min(top + height, image.height)
@@ -3731,6 +4056,7 @@ class ContentService:
             anchor_hint=anchor,
         )
         original_region = cleared.crop((left, top, right, bottom))
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if patch is None:
             fill = cls._sample_logo_clearance_color(
                 cleared,
@@ -3766,11 +4092,14 @@ class ContentService:
         logo_asset_candidates: list[dict[str, object]] | None,
         logo_selection: dict[str, object] | None,
     ) -> dict[str, object] | None:
+        # Internal helper for select logo overlay candidate; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         available_candidates = list(logo_asset_candidates or [])
         if logo_selection and isinstance(logo_selection, dict):
             selected_path = str(logo_selection.get("storage_path") or "").strip()
             if selected_path and not any(str(item.get("storage_path") or "").strip() == selected_path for item in available_candidates):
                 available_candidates.append(dict(logo_selection))
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if current_logo_asset_path and not any(
             str(item.get("storage_path") or "").strip() == current_logo_asset_path for item in available_candidates
         ):
@@ -3789,6 +4118,8 @@ class ContentService:
         background_luminance = self._logo_box_background_luminance(base_image, logo_box)
         preferred_light_mark = background_luminance <= 150
         scored: list[tuple[float, dict[str, object]]] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for candidate in available_candidates:
             storage_path = str(candidate.get("storage_path") or "").strip()
             if not storage_path or not self.storage.exists(storage_path):
@@ -3849,6 +4180,8 @@ class ContentService:
         brand_space_id: UUID,
         brand_context: dict,
     ) -> list[dict[str, object]]:
+        # Internal helper for collect logo asset candidates; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         identity = brand_context.get("identity", {}) or {}
         candidate_map: dict[str, dict[str, object]] = {}
 
@@ -3860,11 +4193,15 @@ class ContentService:
             metadata: dict[str, object] | None = None,
             trust_level: str | None = None,
         ) -> None:
+            # Runs the register candidate service flow by coordinating repositories, validators, and
+            # integrations, then returns domain data.
             normalized_path = str(storage_path or "").strip()
             if not normalized_path or not self.storage.exists(normalized_path):
                 return
             merged_metadata = dict(metadata or {})
             existing = candidate_map.get(normalized_path)
+            # This branch separates the special case from the normal path so later logic can work with cleaner
+            # assumptions.
             if existing:
                 existing["source_priority"] = max(int(existing.get("source_priority") or 0), source_priority)
                 existing["metadata"] = {
@@ -3883,6 +4220,7 @@ class ContentService:
             }
 
         logo_path = str(identity.get("logo_asset_path") or "").strip()
+        # Configuration decides which runtime backend is used while the service contract stays the same.
         if logo_path and self.storage.exists(logo_path):
             register_candidate(logo_path, source="identity.logo_asset_path", source_priority=26, metadata=identity)
         elif logo_path:
@@ -3893,6 +4231,8 @@ class ContentService:
             )
 
         candidate_ids: list[str] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for logo_asset in identity.get("logo_assets") or []:
             if not isinstance(logo_asset, dict):
                 continue
@@ -3918,6 +4258,8 @@ class ContentService:
                 candidate_ids.append(text)
 
         seen_ids: set[str] = set()
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for candidate_id in candidate_ids:
             if not candidate_id or candidate_id in seen_ids:
                 continue
@@ -4030,6 +4372,8 @@ class ContentService:
         requested_variant: str | None = None,
         candidates: list[dict[str, object]] | None = None,
     ) -> dict[str, object] | None:
+        # Internal helper for logo asset selection; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         scored_candidates = list(candidates or await self._collect_logo_asset_candidates(
             tenant_id=tenant_id,
             brand_space_id=brand_space_id,
@@ -4056,6 +4400,8 @@ class ContentService:
 
     @staticmethod
     def _template_metadata_payload(template_meta) -> dict | None:
+        # Internal helper for template metadata payload; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not template_meta:
             return None
         return {
@@ -4068,6 +4414,8 @@ class ContentService:
 
     @staticmethod
     def _sequence_pack_signature(value: object) -> tuple[str, int] | None:
+        # Internal helper for sequence pack signature; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         raw = str(value or "").strip()
         if not raw:
             return None
@@ -4093,6 +4441,8 @@ class ContentService:
         cls,
         signature: tuple[str, int] | None,
     ) -> bool:
+        # Internal helper for sequence signature looks like generic capture; it keeps the public service method
+        # focused on orchestration instead of low-level shaping.
         if signature is None:
             return False
         family, _position = signature
@@ -4108,11 +4458,15 @@ class ContentService:
 
     @classmethod
     def _sequence_source_signature(cls, source: dict[str, Any] | None) -> tuple[str, int] | None:
+        # Internal helper for sequence source signature; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not isinstance(source, dict):
             return None
         metadata = source.get("metadata") if isinstance(source.get("metadata"), dict) else {}
 
         slide_index = 0
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for raw_index in (
             metadata.get("reference_slide_index"),
             metadata.get("slide_index"),
@@ -4136,6 +4490,8 @@ class ContentService:
                 if family_text:
                     return (family_text, slide_index)
 
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for raw_value in (
             metadata.get("sequence_family"),
             metadata.get("family_name"),
@@ -4151,6 +4507,8 @@ class ContentService:
 
     @classmethod
     def _sequence_pack_declared_page_count(cls, source: dict[str, Any] | None) -> int:
+        # Internal helper for sequence pack declared page count; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not isinstance(source, dict):
             return 0
         metadata = source.get("metadata") if isinstance(source.get("metadata"), dict) else {}
@@ -4172,6 +4530,8 @@ class ContentService:
 
     @classmethod
     def _sequence_pack_has_explicit_blueprint(cls, metadata: dict[str, Any] | None) -> bool:
+        # Internal helper for sequence pack has explicit blueprint; it keeps the public service method focused
+        # on orchestration instead of low-level shaping.
         if not isinstance(metadata, dict):
             return False
         if any(metadata.get(key) for key in cls._sequence_pack_explicit_blueprint_keys()):
@@ -4183,6 +4543,8 @@ class ContentService:
 
     @classmethod
     def _sequence_source_is_carousel_capable(cls, source: dict[str, Any] | None) -> bool:
+        # Internal helper for sequence source is carousel capable; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not isinstance(source, dict):
             return False
         metadata = source.get("metadata") if isinstance(source.get("metadata"), dict) else {}
@@ -4209,6 +4571,8 @@ class ContentService:
 
     @classmethod
     def _sequence_pack_is_visual_summary(cls, value: object) -> bool:
+        # Internal helper for sequence pack is visual summary; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         text = str(value or "").strip()
         if not text:
             return False
@@ -4228,6 +4592,8 @@ class ContentService:
 
     @classmethod
     def _repair_encoding_noise(cls, value: object) -> str:
+        # Internal helper for repair encoding noise; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         text = str(value or "").strip()
         if not text:
             return ""
@@ -4241,6 +4607,8 @@ class ContentService:
 
     @classmethod
     def _strip_null_bytes(cls, value: Any) -> Any:
+        # Internal helper for strip null bytes; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if isinstance(value, str):
             return value.replace("\x00", "")
         if isinstance(value, UUID):
@@ -4258,10 +4626,14 @@ class ContentService:
 
     @classmethod
     def _json_safe_payload(cls, value: Any) -> Any:
+        # Internal helper for json safe payload; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         return cls._strip_null_bytes(json.loads(json.dumps(value, default=str)))
 
     @classmethod
     def _studio_panel_payload(cls, value: Any) -> dict[str, Any]:
+        # Internal helper for studio panel payload; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if hasattr(value, "model_dump"):
             payload = value.model_dump(mode="json")
         elif isinstance(value, dict):
@@ -4273,6 +4645,8 @@ class ContentService:
 
     @classmethod
     def _sequence_pack_is_weak_hint(cls, value: object) -> bool:
+        # Internal helper for sequence pack is weak hint; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         text = cls._repair_encoding_noise(value)
         if not text:
             return True
@@ -4293,6 +4667,8 @@ class ContentService:
 
     @classmethod
     def _sequence_pack_summary_text(cls, *sources: object) -> str:
+        # Internal helper for sequence pack summary text; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         for source in sources:
             if not isinstance(source, dict):
                 continue
@@ -4326,7 +4702,11 @@ class ContentService:
         reference_asset: dict[str, Any] | None = None,
         fallback_zone_map: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Internal helper for sequence pack zone map; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         fallback = deepcopy(fallback_zone_map or {})
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if isinstance(fallback.get("zones"), list):
             sanitized_fallback_zones: list[dict[str, Any]] = []
             for item in fallback.get("zones") or []:
@@ -4363,6 +4743,8 @@ class ContentService:
         ]
 
         def _normalized_zones(source: dict[str, Any]) -> list[dict[str, Any]]:
+            # Internal helper for normalized zones; it keeps the public service method focused on orchestration
+            # instead of low-level shaping.
             candidates: list[dict[str, Any]] = []
             direct_zone_map = source.get("zone_map") if isinstance(source.get("zone_map"), dict) else {}
             layout_structure = source.get("layout_structure") if isinstance(source.get("layout_structure"), dict) else {}
@@ -4386,6 +4768,8 @@ class ContentService:
             if isinstance(layout_dna.get("zones"), dict):
                 raw_candidates.append(list((layout_dna.get("zones") or {}).values()))
 
+            # Builds the grouped response or persistence payload one record at a time because later steps
+            # expect this exact shape.
             for raw_zone_list in raw_candidates:
                 for item in raw_zone_list:
                     if not isinstance(item, dict):
@@ -4426,6 +4810,8 @@ class ContentService:
                     break
             return candidates
 
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for source in metadata_sources:
             if not isinstance(source, dict):
                 continue
@@ -4465,6 +4851,8 @@ class ContentService:
 
     @classmethod
     def _sequence_pack_source_asset_path(cls, source: dict[str, Any] | None) -> str:
+        # Internal helper for sequence pack source asset path; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not isinstance(source, dict):
             return ""
         metadata = source.get("metadata") if isinstance(source.get("metadata"), dict) else {}
@@ -4489,6 +4877,8 @@ class ContentService:
         slide_count: int,
         hints: list[object] | None = None,
     ) -> str:
+        # Internal helper for sequence pack story role; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if slide_index == 1 and slide_count > 1:
             return "hook"
         hint_text = " ".join(str(item or "").strip().casefold() for item in (hints or []) if str(item or "").strip())
@@ -4524,11 +4914,15 @@ class ContentService:
         recommendation: dict[str, Any],
         reference_asset: dict[str, Any],
     ) -> list[str]:
+        # Internal helper for sequence pack structural cues; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         cues: list[str] = []
         metadata_sources = [
             recommendation.get("metadata") if isinstance(recommendation.get("metadata"), dict) else {},
             reference_asset.get("metadata") if isinstance(reference_asset.get("metadata"), dict) else {},
         ]
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for source in metadata_sources:
             for key in ("structural_cues", "sequence_cues", "slide_pattern", "page_pattern"):
                 value = source.get(key)
@@ -4542,6 +4936,7 @@ class ContentService:
                         text = chunk.strip()
                         if text and text not in cues:
                             cues.append(text)
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if not cues:
             default_map = {
                 "hook": "cover hook",
@@ -4566,10 +4961,14 @@ class ContentService:
         recommendation: dict[str, Any],
         reference_asset: dict[str, Any],
     ) -> str:
+        # Internal helper for sequence pack headline hint; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         metadata_sources = [
             recommendation.get("metadata") if isinstance(recommendation.get("metadata"), dict) else {},
             reference_asset.get("metadata") if isinstance(reference_asset.get("metadata"), dict) else {},
         ]
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for source in metadata_sources:
             for key in ("headline_hint", "headline", "heading", "slide_title", "page_title", "label"):
                 text = cls._repair_encoding_noise(source.get(key))
@@ -4617,12 +5016,16 @@ class ContentService:
         *,
         storage: object | None = None,
     ) -> list[str]:
+        # Internal helper for read reference pdf pages; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         path_hint = str(storage_path or "").strip()
         if not path_hint:
             return []
 
         resolved_path: Path | None = None
         candidate_path = Path(path_hint)
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if candidate_path.is_absolute() and candidate_path.exists():
             resolved_path = candidate_path
         else:
@@ -4643,6 +5046,8 @@ class ContentService:
             return []
 
         def _normalize_page_text(value: str | None) -> str:
+            # Internal helper for page text; it keeps the public service method focused on orchestration instead
+            # of low-level shaping.
             lines: list[str] = []
             for raw_line in re.split(r"\n+", str(value or "")):
                 line = re.sub(r"\s+", " ", raw_line).strip(" \t-•")
@@ -4651,6 +5056,8 @@ class ContentService:
             return "\n".join(lines)
 
         pages: list[str] = []
+        # Keeps the risky I/O or integration boundary contained so callers receive project-level errors
+        # instead of raw library failures.
         try:
             import pdfplumber
 
@@ -4665,6 +5072,8 @@ class ContentService:
         if pages:
             return pages
 
+        # Keeps the risky I/O or integration boundary contained so callers receive project-level errors
+        # instead of raw library failures.
         try:
             import fitz
 
@@ -4685,12 +5094,16 @@ class ContentService:
         *,
         storage: object | None = None,
     ) -> list[dict[str, Any]]:
+        # Internal helper for reference pdf page editorial hints; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         path_hint = str(storage_path or "").strip()
         if not path_hint:
             return []
 
         resolved_path: Path | None = None
         candidate_path = Path(path_hint)
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if candidate_path.is_absolute() and candidate_path.exists():
             resolved_path = candidate_path
         else:
@@ -4711,9 +5124,13 @@ class ContentService:
             return []
 
         def clean_text(value: object) -> str:
+            # Runs the clean text service flow by coordinating repositories, validators, and integrations, then
+            # returns domain data.
             return cls._repair_encoding_noise(re.sub(r"\s+", " ", str(value or "")).strip(" \t-•"))
 
         def looks_like_footer_or_legal(text: str, *, y0: float = 0.0) -> bool:
+            # Runs the looks like footer or legal service flow by coordinating repositories, validators, and
+            # integrations, then returns domain data.
             lowered = text.casefold()
             legal_tokens = (
                 "disclaimer",
@@ -4728,6 +5145,8 @@ class ContentService:
             return y0 >= 0.92 or any(token in lowered for token in legal_tokens)
 
         def merge_title_lines(lines: list[str]) -> tuple[str, str]:
+            # Runs the merge title lines service flow by coordinating repositories, validators, and
+            # integrations, then returns domain data.
             if not lines:
                 return "", ""
             title_parts = [lines[0]]
@@ -4750,6 +5169,8 @@ class ContentService:
             return title[:180], support[:180]
 
         hints: list[dict[str, Any]] = []
+        # Keeps the risky I/O or integration boundary contained so callers receive project-level errors
+        # instead of raw library failures.
         try:
             import fitz
 
@@ -4797,6 +5218,8 @@ class ContentService:
             return hints
 
         fallback_pages = cls._read_reference_pdf_pages(path_hint, storage=storage)
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for page_index, page_text in enumerate(fallback_pages, start=1):
             lines = [
                 clean_text(line)
@@ -4827,6 +5250,8 @@ class ContentService:
         summary: str,
         text_blocks: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
+        # Internal helper for sample page editorial intelligence; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         text = " ".join(part for part in (headline, supporting, summary) if part).casefold()
         block_count = len([block for block in (text_blocks or []) if isinstance(block, dict) and str(block.get("text") or "").strip()])
         word_count = len(re.findall(r"[a-z0-9]+", text))
@@ -4835,6 +5260,8 @@ class ContentService:
         has_mechanics = bool(re.search(r"\b(tariff|duty|duties|clause|chapters?|sector|services?|visa|mobility|access|imports?|exports?|terms?|deal)\b", text))
         has_strategic_signal = bool(re.search(r"\b(signal|template|gateway|future|bigger|shape|position|strategy|strategic|why did|warrant|negotiat)\b", text))
         has_product_cta = bool(re.search(r"\b(explore|start|sign up|book|platform|product|try|learn more|download|visit)\b", text))
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if slide_index == 1:
             editorial_role = "hook"
         elif slide_index == slide_count:
@@ -4848,6 +5275,8 @@ class ContentService:
         else:
             editorial_role = "detail"
 
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if has_product_cta:
             copy_behavior = "product_cta"
         elif has_curiosity and has_strategic_signal:
@@ -4894,6 +5323,8 @@ class ContentService:
         fallback_editable_fields: list[str],
         storage: object | None = None,
     ) -> dict[str, Any] | None:
+        # Internal helper for pdf reference sequence pack; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         mime_type = str(source.get("mime_type") or metadata.get("mime_type") or "").strip().lower()
         path_hint = str(reference_asset_path or source.get("storage_path") or "").strip()
         if mime_type != "application/pdf" and Path(path_hint).suffix.lower() != ".pdf":
@@ -4928,6 +5359,8 @@ class ContentService:
         sequence_cues: list[str] = []
         slides: list[dict[str, Any]] = []
 
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for slide_index, page_text in enumerate(page_texts, start=1):
             sample_editorial = pdf_editorial_hints[slide_index - 1] if slide_index - 1 < len(pdf_editorial_hints) else {}
             lines = [
@@ -5030,6 +5463,8 @@ class ContentService:
 
     @classmethod
     def _sequence_pack_family_name(cls, *values: object) -> str:
+        # Internal helper for sequence pack family name; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         for value in values:
             signature = cls._sequence_pack_signature(value)
             if signature is not None:
@@ -5048,6 +5483,8 @@ class ContentService:
 
     @staticmethod
     def _sequence_pack_explicit_blueprint_keys() -> tuple[str, ...]:
+        # Internal helper for sequence pack explicit blueprint keys; it keeps the public service method focused
+        # on orchestration instead of low-level shaping.
         return (
             "sequence_blueprint",
             "sample_blueprint",
@@ -5061,6 +5498,8 @@ class ContentService:
         cls,
         metadata: dict[str, Any],
     ) -> tuple[list[dict[str, Any]], dict[str, Any], str]:
+        # Internal helper for sequence pack slide items from metadata; it keeps the public service method
+        # focused on orchestration instead of low-level shaping.
         for key in cls._sequence_pack_explicit_blueprint_keys():
             candidate = metadata.get(key)
             if isinstance(candidate, dict):
@@ -5089,6 +5528,8 @@ class ContentService:
         fallback_editable_fields: list[str],
         storage: object | None = None,
     ) -> dict[str, Any] | None:
+        # Internal helper for reference metadata sequence pack; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         source_candidates: list[tuple[dict[str, Any], dict[str, Any], str, str]] = []
         for recommendation in normalized_recommendations:
             metadata = recommendation.get("metadata") if isinstance(recommendation.get("metadata"), dict) else {}
@@ -5105,6 +5546,8 @@ class ContentService:
         fallback_candidates: list[tuple[dict[str, Any], dict[str, Any], str, str]] = []
         normalized_selected_name = str(selected_template_name or "").strip().casefold()
         normalized_selected_id = str(selected_template_id or "").strip()
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for source, metadata, source_label, reference_asset_path in source_candidates:
             candidate_template_id = str(source.get("template_id") or metadata.get("template_id") or "").strip()
             candidate_name = str(
@@ -5135,6 +5578,8 @@ class ContentService:
         selected_template_label = str(selected_template_name or "").strip()
         sequence_kind = "reference_metadata_blueprint"
 
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for source, metadata, source_label, reference_asset_path in source_candidates:
             slide_items, blueprint_meta, blueprint_key = cls._sequence_pack_slide_items_from_metadata(metadata)
             if not slide_items:
@@ -5248,6 +5693,7 @@ class ContentService:
                 )
             break
 
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if not explicit_slides:
             for source, metadata, source_label, reference_asset_path in source_candidates:
                 pdf_sequence_pack = cls._build_pdf_reference_sequence_pack(
@@ -5390,12 +5836,16 @@ class ContentService:
         base_zone_map: dict[str, Any] | None,
         storage: object | None = None,
     ) -> dict[str, Any] | None:
+        # Internal helper for selected template authority sequence pack; it keeps the public service method
+        # focused on orchestration instead of low-level shaping.
         normalized_selected_template_id = str(selected_template_id or "").strip()
         normalized_selected_template_name = str(selected_template_name or "").strip()
         if not normalized_selected_template_id and not normalized_selected_template_name:
             return None
 
         matched_recommendations: list[dict[str, Any]] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for recommendation in normalized_recommendations:
             candidate_id = str(recommendation.get("template_id") or "").strip()
             candidate_name = str(recommendation.get("name") or "").strip()
@@ -5413,6 +5863,8 @@ class ContentService:
         selected_signature = cls._sequence_pack_signature(normalized_selected_template_name)
         matched_reference_assets: list[dict[str, Any]] = []
         selected_name_match_key = re.sub(r"[^a-z0-9]+", " ", normalized_selected_template_name.casefold()).strip()
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for asset in reference_assets or []:
             if not isinstance(asset, dict):
                 continue
@@ -5460,6 +5912,8 @@ class ContentService:
         guidance_recommendation = matched_recommendations[0] if matched_recommendations else {}
         guidance_reference_asset = matched_reference_assets[0] if matched_reference_assets else {}
 
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for source in [*matched_recommendations, *matched_reference_assets]:
             metadata = source.get("metadata") if isinstance(source.get("metadata"), dict) else {}
             for raw_count in (
@@ -5641,6 +6095,8 @@ class ContentService:
         selected_template_id: str | None,
         selected_template_name: str | None,
     ) -> bool:
+        # Internal helper for sequence pack matches selected template; it keeps the public service method
+        # focused on orchestration instead of low-level shaping.
         if not isinstance(sequence_pack, dict):
             return False
         normalized_selected_template_id = str(selected_template_id or "").strip()
@@ -5651,6 +6107,8 @@ class ContentService:
         pack_template_name = str(sequence_pack.get("selected_template_name") or "").strip().casefold()
         slides = [item for item in (sequence_pack.get("slides") or []) if isinstance(item, dict)]
         selected_signature = cls._sequence_pack_signature(selected_template_name)
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if slides:
             if selected_signature is not None:
                 matched_slide_families: set[str] = set()
@@ -5689,6 +6147,8 @@ class ContentService:
         selected_template_name: str | None,
         selected_template_authority_pack: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
+        # Internal helper for authoritative sequence pack; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not isinstance(sequence_pack, dict):
             return selected_template_authority_pack if isinstance(selected_template_authority_pack, dict) else None
         if (
@@ -5715,6 +6175,8 @@ class ContentService:
         cls,
         slides: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
+        # Internal helper for rebalance sequence pack story roles; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         normalized_slides = [dict(item) for item in slides if isinstance(item, dict)]
         if len(normalized_slides) < 3:
             return normalized_slides
@@ -5729,6 +6191,8 @@ class ContentService:
 
         slide_count = len(normalized_slides)
         rebalanced: list[dict[str, Any]] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for position, slide in enumerate(normalized_slides, start=1):
             updated = dict(slide)
             updated["story_role"] = cls._sequence_pack_story_role(
@@ -5760,7 +6224,11 @@ class ContentService:
         reference_assets: list[dict],
         studio_panel: dict | None,
     ) -> dict | None:
+        # Internal helper for template context payload; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         base_context = deepcopy(template_meta.zone_map or {}) if template_meta else {}
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if template_meta:
             base_context.update(
                 {
@@ -5787,6 +6255,8 @@ class ContentService:
         normalized_selected_template_name_key = normalized_selected_template_name.casefold()
 
         def is_selected_template_recommendation(candidate: dict[str, Any]) -> bool:
+            # Runs the is selected template recommendation service flow by coordinating repositories,
+            # validators, and integrations, then returns domain data.
             candidate_id = str(candidate.get("template_id") or "").strip()
             candidate_name = str(candidate.get("name") or "").strip().casefold()
             return (
@@ -5800,6 +6270,8 @@ class ContentService:
             )
 
         def is_selected_template_reference_asset(candidate: dict[str, Any]) -> bool:
+            # Runs the is selected template reference asset service flow by coordinating repositories,
+            # validators, and integrations, then returns domain data.
             if not normalized_selected_template_name_key:
                 return False
             metadata = candidate.get("metadata") if isinstance(candidate.get("metadata"), dict) else {}
@@ -5819,6 +6291,8 @@ class ContentService:
             *,
             key_builder,
         ) -> list[dict[str, Any]]:
+            # Runs the dedupe items service flow by coordinating repositories, validators, and integrations,
+            # then returns domain data.
             deduped: list[dict[str, Any]] = []
             seen: set[str] = set()
             for item in items:
@@ -5840,6 +6314,8 @@ class ContentService:
             for asset in reference_assets or []
             if isinstance(asset, dict) and cls._sequence_source_is_carousel_capable(asset)
         ]
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if carousel_recommendations or carousel_reference_assets:
             selected_template_recommendations = [
                 dict(recommendation)
@@ -5893,6 +6369,8 @@ class ContentService:
             *,
             selected_template_authority: bool = False,
         ) -> bool:
+            # Runs the should keep sequence pack service flow by coordinating repositories, validators, and
+            # integrations, then returns domain data.
             if not isinstance(sequence_pack, dict):
                 return False
             if selected_template_authority and (normalized_selected_template_id or normalized_selected_template_name):
@@ -5909,6 +6387,8 @@ class ContentService:
         explicit_selected_template_authority = explicit_matches_selection and bool(
             normalized_selected_template_id or normalized_selected_template_name
         )
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if explicit_sequence_pack and explicit_matches_selection:
             resolved_pack = cls._resolve_authoritative_sequence_pack(
                 explicit_sequence_pack,
@@ -6156,6 +6636,8 @@ class ContentService:
         session_id: UUID | None,
         studio_panel: dict,
     ) -> ContentSession:
+        # Internal helper for or create session; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if session_id:
             existing = await self.sessions.get(session_id)
             if existing and existing.tenant_id == tenant_id and existing.brand_space_id == brand_space_id:
@@ -6179,6 +6661,8 @@ class ContentService:
         payload: ContentGenerateRequest,
         content_version: ContentVersion,
     ) -> None:
+        # Internal helper for session context; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         artifact_service = getattr(self, "artifacts", ArtifactStateService())
         session.studio_panel = self._studio_panel_payload(payload.studio_panel)
         context = dict(session.conversational_context or {})
@@ -6213,8 +6697,12 @@ class ContentService:
         session: ContentSession,
         current_prompt: str,
     ) -> dict:
+        # Internal helper for session memory; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         recent_messages = await self.chat_messages.list_recent_by_session(session.id, limit=8)
         serialized_messages = [self._chat_message_payload(message) for message in recent_messages]
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if serialized_messages:
             last_message = serialized_messages[-1]
             if (
@@ -6237,6 +6725,8 @@ class ContentService:
         )
 
     async def _gather_context(self, brand_space_id: UUID) -> dict:
+        # Internal helper for gather context; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         brand = await self.brands.get(brand_space_id)
         if not brand:
             raise NotFoundError("Brand Space not found")
@@ -6256,6 +6746,8 @@ class ContentService:
         brand_space_id: UUID | None,
         content_version_id: UUID,
     ) -> ContentVersion:
+        # Internal helper for content scoped; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         content = await self.contents.get_scoped(content_version_id, tenant_id, brand_space_id)
         if not content:
             raise NotFoundError("Content version not found")
@@ -6268,12 +6760,15 @@ class ContentService:
         brand_context: dict,
         studio_panel: dict | None = None,
     ) -> str | None:
+        # Internal helper for logo asset path; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         selection = await self._resolve_logo_asset_selection(
             tenant_id=tenant_id,
             brand_space_id=brand_space_id,
             brand_context=brand_context,
             studio_panel=studio_panel,
         )
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if not selection:
             fallback_context = await self._brand_context_with_identity_logo_fallback(
                 tenant_id=tenant_id,
@@ -6298,6 +6793,8 @@ class ContentService:
         brand_space_id: UUID,
         brand_context: dict,
     ) -> dict | None:
+        # Internal helper for brand context with IDentity logo fallback; it keeps the public service method
+        # focused on orchestration instead of low-level shaping.
         identity = brand_context.get("identity", {}) or {}
         if any(
             identity.get(key)
@@ -6338,6 +6835,8 @@ class ContentService:
         studio_panel: dict | None = None,
         sections: list[object] | None = None,
     ) -> tuple[dict, list[dict[str, object]], dict[str, object] | None]:
+        # Internal helper for prepare runtime brand context; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         resolved_context = deepcopy(brand_context or {})
 
         section_payloads: dict[str, dict] = {}
@@ -6347,6 +6846,8 @@ class ContentService:
             if section_code and isinstance(payload, dict):
                 section_payloads[section_code] = payload
 
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for section_code in (
             "identity",
             "foundations",
@@ -6376,6 +6877,7 @@ class ContentService:
         identity = dict(resolved_context.get("identity", {}) or {})
         visual_identity = dict(resolved_context.get("visual_identity", {}) or {})
 
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if not visual_identity.get("reusable_design_assets"):
             reusable_assets: list[dict[str, object]] = []
             reusable_repo = getattr(self, "reusable_assets", None)
@@ -6428,6 +6930,8 @@ class ContentService:
             studio_panel=studio_panel,
             candidates=logo_candidates,
         )
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if logo_selection:
             logo_storage_path = str(logo_selection.get("storage_path") or "").strip()
             logo_metadata = dict(logo_selection.get("metadata") or {})
@@ -6468,6 +6972,8 @@ class ContentService:
         return resolved_context, logo_candidates, logo_selection
 
     def _discover_logo_storage_paths(self, tenant_id: UUID, brand_space_id: UUID) -> list[str]:
+        # Internal helper for discover logo storage paths; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         base_path = getattr(self.storage, "base_path", None)
         if not base_path:
             return []
@@ -6489,6 +6995,8 @@ class ContentService:
         keyword_hits: list[Path] = []
         fallback_hits: list[Path] = []
 
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for root in search_roots:
             if not root.exists():
                 continue
@@ -6506,6 +7014,8 @@ class ContentService:
         ordered_candidates = sorted(keyword_hits) + sorted(fallback_hits)
         resolved_paths: list[str] = []
         seen: set[str] = set()
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for candidate in ordered_candidates:
             try:
                 relative = str(candidate.relative_to(base_path)).replace("\\", "/")
@@ -6526,6 +7036,8 @@ class ContentService:
         normalized_metadata: dict[str, object] | None = None,
         source_metadata: dict[str, object] | None = None,
     ) -> bool:
+        # Internal helper for reusable asset looks like logo; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if asset_kind == "logo_variant":
             return True
         normalized_metadata = normalized_metadata or {}
@@ -6546,6 +7058,8 @@ class ContentService:
 
     @staticmethod
     def _path_looks_like_logo(value: str) -> bool:
+        # Internal helper for path looks like logo; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         text = str(value or "").casefold()
         return any(token in text for token in ("logo", "wordmark", "brandmark", "lockup", "emblem", "monogram"))
 
@@ -6555,6 +7069,8 @@ class ContentService:
         brand_space_id: UUID,
         reference_asset_ids: list[UUID],
     ) -> list[dict]:
+        # Internal helper for request reference assets; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         assets: list[dict] = []
         seen: set[str] = set()
         for asset_id in reference_asset_ids:
@@ -6581,6 +7097,8 @@ class ContentService:
         brand_space_id: UUID,
         brand_context: dict,
     ) -> list[dict]:
+        # Internal helper for brand reference assets; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         visual_identity = brand_context.get("visual_identity", {}) or {}
         asset_ids = [
             *(visual_identity.get("reference_creative_asset_ids", []) or []),
@@ -6590,6 +7108,8 @@ class ContentService:
         asset_ids.extend(item.get("asset_id") for item in (visual_identity.get("mood_boards", []) or []) if item.get("asset_id"))
         seen: set[str] = set()
         assets: list[dict] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for reusable_asset in visual_identity.get("reusable_design_assets", []) or []:
             asset_id = str(reusable_asset.get("id", "")).strip()
             if not asset_id or asset_id in seen:
@@ -6598,6 +7118,8 @@ class ContentService:
             if payload["trust_level"] in {"trusted", "usable_with_warning"}:
                 assets.append(payload)
             seen.add(asset_id)
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for raw_id in asset_ids:
             try:
                 asset_id = UUID(str(raw_id))
@@ -6615,8 +7137,12 @@ class ContentService:
         return assets
 
     def _resolve_render_decorative_assets(self, brand_context: dict) -> list[GeneratedImageAsset]:
+        # Internal helper for render decorative assets; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         decorative_assets: list[GeneratedImageAsset] = []
         visual_identity = brand_context.get("visual_identity", {}) or {}
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for asset in visual_identity.get("reusable_design_assets", []) or []:
             if asset.get("trust_level") not in {"trusted", "usable_with_warning"}:
                 continue
@@ -6647,6 +7173,8 @@ class ContentService:
 
     @staticmethod
     def _resolve_render_font_assets(brand_context: dict) -> list[str]:
+        # Internal helper for render font assets; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         visual_identity = brand_context.get("visual_identity", {}) or {}
         typography = visual_identity.get("typography", {}) or {}
         font_paths: list[str] = []
@@ -6668,6 +7196,8 @@ class ContentService:
         override_blueprint: dict | None,
         studio_panel: dict,
     ) -> dict:
+        # Internal helper for blueprint payload; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if override_blueprint:
             blueprint = deepcopy(override_blueprint)
         else:
@@ -6687,6 +7217,8 @@ class ContentService:
         blueprint.setdefault("layout_archetype", None)
         blueprint.setdefault("adaptation_plan", {})
         adaptation_plan = blueprint.get("adaptation_plan") if isinstance(blueprint.get("adaptation_plan"), dict) else {}
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if (
             str(blueprint.get("source_mode") or "").strip().lower() == "synthesized_layout"
             or adaptation_plan.get("reference_style_only")
@@ -6727,6 +7259,8 @@ class ContentService:
         stored_scene_graph: dict | None,
         studio_panel: dict,
     ) -> dict | None:
+        # Internal helper for scene graph payload; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if not stored_scene_graph:
             return None
         scene_graph = deepcopy(stored_scene_graph)
@@ -6751,6 +7285,8 @@ class ContentService:
 
     @staticmethod
     def _supports_ai_final_render_export(studio_panel: dict | None, explainability: dict | None) -> bool:
+        # Internal helper for supports AI final render export; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not isinstance(studio_panel, dict):
             return False
         if not isinstance(explainability, dict):
@@ -6763,6 +7299,8 @@ class ContentService:
 
     @staticmethod
     def _requires_ai_final_render_for_panel(studio_panel: dict | None) -> bool:
+        # Internal helper for requires AI final render for panel; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not isinstance(studio_panel, dict):
             return False
         format_name = str(studio_panel.get("format") or "").strip().lower()
@@ -6776,12 +7314,16 @@ class ContentService:
         studio_panel: dict | None,
         generate_image: bool | None,
     ) -> bool:
+        # Internal helper for effective generate image requested; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if cls._requires_ai_final_render_for_panel(studio_panel):
             return True
         return bool(generate_image)
 
     @staticmethod
     def _assert_research_guard(*, prompt: str, brief: dict[str, Any], stage: str) -> None:
+        # Internal helper for assert research guard; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         guard = brief.get("research_guard") if isinstance(brief.get("research_guard"), dict) else {}
         if not guard or not bool(guard.get("hard_fail")):
             return
@@ -6801,6 +7343,8 @@ class ContentService:
 
     @staticmethod
     def _sort_ai_final_render_assets(assets: list[GeneratedAsset]) -> list[GeneratedAsset]:
+        # Internal helper for sort AI final render assets; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         return sorted(
             assets,
             key=lambda asset: (
@@ -6816,6 +7360,8 @@ class ContentService:
         explainability: dict | None,
         studio_panel: dict | None,
     ) -> list[GeneratedAsset]:
+        # Internal helper for ai final render assets; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not ContentService._supports_ai_final_render_export(studio_panel, explainability):
             return []
         explainability = explainability or {}
@@ -6836,6 +7382,8 @@ class ContentService:
             if (asset.metadata_json or {}).get("render_source") == "ai"
             and (asset.metadata_json or {}).get("generation_stage") == "final_render"
         ]
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if preferred_paths:
             ordered_assets: list[GeneratedAsset] = []
             seen_paths: set[str] = set()
@@ -6852,6 +7400,8 @@ class ContentService:
                 return ordered_assets
         if matching_assets:
             return ContentService._sort_ai_final_render_assets(matching_assets)
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if preferred_paths:
             ordered_assets = []
             seen_paths: set[str] = set()
@@ -6873,6 +7423,8 @@ class ContentService:
         explainability: dict | None,
         selective_regeneration_plan: dict[str, object] | None,
     ) -> bool:
+        # Internal helper for should render missing AI final assets for rewrite; it keeps the public service
+        # method focused on orchestration instead of low-level shaping.
         if ai_final_render_assets:
             return False
         explainability = explainability or {}
@@ -6906,6 +7458,8 @@ class ContentService:
         logo_asset_path: str | None,
         logo_candidates: list[dict[str, object]] | None = None,
     ) -> list[GeneratedAsset]:
+        # Internal helper for regenerate AI final render assets for rewrite; it keeps the public service method
+        # focused on orchestration instead of low-level shaping.
         session = await self.sessions.get(content.session_id)
         if not session:
             raise NotFoundError("Session not found for AI final render regeneration.")
@@ -6991,6 +7545,8 @@ class ContentService:
                 await self.assets.delete(asset)
 
         persisted_assets: list[GeneratedAsset] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for index, asset in enumerate(final_render_assets, start=1):
             persisted_assets.append(
                 await self.assets.add(
@@ -7040,6 +7596,8 @@ class ContentService:
         explainability: dict | None,
         studio_panel: dict | None,
     ) -> GeneratedAsset | None:
+        # Internal helper for ai final render asset; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         resolved = ContentService._find_ai_final_render_assets(assets, explainability, studio_panel)
         return resolved[0] if resolved else None
 
@@ -7049,10 +7607,14 @@ class ContentService:
         *,
         allow_literal_reference_surfaces: bool = True,
     ) -> list[GeneratedImageAsset]:
+        # Internal helper for selected reference visual assets; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         explainability = explainability or {}
         selected_assets = explainability.get("selected_reference_images") or []
         results: list[GeneratedImageAsset] = []
         seen: set[str] = set()
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for asset in selected_assets:
             if not isinstance(asset, dict):
                 continue
@@ -7088,6 +7650,8 @@ class ContentService:
 
     @staticmethod
     def _asset_role_value(asset: GeneratedImageAsset | dict[str, object]) -> str:
+        # Internal helper for asset role value; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if isinstance(asset, GeneratedImageAsset):
             return str(asset.asset_role or "").strip().casefold()
         if isinstance(asset, dict):
@@ -7096,6 +7660,8 @@ class ContentService:
 
     @staticmethod
     def _asset_metadata_value(asset: GeneratedImageAsset | dict[str, object]) -> dict[str, object]:
+        # Internal helper for asset metadata value; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if isinstance(asset, GeneratedImageAsset):
             return dict(asset.metadata or {})
         if isinstance(asset, dict):
@@ -7106,6 +7672,8 @@ class ContentService:
 
     @classmethod
     def _is_literal_reference_surface_asset(cls, asset: GeneratedImageAsset | dict[str, object]) -> bool:
+        # Internal helper for is literal reference surface asset; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         role = cls._asset_role_value(asset)
         return role in {
             str(AssetRole.REFERENCE_CREATIVE),
@@ -7115,6 +7683,8 @@ class ContentService:
 
     @classmethod
     def _asset_allows_literal_render(cls, asset: GeneratedImageAsset | dict[str, object]) -> bool:
+        # Internal helper for asset allows literal render; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         metadata = cls._asset_metadata_value(asset)
         return bool(
             metadata.get("literal_render_allowed")
@@ -7130,6 +7700,8 @@ class ContentService:
         scene_graph: dict | None,
         blueprint: dict | None,
     ) -> bool:
+        # Internal helper for should filter literal reference surfaces for render; it keeps the public service
+        # method focused on orchestration instead of low-level shaping.
         decision = creative_decision or {}
         graph = scene_graph or {}
         resolved_blueprint = blueprint or {}
@@ -7165,6 +7737,8 @@ class ContentService:
         cls,
         assets: list[GeneratedImageAsset],
     ) -> list[GeneratedImageAsset]:
+        # Internal helper for filter literal reference surface assets; it keeps the public service method
+        # focused on orchestration instead of low-level shaping.
         return [
             asset
             for asset in assets
@@ -7178,6 +7752,8 @@ class ContentService:
         *,
         filter_literal_reference_surfaces: bool,
     ) -> dict | None:
+        # Internal helper for sanitize scene graph for structured render; it keeps the public service method
+        # focused on orchestration instead of low-level shaping.
         if not scene_graph or not filter_literal_reference_surfaces:
             return scene_graph
         sanitized = deepcopy(scene_graph)
@@ -7198,15 +7774,21 @@ class ContentService:
 
     @staticmethod
     def _ai_export_file_type(studio_panel: dict | None) -> str:
+        # Internal helper for ai export file type; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         file_type = str((studio_panel or {}).get("file_type") or "").strip().lower()
         return file_type if file_type in {"png", "jpg", "pdf", "doc"} else "png"
 
     def _read_ai_final_render_image(self, storage_path: str) -> Image.Image:
+        # Internal helper for read AI final render image; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         with open_image_asset(self.storage.absolute_path(storage_path)) as raw_image:
             return raw_image.convert("RGBA")
 
     @staticmethod
     def _edge_background_should_strip(image: Image.Image, threshold: int = 245) -> bool:
+        # Internal helper for edge background should strip; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         rgba = image.convert("RGBA")
         width, height = rgba.size
         if width <= 0 or height <= 0:
@@ -7231,6 +7813,8 @@ class ContentService:
 
     @staticmethod
     def _edge_matte_color(image: Image.Image) -> tuple[int, int, int] | None:
+        # Internal helper for edge matte color; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         rgba = image.convert("RGBA")
         width, height = rgba.size
         if width <= 2 or height <= 2:
@@ -7266,6 +7850,8 @@ class ContentService:
 
     @classmethod
     def _strip_logo_background_if_safe(cls, image: Image.Image) -> Image.Image:
+        # Internal helper for strip logo background if safe; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         rgba = image.convert("RGBA")
         matte = cls._edge_matte_color(rgba)
         if matte is None and not cls._edge_background_should_strip(rgba):
@@ -7277,6 +7863,8 @@ class ContentService:
         seen: set[tuple[int, int]] = set()
 
         def is_background(px: tuple[int, int, int, int]) -> bool:
+            # Runs the is background service flow by coordinating repositories, validators, and integrations,
+            # then returns domain data.
             red, green, blue, alpha = px
             if alpha <= 0:
                 return False
@@ -7322,6 +7910,8 @@ class ContentService:
         *,
         target_box: tuple[int, int, int, int] | None = None,
     ) -> Image.Image:
+        # Internal helper for resize logo source for overlay; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         rgba = image.convert("RGBA")
         target_width = int((target_box or (0, 0, 0, 0))[2] or 0)
         target_height = int((target_box or (0, 0, 0, 0))[3] or 0)
@@ -7336,6 +7926,8 @@ class ContentService:
 
     @staticmethod
     def _flatten_image_for_jpg(image: Image.Image) -> Image.Image:
+        # Internal helper for flatten image for jpg; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if image.mode != "RGBA":
             return image.convert("RGB")
         background = Image.new("RGB", image.size, (255, 255, 255))
@@ -7351,6 +7943,8 @@ class ContentService:
         suffix: str = "png",
         quality: int = 92,
     ) -> dict:
+        # Internal helper for store AI final render image; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         buffer = BytesIO()
         if suffix == "jpg":
             self._flatten_image_for_jpg(image).save(buffer, format="JPEG", quality=quality, optimize=True)
@@ -7380,10 +7974,14 @@ class ContentService:
         content: ContentVersion,
         source_assets: list[dict[str, object]],
     ) -> dict | None:
+        # Internal helper for ai final render pdf export; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not source_assets:
             return None
         buffer = BytesIO()
         pdf = pdf_canvas.Canvas(buffer)
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for asset in source_assets:
             with open_image_asset(self.storage.absolute_path(str(asset.get("storage_path") or ""))) as raw_image:
                 image = raw_image.convert("RGB")
@@ -7414,9 +8012,13 @@ class ContentService:
         content: ContentVersion,
         source_assets: list[dict[str, object]],
     ) -> dict | None:
+        # Internal helper for ai final render doc export; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not source_assets:
             return None
         document = Document()
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for index, asset in enumerate(source_assets):
             with open_image_asset(self.storage.absolute_path(str(asset.get("storage_path") or ""))) as raw_image:
                 image = raw_image.convert("RGB")
@@ -7451,11 +8053,15 @@ class ContentService:
         source_assets: list[dict[str, object]],
         file_type: str,
     ) -> list[dict]:
+        # Internal helper for ai final render export assets; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if file_type == "png":
             return [
                 self._decorate_asset_reference({**asset, "asset_role": str(AssetRole.RENDER_EXPORT)})
                 for asset in source_assets
             ]
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if file_type == "jpg":
             converted: list[dict] = []
             for asset in source_assets:
@@ -7492,6 +8098,8 @@ class ContentService:
         logo_asset_candidates: list[dict[str, object]] | None = None,
         logo_selection: dict[str, object] | None = None,
     ) -> dict:
+        # Internal helper for ai final render export payload; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         return self._build_ai_final_render_export_payloads(
             content=content,
             assets=[asset],
@@ -7515,6 +8123,8 @@ class ContentService:
         logo_asset_candidates: list[dict[str, object]] | None = None,
         logo_selection: dict[str, object] | None = None,
     ) -> dict:
+        # Internal helper for ai final render export payloads; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not assets:
             return {"preview_asset": None, "export_assets": [], "renderer_metadata": {}}
 
@@ -7524,6 +8134,8 @@ class ContentService:
         any_logo_rendered = False
         any_footer_rendered = False
 
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for index, asset in enumerate(ordered_assets, start=1):
             try:
                 composited_asset = self._build_ai_logo_fallback_asset(
@@ -7629,9 +8241,13 @@ class ContentService:
         canvas_height: int,
         units: str | None = None,
     ) -> tuple[int, int, int, int] | None:
+        # Internal helper for coerce AI logo box; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if not isinstance(candidate, dict):
             return None
         geometry = candidate.get("geometry") if isinstance(candidate.get("geometry"), dict) else candidate
+        # Keeps the risky I/O or integration boundary contained so callers receive project-level errors
+        # instead of raw library failures.
         try:
             raw_x = float(geometry.get("x", 0))
             raw_y = float(geometry.get("y", 0))
@@ -7641,6 +8257,7 @@ class ContentService:
             return None
         resolved_units = str(units or geometry.get("units") or candidate.get("units") or "").strip().lower()
         looks_normalized = max(abs(raw_x), abs(raw_y), abs(raw_width), abs(raw_height)) <= 1.5
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if resolved_units == "normalized" or (not resolved_units and looks_normalized):
             x = int(round(raw_x * canvas_width))
             y = int(round(raw_y * canvas_height))
@@ -7661,6 +8278,8 @@ class ContentService:
 
     @classmethod
     def _logo_anchor_from_hint(cls, hint: str | None) -> tuple[str, str] | None:
+        # Internal helper for logo anchor from hint; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         text = str(hint or "").strip().lower()
         if not text:
             return None
@@ -7672,6 +8291,8 @@ class ContentService:
 
     @classmethod
     def _normalize_logo_position_option(cls, value: object) -> str:
+        # Internal helper for logo position option; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         text = str(value or "").strip().lower().replace("_", "-").replace(" ", "-")
         while "--" in text:
             text = text.replace("--", "-")
@@ -7705,6 +8326,8 @@ class ContentService:
 
     @classmethod
     def _logo_anchor_to_position(cls, anchor: tuple[str, str]) -> str:
+        # Internal helper for logo anchor to position; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         vertical, horizontal = anchor
         if vertical == "middle" and horizontal == "center":
             return "center"
@@ -7712,6 +8335,8 @@ class ContentService:
 
     @classmethod
     def _logo_anchor_from_position(cls, position: str) -> tuple[str, str] | None:
+        # Internal helper for logo anchor from position; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         normalized = cls._normalize_logo_position_option(position)
         if not normalized:
             return None
@@ -7726,7 +8351,11 @@ class ContentService:
         content: ContentVersion,
         explainability: dict,
     ) -> dict[str, object]:
+        # Internal helper for brand logo placement policy from payloads; it keeps the public service method
+        # focused on orchestration instead of low-level shaping.
         visual_identity = {}
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for payload in (
             explainability,
             content.explainability_metadata if isinstance(content.explainability_metadata, dict) else {},
@@ -7767,6 +8396,8 @@ class ContentService:
 
     @staticmethod
     def _top_logo_positions() -> set[str]:
+        # Internal helper for top logo positions; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         return {"top-right", "top-left", "top-center"}
 
     @classmethod
@@ -7777,6 +8408,8 @@ class ContentService:
         explainability: dict,
         preferred_hint: str | None,
     ) -> list[tuple[str, str]]:
+        # Internal helper for candidate logo anchors; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         policy = cls._brand_logo_placement_policy_from_payloads(content, explainability)
         default_position = cls._normalize_logo_position_option(policy.get("default_position"))
         if default_position in cls._top_logo_positions() and policy.get("default_position_explicit"):
@@ -7789,6 +8422,8 @@ class ContentService:
             for position in (policy.get("allowed_positions") or [])
         ]
         allowed_positions = [position for position in allowed_positions if position]
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if allowed_positions:
             ordered_positions = [
                 position
@@ -7821,6 +8456,8 @@ class ContentService:
         canvas_width: int,
         canvas_height: int,
     ) -> tuple[str, str]:
+        # Internal helper for logo anchor from box; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         x, y, width, height = box
         center_x = x + (width / 2.0)
         center_y = y + (height / 2.0)
@@ -7830,10 +8467,14 @@ class ContentService:
 
     @staticmethod
     def _logo_size_scale() -> float:
+        # Internal helper for logo size scale; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         return 0.96
 
     @staticmethod
     def _logo_size_scale_for_format(format_name: str) -> float:
+        # Internal helper for logo size scale for format; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         normalized_format = str(format_name or "").strip().lower()
         if normalized_format in {"static", "infographic"}:
             return 1.2
@@ -7841,18 +8482,26 @@ class ContentService:
 
     @staticmethod
     def _scaled_logo_dimension(value: int | float) -> int:
+        # Internal helper for scaled logo dimension; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         return max(int(round(float(value) * ContentService._logo_size_scale())), 1)
 
     @staticmethod
     def _logo_horizontal_margin_px(canvas_width: int) -> int:
+        # Internal helper for logo horizontal margin px; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         return min(20, max(int(canvas_width) - 1, 0))
 
     @staticmethod
     def _logo_top_margin_px(canvas_height: int) -> int:
+        # Internal helper for logo top margin px; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         return min(max(int(round(max(int(canvas_height), 1) * 0.035)), 20), max(int(canvas_height) - 1, 0))
 
     @staticmethod
     def _logo_bottom_margin_px(canvas_height: int) -> int:
+        # Internal helper for logo bottom margin px; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         return min(20, max(int(canvas_height) - 1, 0))
 
     @staticmethod
@@ -7862,6 +8511,8 @@ class ContentService:
         canvas_height: int,
         format_name: str,
     ) -> tuple[int, int]:
+        # Internal helper for logo box profile for format; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         normalized_format = str(format_name or "").strip().lower()
         if normalized_format == "carousel":
             width = max(int(canvas_width * 0.2), 170)
@@ -7892,6 +8543,8 @@ class ContentService:
         canvas_height: int,
         format_name: str,
     ) -> tuple[int, int, int, int]:
+        # Internal helper for cap logo box to profile; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         x, y, width, height = box
         preferred_width, preferred_height = cls._logo_box_profile_for_format(
             canvas_width=canvas_width,
@@ -7910,6 +8563,8 @@ class ContentService:
         anchor: tuple[str, str] | None,
         reference_box: tuple[int, int, int, int] | None = None,
     ) -> tuple[int, int, int, int]:
+        # Internal helper for default AI logo box; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         vertical, horizontal = anchor or ("top", "right")
         margin_x = cls._logo_horizontal_margin_px(canvas_width)
         margin_top = cls._logo_top_margin_px(canvas_height)
@@ -7922,6 +8577,7 @@ class ContentService:
         normalized_format = str(format_name or "").strip().lower()
         if reference_box is not None and normalized_format in {"static", "infographic"}:
             reference_box = None
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if reference_box is not None:
             ref_x, ref_y, ref_width, ref_height = reference_box
             if str(format_name or "").strip().lower() == "carousel":
@@ -7969,6 +8625,8 @@ class ContentService:
         canvas_height: int,
         anchor: tuple[str, str],
     ) -> tuple[int, int, int, int]:
+        # Internal helper for snap logo box to anchor edge; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         x, y, width, height = box
         vertical, horizontal = anchor
         margin_x = ContentService._logo_horizontal_margin_px(canvas_width)
@@ -7998,6 +8656,8 @@ class ContentService:
         logo_height: int,
         anchor: str,
     ) -> tuple[int, int]:
+        # Internal helper for logo offset in box; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         x, y, width, height = box
         normalized_anchor = str(anchor or "").strip().lower()
         if "left" in normalized_anchor:
@@ -8019,6 +8679,8 @@ class ContentService:
         first: tuple[int, int, int, int],
         second: tuple[int, int, int, int],
     ) -> int:
+        # Internal helper for rect overlap area; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         left = max(first[0], second[0])
         top = max(first[1], second[1])
         right = min(first[0] + first[2], second[0] + second[2])
@@ -8036,6 +8698,8 @@ class ContentService:
         pad_x: int,
         pad_y: int,
     ) -> tuple[int, int, int, int]:
+        # Internal helper for expanded box with padding; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         x, y, width, height = box
         left = max(x - pad_x, 0)
         top = max(y - pad_y, 0)
@@ -8051,6 +8715,8 @@ class ContentService:
         canvas_width: int,
         canvas_height: int,
     ) -> tuple[int, int]:
+        # Internal helper for logo collision padding; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         pad_x = max(int(logo_width * 0.08), int(canvas_width * 0.006), 4)
         pad_y = max(int(logo_height * 0.08), int(canvas_height * 0.002), 2)
         return (pad_x, pad_y)
@@ -8063,6 +8729,8 @@ class ContentService:
         canvas_width: int,
         canvas_height: int,
     ) -> tuple[int, int, int, int] | None:
+        # Internal helper for coerce layout obstruction box; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         geometry = candidate.get("geometry") if isinstance(candidate.get("geometry"), dict) else candidate
         units = str(geometry.get("units") or candidate.get("units") or "").strip().lower()
         if "w" in geometry and "width" not in geometry:
@@ -8085,8 +8753,12 @@ class ContentService:
         canvas_width: int,
         canvas_height: int,
     ) -> list[dict[str, object]]:
+        # Internal helper for logo layout obstruction boxes; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         boxes: list[dict[str, object]] = []
         scene_graph = explainability.get("scene_graph") if isinstance(explainability, dict) else {}
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for element in (scene_graph.get("elements") or []) if isinstance(scene_graph, dict) else []:
             if not isinstance(element, dict):
                 continue
@@ -8101,6 +8773,8 @@ class ContentService:
             if box:
                 boxes.append({"box": box, "role": role, "source": "scene_graph"})
         blueprint = content.blueprint_payload if isinstance(content.blueprint_payload, dict) else {}
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for zone in blueprint.get("zones") or []:
             if not isinstance(zone, dict):
                 continue
@@ -8118,6 +8792,8 @@ class ContentService:
             content=content,
             explainability=explainability,
         )
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if footer_text:
             footer_safe_area = calculate_footer_safe_area(
                 canvas_width=canvas_width,
@@ -8144,6 +8820,8 @@ class ContentService:
         safe_box: tuple[int, int, int, int],
         obstruction_boxes: list[dict[str, object]],
     ) -> float:
+        # Internal helper for layout overlap score; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         safe_area = max(safe_box[2] * safe_box[3], 1)
         role_weights = {
             "headline": 5.0,
@@ -8164,6 +8842,8 @@ class ContentService:
             "background": 0.1,
         }
         score = 0.0
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for item in obstruction_boxes:
             box = item.get("box")
             if not isinstance(box, tuple):
@@ -8180,6 +8860,8 @@ class ContentService:
         image: Image.Image,
         safe_box: tuple[int, int, int, int],
     ) -> float:
+        # Internal helper for image region obstruction score; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         x, y, width, height = safe_box
         crop = image.crop((x, y, min(x + width, image.width), min(y + height, image.height))).convert("RGB")
         if crop.width <= 0 or crop.height <= 0:
@@ -8194,6 +8876,8 @@ class ContentService:
         non_quiet = 0
         row_counts = [0 for _ in range(sample.height)]
         column_counts = [0 for _ in range(sample.width)]
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for index, (red, green, blue) in enumerate(pixels):
             chroma = max(red, green, blue) - min(red, green, blue)
             luminance = (0.2126 * red) + (0.7152 * green) + (0.0722 * blue)
@@ -8226,6 +8910,8 @@ class ContentService:
         image: Image.Image,
         strip_box: tuple[int, int, int, int],
     ) -> dict[str, object]:
+        # Internal helper for footer strip quietness report; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         x, y, width, height = strip_box
         crop = image.crop((x, y, min(x + width, image.width), min(y + height, image.height))).convert("RGB")
         if crop.width <= 0 or crop.height <= 0:
@@ -8259,6 +8945,8 @@ class ContentService:
 
         edge_count = 0
         edge_total = 0
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for row in range(sample.height):
             for column in range(sample.width):
                 red, green, blue = pixels[row * sample.width + column]
@@ -8286,6 +8974,8 @@ class ContentService:
 
     @staticmethod
     def _logo_scale_candidates() -> list[float]:
+        # Internal helper for logo scale candidates; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         return [1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.45, 0.4, 0.35, 0.3]
 
     @classmethod
@@ -8301,6 +8991,8 @@ class ContentService:
         preferred_hint: str | None,
         image_obstruction_weight: float = 4.0,
     ) -> dict[str, object]:
+        # Internal helper for logo collision guard; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         canvas_width, canvas_height = base_image.size
         initial_anchor = cls._logo_anchor_from_box(
             logo_box,
@@ -8323,6 +9015,7 @@ class ContentService:
             for position in (policy.get("allowed_positions") or [])
             if (anchor := cls._logo_anchor_from_position(str(position)))
         }
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if allowed_anchor_keys and policy.get("explicit") and not default_top_position_locked:
             for position in (
                 "top-right",
@@ -8358,6 +9051,8 @@ class ContentService:
             )
         )
         best: dict[str, object] | None = None
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for anchor in anchors:
             scale_candidates = cls._logo_scale_candidates() if normalized_format == "carousel" else [1.0]
             for scale in scale_candidates:
@@ -8442,6 +9137,7 @@ class ContentService:
                 }
                 if best is None or score < float(best["score"]):
                     best = candidate
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if best is None:
             contained = ImageOps.contain(
                 logo_image,
@@ -8485,6 +9181,8 @@ class ContentService:
         canvas_height: int,
         anchor: tuple[str, str] | None,
     ) -> tuple[int, int, int, int] | None:
+        # Internal helper for reference AI logo box; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if anchor is None:
             return None
         visual_identity = {}
@@ -8502,6 +9200,8 @@ class ContentService:
         candidates: list[tuple[float, float, float, float]] = []
 
         def _collect(zones: object) -> None:
+            # Internal helper for collect; it keeps the public service method focused on orchestration instead
+            # of low-level shaping.
             for zone in zones if isinstance(zones, list) else []:
                 if not isinstance(zone, dict):
                     continue
@@ -8543,6 +9243,8 @@ class ContentService:
             return None
 
         def _median(values: list[float]) -> float:
+            # Internal helper for median; it keeps the public service method focused on orchestration instead of
+            # low-level shaping.
             ordered = sorted(values)
             return ordered[len(ordered) // 2]
 
@@ -8558,11 +9260,15 @@ class ContentService:
         content: ContentVersion,
         explainability: dict,
     ) -> str | None:
+        # Internal helper for extract logo position hint; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         generated_payload = content.generated_payload if isinstance(content.generated_payload, dict) else {}
         metadata = generated_payload.get("metadata") if isinstance(generated_payload.get("metadata"), dict) else {}
         blueprint = content.blueprint_payload if isinstance(content.blueprint_payload, dict) else {}
         blueprint_zones = blueprint.get("zones") if isinstance(blueprint.get("zones"), list) else []
         scene_graph = explainability.get("scene_graph") if isinstance(explainability, dict) else {}
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if isinstance(scene_graph, dict):
             styles = scene_graph.get("styles") if isinstance(scene_graph.get("styles"), dict) else {}
             brand_visual_brief = styles.get("brand_visual_brief") if isinstance(styles.get("brand_visual_brief"), dict) else {}
@@ -8581,6 +9287,8 @@ class ContentService:
             brand_visual_brief.get("logo_position"),
             metadata.get("logo_position"),
         ]
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for zone in blueprint_zones:
             if not isinstance(zone, dict):
                 continue
@@ -8599,6 +9307,8 @@ class ContentService:
         content: ContentVersion,
         explainability: dict,
     ) -> bool:
+        # Internal helper for is style reference only logo policy; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         blueprint = content.blueprint_payload if isinstance(content.blueprint_payload, dict) else {}
         adaptation_plan = blueprint.get("adaptation_plan") if isinstance(blueprint.get("adaptation_plan"), dict) else {}
         if bool(adaptation_plan.get("reference_style_only")):
@@ -8622,6 +9332,8 @@ class ContentService:
         content: ContentVersion,
         explainability: dict,
     ) -> tuple[int, int, int, int]:
+        # Internal helper for ai logo box; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         hint_anchor = cls._logo_anchor_from_hint(hint)
         reference_box = cls._reference_ai_logo_box(
             content=content,
@@ -8635,6 +9347,7 @@ class ContentService:
             canvas_height=canvas_height,
             format_name=format_name,
         )
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if box is None:
             return cls._default_ai_logo_box(
                 canvas_width=canvas_width,
@@ -8652,6 +9365,8 @@ class ContentService:
         x, y, width, height = box
         anchor_mismatch = bool(hint_anchor and hint_anchor != current_anchor)
         too_small = width < int(min_width * 0.65) or height < int(min_height * 0.65)
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if anchor_mismatch or too_small:
             return cls._default_ai_logo_box(
                 canvas_width=canvas_width,
@@ -8660,6 +9375,7 @@ class ContentService:
                 anchor=anchor,
                 reference_box=reference_box,
             )
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if reference_box is not None:
             _ref_x, _ref_y, ref_width, ref_height = reference_box
             if abs(width - ref_width) >= max(int(canvas_width * 0.035), 28) or abs(height - ref_height) >= max(int(canvas_height * 0.025), 22):
@@ -8700,6 +9416,8 @@ class ContentService:
         studio_panel: dict,
         asset: GeneratedAsset,
     ) -> tuple[int, int, int, int]:
+        # Internal helper for ai logo box; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         canvas_width = int(asset.width or (studio_panel.get("size") or {}).get("width") or 1080)
         canvas_height = int(asset.height or (studio_panel.get("size") or {}).get("height") or 1080)
         format_name = str((studio_panel or {}).get("format") or "").strip().lower()
@@ -8707,6 +9425,7 @@ class ContentService:
         style_reference_only = cls._is_style_reference_only_logo_policy(content, explainability)
 
         scene_graph = explainability.get("scene_graph") if isinstance(explainability, dict) else {}
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if not style_reference_only:
             for element in (scene_graph.get("elements") or []) if isinstance(scene_graph, dict) else []:
                 role = str((element or {}).get("role") or (element or {}).get("element_type") or "").strip().lower()
@@ -8741,6 +9460,7 @@ class ContentService:
                     )
 
         blueprint = content.blueprint_payload if isinstance(content.blueprint_payload, dict) else {}
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if not style_reference_only:
             for zone in blueprint.get("zones") or []:
                 zone_role = str((zone or {}).get("role") or "").strip().lower()
@@ -8779,6 +9499,8 @@ class ContentService:
         studio_panel: dict | None,
         assets: list[GeneratedAsset],
     ) -> bool:
+        # Internal helper for should use AI final render overlay for panel; it keeps the public service method
+        # focused on orchestration instead of low-level shaping.
         format_name = str((studio_panel or {}).get("format") or "").strip().lower()
         if format_name not in ContentService.AI_FINAL_RENDER_OVERLAY_FORMATS:
             return False
@@ -8790,6 +9512,8 @@ class ContentService:
 
     @staticmethod
     def _ai_final_render_asset_has_overlay_contract(asset: GeneratedAsset) -> bool:
+        # Internal helper for ai final render asset has overlay contract; it keeps the public service method
+        # focused on orchestration instead of low-level shaping.
         metadata = asset.metadata_json or {}
         return isinstance(metadata.get("render_overlay_text"), dict)
 
@@ -8797,6 +9521,8 @@ class ContentService:
     def _ai_final_render_overlay_scene_graph_is_usable(
         payload: dict | None,
     ) -> bool:
+        # Internal helper for ai final render overlay scene graph is usable; it keeps the public service method
+        # focused on orchestration instead of low-level shaping.
         if not isinstance(payload, dict):
             return False
         elements = payload.get("elements")
@@ -8806,6 +9532,8 @@ class ContentService:
     def _ai_final_render_overlay_text_is_usable(
         payload: dict | None,
     ) -> bool:
+        # Internal helper for ai final render overlay text is usable; it keeps the public service method focused
+        # on orchestration instead of low-level shaping.
         if not isinstance(payload, dict):
             return False
         return any(
@@ -8818,6 +9546,8 @@ class ContentService:
         asset: GeneratedAsset,
         explainability: dict | None,
     ) -> dict | None:
+        # Internal helper for ai final render overlay scene graph payload; it keeps the public service method
+        # focused on orchestration instead of low-level shaping.
         metadata = asset.metadata_json or {}
         candidate = metadata.get("render_overlay_scene_graph")
         if isinstance(candidate, dict):
@@ -8831,9 +9561,13 @@ class ContentService:
         asset: GeneratedAsset,
         content: ContentVersion,
     ) -> dict:
+        # Internal helper for ai final render overlay text payload; it keeps the public service method focused
+        # on orchestration instead of low-level shaping.
         metadata = asset.metadata_json or {}
         slide_index = metadata.get("slide_index")
         slide_count = metadata.get("slide_count")
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if str(slide_index or "").strip().isdigit():
             structured_payload = ContentService._selective_overlay_text_payload(
                 content,
@@ -8848,6 +9582,8 @@ class ContentService:
             if structured_source == "structured_slide_spec":
                 return structured_payload
         candidate = metadata.get("render_overlay_text")
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if isinstance(candidate, dict):
             candidate_copy = deepcopy(candidate)
             candidate_meta = candidate_copy.get("metadata")
@@ -8860,6 +9596,8 @@ class ContentService:
 
     @staticmethod
     def _ai_final_render_overlay_element_slide_index(element: dict | None) -> int | None:
+        # Internal helper for ai final render overlay element slide index; it keeps the public service method
+        # focused on orchestration instead of low-level shaping.
         if not isinstance(element, dict):
             return None
         candidates = [
@@ -8885,6 +9623,8 @@ class ContentService:
         role: str,
         slide_index: int,
     ) -> dict | None:
+        # Internal helper for ai final render select overlay text element; it keeps the public service method
+        # focused on orchestration instead of low-level shaping.
         normalized_role = str(role or "").strip().lower()
         role_aliases = {
             "headline": {
@@ -8958,6 +9698,8 @@ class ContentService:
         overlay_text: str,
         overlay_metadata: dict,
     ) -> None:
+        # Internal helper for ai final render apply data surface overlay hints; it keeps the public service
+        # method focused on orchestration instead of low-level shaping.
         if role != "proof_points":
             return
 
@@ -8980,6 +9722,8 @@ class ContentService:
             validation_hints.setdefault("surface_mode", surface_mode)
 
         def _positive_int(value: object) -> int | None:
+            # Internal helper for positive int; it keeps the public service method focused on orchestration
+            # instead of low-level shaping.
             try:
                 numeric = int(str(value).strip())
             except (TypeError, ValueError):
@@ -8996,6 +9740,8 @@ class ContentService:
             if numeric is not None:
                 validation_hints[key] = numeric
 
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if surface_mode.casefold() == "ranking_table":
             if "module_count" not in validation_hints and overlay_row_count:
                 validation_hints["module_count"] = overlay_row_count
@@ -9021,6 +9767,8 @@ class ContentService:
         asset: GeneratedAsset,
         overlay_text: dict,
     ) -> dict | None:
+        # Internal helper for ai final render sanitize overlay scene graph for asset; it keeps the public
+        # service method focused on orchestration instead of low-level shaping.
         if not isinstance(scene_graph, dict):
             return None
         sanitized = deepcopy(scene_graph)
@@ -9043,6 +9791,8 @@ class ContentService:
         overlay_metadata = overlay_text.get("metadata") if isinstance(overlay_text.get("metadata"), dict) else {}
 
         def _overlay_list_text(key: str) -> str:
+            # Internal helper for overlay list text; it keeps the public service method focused on orchestration
+            # instead of low-level shaping.
             for source in (overlay_text, overlay_metadata):
                 value = source.get(key) if isinstance(source, dict) else None
                 if isinstance(value, list):
@@ -9064,6 +9814,8 @@ class ContentService:
         seen_ids: set[str] = set()
 
         def _append(element: dict | None) -> None:
+            # Internal helper for append; it keeps the public service method focused on orchestration instead of
+            # low-level shaping.
             if not isinstance(element, dict):
                 return
             element_id = str(element.get("element_id") or "").strip()
@@ -9081,6 +9833,8 @@ class ContentService:
             if role == "logo":
                 _append(deepcopy(element))
 
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for role in ("headline", "body", "proof_points", "stat_highlights", "cta"):
             value = overlay_values.get(role) or ""
             if not value:
@@ -9130,6 +9884,8 @@ class ContentService:
         slide_index: int,
         slide_count: int,
     ) -> dict:
+        # Internal helper for selective overlay text payload; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         generated_payload = content.generated_payload if isinstance(content.generated_payload, dict) else {}
         metadata = generated_payload.get("metadata") if isinstance(generated_payload.get("metadata"), dict) else {}
         slide_specs = metadata.get("carousel_slide_specs") if isinstance(metadata.get("carousel_slide_specs"), list) else []
@@ -9172,6 +9928,8 @@ class ContentService:
 
     @staticmethod
     def _selective_regeneration_plan(explainability: dict | None) -> dict[str, object]:
+        # Internal helper for selective regeneration plan; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         explainability = explainability or {}
         plan = explainability.get("selective_regeneration_plan")
         return dict(plan) if isinstance(plan, dict) else {}
@@ -9190,6 +9948,8 @@ class ContentService:
         logo_asset_path: str | None,
         overlay_content: ContentVersion | None = None,
     ) -> dict[str, object] | None:
+        # Internal helper for ai final overlay source asset; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         overlay_scene_graph = self._ai_final_render_overlay_scene_graph_payload(
             asset,
             explainability,
@@ -9275,6 +10035,8 @@ class ContentService:
         font_asset_paths: list[str],
         brand_visual_rules: dict,
     ) -> dict:
+        # Internal helper for ai final render delivery payloads; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if self._should_use_ai_final_render_overlay_for_panel(studio_panel, assets):
             return await self._build_ai_final_render_overlay_payloads(
                 content=content,
@@ -9320,6 +10082,8 @@ class ContentService:
         brand_visual_rules: dict,
         regeneration_plan: dict[str, object],
     ) -> dict | None:
+        # Internal helper for selective AI final render export payloads; it keeps the public service method
+        # focused on orchestration instead of low-level shaping.
         ordered_parent_assets = self._sort_ai_final_render_assets(parent_assets)
         if not ordered_parent_assets:
             return None
@@ -9368,6 +10132,8 @@ class ContentService:
             studio_panel,
         )
 
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for position, slide_index in enumerate(ordered_slide_indexes, start=1):
             reused_parent_render = slide_index not in targeted_slide_indexes
             asset = (
@@ -9521,6 +10287,8 @@ class ContentService:
         font_asset_paths: list[str],
         brand_visual_rules: dict,
     ) -> dict:
+        # Internal helper for ai final render overlay payloads; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not assets:
             return self._build_ai_final_render_export_payloads(
                 content=content,
@@ -9549,6 +10317,8 @@ class ContentService:
         any_logo_rendered = False
         overlay_quality_assessments: list[dict[str, object]] = []
 
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for position, asset in enumerate(ordered_assets, start=1):
             overlay_payload = await self._render_ai_final_overlay_source_asset(
                 content=content,
@@ -9670,6 +10440,8 @@ class ContentService:
         *,
         fallback_asset: GeneratedAsset | GeneratedImageAsset,
     ) -> GeneratedImageAsset:
+        # Internal helper for payload to generated image asset; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         metadata = {}
         if isinstance(payload, dict) and isinstance(payload.get("metadata"), dict):
             metadata = dict(payload.get("metadata") or {})
@@ -9692,6 +10464,8 @@ class ContentService:
 
     @staticmethod
     def _asset_metadata_payload(asset: GeneratedAsset | GeneratedImageAsset) -> dict[str, object]:
+        # Internal helper for asset metadata payload; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         return dict(getattr(asset, "metadata_json", None) or getattr(asset, "metadata", {}) or {})
 
     @staticmethod
@@ -9700,6 +10474,8 @@ class ContentService:
         content: ContentVersion,
         explainability: dict,
     ) -> str:
+        # Internal helper for ai final render legal footer text; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         for graph_key in ("final_render_scene_graph", "scene_graph"):
             graph = explainability.get(graph_key) if isinstance(explainability, dict) else None
             if not isinstance(graph, dict):
@@ -9715,6 +10491,8 @@ class ContentService:
                         return " ".join(text.split())
         generated_payload = content.generated_payload if isinstance(content.generated_payload, dict) else {}
         metadata = generated_payload.get("metadata") if isinstance(generated_payload.get("metadata"), dict) else {}
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for candidate in (
             metadata.get("footer"),
             metadata.get("legal_footer"),
@@ -9727,6 +10505,8 @@ class ContentService:
 
     @staticmethod
     def _load_footer_font(size: int) -> ImageFont.ImageFont:
+        # Internal helper for load footer font; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         for font_name in ("arial.ttf", "Arial.ttf", "DejaVuSans.ttf", "LiberationSans-Regular.ttf"):
             try:
                 return ImageFont.truetype(font_name, size=size)
@@ -9742,6 +10522,8 @@ class ContentService:
         *,
         max_width: int,
     ) -> list[str]:
+        # Internal helper for wrap footer lines; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         return wrap_footer_lines(draw, text, font, max_width=max_width)
 
     def _build_ai_footer_fallback_asset(
@@ -9752,12 +10534,16 @@ class ContentService:
         explainability: dict,
         studio_panel: dict,
     ) -> dict | None:
+        # Internal helper for ai footer fallback asset; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         footer_text = self._ai_final_render_legal_footer_text(content=content, explainability=explainability)
         if not footer_text or not str(getattr(asset, "mime_type", "") or "").startswith("image/"):
             return None
         storage_path = str(getattr(asset, "storage_path", "") or "")
         if not storage_path or not self.storage.exists(storage_path):
             return None
+        # Keeps the risky I/O or integration boundary contained so callers receive project-level errors
+        # instead of raw library failures.
         try:
             with open_image_asset(self.storage.absolute_path(storage_path)) as raw_base:
                 base = raw_base.convert("RGBA")
@@ -9788,6 +10574,7 @@ class ContentService:
         static_infographic_format = format_name in {"static", "infographic"}
         original_footer_strip_box = footer_strip_box
         relocated_footer_strip_box: tuple[int, int, int, int] | None = None
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if static_infographic_format and not bool(quietness_report.get("quiet")):
             logger.info(
                 "content.ai_final_render.footer_overlay_forced_busy_strip content_version_id=%s format=%s score=%s",
@@ -9845,6 +10632,8 @@ class ContentService:
         cursor_y = text_strip_top + max((text_strip_height - total_height) // 2, vertical_padding // 2)
         stroke_fill = (255, 255, 255, 180) if avg_luma < 145 else (0, 0, 0, 96)
         stroke_width = 1 if static_infographic_format else 0
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for line, box in zip(chosen_lines, line_boxes):
             line_height = box[3] - box[1]
             draw.text(
@@ -9937,6 +10726,8 @@ class ContentService:
         logo_asset_candidates: list[dict[str, object]] | None = None,
         logo_selection: dict[str, object] | None = None,
     ) -> dict | None:
+        # Internal helper for ai logo fallback asset; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not logo_asset_path or not str(asset.mime_type or "").startswith("image/"):
             return None
         if (asset.metadata_json or {}).get("logo_composited_by_ai"):
@@ -9944,6 +10735,8 @@ class ContentService:
         if not self.storage.exists(asset.storage_path) or not self.storage.exists(logo_asset_path):
             return None
 
+        # Keeps the risky I/O or integration boundary contained so callers receive project-level errors
+        # instead of raw library failures.
         try:
             with open_image_asset(self.storage.absolute_path(asset.storage_path)) as raw_base:
                 base = raw_base.convert("RGBA")
@@ -9977,6 +10770,8 @@ class ContentService:
         )
         if not self.storage.exists(resolved_logo_asset_path):
             resolved_logo_asset_path = logo_asset_path
+        # Keeps the risky I/O or integration boundary contained so callers receive project-level errors
+        # instead of raw library failures.
         try:
             with open_image_asset(self.storage.absolute_path(resolved_logo_asset_path)) as raw_logo:
                 raw_logo_rgba = self._resize_logo_source_for_overlay(
@@ -10012,6 +10807,7 @@ class ContentService:
         static_infographic_format = format_name in {"static", "infographic"}
         base_for_collision = base
         logo_zone_clearance_applied = False
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if not static_infographic_format:
             if not layout_obstructions:
                 base_for_collision, logo_zone_clearance_applied = self._clear_ai_logo_overlay_region(
@@ -10162,6 +10958,8 @@ class ContentService:
         selected_template_name: str | None,
         reference_assets: list[dict],
     ) -> dict:
+        # Internal helper for generation decision; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         recommendations = [
             recommendation.model_dump(mode="json") if hasattr(recommendation, "model_dump") else dict(recommendation)
             for recommendation in template_recommendations
@@ -10206,8 +11004,12 @@ class ContentService:
         selected_template_id: UUID | None,
         response: dict,
     ) -> None:
+        # Internal helper for persist render assets; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         preview_asset = response.get("preview_asset")
         export_assets = response.get("export_assets", [])
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for asset in [preview_asset, *export_assets]:
             if not asset:
                 continue
@@ -10248,9 +11050,13 @@ class ContentService:
         prompt: str,
         studio_panel: dict | None = None,
     ) -> tuple[dict[str, list[dict]], dict[str, dict]]:
+        # Internal helper for retrieved knowledge; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         assets = await self.knowledge.list(tenant_id, brand_space_id)
         channel_state: dict[str, dict] = {}
         retrieved_knowledge: dict[str, list[dict]] = {}
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for channel in self._knowledge_channels_for_panel(studio_panel):
             channel_assets = [asset for asset in assets if asset.channel == channel and asset.lifecycle_state != "deleted"]
             query_variants = self._knowledge_queries_for_channel(prompt, channel)
@@ -10299,6 +11105,8 @@ class ContentService:
         logo_candidates: list[dict[str, Any]],
         logo_selection: dict[str, Any] | None,
     ) -> None:
+        # Internal helper for write brand usage trace; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         brand_usage_writer = getattr(self.trace, "write_brand_usage_report", None)
         brand_usage_builder = getattr(self.trace, "build_brand_usage_report", None)
         if not (callable(brand_usage_writer) and callable(brand_usage_builder) and trace_id):
@@ -10359,6 +11167,8 @@ class ContentService:
         logo_selection: dict[str, Any] | None,
         content_version: ContentVersion,
     ) -> None:
+        # Internal helper for write visual generation readable trace; it keeps the public service method focused
+        # on orchestration instead of low-level shaping.
         readable_bundle_builder = getattr(self.trace, "build_visual_generation_readable_bundle", None)
         readable_bundle_writer = getattr(self.trace, "write_visual_generation_readable_bundle", None)
         if not (callable(readable_bundle_builder) and callable(readable_bundle_writer) and trace_id):
@@ -10430,6 +11240,8 @@ class ContentService:
         output_assets: list[dict[str, Any]],
         reference_assets: list[dict[str, Any]] | None = None,
     ) -> None:
+        # Internal helper for write brand scoring output; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not output_assets:
             return
         explainability = (
@@ -10437,6 +11249,7 @@ class ContentService:
             if isinstance(content_version.explainability_metadata, dict)
             else {}
         )
+        # This branch enforces tenant, brand, or role boundaries before shared data can be read or changed.
         if not self.settings.inline_brand_scoring_enabled:
             deferred_payload = {
                 "status": "deferred",
@@ -10449,6 +11262,8 @@ class ContentService:
             }
             self.trace.write_payload(trace_id, "brand_scoring", deferred_payload)
             return
+        # Keeps the risky I/O or integration boundary contained so callers receive project-level errors
+        # instead of raw library failures.
         try:
             scorecard = self.brand_scoring.build_scorecard(
                 prompt=prompt,
@@ -10492,6 +11307,8 @@ class ContentService:
 
     @staticmethod
     def _scoring_assets_from_explainability(explainability: dict[str, Any]) -> list[dict[str, Any]]:
+        # Internal helper for scoring assets from explainability; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         assets = explainability.get("final_render_assets") if isinstance(explainability.get("final_render_assets"), list) else []
         normalized: list[dict[str, Any]] = []
         for asset in assets:
@@ -10520,6 +11337,8 @@ class ContentService:
         user_id: UUID,
         payload: ContentGenerateRequest,
     ) -> ContentVersion:
+        # Runs the content generate workflow from validated route payload to persisted result consumed by API
+        # handlers.
         generation_started_at = perf_counter()
         generation_performance: list[dict[str, Any]] = []
         context = await self._gather_context(brand_space_id)
@@ -10621,6 +11440,7 @@ class ContentService:
             if selected_template_id
             else None
         )
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if selected_template_id and not preselected_template:
             logger.warning(
                 "content.generate.requested_template_missing brand_space_id=%s session_id=%s requested_template_id=%s",
@@ -10911,6 +11731,8 @@ class ContentService:
             len(response.image_assets or []),
             response.repair_attempts,
         )
+        # The payload/context shape drives this branch because downstream serializers depend on consistent
+        # fields.
         if (
             self._requires_ai_final_render_for_panel(payload.studio_panel.model_dump())
             and effective_generate_image
@@ -11039,6 +11861,8 @@ class ContentService:
         follow_up_intent = (session_memory.get("follow_up_intent") or {})
         latest_content = session_memory.get("latest_content_version") or {}
         parent_content_version_id = payload.source_content_version_id or self._parse_uuid_or_none(latest_content.get("id"))
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if follow_up_intent.get("uses_previous_output") and parent_content_version_id:
             try:
                 content_version.parent_version_id = UUID(str(parent_content_version_id))
@@ -11241,6 +12065,8 @@ class ContentService:
         user_id: UUID,
         payload: ContentRewriteRequest,
     ) -> ContentVersion:
+        # Runs the content rewrite workflow from validated route payload to persisted result consumed by API
+        # handlers.
         original = await self._get_content_scoped(tenant_id, brand_space_id, payload.content_version_id)
         logger.info(
             "content.rewrite.start original_content_version_id=%s revision_scope=%s rewrite_length=%s",
@@ -11367,6 +12193,7 @@ class ContentService:
             payload.revision_scope,
         )
         missing_targeted_core_fields = rewrite_preservation.get("missing_targeted_core_fields", [])
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if isinstance(missing_targeted_core_fields, list) and missing_targeted_core_fields:
             raise GenerationFailureError(
                 "Rewrite output is missing required structured fields.",
@@ -11523,6 +12350,8 @@ class ContentService:
             tone_feedback=self._strip_null_bytes(initial_tone_feedback),
         )
         await self.contents.add(rewritten)
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if session:
             await self._record_session_context(
                 session,
@@ -11567,6 +12396,8 @@ class ContentService:
         return rewritten
 
     async def tone_check(self, brand_space_id: UUID, payload: ToneCheckRequest) -> dict:
+        # Runs the content tone check workflow from validated route payload to persisted result consumed by API
+        # handlers.
         brand = await self.brands.get(brand_space_id)
         if not brand:
             raise NotFoundError("Brand Space not found")
@@ -11609,9 +12440,13 @@ class ContentService:
         )
 
     async def history(self, tenant_id: UUID, brand_space_id: UUID) -> list[ContentVersion]:
+        # Runs the history service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         return await self.contents.list_by_brand(brand_space_id, tenant_id)
 
     async def detail(self, tenant_id: UUID, brand_space_id: UUID, content_version_id: UUID) -> ContentVersion:
+        # Runs the detail service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         return await self._get_content_scoped(tenant_id, brand_space_id, content_version_id)
 
     async def export(
@@ -11623,6 +12458,8 @@ class ContentService:
         blueprint_payload: dict | None = None,
         template_id: UUID | None = None,
     ) -> dict:
+        # Runs the export service flow and persists the resulting state before returning it to the route or
+        # worker.
         content = await self._get_content_scoped(tenant_id, brand_space_id, content_version_id)
         brand = await self.brands.get_scoped(tenant_id, brand_space_id)
         if not brand:
@@ -11706,6 +12543,7 @@ class ContentService:
             "brand_name": brand.name,
             "identity": brand.resolved_brand_context.get("identity", {}),
         }
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if ai_final_render_assets and not (
             selective_regeneration_plan
             and selective_regeneration_plan.get("targeted_slide_indexes")
@@ -11778,6 +12616,8 @@ class ContentService:
             for asset in selected_reference_visual_assets
             if asset.storage_path not in persisted_paths
         ]
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if (
             selective_regeneration_plan
             and selective_regeneration_plan.get("targeted_slide_indexes")
@@ -11865,6 +12705,8 @@ class ContentService:
                         },
                     )
                     return payload
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if ai_final_render_assets:
             logger.info(
                 "content.export.ai_final_render_passthrough content_version_id=%s ai_final_render_assets=%s",
@@ -12057,6 +12899,8 @@ class ContentService:
         return payload
 
     async def copy(self, tenant_id: UUID, brand_space_id: UUID, content_version_id: UUID) -> dict:
+        # Runs the copy service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         content = await self._get_content_scoped(tenant_id, brand_space_id, content_version_id)
         return {
             "headline": content.generated_payload.get("headline", ""),
@@ -12066,6 +12910,8 @@ class ContentService:
         }
 
     async def archive(self, tenant_id: UUID, brand_space_id: UUID, content_version_id: UUID) -> ContentVersion:
+        # Runs the archive service flow and persists the resulting state before returning it to the route or
+        # worker.
         content = await self._get_content_scoped(tenant_id, brand_space_id, content_version_id)
         content.lifecycle_state = ContentLifecycle.ARCHIVED
         await self.session.commit()
@@ -12073,6 +12919,8 @@ class ContentService:
         return content
 
     async def delete(self, tenant_id: UUID, brand_space_id: UUID, content_version_id: UUID) -> dict:
+        # Runs the delete service flow and persists the resulting state before returning it to the route or
+        # worker.
         content = await self._get_content_scoped(tenant_id, brand_space_id, content_version_id)
         content.deleted_at = datetime.now(timezone.utc)
         await self.session.commit()

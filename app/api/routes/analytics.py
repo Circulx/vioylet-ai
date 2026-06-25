@@ -1,3 +1,4 @@
+# FastAPI route handlers live here; they validate request inputs, call services, and return response schemas.
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -18,6 +19,8 @@ async def platform_analytics(
     _: CurrentPrincipal = Depends(require_roles(RoleCode.SUPER_ADMIN)),
     session: AsyncSession = Depends(get_db_session),
 ) -> AnalyticsResponse:
+    # Serves the platform analytics endpoint; it uses FastAPI dependencies, delegates work to services, and
+    # returns the response schema.
     metrics = await AnalyticsService(session).platform_summary()
     return AnalyticsResponse(scope="platform", metrics=metrics)
 
@@ -27,6 +30,8 @@ async def tenant_analytics(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> AnalyticsResponse:
+    # Serves the tenant analytics endpoint; it uses FastAPI dependencies, delegates work to services, and
+    # returns the response schema.
     if RoleCode.TENANT_USER in principal.role_codes or RoleCode.BRAND_USER in principal.role_codes:
         raise HTTPException(status_code=403, detail="Tenant-level analytics unavailable for this role")
     metrics = await AnalyticsService(session).tenant_summary(principal.tenant_id)
@@ -39,6 +44,8 @@ async def brand_analytics(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> AnalyticsResponse:
+    # Serves the brand analytics endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     if RoleCode.BRAND_USER in principal.role_codes:
         raise HTTPException(status_code=403, detail="Brand analytics unavailable for this role")
     assert_brand_access(principal, brand_id)
@@ -51,6 +58,8 @@ async def usage_summary(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> AnalyticsResponse:
+    # Serves the usage summary endpoint; it uses FastAPI dependencies, delegates work to services, and returns
+    # the response schema.
     if RoleCode.TENANT_USER in principal.role_codes or RoleCode.BRAND_USER in principal.role_codes:
         raise HTTPException(status_code=403, detail="Usage summary unavailable for this role")
     metrics = await AnalyticsService(session).tenant_summary(principal.tenant_id)

@@ -1,3 +1,4 @@
+# FastAPI route handlers live here; they validate request inputs, call services, and return response schemas.
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
@@ -20,6 +21,8 @@ async def create_folder(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    # Serves the folder creation endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
     folder = await FolderService(session).create(principal.tenant_id, brand_scope, principal.user_id, payload.name, payload.description)
@@ -32,6 +35,8 @@ async def list_folders(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> list[dict]:
+    # Serves the folders listing endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
     folders = await FolderService(session).list(principal.tenant_id, brand_scope)
@@ -46,6 +51,8 @@ async def rename_folder(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    # Serves the rename folder endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
     folder = await FolderService(session).rename_scoped(principal.tenant_id, brand_scope, folder_id, payload.name)
@@ -59,6 +66,8 @@ async def delete_folder(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> MessageResponse:
+    # Serves the folder deletion endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
     await FolderService(session).delete_scoped(principal.tenant_id, brand_scope, folder_id)
@@ -72,6 +81,8 @@ async def move_content(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> MessageResponse:
+    # Serves the move content endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
     await FolderService(session).move_content_scoped(principal.tenant_id, brand_scope, payload.content_version_id, payload.folder_id)

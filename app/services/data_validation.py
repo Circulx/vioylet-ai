@@ -1,3 +1,4 @@
+# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
@@ -42,9 +43,12 @@ from app.utils.palette_roles import derive_palette_roles, is_soft_neutral_color,
 
 
 class DataValidatorService:
+    # Business layer for data validator; routes and workers pass validated inputs here and receive domain
+    # results back.
     TEMPLATE_PALETTE_DISTANCE_TOLERANCE = 36.0
 
     def __init__(self, session: AsyncSession) -> None:
+        # Wires the repositories and helper services this workflow reuses across its public methods.
         self.session = session
         self.settings = get_settings()
         self.brands = BrandSpaceRepository(session)
@@ -74,6 +78,8 @@ class DataValidatorService:
         self.intelligence = BrandIntelligenceService()
 
     async def refresh_brand_context(self, brand_space_id: UUID) -> tuple[BrandSpace, ResolvedBrandContextSnapshot]:
+        # Runs the refresh brand context service flow and persists the resulting state before returning it to
+        # the route or worker.
         brand = await self.brands.get(brand_space_id)
         if not brand:
             raise NotFoundError("Brand Space not found")
@@ -118,6 +124,8 @@ class DataValidatorService:
             self.session.add(conflict)
             warnings.append(conflict.details_json.get("summary") or conflict.conflict_type.replace("_", " ").title())
 
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for asset in assets:
             result = await self._upsert_validation_result_for_asset(
                 asset=asset,
@@ -128,6 +136,8 @@ class DataValidatorService:
                 excluded_asset_ids.append(str(asset.id))
 
         identity = dict(base_context.get("identity", {}))
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if logo_summary["logos"]:
             identity["logo_assets"] = logo_summary["logos"]
             identity["logo_asset_ids"] = [logo["asset_id"] for logo in logo_summary["logos"]]
@@ -145,6 +155,8 @@ class DataValidatorService:
             visual_identity["typography"] = typography_summary
         if reference_summary["templates"]:
             visual_identity["template_intelligence"] = reference_summary["templates"]
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if reference_summary.get("synthesis"):
             visual_identity["design_system"] = reference_summary["synthesis"]
             if reference_summary["synthesis"].get("component_motifs"):
@@ -263,6 +275,8 @@ class DataValidatorService:
         return brand, snapshot
 
     async def get_validation_summary(self, tenant_id: UUID, brand_space_id: UUID) -> dict:
+        # Runs the validation summary service flow by coordinating repositories, validators, and integrations,
+        # then returns domain data.
         snapshot = await self.snapshots.latest_for_brand(tenant_id, brand_space_id)
         conflicts = await self.conflicts.list_for_brand(tenant_id, brand_space_id)
         assets = await self.assets.list_by_brand(brand_space_id, tenant_id)
@@ -276,10 +290,14 @@ class DataValidatorService:
         }
 
     async def get_latest_snapshot(self, tenant_id: UUID, brand_space_id: UUID) -> ResolvedBrandContextSnapshot | None:
+        # Runs the latest snapshot service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         return await self.snapshots.latest_for_brand(tenant_id, brand_space_id)
 
     @staticmethod
     def _hex_to_rgb(value: str) -> tuple[int, int, int] | None:
+        # Internal helper for hex to rgb; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         normalized = normalize_hex(value)
         if not normalized:
             return None
@@ -288,6 +306,8 @@ class DataValidatorService:
 
     @staticmethod
     def _rgb_distance(left: tuple[int, int, int], right: tuple[int, int, int]) -> float:
+        # Internal helper for rgb distance; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         return sum((left[index] - right[index]) ** 2 for index in range(3)) ** 0.5
 
     @classmethod
@@ -297,6 +317,8 @@ class DataValidatorService:
         palette_hexes: set[str],
         palette_rgbs: list[tuple[int, int, int]],
     ) -> bool:
+        # Internal helper for template color matches palette; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         normalized = normalize_hex(color)
         if not normalized:
             return False
@@ -314,9 +336,13 @@ class DataValidatorService:
 
     @classmethod
     def _normalized_palette_role_map(cls, entries: list[dict[str, str]]) -> dict[str, str]:
+        # Internal helper for normalized palette role map; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         return derive_palette_roles({"palette_entries": entries})
 
     async def _build_base_context(self, brand: BrandSpace) -> dict:
+        # Internal helper for base context; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         sections = await self.sections.list_current_sections(brand.id, brand.tenant_id)
         personas = await self.personas.list_by_brand(brand.id, brand.tenant_id)
         guardrails = await self.guardrails.list_by_brand(brand.id, brand.tenant_id)
@@ -330,11 +356,15 @@ class DataValidatorService:
         )
 
     async def _resolve_logos(self, tenant_id: UUID, brand_space_id: UUID) -> dict:
+        # Internal helper for logos; it keeps the public service method focused on orchestration instead of low-
+        # level shaping.
         logos = await self.logo_assets.list_for_brand(tenant_id, brand_space_id)
         payload: list[dict] = []
         aggregated_rules = {"compatibility": [], "size_rules": [], "fonts": [], "taglines": []}
         primary_storage_path: str | None = None
         seen_asset_ids: set[str] = set()
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for logo in logos:
             metadata = await self.logo_metadata.get_by_logo_asset(logo.id)
             source_asset = await self.assets.get_scoped(logo.knowledge_asset_id, tenant_id, brand_space_id)
@@ -375,6 +405,8 @@ class DataValidatorService:
             tenant_id=tenant_id,
             active_only=True,
         )
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for source_asset in fallback_assets:
             asset_id = str(source_asset.id)
             if asset_id in seen_asset_ids:
@@ -420,6 +452,8 @@ class DataValidatorService:
         }
 
     async def _resolve_audience(self, tenant_id: UUID, brand_space_id: UUID) -> dict:
+        # Internal helper for audience; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         assets = await self.audience_assets.list_for_brand(tenant_id, brand_space_id)
         segments: list[dict] = []
         behaviors: list[str] = []
@@ -436,6 +470,8 @@ class DataValidatorService:
         summaries: list[str] = []
         research_evidence: list[dict] = []
         quality_snapshots: list[dict[str, float]] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for asset in assets:
             structured = await self.audience_structured.get_by_audience_asset(asset.id)
             if not structured:
@@ -517,6 +553,8 @@ class DataValidatorService:
                         research_evidence[-1]["ranking_score"] = self._research_evidence_rank(research_evidence[-1])
         deduped_research_evidence: list[dict] = []
         seen_research_keys: set[tuple[str, str, str]] = set()
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for item in sorted(
             research_evidence,
             key=lambda entry: (
@@ -578,7 +616,11 @@ class DataValidatorService:
         references: list[dict],
         templates: list[dict],
     ) -> list[dict[str, object]]:
+        # Internal helper for template analysis records; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         records: list[dict[str, object]] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for reference in references:
             if not isinstance(reference, dict):
                 continue
@@ -617,6 +659,8 @@ class DataValidatorService:
                     "brand_score": reference.get("brand_score"),
                 }
             )
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for template in templates:
             if not isinstance(template, dict):
                 continue
@@ -655,6 +699,8 @@ class DataValidatorService:
 
     @staticmethod
     def _most_common_values(values: list[str], *, limit: int = 3) -> list[str]:
+        # Internal helper for most common values; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         cleaned = [str(value).strip() for value in values if str(value).strip()]
         if not cleaned:
             return []
@@ -667,11 +713,15 @@ class DataValidatorService:
 
     @staticmethod
     def _supports_visual_signal(value: object) -> bool:
+        # Internal helper for supports visual signal; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         normalized = str(value or "").strip().lower()
         return normalized not in {"", "none", "no", "false", "0", "null", "unknown"}
 
     @staticmethod
     def _top_ratio(values: list[str], target: str) -> float:
+        # Internal helper for top ratio; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         if not values:
             return 0.0
         normalized = [str(item or "").strip().lower() for item in values if str(item or "").strip()]
@@ -682,6 +732,8 @@ class DataValidatorService:
 
     @staticmethod
     def _rendering_family(rendering_mode: str) -> str:
+        # Internal helper for rendering family; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         normalized = str(rendering_mode or "").strip().lower()
         return {
             "photo": "photo",
@@ -691,6 +743,8 @@ class DataValidatorService:
 
     @classmethod
     def _profile_visual_family(cls, profile: dict[str, object]) -> str:
+        # Internal helper for profile visual family; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         image_mode = str(profile.get("image_mode") or "").strip().lower()
         rendering_mode = str(profile.get("rendering_mode") or "").strip().lower()
         depth_mode = str(profile.get("depth_mode") or "").strip().lower()
@@ -719,6 +773,8 @@ class DataValidatorService:
         mixed_label: str = "mixed",
         min_ratio: float = 0.5,
     ) -> str | None:
+        # Internal helper for dominant policy value; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if not ordered_values:
             return None
         top_value = ordered_values[0]
@@ -729,6 +785,8 @@ class DataValidatorService:
 
     @classmethod
     def _visual_style_profile_from_record(cls, record: dict[str, object]) -> dict[str, object]:
+        # Internal helper for visual style profile from record; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if not isinstance(record, dict):
             return {}
         existing = record.get("visual_style_profile") if isinstance(record.get("visual_style_profile"), dict) else {}
@@ -771,6 +829,7 @@ class DataValidatorService:
         )
 
         image_mode = str(existing.get("image_mode") or "").strip().lower()
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if not image_mode:
             if "3d" in signal_text:
                 image_mode = "3d"
@@ -784,6 +843,7 @@ class DataValidatorService:
                 image_mode = "mixed" if rendering_style == "mixed" else "illustration"
 
         depth_mode = str(existing.get("depth_mode") or "").strip().lower()
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if not depth_mode:
             if depth_style == "true_3d":
                 depth_mode = "true_3d"
@@ -797,6 +857,7 @@ class DataValidatorService:
                 depth_mode = "flat"
 
         rendering_mode = str(existing.get("rendering_mode") or "").strip().lower()
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if not rendering_mode:
             if rendering_style == "3d_render":
                 rendering_mode = "3d_render"
@@ -917,6 +978,8 @@ class DataValidatorService:
 
     @classmethod
     def _synthesize_visual_style_policy(cls, records: list[dict[str, object]]) -> dict[str, object]:
+        # Internal helper for synthesize visual style policy; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         profiles = [cls._visual_style_profile_from_record(record) for record in records if isinstance(record, dict)]
         profiles = [profile for profile in profiles if profile]
         if not profiles:
@@ -952,6 +1015,8 @@ class DataValidatorService:
             or str(profile.get("depth_mode") or "") in {"true_3d", "3d_illusion"}
             or str(profile.get("rendering_mode") or "") == "3d_render"
         )
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if three_d_count == 0:
             three_d_usage = "none"
         else:
@@ -1017,9 +1082,13 @@ class DataValidatorService:
 
     @classmethod
     def _synthesize_component_motifs(cls, records: list[dict[str, object]]) -> dict[str, dict[str, object]]:
+        # Internal helper for synthesize component motifs; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         total = max(len(records), 1)
         support: dict[str, int] = {}
         chosen: dict[str, dict[str, object]] = {}
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for record in records:
             motifs = record.get("component_motifs") if isinstance(record.get("component_motifs"), dict) else {}
             for key, value in motifs.items():
@@ -1048,6 +1117,8 @@ class DataValidatorService:
 
     @classmethod
     def _synthesize_editorial_patterns(cls, records: list[dict[str, object]]) -> dict[str, object]:
+        # Internal helper for synthesize editorial patterns; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         story_arc_counter: Counter[tuple[str, ...]] = Counter()
         headline_patterns: list[str] = []
         sample_summaries: list[str] = []
@@ -1079,6 +1150,8 @@ class DataValidatorService:
             limit=3,
         )
         disclaimer_support = 0
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for item in records:
             editorial_dna = item.get("editorial_dna") if isinstance(item.get("editorial_dna"), dict) else {}
             story_arc = tuple(
@@ -1125,6 +1198,8 @@ class DataValidatorService:
 
     @classmethod
     def _synthesize_reference_system(cls, references: list[dict], templates: list[dict]) -> dict[str, object]:
+        # Internal helper for synthesize reference system; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         records = cls._template_analysis_records(references, templates)
         if not records:
             return {}
@@ -1135,6 +1210,8 @@ class DataValidatorService:
         logo_anchors = cls._most_common_values([str(item.get("logo_anchor") or "") for item in records], limit=2)
 
         zone_counter: Counter[str] = Counter()
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for record in records:
             for zone in record.get("editable_zones") or []:
                 if not isinstance(zone, dict):
@@ -1167,6 +1244,8 @@ class DataValidatorService:
 
         gradient_preferences: list[dict[str, object]] = []
         seen_gradients: set[tuple[str, str, str, str]] = set()
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for record in records:
             for gradient in record.get("gradients") or []:
                 if not isinstance(gradient, dict):
@@ -1451,6 +1530,8 @@ class DataValidatorService:
         visual_style_policy = cls._synthesize_visual_style_policy(records)
         format_specific_patterns: dict[str, dict[str, object]] = {}
         format_visual_style_profiles: dict[str, dict[str, object]] = {}
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for family in ("static", "carousel", "infographic"):
             family_records = [
                 item
@@ -1550,6 +1631,8 @@ class DataValidatorService:
         palette_summary: dict,
         typography_summary: dict,
     ) -> tuple[dict, list[DataConflict]]:
+        # Internal helper for references and templates; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         templates = await self.templates.list_by_brand(brand_space_id, tenant_id)
         all_references = await self.visual_references.list_for_brand(tenant_id, brand_space_id)
 
@@ -1585,6 +1668,8 @@ class DataValidatorService:
         conflicts: list[DataConflict] = []
         reference_payload = []
         template_payload = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for reference in references:
             style_characteristics = (
                 dict(reference.style_characteristics)
@@ -1615,6 +1700,8 @@ class DataValidatorService:
                     "template_id": str(reference.template_id) if reference.template_id else None,
                 }
             )
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for template in templates:
             analysis = dict(template.analysis_json or {})
             template_profile = self._visual_style_profile_from_record(
@@ -1701,6 +1788,8 @@ class DataValidatorService:
         return {"references": reference_payload, "templates": template_payload, "synthesis": synthesis}, conflicts
 
     async def _resolve_mood_boards(self, tenant_id: UUID, brand_space_id: UUID) -> list[dict]:
+        # Internal helper for mood boards; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         boards = await self.mood_boards.list_for_brand(tenant_id, brand_space_id)
         return [
             {
@@ -1715,6 +1804,8 @@ class DataValidatorService:
         ]
 
     async def _resolve_reusable_assets(self, tenant_id: UUID, brand_space_id: UUID) -> dict:
+        # Internal helper for reusable assets; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         assets = await self.reusable_assets.list_for_brand(tenant_id, brand_space_id)
         approved: list[dict] = []
         reference_only: list[dict] = []
@@ -1722,6 +1813,8 @@ class DataValidatorService:
         icon_asset_ids: list[str] = []
         decorative_asset_ids: list[str] = []
         logo_variant_asset_ids: list[str] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for asset in assets:
             if not asset.is_active:
                 continue
@@ -1795,6 +1888,8 @@ class DataValidatorService:
         tenant_id: UUID,
         brand_space_id: UUID,
     ) -> tuple[dict, list[str], list[DataConflict], set[str]]:
+        # Internal helper for palette; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         entries = await self.palette_entries.list_for_brand(tenant_id, brand_space_id)
         warnings: list[str] = []
         conflicts: list[DataConflict] = []
@@ -1802,6 +1897,8 @@ class DataValidatorService:
         duplicate_roles: dict[str, set[str]] = defaultdict(set)
         involved_asset_ids: set[str] = set()
         payload = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for entry in entries:
             payload.append(
                 {
@@ -1823,6 +1920,8 @@ class DataValidatorService:
             duplicate_roles[entry.hex_code].add(entry.role)
             if entry.knowledge_asset_id:
                 involved_asset_ids.add(str(entry.knowledge_asset_id))
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for hex_code, roles in duplicate_roles.items():
             if len(roles) < 2:
                 continue
@@ -1846,11 +1945,15 @@ class DataValidatorService:
         return {"entries": payload, "role_map": role_map}, warnings, conflicts, involved_asset_ids
 
     async def _resolve_typography(self, tenant_id: UUID, brand_space_id: UUID) -> dict:
+        # Internal helper for typography; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         guides = await self.typography_guides.list_for_brand(tenant_id, brand_space_id)
         font_families = []
         hierarchy = {}
         usage_patterns = {}
         uploaded_font_assets: list[dict] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for guide in guides:
             font_families.extend(guide.font_families)
             hierarchy.update(guide.style_hierarchy)
@@ -1895,6 +1998,8 @@ class DataValidatorService:
         }
 
     async def _resolve_word_banks(self, tenant_id: UUID, brand_space_id: UUID) -> dict:
+        # Internal helper for word banks; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         uploads = await self.word_bank_uploads.list_for_brand(tenant_id, brand_space_id)
         upload_ids = [upload.id for upload in uploads]
         positive = await self.positive_words.list_for_brand(tenant_id, brand_space_id) if upload_ids else []
@@ -1914,6 +2019,8 @@ class DataValidatorService:
 
     async def _resolve_legal_disclaimers(self, tenant_id: UUID, brand_space_id: UUID) -> list[dict]:
         """Resolve legal disclaimers for the brand"""
+        # Resolves the resolve legal disclaimers flow by coordinating repositories, validators, and downstream
+        # integrations as needed.
         from app.repositories.brand_assets import BrandLegalAssetRepository
 
         legal_repo = BrandLegalAssetRepository(self.session)
@@ -1940,6 +2047,8 @@ class DataValidatorService:
 
     async def _resolve_cta_templates(self, tenant_id: UUID, brand_space_id: UUID) -> list[dict]:
         """Resolve CTA templates for the brand"""
+        # Resolves the resolve cta templates flow by coordinating repositories, validators, and downstream
+        # integrations as needed.
         from app.repositories.brand_assets import BrandCTATemplateRepository
 
         cta_repo = BrandCTATemplateRepository(self.session)
@@ -1972,6 +2081,8 @@ class DataValidatorService:
         palette_asset_ids: set[str],
         conflict_records: list[DataConflict],
     ) -> AssetValidationResult:
+        # Internal helper for validation result for asset; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         conflict_hits = [
             conflict
             for conflict in conflict_records
@@ -1982,6 +2093,7 @@ class DataValidatorService:
         warnings = [warning for warning in warnings if warning]
         validation_state = asset.validation_state or AssetValidationState.PENDING
         exclusion_reason = None
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if asset.lifecycle_state == "failed" or not asset.is_active:
             validation_state = AssetValidationState.EXCLUDED
             exclusion_reason = asset.processing_error or "Asset is inactive and excluded from generation."
@@ -2011,6 +2123,8 @@ class DataValidatorService:
             "resolved_payload": asset.normalized_data_json or asset.structured_data_json,
             "confidence": asset.classification_confidence,
         }
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if existing:
             existing.validation_state = payload["validation_state"]
             existing.warnings = payload["warnings"]
@@ -2025,6 +2139,8 @@ class DataValidatorService:
 
     @staticmethod
     def _dedupe_list(values: list[str]) -> list[str]:
+        # Internal helper for dedupe list; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         seen: set[str] = set()
         deduped: list[str] = []
         for value in values:
@@ -2051,6 +2167,8 @@ class DataValidatorService:
         desired_outcomes: list[str],
         limit: int = 6,
     ) -> list[str]:
+        # Internal helper for ranked research highlights; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         lanes: dict[str, list[str]] = {
             "proof_cues": [],
             "trust_signals": [],
@@ -2060,6 +2178,8 @@ class DataValidatorService:
             "summaries": cls._dedupe_list(summaries),
             "general": [],
         }
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for item in research_evidence:
             field = str(item.get("field") or "").strip().casefold()
             value = str(item.get("value") or "").strip()
@@ -2067,6 +2187,8 @@ class DataValidatorService:
                 continue
             lane_name = field if field in lanes else "general"
             lanes[lane_name].append(value)
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for field, values in (
             ("proof_cues", proof_cues),
             ("trust_signals", trust_signals),
@@ -2083,6 +2205,8 @@ class DataValidatorService:
         positions = {lane_name: 0 for lane_name in lanes}
 
         def _append_from_lane(lane_name: str) -> bool:
+            # Internal helper for append from lane; it keeps the public service method focused on orchestration
+            # instead of low-level shaping.
             lane = lanes.get(lane_name, [])
             index = positions[lane_name]
             while index < len(lane):
@@ -2136,6 +2260,8 @@ class DataValidatorService:
 
     @staticmethod
     def _dedupe_dict_list(values: list[dict], key: str) -> list[dict]:
+        # Internal helper for dedupe dict list; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         seen: set[str] = set()
         deduped: list[dict] = []
         for value in values:
@@ -2151,6 +2277,8 @@ class DataValidatorService:
 
     @staticmethod
     def _coerce_float(value: object, fallback: float = 0.0) -> float:
+        # Internal helper for coerce float; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         try:
             return float(value)
         except (TypeError, ValueError):
@@ -2158,6 +2286,8 @@ class DataValidatorService:
 
     @staticmethod
     def _coerce_int(value: object, fallback: int = 0) -> int:
+        # Internal helper for coerce int; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         try:
             return int(value)
         except (TypeError, ValueError):
@@ -2165,6 +2295,8 @@ class DataValidatorService:
 
     @classmethod
     def _research_evidence_rank(cls, entry: dict[str, object]) -> float:
+        # Internal helper for research evidence rank; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         item_confidence = cls._coerce_float(entry.get("confidence"))
         evidence_confidence = cls._coerce_float(entry.get("evidence_confidence"))
         source_agreement_score = cls._coerce_float(entry.get("source_agreement_score"))
@@ -2181,6 +2313,8 @@ class DataValidatorService:
 
     @staticmethod
     def _trust_level_for_validation_state(validation_state: str | None) -> str:
+        # Internal helper for trust level for validation state; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         normalized = str(validation_state or AssetValidationState.PENDING).lower()
         if normalized == AssetValidationState.CLEAN:
             return "trusted"

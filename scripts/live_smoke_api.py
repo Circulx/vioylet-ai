@@ -1,3 +1,4 @@
+# API wiring for the backend surface; routers in this package expose service workflows over HTTP.
 from __future__ import annotations
 
 import json
@@ -14,6 +15,7 @@ import psycopg
 
 @dataclass
 class SmokeResult:
+    # Groups the smoke result behavior used by this part of the backend flow.
     name: str
     ok: bool
     detail: str
@@ -21,10 +23,12 @@ class SmokeResult:
 
 
 def _env(name: str, default: str) -> str:
+    # Handles env for callers in this backend module.
     return os.getenv(name, default)
 
 
 def get_config() -> dict[str, Any]:
+    # Fetches config for callers in this backend module.
     return {
         "base_url": _env("SMOKE_BASE_URL", "http://127.0.0.1:8001"),
         "db_url": _env("SMOKE_DB_URL", "postgresql://violyt:violyt@localhost:5432/violyt"),
@@ -40,6 +44,7 @@ def get_config() -> dict[str, Any]:
 
 
 def probe_database(db_url: str) -> None:
+    # Handles probe database for callers in this backend module.
     conn = psycopg.connect(db_url, connect_timeout=5)
     try:
         with conn.cursor() as cursor:
@@ -50,6 +55,7 @@ def probe_database(db_url: str) -> None:
 
 
 def start_server(base_url: str) -> subprocess.Popen[str]:
+    # Handles start server for callers in this backend module.
     port = base_url.rsplit(":", 1)[-1]
     env = os.environ.copy()
     process = subprocess.Popen(
@@ -64,6 +70,7 @@ def start_server(base_url: str) -> subprocess.Popen[str]:
 
 
 def wait_for_server(base_url: str, timeout_seconds: int) -> None:
+    # Handles wait for server for callers in this backend module.
     deadline = time.time() + timeout_seconds
     last_error = "server did not respond"
     while time.time() < deadline:
@@ -79,6 +86,7 @@ def wait_for_server(base_url: str, timeout_seconds: int) -> None:
 
 
 def run_smoke(config: dict[str, Any]) -> list[SmokeResult]:
+    # Runs smoke for callers in this backend module.
     results: list[SmokeResult] = []
     base_url = config["base_url"]
     brand_header = {"X-Brand-Space-Id": config["brand_space_id"]}
@@ -89,6 +97,7 @@ def run_smoke(config: dict[str, Any]) -> list[SmokeResult]:
         "size": {"width": 1200, "height": 627},
     }
 
+    # Scopes the resource lifetime tightly around the operation that needs it.
     with httpx.Client(base_url=base_url, timeout=30.0) as client:
         activation_response = client.post(
             "/api/v1/auth/activate",
@@ -346,6 +355,7 @@ def run_smoke(config: dict[str, Any]) -> list[SmokeResult]:
 
 
 def main() -> int:
+    # Runs main for callers in this backend module.
     config = get_config()
     report: dict[str, Any] = {"config": {k: v for k, v in config.items() if "password" not in k and "token" not in k}, "results": []}
     process: subprocess.Popen[str] | None = None

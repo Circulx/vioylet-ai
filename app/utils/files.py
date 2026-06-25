@@ -1,3 +1,4 @@
+# Utility helpers collect shared formatting, parsing, and normalization rules used across services.
 from __future__ import annotations
 
 import base64
@@ -10,6 +11,8 @@ _SAFE_FILENAME_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 def estimate_decoded_base64_size(content_base64: str) -> int:
+    # Handles estimate decoded base64 size as a reusable helper for services that need the same formatting or
+    # normalization rule.
     encoded = content_base64.split(",", 1)[1] if "," in content_base64 else content_base64
     stripped = "".join(encoded.split())
     padding = stripped.count("=")
@@ -17,6 +20,8 @@ def estimate_decoded_base64_size(content_base64: str) -> int:
 
 
 def decode_base64_content(content_base64: str, *, max_bytes: int | None = None) -> bytes:
+    # Decodes base64 content as a reusable helper for services that need the same formatting or normalization
+    # rule.
     if "," in content_base64:
         _, encoded = content_base64.split(",", 1)
     else:
@@ -30,6 +35,8 @@ def decode_base64_content(content_base64: str, *, max_bytes: int | None = None) 
 
 
 def sanitize_filename(filename: str, *, fallback: str = "file", max_length: int = 160) -> str:
+    # Handles sanitize filename as a reusable helper for services that need the same formatting or normalization
+    # rule.
     raw_name = Path(filename or fallback).name
     stem = _SAFE_FILENAME_CHARS.sub("-", Path(raw_name).stem).strip(" ._-")
     suffix = _SAFE_FILENAME_CHARS.sub("", Path(raw_name).suffix)
@@ -39,4 +46,5 @@ def sanitize_filename(filename: str, *, fallback: str = "file", max_length: int 
 
 
 def ensure_parent(path: Path) -> None:
+    # Ensures parent as a reusable helper for services that need the same formatting or normalization rule.
     path.parent.mkdir(parents=True, exist_ok=True)

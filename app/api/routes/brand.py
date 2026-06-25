@@ -1,3 +1,4 @@
+# FastAPI route handlers live here; they validate request inputs, call services, and return response schemas.
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -31,6 +32,8 @@ router = APIRouter()
 
 
 def trust_level_for_validation_state(validation_state: str | None) -> str:
+    # Serves the trust level for validation state endpoint; it uses FastAPI dependencies, delegates work to
+    # services, and returns the response schema.
     normalized = str(validation_state or "pending").lower()
     if normalized == "clean":
         return "trusted"
@@ -47,6 +50,8 @@ async def create_brand(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> BrandResponse:
+    # Serves the brand creation endpoint; it uses FastAPI dependencies, delegates work to services, and returns
+    # the response schema.
     forbid_super_admin_brand_access(principal)
     brand = await BrandSpaceService(session).create_brand(principal.tenant_id, principal.user_id, payload)
     return BrandResponse.model_validate(brand)
@@ -57,6 +62,8 @@ async def list_brands(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> list[BrandResponse]:
+    # Serves the brands listing endpoint; it uses FastAPI dependencies, delegates work to services, and returns
+    # the response schema.
     forbid_super_admin_brand_access(principal)
     brands = await BrandSpaceService(session).list_brands(principal.tenant_id, principal.user_id, principal.role_codes)
     return [BrandResponse.model_validate(item) for item in brands]
@@ -68,6 +75,8 @@ async def get_brand(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> BrandResponse:
+    # Serves the brand detail lookup endpoint; it checks brand scope, delegates work to services, and returns
+    # the response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
     brand = await BrandSpaceService(session).brands.get_scoped(principal.tenant_id, brand_id)
@@ -82,6 +91,8 @@ async def get_brand_usage(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> BrandUsageResponse:
+    # Serves the brand usage detail lookup endpoint; it checks brand scope, delegates work to services, and
+    # returns the response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
     if not principal.tenant_id:
@@ -97,6 +108,8 @@ async def update_brand(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> BrandResponse:
+    # Serves the brand update endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
     brand = await BrandSpaceService(session).update_brand(principal.tenant_id, brand_id, payload)
@@ -111,6 +124,8 @@ async def upsert_section(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> BrandResponse:
+    # Serves the upsert section endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
     try:
@@ -132,6 +147,8 @@ async def upsert_sections(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> BrandResponse:
+    # Serves the upsert sections endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
     brand = await BrandSpaceService(session).upsert_sections(principal.tenant_id, brand_id, payload)
@@ -145,6 +162,8 @@ async def finalize_brand(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> BrandResponse:
+    # Serves the brand finalization endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
     brand = await BrandSpaceService(session).finalize_brand(principal.tenant_id, brand_id)
@@ -157,6 +176,8 @@ async def publish_brand(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> BrandResponse:
+    # Serves the brand publish endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
     brand = await BrandSpaceService(session).publish_brand(principal.tenant_id, brand_id)
@@ -169,6 +190,8 @@ async def unpublish_brand(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> BrandResponse:
+    # Serves the brand unpublish endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
     brand = await BrandSpaceService(session).unpublish_brand(principal.tenant_id, brand_id)
@@ -181,6 +204,8 @@ async def archive_brand(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> BrandResponse:
+    # Serves the brand archive endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
     brand = await BrandSpaceService(session).archive_brand(principal.tenant_id, brand_id)
@@ -193,6 +218,8 @@ async def restore_brand(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> BrandResponse:
+    # Serves the brand restore endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
     brand = await BrandSpaceService(session).restore_brand(principal.tenant_id, brand_id)
@@ -205,6 +232,8 @@ async def delete_brand(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> MessageResponse:
+    # Serves the brand deletion endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
     await BrandSpaceService(session).delete_brand(principal.tenant_id, brand_id)
@@ -217,6 +246,8 @@ async def brand_overview(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> BrandOverviewResponse:
+    # Serves the brand overview endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
     service = BrandSpaceService(session)
@@ -242,6 +273,8 @@ async def brand_validation_summary(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> ValidationSummaryResponse:
+    # Serves the brand validation summary endpoint; it checks brand scope, delegates work to services, and
+    # returns the response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
     validator = DataValidatorService(session)
@@ -278,6 +311,8 @@ async def brand_resolved_context(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> ResolvedBrandContextResponse:
+    # Serves the brand resolved context endpoint; it checks brand scope, delegates work to services, and returns
+    # the response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
     validator = DataValidatorService(session)

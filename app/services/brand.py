@@ -1,3 +1,4 @@
+# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
 from uuid import UUID
@@ -29,7 +30,10 @@ from app.utils.text import slugify
 
 
 class BrandSpaceService:
+    # Business layer for brand space; routes and workers pass validated inputs here and receive domain results
+    # back.
     def __init__(self, session: AsyncSession) -> None:
+        # Wires the repositories and helper services this workflow reuses across its public methods.
         self.session = session
         self.brands = BrandSpaceRepository(session)
         self.sections = BrandSectionRepository(session)
@@ -44,6 +48,8 @@ class BrandSpaceService:
 
     @staticmethod
     def _clamp_percent(value: object) -> int:
+        # Internal helper for clamp percent; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         try:
             numeric_value = int(value)
         except (TypeError, ValueError):
@@ -52,11 +58,15 @@ class BrandSpaceService:
 
     @staticmethod
     def _metric_percent(used: int, allocated_limit: float) -> int:
+        # Internal helper for metric percent; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if allocated_limit <= 0:
             return 0
         return max(0, min(round((used / allocated_limit) * 100), 100))
 
     async def _commit_and_refresh_brand(self, brand: BrandSpace) -> BrandSpace:
+        # Internal helper for commit and refresh brand; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         await self.session.commit()
         await self.session.refresh(brand)
         return brand
@@ -74,6 +84,8 @@ class BrandSpaceService:
         )
 
     async def create_brand(self, tenant_id: UUID, created_by: UUID, payload: BrandCreateRequest) -> BrandSpace:
+        # Runs the brand service flow and persists the resulting state before returning it to the route or
+        # worker.
         await self.usage.enforce(tenant_id, UsageMetricCode.BRAND_SPACES)
         slug = slugify(payload.identity.brand_name)
         brand = BrandSpace(
@@ -108,6 +120,8 @@ class BrandSpaceService:
                 completion_percent=100,
             )
         )
+        # The payload/context shape drives this branch because downstream serializers depend on consistent
+        # fields.
         if payload.foundations:
             await self.sections.add(
                 BrandConfigurationSection(
@@ -128,6 +142,8 @@ class BrandSpaceService:
                     completion_percent=0,
                 )
             )
+        # The payload/context shape drives this branch because downstream serializers depend on consistent
+        # fields.
         if payload.voice_tone:
             await self.sections.add(
                 BrandConfigurationSection(
@@ -148,6 +164,8 @@ class BrandSpaceService:
                     completion_percent=0,
                 )
             )
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for section_code in ["personas", "guardrails", "knowledge", "objectives", "visual_identity", "prompt_intelligence", "review"]:
             await self.sections.add(
                 BrandConfigurationSection(
@@ -163,6 +181,8 @@ class BrandSpaceService:
         return await self.refresh_context(brand.id)
 
     async def refresh_context(self, brand_space_id: UUID) -> BrandSpace:
+        # Runs the refresh context service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         brand, _snapshot = await self.validator.refresh_brand_context(brand_space_id)
         try:
             sections = await self.sections.list_current_sections(brand_space_id, brand.tenant_id)
@@ -180,6 +200,8 @@ class BrandSpaceService:
         existing_sections: list[BrandConfigurationSection],
         section_versions: dict[str, int],
     ) -> None:
+        # Internal helper for section upsert; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         for existing in existing_sections:
             if existing.section_code == payload.section_code:
                 existing.is_current = False
@@ -197,6 +219,8 @@ class BrandSpaceService:
             )
         )
 
+        # The payload/context shape drives this branch because downstream serializers depend on consistent
+        # fields.
         if payload.section_code == "identity":
             brand.name = payload.payload.get("brand_name", brand.name)
             brand.description = payload.payload.get("brand_description", brand.description)
@@ -222,6 +246,8 @@ class BrandSpaceService:
                 "visual_identity": payload.payload,
             }
 
+        # The payload/context shape drives this branch because downstream serializers depend on consistent
+        # fields.
         if payload.section_code == "personas":
             existing_personas = await self.personas.list_by_brand(brand_space_id, tenant_id)
             for existing in existing_personas:
@@ -232,6 +258,8 @@ class BrandSpaceService:
                 if created.is_default:
                     default_persona_id = created.id
             brand.default_persona_id = default_persona_id
+        # The payload/context shape drives this branch because downstream serializers depend on consistent
+        # fields.
         if payload.section_code == "guardrails":
             existing_guardrails = await self.guardrails.list_by_brand(brand_space_id, tenant_id)
             for existing in existing_guardrails:
@@ -251,6 +279,8 @@ class BrandSpaceService:
                 await self.objectives.add(Objective(tenant_id=tenant_id, brand_space_id=brand_space_id, **item))
 
     async def upsert_section(self, tenant_id: UUID, brand_space_id: UUID, payload: BrandSectionUpsertRequest) -> BrandSpace:
+        # Runs the section service flow and persists the resulting state before returning it to the route or
+        # worker.
         brand = await self.brands.get_scoped(tenant_id, brand_space_id)
         if not brand:
             raise NotFoundError("Brand Space not found")
@@ -267,6 +297,8 @@ class BrandSpaceService:
         return await self.refresh_context(brand_space_id)
 
     async def upsert_sections(self, tenant_id: UUID, brand_space_id: UUID, payload: BrandSectionsUpsertRequest) -> BrandSpace:
+        # Runs the sections service flow and persists the resulting state before returning it to the route or
+        # worker.
         brand = await self.brands.get_scoped(tenant_id, brand_space_id)
         if not brand:
             raise NotFoundError("Brand Space not found")
@@ -284,6 +316,8 @@ class BrandSpaceService:
         return await self.refresh_context(brand_space_id)
 
     async def update_brand(self, tenant_id: UUID, brand_space_id: UUID, payload: BrandUpdateRequest) -> BrandSpace:
+        # Runs the brand service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         brand = await self.brands.get_scoped(tenant_id, brand_space_id)
         if not brand:
             raise NotFoundError("Brand Space not found")
@@ -294,6 +328,8 @@ class BrandSpaceService:
         return await self._commit_and_refresh_brand(brand)
 
     async def get_usage_summary(self, tenant_id: UUID, brand_space_id: UUID) -> dict:
+        # Runs the usage summary service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         brand = await self.brands.get_scoped(tenant_id, brand_space_id)
         if not brand:
             raise NotFoundError("Brand Space not found")
@@ -373,9 +409,13 @@ class BrandSpaceService:
         }
 
     async def finalize_brand(self, tenant_id: UUID, brand_space_id: UUID) -> BrandSpace:
+        # Runs the brand service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         return await self.publish_brand(tenant_id, brand_space_id)
 
     async def publish_brand(self, tenant_id: UUID, brand_space_id: UUID) -> BrandSpace:
+        # Runs the brand service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         brand = await self.brands.get_scoped(tenant_id, brand_space_id)
         if not brand:
             raise NotFoundError("Brand Space not found")
@@ -389,6 +429,8 @@ class BrandSpaceService:
         return await self._commit_and_refresh_brand(brand)
 
     async def unpublish_brand(self, tenant_id: UUID, brand_space_id: UUID) -> BrandSpace:
+        # Runs the brand service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         brand = await self.brands.get_scoped(tenant_id, brand_space_id)
         if not brand:
             raise NotFoundError("Brand Space not found")
@@ -396,6 +438,8 @@ class BrandSpaceService:
         return await self._commit_and_refresh_brand(brand)
 
     async def archive_brand(self, tenant_id: UUID, brand_space_id: UUID) -> BrandSpace:
+        # Runs the brand service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         brand = await self.brands.get_scoped(tenant_id, brand_space_id)
         if not brand:
             raise NotFoundError("Brand Space not found")
@@ -403,6 +447,8 @@ class BrandSpaceService:
         return await self._commit_and_refresh_brand(brand)
 
     async def restore_brand(self, tenant_id: UUID, brand_space_id: UUID) -> BrandSpace:
+        # Runs the brand service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         brand = await self.brands.get_scoped(tenant_id, brand_space_id)
         if not brand:
             raise NotFoundError("Brand Space not found")
@@ -410,6 +456,8 @@ class BrandSpaceService:
         return await self._commit_and_refresh_brand(brand)
 
     async def delete_brand(self, tenant_id: UUID, brand_space_id: UUID) -> BrandSpace:
+        # Runs the brand service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         brand = await self.brands.get_scoped(tenant_id, brand_space_id)
         if not brand:
             raise NotFoundError("Brand Space not found")
@@ -417,6 +465,8 @@ class BrandSpaceService:
         return await self._commit_and_refresh_brand(brand)
 
     async def list_brands(self, tenant_id: UUID, user_id: UUID, role_codes: set[str]) -> list[BrandSpace]:
+        # Runs the brands service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         if RoleCode.BRAND_USER in role_codes:
             brand_ids = await self.members.list_brand_ids_for_user(user_id)
             all_brands = await self.brands.list_by_tenant(tenant_id)
@@ -424,6 +474,8 @@ class BrandSpaceService:
         return await self.brands.list_by_tenant(tenant_id)
 
     async def require_active(self, tenant_id: UUID, brand_space_id: UUID) -> BrandSpace:
+        # Runs the require active service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         brand = await self.brands.get_scoped(tenant_id, brand_space_id)
         if not brand:
             raise NotFoundError("Brand Space not found")

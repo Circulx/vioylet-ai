@@ -1,3 +1,4 @@
+# Core application plumbing lives here: settings, security helpers, dependency gates, and shared errors.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -20,6 +21,8 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 @dataclass
 class CurrentPrincipal:
+    # Core runtime shape for current principal; dependency and security helpers share this instead of passing
+    # loose dictionaries.
     user_id: UUID
     tenant_id: UUID | None
     email: str
@@ -27,9 +30,11 @@ class CurrentPrincipal:
     brand_space_ids: set[UUID] = field(default_factory=set)
 
     def has_any_role(self, *roles: str) -> bool:
+        # Handles request access rules so protected tenant or brand data is not touched too early.
         return any(role in self.role_codes for role in roles)
 
     def is_tenant_admin(self) -> bool:
+        # Handles is tenant admin for shared backend configuration, dependency injection, or error handling.
         return self.has_any_role(RoleCode.SUPER_ADMIN, RoleCode.TENANT_ADMIN)
 
 
@@ -37,6 +42,7 @@ async def get_current_principal(
     token: str = Depends(oauth2_scheme),
     session: AsyncSession = Depends(get_db_session),
 ) -> CurrentPrincipal:
+    # Returns shared current principal used by dependency injection and service initialization.
     try:
         payload = decode_token(token)
         user_id = UUID(payload["sub"])
@@ -71,7 +77,9 @@ async def get_current_principal(
 
 
 def require_roles(*role_codes: str):
+    # Handles request access rules so protected tenant or brand data is not touched too early.
     async def checker(principal: CurrentPrincipal = Depends(get_current_principal)) -> CurrentPrincipal:
+        # Handles checker for shared backend configuration, dependency injection, or error handling.
         if not principal.has_any_role(*role_codes):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
         return principal
@@ -80,10 +88,12 @@ def require_roles(*role_codes: str):
 
 
 async def get_brand_scope_header(x_brand_space_id: str | None = Header(default=None)) -> UUID | None:
+    # Fetches request access rules so protected tenant or brand data is not touched too early.
     return UUID(x_brand_space_id) if x_brand_space_id else None
 
 
 def require_brand_scope(brand_scope: UUID | None) -> UUID:
+    # Handles request access rules so protected tenant or brand data is not touched too early.
     if not brand_scope:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -93,6 +103,7 @@ def require_brand_scope(brand_scope: UUID | None) -> UUID:
 
 
 def assert_tenant_access(principal: CurrentPrincipal, tenant_id: UUID) -> None:
+    # Handles request access rules so protected tenant or brand data is not touched too early.
     if principal.has_any_role(RoleCode.SUPER_ADMIN):
         return
     if principal.tenant_id != tenant_id:
@@ -100,6 +111,7 @@ def assert_tenant_access(principal: CurrentPrincipal, tenant_id: UUID) -> None:
 
 
 def assert_brand_access(principal: CurrentPrincipal, brand_space_id: UUID) -> None:
+    # Handles request access rules so protected tenant or brand data is not touched too early.
     forbid_super_admin_brand_access(principal)
     if principal.is_tenant_admin():
         return
@@ -108,6 +120,7 @@ def assert_brand_access(principal: CurrentPrincipal, brand_space_id: UUID) -> No
 
 
 def forbid_super_admin_brand_access(principal: CurrentPrincipal) -> None:
+    # Handles request access rules so protected tenant or brand data is not touched too early.
     if principal.has_any_role(RoleCode.SUPER_ADMIN):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

@@ -1,3 +1,4 @@
+# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
 from pathlib import Path
@@ -11,6 +12,8 @@ from app.core.config import BASE_DIR, get_settings
 
 
 class ContentFormatGuideService:
+    # Business layer for content format guide; routes and workers pass validated inputs here and receive domain
+    # results back.
     GUIDE_NAME_PATTERNS = (
         "*Content Formats Guide*.docx",
         "*Content Format Guide*.docx",
@@ -21,16 +24,21 @@ class ContentFormatGuideService:
     )
 
     def __init__(self) -> None:
+        # Wires the repositories and helper services this workflow reuses across its public methods.
         self.settings = get_settings()
 
     @staticmethod
     def _normalize_text(value: Any, limit: int | None = None) -> str:
+        # Internal helper for text; it keeps the public service method focused on orchestration instead of low-
+        # level shaping.
         text = " ".join(str(value or "").split()).strip()
         if limit is None or not text:
             return text
         return text[:limit].rstrip(" ,.;:")
 
     def _candidate_paths(self) -> list[Path]:
+        # Internal helper for candidate paths; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         candidates: list[Path] = []
         if self.settings.content_format_guide_path:
             candidates.append(Path(self.settings.content_format_guide_path))
@@ -53,12 +61,16 @@ class ContentFormatGuideService:
         return resolved
 
     def _resolve_path(self) -> Path | None:
+        # Internal helper for path; it keeps the public service method focused on orchestration instead of low-
+        # level shaping.
         for path in self._candidate_paths():
             if path.exists() and path.is_file():
                 return path
         return None
 
     def _resolve_cache_path(self) -> Path | None:
+        # Internal helper for cache path; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         docs_dir = BASE_DIR / "docs"
         if not docs_dir.exists():
             return None
@@ -70,6 +82,8 @@ class ContentFormatGuideService:
 
     @staticmethod
     def _load_cached_payload(path: Path) -> dict[str, Any]:
+        # Internal helper for load cached payload; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -78,6 +92,8 @@ class ContentFormatGuideService:
 
     @staticmethod
     def _extract_paragraphs(path: Path) -> list[str]:
+        # Internal helper for extract paragraphs; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         document = Document(path)
         paragraphs = [
             " ".join(paragraph.text.split()).strip()
@@ -93,6 +109,8 @@ class ContentFormatGuideService:
         keywords: tuple[str, ...],
         max_items: int = 5,
     ) -> list[str]:
+        # Internal helper for collect section; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         matches: list[str] = []
         lowered = [paragraph.casefold() for paragraph in paragraphs]
         for index, paragraph_lower in enumerate(lowered):
@@ -108,6 +126,8 @@ class ContentFormatGuideService:
 
     @staticmethod
     def _format_rules(section_lines: list[str]) -> list[str]:
+        # Internal helper for format rules; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         rules: list[str] = []
         for line in section_lines:
             normalized = re.sub(r"^[\-\u2022\*\d\.\)\s]+", "", line).strip()
@@ -122,6 +142,8 @@ class ContentFormatGuideService:
         start_markers: tuple[str, ...],
         end_markers: tuple[str, ...] = (),
     ) -> list[str]:
+        # Internal helper for section slice; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         lowered = [paragraph.casefold() for paragraph in paragraphs]
         start_index = next(
             (
@@ -147,6 +169,8 @@ class ContentFormatGuideService:
         heading: str,
         stop_headings: tuple[str, ...],
     ) -> list[str]:
+        # Internal helper for block slice; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         lowered = [line.casefold() for line in section_lines]
         heading_lower = heading.casefold()
         start_index = next(
@@ -169,6 +193,8 @@ class ContentFormatGuideService:
         start_markers: tuple[str, ...],
         stop_markers: tuple[str, ...] = (),
     ) -> list[str]:
+        # Internal helper for lines after label; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         lowered = [line.casefold() for line in block]
         start_index = next(
             (
@@ -196,11 +222,15 @@ class ContentFormatGuideService:
         heading: str,
         stop_headings: tuple[str, ...],
     ) -> str:
+        # Internal helper for definition for heading; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         block = cls._block_slice(section_lines, heading=heading, stop_headings=stop_headings)
         return cls._normalize_text(block[0] if block else "", limit=320)
 
     @staticmethod
     def _parse_export_lines(lines: list[str]) -> dict[str, dict[str, str]]:
+        # Internal helper for export lines; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         export_map: dict[str, dict[str, str]] = {}
         for line in lines:
             if ":" not in line:
@@ -230,6 +260,8 @@ class ContentFormatGuideService:
 
     @classmethod
     def _compose_platform_guidance(cls, block: list[str]) -> dict[str, Any]:
+        # Internal helper for compose platform guidance; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         notes = cls._format_rules(block)
         return {
             "summary": cls._normalize_text(" ".join(block[:3]), limit=320),
@@ -237,7 +269,10 @@ class ContentFormatGuideService:
         }
 
     def load(self) -> dict[str, Any]:
+        # Runs the load service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         path = self._resolve_path()
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if path is None:
             cache_path = self._resolve_cache_path()
             if cache_path is None:
@@ -247,6 +282,7 @@ class ContentFormatGuideService:
                 cached_payload.setdefault("source_path", str(cache_path))
             return cached_payload
         paragraphs = self._extract_paragraphs(path)
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if not paragraphs:
             cache_path = self._resolve_cache_path()
             if cache_path is None:

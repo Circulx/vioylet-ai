@@ -1,3 +1,4 @@
+# Pydantic schemas define the API contracts used by routes, services, and frontend callers.
 from __future__ import annotations
 
 from typing import Any
@@ -9,6 +10,8 @@ from app.schemas.common import APIModel, AssetReference, StudioPanelSelection
 
 
 class RequestInheritancePolicy(APIModel):
+    # Shared schema for inheritance policy; it keeps route payloads, service data, and serialized responses
+    # aligned.
     inherit_persona: bool | None = None
     inherit_objective: bool | None = None
     inherit_template: bool | None = None
@@ -18,6 +21,8 @@ class RequestInheritancePolicy(APIModel):
 
 
 class ContentGenerateRequest(APIModel):
+    # Request contract for content generate; FastAPI validates incoming JSON against these fields before service
+    # code runs.
     prompt: str = Field(min_length=1)
     raw_user_prompt: str | None = None
     rewrite_instruction: str | None = None
@@ -35,6 +40,8 @@ class ContentGenerateRequest(APIModel):
 
 
 class ContentRewriteRequest(APIModel):
+    # Request contract for content rewrite; FastAPI validates incoming JSON against these fields before service
+    # code runs.
     content_version_id: UUID
     rewrite_instruction: str = Field(min_length=1)
     studio_panel: StudioPanelSelection
@@ -42,6 +49,8 @@ class ContentRewriteRequest(APIModel):
 
 
 class ToneCheckRequest(APIModel):
+    # Request contract for tone check; FastAPI validates incoming JSON against these fields before service code
+    # runs.
     content: str | None = None
     persona_id: UUID | None = None
     objective_id: UUID | None = None
@@ -52,6 +61,7 @@ class ToneCheckRequest(APIModel):
 
     @model_validator(mode="after")
     def validate_inputs(self) -> "ToneCheckRequest":
+        # Checks or reshapes inputs while Pydantic prepares the model for validation or serialization.
         self.content = str(self.content or "").strip() or None
         if not self.content and not self.content_version_id and not self.content_payload:
             raise ValueError("Provide content, content_payload, or content_version_id for tone evaluation.")
@@ -59,6 +69,8 @@ class ToneCheckRequest(APIModel):
 
 
 class ContentExportRequest(APIModel):
+    # Request contract for content export; FastAPI validates incoming JSON against these fields before service
+    # code runs.
     content_version_id: UUID
     export_format: str
     studio_panel: dict[str, Any] | None = None
@@ -67,10 +79,14 @@ class ContentExportRequest(APIModel):
 
 
 class ContentCopyRequest(APIModel):
+    # Request contract for content copy; FastAPI validates incoming JSON against these fields before service
+    # code runs.
     content_version_id: UUID
 
 
 class ToneEvaluationResponse(APIModel):
+    # Response contract for tone evaluation; routes serialize service or ORM results into this frontend-facing
+    # shape.
     score: int
     matched_signals: list[str]
     deviations: list[str]
@@ -81,6 +97,8 @@ class ToneEvaluationResponse(APIModel):
 
 
 class ContentVersionResponse(APIModel):
+    # Response contract for content version; routes serialize service or ORM results into this frontend-facing
+    # shape.
     id: UUID
     session_id: UUID
     parent_version_id: UUID | None = None

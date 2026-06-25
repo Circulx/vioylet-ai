@@ -1,3 +1,4 @@
+# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
 from collections import defaultdict
@@ -16,12 +17,17 @@ from app.services.usage import UsageLimitService
 
 
 class AnalyticsService:
+    # Business layer for analytics; routes and workers pass validated inputs here and receive domain results
+    # back.
     def __init__(self, session: AsyncSession) -> None:
+        # Wires the repositories and helper services this workflow reuses across its public methods.
         self.session = session
         self.usage = UsageLimitService(session)
 
     @staticmethod
     def summarize_token_usage(records: list[tuple[object, dict | None]]) -> dict:
+        # Runs the summarize token usage service flow by coordinating repositories, validators, and
+        # integrations, then returns domain data.
         totals = {
             "input_tokens": 0,
             "output_tokens": 0,
@@ -30,6 +36,8 @@ class AnalyticsService:
         monthly: dict[str, dict[str, int]] = defaultdict(
             lambda: {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
         )
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for created_at, metadata in records:
             if not metadata or not isinstance(metadata, dict):
                 continue
@@ -67,6 +75,8 @@ class AnalyticsService:
         tenant_id: UUID | None = None,
         brand_space_id: UUID | None = None,
     ) -> dict:
+        # Internal helper for token usage metrics; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         filters = []
         if tenant_id is not None:
             filters.append(ContentVersion.tenant_id == tenant_id)
@@ -117,6 +127,8 @@ class AnalyticsService:
         }
 
     async def tenant_summary(self, tenant_id: UUID) -> dict:
+        # Runs the tenant summary service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         brand_spaces = await self.session.scalar(select(func.count(BrandSpace.id)).where(BrandSpace.tenant_id == tenant_id))
         users = await self.session.scalar(select(func.count(User.id)).where(User.tenant_id == tenant_id))
         content_generations = await self.session.scalar(select(func.count(ContentVersion.id)).where(ContentVersion.tenant_id == tenant_id))
@@ -146,6 +158,8 @@ class AnalyticsService:
         }
 
     async def brand_summary(self, tenant_id: UUID, brand_space_id: UUID) -> dict:
+        # Runs the brand summary service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         content_generations = await self.session.scalar(
             select(func.count(ContentVersion.id)).where(
                 ContentVersion.tenant_id == tenant_id,
@@ -187,6 +201,8 @@ class AnalyticsService:
         }
 
     async def platform_summary(self) -> dict:
+        # Runs the platform summary service flow by coordinating repositories, validators, and integrations,
+        # then returns domain data.
         tenants = await self.session.scalar(select(func.count(Tenant.id)))
         active_tenants = await self.session.scalar(
             select(func.count(Tenant.id)).where(Tenant.is_active.is_(True))

@@ -1,3 +1,4 @@
+# FastAPI route handlers live here; they validate request inputs, call services, and return response schemas.
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -35,6 +36,8 @@ async def create_tenant(
     payload: TenantCreateRequest,
     session: AsyncSession = Depends(get_db_session),
 ) -> TenantCreateResponse:
+    # Serves the tenant creation endpoint; it uses FastAPI dependencies, delegates work to services, and returns
+    # the response schema.
     tenant, delivery = await TenantService(session).create_tenant(payload)
     return TenantCreateResponse.model_validate(
         {
@@ -51,6 +54,8 @@ async def create_tenant(
 
 @router.get("", response_model=list[TenantSummaryResponse], dependencies=[Depends(require_roles(RoleCode.SUPER_ADMIN))])
 async def list_tenants(session: AsyncSession = Depends(get_db_session)) -> list[TenantSummaryResponse]:
+    # Serves the tenants listing endpoint; it uses FastAPI dependencies, delegates work to services, and returns
+    # the response schema.
     service = TenantService(session)
     tenants = await service.list_tenants()
     summaries = [await service.get_tenant_summary(tenant.id) for tenant in tenants]
@@ -64,6 +69,8 @@ async def get_tenant(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> TenantSummaryResponse:
+    # Serves the tenant detail lookup endpoint; it uses FastAPI dependencies, delegates work to services, and
+    # returns the response schema.
     assert_tenant_access(principal, tenant_id)
     summary = await TenantService(session).get_tenant_summary(tenant_id)
     return TenantSummaryResponse.model_validate(summary)
@@ -77,6 +84,8 @@ async def upload_tenant_logo(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> TenantSummaryResponse:
+    # Serves the tenant logo upload endpoint; it uses FastAPI dependencies, delegates work to services, and
+    # returns the response schema.
     assert_tenant_access(principal, tenant_id)
     service = TenantService(session)
     await service.upload_logo(tenant_id, payload)
@@ -92,6 +101,8 @@ async def update_tenant(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> TenantSummaryResponse:
+    # Serves the tenant update endpoint; it uses FastAPI dependencies, delegates work to services, and returns
+    # the response schema.
     assert_tenant_access(principal, tenant_id)
     service = TenantService(session)
     await service.update_tenant(tenant_id, payload)
@@ -107,6 +118,8 @@ async def update_brand_usage_targets(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> TenantBrandUsageTargetsResponse:
+    # Serves the brand usage targets update endpoint; it uses FastAPI dependencies, delegates work to services,
+    # and returns the response schema.
     assert_tenant_access(principal, tenant_id)
     targets = await TenantService(session).update_brand_usage_targets(tenant_id, payload.brand_usage_targets)
     return TenantBrandUsageTargetsResponse(brand_usage_targets=targets)
@@ -121,6 +134,8 @@ async def delete_tenant(
     tenant_id: UUID,
     session: AsyncSession = Depends(get_db_session),
 ) -> MessageResponse:
+    # Serves the tenant deletion endpoint; it uses FastAPI dependencies, delegates work to services, and returns
+    # the response schema.
     await TenantService(session).delete_tenant(tenant_id)
     return MessageResponse(message="Tenant deleted")
 
@@ -132,6 +147,8 @@ async def list_users(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> list[TenantUserResponse]:
+    # Serves the users listing endpoint; it uses FastAPI dependencies, delegates work to services, and returns
+    # the response schema.
     assert_tenant_access(principal, tenant_id)
     service = TenantService(session)
     users = await service.list_users(tenant_id)
@@ -146,6 +163,8 @@ async def list_tenant_brand_spaces(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> list[TenantBrandSpaceSummaryResponse]:
+    # Serves the tenant brand spaces listing endpoint; it uses FastAPI dependencies, delegates work to services,
+    # and returns the response schema.
     assert_tenant_access(principal, tenant_id)
     service = TenantService(session)
     summaries = await service.list_tenant_brand_space_summaries(tenant_id)
@@ -160,6 +179,8 @@ async def create_tenant_user(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> TenantUserCreateResponse:
+    # Serves the tenant user creation endpoint; it uses FastAPI dependencies, delegates work to services, and
+    # returns the response schema.
     assert_tenant_access(principal, tenant_id)
     service = TenantService(session)
     user, delivery = await service.create_tenant_user(tenant_id, payload)
@@ -185,6 +206,8 @@ async def get_user(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> TenantUserResponse:
+    # Serves the user detail lookup endpoint; it uses FastAPI dependencies, delegates work to services, and
+    # returns the response schema.
     assert_tenant_access(principal, tenant_id)
     summary = await TenantService(session).get_user_summary(tenant_id, user_id)
     return TenantUserResponse.model_validate(summary)
@@ -199,6 +222,8 @@ async def update_user(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> TenantUserResponse:
+    # Serves the user update endpoint; it uses FastAPI dependencies, delegates work to services, and returns the
+    # response schema.
     assert_tenant_access(principal, tenant_id)
     if (
         user_id == principal.user_id
@@ -222,6 +247,8 @@ async def deactivate_user(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> MessageResponse:
+    # Serves the deactivate user endpoint; it uses FastAPI dependencies, delegates work to services, and returns
+    # the response schema.
     assert_tenant_access(principal, tenant_id)
     await TenantService(session).deactivate_user(tenant_id, user_id)
     return MessageResponse(message="User deactivated")
@@ -234,6 +261,8 @@ async def update_usage_limits(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> MessageResponse:
+    # Serves the usage limits update endpoint; it uses FastAPI dependencies, delegates work to services, and
+    # returns the response schema.
     assert_tenant_access(principal, tenant_id)
     await TenantService(session).update_usage_limits(tenant_id, payload)
     return MessageResponse(message="Usage limits updated")
@@ -246,6 +275,8 @@ async def get_usage_summary(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> TenantUsageSummary:
+    # Serves the usage summary detail lookup endpoint; it uses FastAPI dependencies, delegates work to services,
+    # and returns the response schema.
     assert_tenant_access(principal, tenant_id)
     summary = await TenantService(session).get_usage_summary(tenant_id)
     return TenantUsageSummary.model_validate(summary)

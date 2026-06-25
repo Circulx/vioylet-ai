@@ -1,3 +1,4 @@
+# Database bootstrap code centralizes SQLAlchemy metadata and session lifecycle for repositories.
 from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -16,5 +17,6 @@ AsyncSessionLocal = async_sessionmaker(
 
 
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
+    # Yields an async SQLAlchemy session to FastAPI and closes the request-scoped DB context afterward.
     async with AsyncSessionLocal() as session:
         yield session

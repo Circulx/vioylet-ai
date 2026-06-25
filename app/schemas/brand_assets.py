@@ -1,3 +1,4 @@
+# Pydantic schemas define the API contracts used by routes, services, and frontend callers.
 from __future__ import annotations
 
 from datetime import datetime
@@ -10,6 +11,8 @@ from app.schemas.common import APIModel
 
 
 class BrandAttachmentUploadRequest(APIModel):
+    # Request contract for brand attachment upload; FastAPI validates incoming JSON against these fields before
+    # service code runs.
     name: str
     filename: str
     mime_type: str
@@ -20,6 +23,8 @@ class BrandAttachmentUploadRequest(APIModel):
 
 
 class AssetCategoryRoutingResponse(APIModel):
+    # Response contract for asset category routing; routes serialize service or ORM results into this frontend-
+    # facing shape.
     requested_field_key: str
     requested_category: str | None = None
     routed_category: str
@@ -30,6 +35,8 @@ class AssetCategoryRoutingResponse(APIModel):
 
 
 class AssetProcessingStatusResponse(APIModel):
+    # Response contract for asset processing status; routes serialize service or ORM results into this frontend-
+    # facing shape.
     field_key: str
     lifecycle_state: str
     processor_name: str | None = None
@@ -40,6 +47,8 @@ class AssetProcessingStatusResponse(APIModel):
 
 
 class AssetValidationResultResponse(APIModel):
+    # Response contract for asset validation result; routes serialize service or ORM results into this frontend-
+    # facing shape.
     field_key: str
     validation_state: str
     trust_level: str | None = None
@@ -50,6 +59,8 @@ class AssetValidationResultResponse(APIModel):
 
 
 class ReusableBrandAssetResponse(APIModel):
+    # Response contract for reusable brand asset; routes serialize service or ORM results into this frontend-
+    # facing shape.
     id: UUID
     knowledge_asset_id: UUID
     asset_kind: str
@@ -71,6 +82,8 @@ class ReusableBrandAssetResponse(APIModel):
 
 
 class BrandAttachmentResponse(APIModel):
+    # Response contract for brand attachment; routes serialize service or ORM results into this frontend-facing
+    # shape.
     id: UUID
     tenant_id: UUID
     brand_space_id: UUID | None = None
@@ -101,16 +114,22 @@ class BrandAttachmentResponse(APIModel):
 
 
 class BrandAttachmentListResponse(APIModel):
+    # Response contract for brand attachment list; routes serialize service or ORM results into this frontend-
+    # facing shape.
     field_key: str
     assets: list[BrandAttachmentResponse] = Field(default_factory=list)
 
 
 class BrandAttachmentStatusUpdateResponse(APIModel):
+    # Response contract for brand attachment status update; routes serialize service or ORM results into this
+    # frontend-facing shape.
     asset: BrandAttachmentResponse
     message: str
 
 
 class DataConflictResponse(APIModel):
+    # Response contract for data conflict; routes serialize service or ORM results into this frontend-facing
+    # shape.
     id: UUID
     conflict_type: str
     severity: str
@@ -124,6 +143,8 @@ class DataConflictResponse(APIModel):
 
 
 class ResolvedBrandContextResponse(APIModel):
+    # Response contract for resolved brand context; routes serialize service or ORM results into this frontend-
+    # facing shape.
     brand_space_id: UUID
     snapshot_id: UUID | None = None
     snapshot_kind: str = "validated"
@@ -134,6 +155,8 @@ class ResolvedBrandContextResponse(APIModel):
 
 
 class ValidationSummaryResponse(APIModel):
+    # Response contract for validation summary; routes serialize service or ORM results into this frontend-
+    # facing shape.
     brand_space_id: UUID
     warnings: list[str] = Field(default_factory=list)
     conflicts: list[DataConflictResponse] = Field(default_factory=list)
@@ -143,6 +166,8 @@ class ValidationSummaryResponse(APIModel):
 
 
 class BrandLegalAssetResponse(APIModel):
+    # Response contract for brand legal asset; routes serialize service or ORM results into this frontend-facing
+    # shape.
     id: UUID
     brand_space_id: UUID
     asset_type: str
@@ -158,6 +183,8 @@ class BrandLegalAssetResponse(APIModel):
 
 
 class BrandCTATemplateResponse(APIModel):
+    # Response contract for brand CTAtemplate; routes serialize service or ORM results into this frontend-facing
+    # shape.
     id: UUID
     brand_space_id: UUID
     template_name: str

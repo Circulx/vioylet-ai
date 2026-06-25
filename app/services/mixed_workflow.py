@@ -1,3 +1,4 @@
+# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
@@ -7,6 +8,8 @@ from uuid import UUID
 
 @dataclass(slots=True)
 class WorkflowStep:
+    # Business layer for workflow step; routes and workers pass validated inputs here and receive domain results
+    # back.
     key: str
     label: str
     status: str
@@ -15,6 +18,8 @@ class WorkflowStep:
 
 @dataclass(slots=True)
 class WorkflowState:
+    # Business layer for workflow state; routes and workers pass validated inputs here and receive domain
+    # results back.
     workflow_type: str | None
     source_mode: str | None
     target_mode: str | None
@@ -24,6 +29,8 @@ class WorkflowState:
     reviewed_asset_ids: list[str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
+        # Runs the to dict service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         return {
             "workflow_type": self.workflow_type,
             "source_mode": self.source_mode,
@@ -37,6 +44,8 @@ class WorkflowState:
 
 @dataclass(slots=True)
 class MixedWorkflowContext:
+    # Business layer for mixed workflow context; routes and workers pass validated inputs here and receive
+    # domain results back.
     prompt: str
     reference_asset_ids: list[UUID]
     review_result: dict[str, Any] | None = None
@@ -46,6 +55,8 @@ class MixedWorkflowContext:
 
 
 class MixedWorkflowService:
+    # Business layer for mixed workflow; routes and workers pass validated inputs here and receive domain
+    # results back.
     def prepare_generation_context(
         self,
         *,
@@ -55,6 +66,8 @@ class MixedWorkflowService:
         review_result: dict[str, Any] | None = None,
         reference_asset_ids: list[UUID] | None = None,
     ) -> MixedWorkflowContext:
+        # Runs the prepare generation context service flow by coordinating repositories, validators, and
+        # integrations, then returns domain data.
         session_context = session_context or {}
         workflow_plan = workflow_plan or {}
         workflow_type = str(workflow_plan.get("type") or "").strip() or None
@@ -81,6 +94,8 @@ class MixedWorkflowService:
         last_text_output = str(session_context.get("last_text_output") or "").strip()
         last_deliverable_type = str(session_context.get("last_text_deliverable_type") or "").strip()
 
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if workflow_type == "repurpose_text_to_visual" and last_text_output:
             prompt = (
                 f"{prompt}\n\n"
@@ -135,6 +150,8 @@ class MixedWorkflowService:
         reviewed_asset_ids: list[str] | None,
         source_mode: str | None,
     ) -> WorkflowState | None:
+        # Runs the state service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         workflow_plan = workflow_plan or {}
         workflow_type = str(workflow_plan.get("type") or "").strip() or None
         if not workflow_type:
@@ -142,6 +159,8 @@ class MixedWorkflowService:
         target_mode = str(workflow_plan.get("target_mode") or "").strip() or None
         steps: list[WorkflowStep] = []
         recovery_hint = None
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if workflow_type == "repurpose_text_to_visual":
             steps = [
                 WorkflowStep("reuse_source_text", "Reuse previous text draft", "completed", "content_only"),
@@ -175,6 +194,8 @@ class MixedWorkflowService:
 
     @staticmethod
     def _parse_uuid_or_none(value: Any) -> UUID | None:
+        # Internal helper for uuid or none; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         if isinstance(value, UUID):
             return value
         text = str(value or "").strip()

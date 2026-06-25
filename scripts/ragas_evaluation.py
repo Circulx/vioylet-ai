@@ -1,3 +1,4 @@
+# Operational scripts run one-off maintenance, smoke checks, and local debugging workflows.
 from __future__ import annotations
 
 import argparse
@@ -54,6 +55,8 @@ RAGAS_RELEVANT_CHANNELS = {
 
 @dataclass
 class EvalSample:
+    # Small state object for the eval sample script so the command-line workflow can pass structured data
+    # around.
     trace_id: str
     sample_id: str
     user_input: str
@@ -64,12 +67,15 @@ class EvalSample:
 
 
 def load_json(path: Path) -> Any:
+    # Handles load json for the script workflow, usually preparing inputs or calling backend services directly.
     if not path.exists():
         return None
     return json.loads(path.read_text(encoding="utf-8"))
 
 
 def compact_json(value: Any, *, limit: int = 4000) -> str:
+    # Handles compact json for the script workflow, usually preparing inputs or calling backend services
+    # directly.
     if value is None:
         return ""
     if isinstance(value, str):
@@ -81,10 +87,14 @@ def compact_json(value: Any, *, limit: int = 4000) -> str:
 
 
 def is_empty_value(value: Any) -> bool:
+    # Handles is empty value for the script workflow, usually preparing inputs or calling backend services
+    # directly.
     return value is None or value == "" or value == [] or value == {}
 
 
 def clean_empty_fields(value: Any) -> Any:
+    # Handles clean empty fields for the script workflow, usually preparing inputs or calling backend services
+    # directly.
     if isinstance(value, dict):
         cleaned = {}
         for key, item in value.items():
@@ -99,6 +109,8 @@ def clean_empty_fields(value: Any) -> Any:
 
 
 def clean_report_content(value: Any) -> Any:
+    # Handles clean report content for the script workflow, usually preparing inputs or calling backend services
+    # directly.
     if isinstance(value, dict):
         return {
             key: clean_report_content(item)
@@ -114,14 +126,19 @@ def clean_report_content(value: Any) -> Any:
 
 
 def compact_context(value: Any, *, limit: int = 4000) -> str:
+    # Handles compact context for the script workflow, usually preparing inputs or calling backend services
+    # directly.
     return compact_json(clean_empty_fields(value), limit=limit)
 
 
 def token_set(text: str) -> set[str]:
+    # Handles token set for the script workflow, usually preparing inputs or calling backend services directly.
     return {token.lower() for token in WORD_RE.findall(text or "") if len(token) > 2}
 
 
 def overlap_score(left: str, right: str) -> float:
+    # Handles overlap score for the script workflow, usually preparing inputs or calling backend services
+    # directly.
     left_tokens = token_set(left)
     right_tokens = token_set(right)
     if not left_tokens or not right_tokens:
@@ -130,11 +147,14 @@ def overlap_score(left: str, right: str) -> float:
 
 
 def safe_mean(values: list[float]) -> float:
+    # Handles safe mean for the script workflow, usually preparing inputs or calling backend services directly.
     values = [value for value in values if isinstance(value, (int, float)) and not math.isnan(value)]
     return round(sum(values) / len(values), 4) if values else 0.0
 
 
 def concise_error(exc: Exception) -> str:
+    # Handles concise error for the script workflow, usually preparing inputs or calling backend services
+    # directly.
     message = re.sub(r"\s+", " ", str(exc)).strip()
     if not message:
         message = repr(exc) or exc.__class__.__name__
@@ -146,14 +166,20 @@ def concise_error(exc: Exception) -> str:
 
 
 def report_timestamp() -> str:
+    # Handles report timestamp for the script workflow, usually preparing inputs or calling backend services
+    # directly.
     return datetime.now(REPORT_TIMEZONE).isoformat(timespec="seconds")
 
 
 def report_output_dir(base_output_dir: Path, trace_id: str | None) -> Path:
+    # Handles report output dir for the script workflow, usually preparing inputs or calling backend services
+    # directly.
     return base_output_dir / trace_id if trace_id else base_output_dir / "_combined"
 
 
 def collect_contexts(compiled_context: dict[str, Any], orchestrator_final: dict[str, Any]) -> list[str]:
+    # Handles collect contexts for the script workflow, usually preparing inputs or calling backend services
+    # directly.
     contexts: list[str] = []
 
     for key in RAGAS_CONTEXT_KEYS:
@@ -169,6 +195,8 @@ def collect_contexts(compiled_context: dict[str, Any], orchestrator_final: dict[
             contexts.append(f"knowledge_brief: {text}")
 
     retrieved = ((orchestrator_final.get("explainability") or {}).get("retrieved_knowledge") or {})
+    # This branch separates the special case from the normal path so later logic can work with cleaner
+    # assumptions.
     if isinstance(retrieved, dict):
         for channel, items in retrieved.items():
             if channel not in RAGAS_RELEVANT_CHANNELS:
@@ -211,7 +239,11 @@ SOURCE_DISPLAY_MAP = {
 
 
 def build_retrieved_content(contexts: list[str]) -> list[dict[str, Any]]:
+    # Builds retrieved content for the script workflow, usually preparing inputs or calling backend services
+    # directly.
     items = []
+    # Builds the grouped response or persistence payload one record at a time because later steps expect this
+    # exact shape.
     for context in contexts:
         source, _, content = context.partition(":")
         source = source.strip() or "context"
@@ -258,8 +290,12 @@ def build_retrieved_content(contexts: list[str]) -> list[dict[str, Any]]:
 
 
 def collect_retrieved_evidence(compiled_context: dict[str, Any], orchestrator_final: dict[str, Any]) -> dict[str, Any]:
+    # Handles collect retrieved evidence for the script workflow, usually preparing inputs or calling backend
+    # services directly.
     items: list[dict[str, Any]] = []
 
+    # Builds the grouped response or persistence payload one record at a time because later steps expect this
+    # exact shape.
     for item in compiled_context.get("knowledge_brief", []) or []:
         if not isinstance(item, dict):
             continue
@@ -274,6 +310,8 @@ def collect_retrieved_evidence(compiled_context: dict[str, Any], orchestrator_fi
             )
 
     visual_knowledge = compiled_context.get("visual_knowledge_brief", {}) or {}
+    # Builds the grouped response or persistence payload one record at a time because later steps expect this
+    # exact shape.
     for item in visual_knowledge.get("items", []) or []:
         if not isinstance(item, dict):
             continue
@@ -292,6 +330,8 @@ def collect_retrieved_evidence(compiled_context: dict[str, Any], orchestrator_fi
         or ((orchestrator_final.get("explainability") or {}).get("input_access_summary") or {}).get("retrieved_knowledge")
         or {}
     )
+    # This branch separates the special case from the normal path so later logic can work with cleaner
+    # assumptions.
     if isinstance(retrieved, dict):
         for channel, channel_items in retrieved.items():
             if channel in {"used_paths", "unused_paths", "read_counts", "access_types", "events"}:
@@ -316,6 +356,7 @@ def collect_retrieved_evidence(compiled_context: dict[str, Any], orchestrator_fi
 
 
 def build_reference(compiled_context: dict[str, Any]) -> str:
+    # Builds reference for the script workflow, usually preparing inputs or calling backend services directly.
     pieces = [
         compiled_context.get("research_summary"),
         compiled_context.get("brand_copy_brief"),
@@ -327,6 +368,8 @@ def build_reference(compiled_context: dict[str, Any]) -> str:
 
 
 def generated_image_count(trace_dir: Path, final_render_generation: dict[str, Any] | None) -> dict[str, Any]:
+    # Handles generated image count for the script workflow, usually preparing inputs or calling backend
+    # services directly.
     prompt_files = sorted(trace_dir.glob("final_render_prompt_slide_*.json"))
     assets = (final_render_generation or {}).get("assets", []) if isinstance(final_render_generation, dict) else []
     render_assets = [
@@ -345,11 +388,15 @@ def generated_image_count(trace_dir: Path, final_render_generation: dict[str, An
 
 
 def quoted_after(label: str, text: str) -> str:
+    # Handles quoted after for the script workflow, usually preparing inputs or calling backend services
+    # directly.
     match = re.search(re.escape(label) + r'\s*:\s*"([^"]+)"', text)
     return match.group(1).strip() if match else ""
 
 
 def extract_slide_response(prompt_payload: dict[str, Any]) -> str:
+    # Handles extract slide response for the script workflow, usually preparing inputs or calling backend
+    # services directly.
     prompt_text = str(prompt_payload.get("prompt") or "")
     parts = [
         f"Slide {prompt_payload.get('slide_index')} of {prompt_payload.get('slide_count')}",
@@ -375,6 +422,8 @@ def extract_slide_response(prompt_payload: dict[str, Any]) -> str:
 
 
 def build_samples_for_trace(trace_dir: Path) -> tuple[list[EvalSample], dict[str, Any], str]:
+    # Builds samples for trace for the script workflow, usually preparing inputs or calling backend services
+    # directly.
     compiled_context = load_json(trace_dir / "compiled_context.json") or {}
     content_request = load_json(trace_dir / "content_request.json") or {}
     orchestrator_final = load_json(trace_dir / "orchestrator_final.json") or {}
@@ -392,6 +441,8 @@ def build_samples_for_trace(trace_dir: Path) -> tuple[list[EvalSample], dict[str
     text_payload = orchestrator_final.get("text") or {}
     overall_response = compact_json(text_payload, limit=12000)
     samples: list[EvalSample] = []
+    # This branch separates the special case from the normal path so later logic can work with cleaner
+    # assumptions.
     if overall_response:
         samples.append(
             EvalSample(
@@ -409,6 +460,8 @@ def build_samples_for_trace(trace_dir: Path) -> tuple[list[EvalSample], dict[str
 
 
 def build_carousel_slide_samples_for_trace(trace_dir: Path) -> tuple[list[EvalSample], dict[str, Any], str]:
+    # Builds carousel slide samples for trace for the script workflow, usually preparing inputs or calling
+    # backend services directly.
     compiled_context = load_json(trace_dir / "compiled_context.json") or {}
     content_request = load_json(trace_dir / "content_request.json") or {}
     orchestrator_final = load_json(trace_dir / "orchestrator_final.json") or {}
@@ -428,6 +481,8 @@ def build_carousel_slide_samples_for_trace(trace_dir: Path) -> tuple[list[EvalSa
         return [], count_info, prompt
 
     samples: list[EvalSample] = []
+    # Builds the grouped response or persistence payload one record at a time because later steps expect this
+    # exact shape.
     for prompt_file in prompt_files:
         prompt_payload = load_json(prompt_file) or {}
         slide_index = int(prompt_payload.get("slide_index") or len(samples) + 1)
@@ -454,6 +509,8 @@ def build_carousel_slide_samples_for_trace(trace_dir: Path) -> tuple[list[EvalSa
 
 
 def heuristic_scores(sample: EvalSample) -> dict[str, float]:
+    # Handles heuristic scores for the script workflow, usually preparing inputs or calling backend services
+    # directly.
     context_blob = "\n".join(sample.retrieved_contexts)
     return {
         "faithfulness": round(overlap_score(sample.response, context_blob), 4),
@@ -467,9 +524,13 @@ def heuristic_scores(sample: EvalSample) -> dict[str, float]:
 
 
 def try_run_ragas(samples: list[EvalSample]) -> tuple[str, dict[str, dict[str, float]], str | None]:
+    # Handles try run RAGAS for the script workflow, usually preparing inputs or calling backend services
+    # directly.
     logger.debug("ragas_evaluation.try_run_ragas samples=%d", len(samples))
 
     _import_errors: list[str] = []
+    # Builds the grouped response or persistence payload one record at a time because later steps expect this
+    # exact shape.
     for pkg, stmt in [
         ("datasets", "from datasets import Dataset"),
         ("langchain_openai", "from langchain_openai import ChatOpenAI, OpenAIEmbeddings"),
@@ -490,6 +551,8 @@ def try_run_ragas(samples: list[EvalSample]) -> tuple[str, dict[str, dict[str, f
         logger.warning("ragas_evaluation.import_blocked errors=%s", _import_errors)
         return "heuristic_fallback", {}, msg
 
+    # Keeps the risky I/O or integration boundary contained so callers receive project-level errors instead of
+    # raw library failures.
     try:
         api_key_present = bool(os.getenv("OPENAI_API_KEY"))
         logger.debug("ragas_evaluation.api_key_present=%s", api_key_present)
@@ -551,12 +614,16 @@ def try_run_ragas(samples: list[EvalSample]) -> tuple[str, dict[str, dict[str, f
 
 
 def append_evaluation_report(production_path: Path, new_report: dict[str, Any]) -> dict[str, Any]:
+    # Handles append evaluation report for the script workflow, usually preparing inputs or calling backend
+    # services directly.
     existing = load_json(production_path)
     existing_evaluations = []
     if isinstance(existing, dict):
         existing_evaluations = list(existing.get("evaluations") or [])
 
     merged_by_generation: dict[str, dict[str, Any]] = {}
+    # Builds the grouped response or persistence payload one record at a time because later steps expect this
+    # exact shape.
     for evaluation in existing_evaluations:
         if not isinstance(evaluation, dict):
             continue
@@ -566,6 +633,8 @@ def append_evaluation_report(production_path: Path, new_report: dict[str, Any]) 
         if generation_id:
             merged_by_generation[generation_id] = evaluation
 
+    # This branch separates the special case from the normal path so later logic can work with cleaner
+    # assumptions.
     if new_report.get("evaluator") == "ragas":
         for evaluation in new_report.get("evaluations") or []:
             if not isinstance(evaluation, dict):
@@ -595,6 +664,8 @@ def append_evaluation_report(production_path: Path, new_report: dict[str, Any]) 
 
 
 def append_fallback_report(fallback_path: Path, fallback_report: dict[str, Any]) -> dict[str, Any]:
+    # Handles append fallback report for the script workflow, usually preparing inputs or calling backend
+    # services directly.
     existing = load_json(fallback_path)
     existing_evaluations = []
     if isinstance(existing, dict):
@@ -608,6 +679,8 @@ def append_fallback_report(fallback_path: Path, fallback_report: dict[str, Any])
         if generation_id:
             merged_by_generation[generation_id] = evaluation
 
+    # Builds the grouped response or persistence payload one record at a time because later steps expect this
+    # exact shape.
     for evaluation in fallback_report.get("evaluations") or []:
         if not isinstance(evaluation, dict):
             continue
@@ -635,6 +708,8 @@ def append_fallback_report(fallback_path: Path, fallback_report: dict[str, Any])
 
 
 def append_carousel_slide_report(output_path: Path, new_report: dict[str, Any]) -> dict[str, Any]:
+    # Handles append carousel slide report for the script workflow, usually preparing inputs or calling backend
+    # services directly.
     existing = load_json(output_path)
     existing_evaluations = []
     if isinstance(existing, dict):
@@ -648,6 +723,8 @@ def append_carousel_slide_report(output_path: Path, new_report: dict[str, Any]) 
         if generation_id:
             merged_by_generation[generation_id] = evaluation
 
+    # This branch separates the special case from the normal path so later logic can work with cleaner
+    # assumptions.
     if new_report.get("evaluator") == "ragas":
         for evaluation in new_report.get("evaluations") or []:
             if not isinstance(evaluation, dict):
@@ -679,7 +756,11 @@ def build_carousel_slide_report(
     mode: str,
     warning: str | None,
 ) -> dict[str, Any]:
+    # Builds carousel slide report for the script workflow, usually preparing inputs or calling backend services
+    # directly.
     evaluations: list[dict[str, Any]] = []
+    # Builds the grouped response or persistence payload one record at a time because later steps expect this
+    # exact shape.
     for trace in trace_summaries:
         trace_rows = [row for row in rows if row["trace_id"] == trace["trace_id"]]
         if not trace_rows:
@@ -716,8 +797,12 @@ def build_carousel_slide_report(
 
 
 def evaluate_carousel_slides(trace_dirs: list[Path], output_dir: Path) -> None:
+    # Handles evaluate carousel slides for the script workflow, usually preparing inputs or calling backend
+    # services directly.
     all_samples: list[EvalSample] = []
     trace_summaries: list[dict[str, Any]] = []
+    # Builds the grouped response or persistence payload one record at a time because later steps expect this
+    # exact shape.
     for trace_dir in trace_dirs:
         samples, count_info, prompt = build_carousel_slide_samples_for_trace(trace_dir)
         if not samples:
@@ -737,6 +822,8 @@ def evaluate_carousel_slides(trace_dirs: list[Path], output_dir: Path) -> None:
 
     mode, ragas_scores, warning = try_run_ragas(all_samples)
     rows = []
+    # Builds the grouped response or persistence payload one record at a time because later steps expect this
+    # exact shape.
     for sample in all_samples:
         scores = ragas_scores.get(sample.sample_id) if ragas_scores else heuristic_scores(sample)
         if "answer_relevancy" in scores and "response_relevancy" not in scores:
@@ -755,6 +842,8 @@ def evaluate_carousel_slides(trace_dirs: list[Path], output_dir: Path) -> None:
         )
 
     slide_report = build_carousel_slide_report(trace_summaries, rows, mode, warning)
+    # This branch separates the special case from the normal path so later logic can work with cleaner
+    # assumptions.
     if mode == "ragas":
         slide_path = output_dir / "ragas_carousel_slide_evaluation.json"
         slide_report = append_carousel_slide_report(slide_path, slide_report)
@@ -766,10 +855,14 @@ def evaluate_carousel_slides(trace_dirs: list[Path], output_dir: Path) -> None:
 
 
 def evaluate_traces(trace_root: Path, output_dir: Path, trace_id: str | None = None) -> dict[str, Any]:
+    # Handles evaluate traces for the script workflow, usually preparing inputs or calling backend services
+    # directly.
     logger.debug(
         "ragas_evaluation.evaluate_traces trace_root=%s trace_id=%s exists=%s",
         trace_root, trace_id, trace_root.exists(),
     )
+    # This branch separates the special case from the normal path so later logic can work with cleaner
+    # assumptions.
     if trace_id:
         trace_dir_check = trace_root / trace_id
         logger.debug(
@@ -788,6 +881,8 @@ def evaluate_traces(trace_root: Path, output_dir: Path, trace_id: str | None = N
 
     all_samples: list[EvalSample] = []
     trace_summaries: list[dict[str, Any]] = []
+    # Builds the grouped response or persistence payload one record at a time because later steps expect this
+    # exact shape.
     for trace_dir in trace_dirs:
         if not trace_dir.exists():
             continue
@@ -806,6 +901,8 @@ def evaluate_traces(trace_root: Path, output_dir: Path, trace_id: str | None = N
     mode, ragas_scores, warning = try_run_ragas(all_samples)
     logger.debug("ragas_evaluation.mode=%s warning=%s", mode, warning)
     rows = []
+    # Builds the grouped response or persistence payload one record at a time because later steps expect this
+    # exact shape.
     for sample in all_samples:
         scores = ragas_scores.get(sample.sample_id) if ragas_scores else heuristic_scores(sample)
         if "answer_relevancy" in scores and "response_relevancy" not in scores:
@@ -880,6 +977,7 @@ def evaluate_traces(trace_root: Path, output_dir: Path, trace_id: str | None = N
 
 
 def main() -> None:
+    # Command-line entrypoint that wires arguments and configuration into this script workflow.
     parser = argparse.ArgumentParser(description="Evaluate generation trace RAG grounding with RAGAS-compatible samples.")
     parser.add_argument("--trace-root", type=Path, default=DEFAULT_TRACE_ROOT)
     parser.add_argument("--trace-id", type=str, default=None)

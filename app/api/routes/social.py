@@ -1,3 +1,4 @@
+# FastAPI route handlers live here; they validate request inputs, call services, and return response schemas.
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
@@ -19,6 +20,8 @@ async def list_social_connections(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> list[SocialConnectionResponse]:
+    # Serves the social connections listing endpoint; it checks brand scope, delegates work to services, and
+    # returns the response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
     items = await SocialService(session).list_connections(principal.tenant_id, brand_scope)
@@ -32,6 +35,8 @@ async def connect_social(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> SocialConnectionResponse:
+    # Serves the connect social endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
     connection = await SocialService(session).connect(principal.tenant_id, brand_scope, payload.platform, payload.account_name, payload.account_identifier, payload.access_token, payload.refresh_token, payload.scopes)
@@ -45,6 +50,8 @@ async def publish_social(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    # Serves the social publish endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
     return await SocialService(session).publish(principal.tenant_id, brand_scope, payload.platform, payload.model_dump())
@@ -57,6 +64,8 @@ async def disconnect_social(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> MessageResponse:
+    # Serves the disconnect social endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
     await SocialService(session).disconnect(brand_scope, payload.platform)

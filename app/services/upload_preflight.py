@@ -1,3 +1,4 @@
+# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -18,6 +19,8 @@ from app.utils.files import decode_base64_content, estimate_decoded_base64_size
 
 @dataclass(slots=True)
 class UploadPreflightResult:
+    # Business layer for upload preflight result; routes and workers pass validated inputs here and receive
+    # domain results back.
     content: bytes
     normalized_mime_type: str
     detected_extension: str
@@ -28,6 +31,8 @@ class UploadPreflightResult:
 
 
 class UploadPreflightService:
+    # Business layer for upload preflight; routes and workers pass validated inputs here and receive domain
+    # results back.
     _allowed_extensions = {
         ".pdf",
         ".png",
@@ -71,6 +76,7 @@ class UploadPreflightService:
     }
 
     def __init__(self) -> None:
+        # Wires the repositories and helper services this workflow reuses across its public methods.
         self.settings = get_settings()
 
     def validate_base64_upload(
@@ -80,6 +86,8 @@ class UploadPreflightService:
         mime_type: str,
         content_base64: str,
     ) -> UploadPreflightResult:
+        # Runs the base64 upload service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         estimated_size = estimate_decoded_base64_size(content_base64)
         if estimated_size > self.settings.upload_max_file_bytes:
             raise UploadValidationError(
@@ -103,6 +111,8 @@ class UploadPreflightService:
         mime_type: str,
         content: bytes,
     ) -> UploadPreflightResult:
+        # Runs the bytes service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         extension = Path(filename).suffix.lower()
         normalized_mime = (mime_type or "").strip().lower() or mimetypes.guess_type(filename)[0] or "application/octet-stream"
         if extension not in self._allowed_extensions:
@@ -114,6 +124,8 @@ class UploadPreflightService:
         megapixels: float | None = None
         hints: dict[str, Any] = {}
 
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if extension == ".pdf":
             with pdfplumber.open(BytesIO(content)) as pdf:
                 page_count = len(pdf.pages)
@@ -171,6 +183,8 @@ class UploadPreflightService:
 
     @staticmethod
     def _resolve_office_suffix(content: bytes, current_extension: str) -> str:
+        # Internal helper for office suffix; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         if current_extension not in {".doc", ".ppt"}:
             return current_extension
         if not zipfile.is_zipfile(BytesIO(content)):

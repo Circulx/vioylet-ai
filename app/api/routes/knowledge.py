@@ -1,3 +1,4 @@
+# FastAPI route handlers live here; they validate request inputs, call services, and return response schemas.
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
@@ -14,6 +15,7 @@ router = APIRouter()
 
 
 def serialize_asset(asset) -> KnowledgeAssetResponse:
+    # Builds API response data from service or ORM objects, keeping persistence details out of route returns.
     delivery = AssetDeliveryService()
     response = KnowledgeAssetResponse.model_validate(asset)
     return response.model_copy(
@@ -33,6 +35,8 @@ async def upload_knowledge(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> KnowledgeAssetResponse:
+    # Serves the knowledge upload endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
     asset = await KnowledgeService(session).upload(principal.tenant_id, brand_scope, payload)
@@ -45,6 +49,8 @@ async def list_knowledge(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> list[KnowledgeAssetResponse]:
+    # Serves the knowledge listing endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
     assets = await KnowledgeService(session).list(principal.tenant_id, brand_scope)
@@ -58,6 +64,8 @@ async def knowledge_status(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> KnowledgeAssetResponse:
+    # Serves the knowledge status endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
     asset = await KnowledgeService(session).get_scoped(principal.tenant_id, brand_scope, knowledge_id)
@@ -71,6 +79,8 @@ async def delete_knowledge(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> KnowledgeAssetResponse:
+    # Serves the knowledge deletion endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
     asset = await KnowledgeService(session).delete_scoped(principal.tenant_id, brand_scope, knowledge_id)
@@ -85,6 +95,8 @@ async def reprocess_knowledge(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> KnowledgeAssetResponse:
+    # Serves the reprocess knowledge endpoint; it checks brand scope, delegates work to services, and returns
+    # the response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
     asset = await KnowledgeService(session).reprocess_scoped(principal.tenant_id, brand_scope, knowledge_id)

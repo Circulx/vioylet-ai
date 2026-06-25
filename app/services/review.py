@@ -1,3 +1,4 @@
+# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
 import secrets
@@ -14,13 +15,17 @@ from app.repositories.collaboration import ReviewCommentRepository, ReviewLinkRe
 
 
 class ReviewService:
+    # Business layer for review; routes and workers pass validated inputs here and receive domain results back.
     def __init__(self, session: AsyncSession) -> None:
+        # Wires the repositories and helper services this workflow reuses across its public methods.
         self.session = session
         self.links = ReviewLinkRepository(session)
         self.comments = ReviewCommentRepository(session)
         self.contents = ContentRepository(session)
 
     async def create_link(self, tenant_id: UUID, brand_space_id: UUID, content_version_id: UUID, created_by: UUID, title: str | None, allow_external_comments: bool) -> ReviewLink:
+        # Runs the link service flow and persists the resulting state before returning it to the route or
+        # worker.
         content = await self.contents.get_scoped(content_version_id, tenant_id, brand_space_id)
         if not content:
             raise NotFoundError("Content version not found")
@@ -39,6 +44,8 @@ class ReviewService:
         return review_link
 
     async def get_by_token(self, token: str) -> tuple[ReviewLink, list[ReviewComment]]:
+        # Runs the by token service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         link = await self.links.get_by_token(token)
         if not link:
             raise NotFoundError("Review link not found")
@@ -46,6 +53,8 @@ class ReviewService:
         return link, comments
 
     async def add_comment(self, review_link_id: UUID, tenant_id: UUID, brand_space_id: UUID, body: str, author_user_id: UUID | None = None, external_author_name: str | None = None) -> ReviewComment:
+        # Runs the comment service flow and persists the resulting state before returning it to the route or
+        # worker.
         link = await self.links.get(review_link_id)
         if not link:
             raise NotFoundError("Review link not found")
@@ -64,6 +73,8 @@ class ReviewService:
         return comment
 
     async def update_status(self, review_link_id: UUID, status: str) -> ReviewLink:
+        # Runs the status service flow and persists the resulting state before returning it to the route or
+        # worker.
         link = await self.links.get(review_link_id)
         if not link:
             raise NotFoundError("Review link not found")

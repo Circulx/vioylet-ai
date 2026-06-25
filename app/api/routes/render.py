@@ -1,3 +1,4 @@
+# FastAPI route handlers live here; they validate request inputs, call services, and return response schemas.
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -21,6 +22,8 @@ async def render_layout(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    # Serves the layout rendering endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
     content = await ContentRepository(session).get_scoped(payload.content_version_id, principal.tenant_id, brand_scope)
@@ -45,6 +48,8 @@ async def render_preview(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> RenderResponse:
+    # Serves the preview rendering endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
     response = await ContentService(session).export(
@@ -65,6 +70,8 @@ async def render_export(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> RenderResponse:
+    # Serves the export rendering endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
     response = await ContentService(session).export(
@@ -85,6 +92,8 @@ async def render_status(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    # Serves the status rendering endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
     content = await ContentRepository(session).get_scoped(content_id, principal.tenant_id, brand_scope)

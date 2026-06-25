@@ -1,3 +1,4 @@
+# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
 import json
@@ -10,11 +11,16 @@ from app.models.brand import BrandConfigurationSection, BrandSpace
 
 
 class BrandSummaryMemoryService:
+    # Business layer for brand summary memory; routes and workers pass validated inputs here and receive domain
+    # results back.
     def __init__(self) -> None:
+        # Wires the repositories and helper services this workflow reuses across its public methods.
         self.vectors = FaissVectorStoreProvider()
 
     @staticmethod
     def _clean_text(value: Any, *, limit: int | None = None) -> str:
+        # Internal helper for clean text; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         text = " ".join(str(value or "").split()).strip()
         if limit is None or len(text) <= limit:
             return text
@@ -22,6 +28,8 @@ class BrandSummaryMemoryService:
 
     @staticmethod
     def _namespace(tenant_id: UUID, brand_space_id: UUID) -> str:
+        # Internal helper for namespace; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         return FaissVectorStoreProvider().namespace(
             str(tenant_id),
             str(brand_space_id),
@@ -30,6 +38,8 @@ class BrandSummaryMemoryService:
 
     @classmethod
     def _json_summary(cls, value: Any, *, limit: int = 1200) -> str:
+        # Internal helper for json summary; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         if value in (None, "", [], {}):
             return ""
         try:
@@ -43,6 +53,8 @@ class BrandSummaryMemoryService:
         cls,
         sections: list[BrandConfigurationSection] | list[dict[str, Any]] | None,
     ) -> dict[str, Any]:
+        # Internal helper for section payload map; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         payloads: dict[str, Any] = {}
         for section in sections or []:
             if isinstance(section, dict):
@@ -57,6 +69,8 @@ class BrandSummaryMemoryService:
 
     @classmethod
     def _compact_payload(cls, value: Any) -> Any:
+        # Internal helper for compact payload; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if isinstance(value, dict):
             compacted: dict[str, Any] = {}
             for key, raw_value in value.items():
@@ -75,6 +89,8 @@ class BrandSummaryMemoryService:
 
     @classmethod
     def _query_terms(cls, query: str) -> set[str]:
+        # Internal helper for query terms; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         return {
             token
             for token in re.findall(r"[a-z0-9]+", str(query or "").casefold())
@@ -83,6 +99,8 @@ class BrandSummaryMemoryService:
 
     @classmethod
     def _score_document_for_query(cls, doc: dict[str, Any], query_terms: set[str]) -> int:
+        # Internal helper for document for query; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if not query_terms:
             return 0
         searchable = (
@@ -100,6 +118,8 @@ class BrandSummaryMemoryService:
         existing_contents: set[str],
         limit: int,
     ) -> list[str]:
+        # Internal helper for relevant fallback documents; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         query_terms = cls._query_terms(query)
         scored: list[tuple[int, int, dict[str, Any]]] = []
         for index, doc in enumerate(docs):
@@ -126,6 +146,8 @@ class BrandSummaryMemoryService:
         *,
         sections: list[BrandConfigurationSection] | list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
+        # Internal helper for documents; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         context = dict(getattr(brand, "resolved_brand_context", {}) or {})
         identity = context.get("identity", {}) if isinstance(context.get("identity"), dict) else {}
         audience = context.get("audience_insights", {}) if isinstance(context.get("audience_insights"), dict) else {}
@@ -196,6 +218,8 @@ class BrandSummaryMemoryService:
             "guardrails": guardrails,
             "objectives": objectives,
         }
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for section, payload in section_payloads.items():
             summary = cls._json_summary(payload, limit=2200)
             if not summary:
@@ -214,6 +238,8 @@ class BrandSummaryMemoryService:
                 }
             )
 
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for section_code, payload in cls._section_payload_map(sections).items():
             compacted = cls._compact_payload(payload)
             summary = cls._json_summary(compacted, limit=2200)
@@ -240,6 +266,8 @@ class BrandSummaryMemoryService:
         *,
         sections: list[BrandConfigurationSection] | list[dict[str, Any]] | None = None,
     ) -> None:
+        # Runs the brand summary service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         docs = self._build_documents(brand, sections=sections)
         if not docs:
             return
@@ -256,12 +284,15 @@ class BrandSummaryMemoryService:
         limit: int = 3,
         sections: list[BrandConfigurationSection] | list[dict[str, Any]] | None = None,
     ) -> str:
+        # Runs the retrieve brand summary service flow by coordinating repositories, validators, and
+        # integrations, then returns domain data.
         namespace = self._namespace(brand.tenant_id, brand.id)
         docs = self._build_documents(brand, sections=sections)
         results = self.vectors.search(namespace, self._clean_text(query, limit=600), k=limit)
         if not results:
             self.upsert_brand_summary(brand, sections=sections)
             results = self.vectors.search(namespace, self._clean_text(query, limit=600), k=limit)
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if not results:
             fallback_lines = self._relevant_fallback_documents(
                 docs,
@@ -275,6 +306,8 @@ class BrandSummaryMemoryService:
 
         seen: set[str] = set()
         lines: list[str] = []
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for result in results:
             content = self._clean_text(result.content, limit=1800)
             if not content or content in seen:

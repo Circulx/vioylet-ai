@@ -1,3 +1,4 @@
+# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -15,6 +16,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass(slots=True)
 class EmailDeliveryResult:
+    # Business layer for email delivery result; routes and workers pass validated inputs here and receive domain
+    # results back.
     attempted: bool
     delivered: bool
     recipient_email: str
@@ -22,13 +25,19 @@ class EmailDeliveryResult:
 
 
 class EmailService:
+    # Business layer for email; routes and workers pass validated inputs here and receive domain results back.
     def __init__(self) -> None:
+        # Wires the repositories and helper services this workflow reuses across its public methods.
         self.settings = get_settings()
 
     def is_configured(self) -> bool:
+        # Runs the is configured service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         return bool(self.settings.smtp_host and self.settings.smtp_username and self.settings.smtp_password)
 
     def build_activation_link(self, token: str) -> str:
+        # Runs the activation link service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         base_url = self.settings.frontend_base_url.rstrip("/")
         return f"{base_url}/auth/activate?token={quote(token, safe='')}"
 
@@ -38,6 +47,8 @@ class EmailService:
         recipient_name: str | None,
         token: str,
     ) -> EmailDeliveryResult:
+        # Runs the send activation email service flow by coordinating repositories, validators, and
+        # integrations, then returns domain data.
         activation_link = self.build_activation_link(token)
         subject = "Activate your Violyt account"
         greeting_name = recipient_name or recipient_email
@@ -63,6 +74,8 @@ class EmailService:
         recipient_name: str | None,
         token: str,
     ) -> EmailDeliveryResult:
+        # Runs the send password reset email service flow by coordinating repositories, validators, and
+        # integrations, then returns domain data.
         reset_link = self.build_activation_link(token)
         subject = "Reset your Violyt password"
         greeting_name = recipient_name or recipient_email
@@ -89,6 +102,8 @@ class EmailService:
         text_body: str,
         html_body: str | None = None,
     ) -> EmailDeliveryResult:
+        # Internal helper for send email; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         if not self.is_configured():
             logger.warning("SMTP is not configured. Skipping email delivery for %s.", recipient_email)
             return EmailDeliveryResult(
@@ -109,6 +124,8 @@ class EmailService:
             message.add_alternative(html_body, subtype="html")
 
         context = ssl.create_default_context()
+        # Keeps the risky I/O or integration boundary contained so callers receive project-level errors
+        # instead of raw library failures.
         try:
             with smtplib.SMTP(self.settings.smtp_host, self.settings.smtp_port, timeout=20) as smtp:
                 smtp.ehlo()

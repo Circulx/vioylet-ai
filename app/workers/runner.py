@@ -1,3 +1,4 @@
+# Worker entrypoints execute queued backend jobs outside the request/response lifecycle.
 from __future__ import annotations
 
 import asyncio
@@ -17,10 +18,12 @@ from app.services.template import TemplateService
 
 
 def _build_worker_id() -> str:
+    # Creates a unique worker ID from host, process, and random suffix so claimed jobs can be traced.
     return f"{socket.gethostname()}:{os.getpid()}:{uuid4().hex[:8]}"
 
 
 def _run_ragas_evaluation(trace_id: str) -> dict[str, str]:
+    # Runs RAGAS evaluation in the worker process and returns file paths for the completed job payload.
     from scripts.ragas_evaluation import evaluate_traces
 
     settings = get_settings()
@@ -37,6 +40,7 @@ def _run_ragas_evaluation(trace_id: str) -> dict[str, str]:
 
 
 async def _heartbeat_loop(job_id, worker_id: str, stop: asyncio.Event) -> None:
+    # Refreshes the processing heartbeat so stalled jobs can be detected without blocking the job handler.
     settings = get_settings()
     while not stop.is_set():
         await asyncio.sleep(settings.worker_job_heartbeat_seconds)
@@ -47,8 +51,10 @@ async def _heartbeat_loop(job_id, worker_id: str, stop: asyncio.Event) -> None:
 
 
 async def handle_job(job_id, worker_id: str):
+    # Runs one claimed job, dispatches to the right service by job type, and updates status for the worker loop.
     stop = asyncio.Event()
     heartbeat_task = asyncio.create_task(_heartbeat_loop(job_id, worker_id, stop))
+    # Scopes the resource lifetime tightly around the operation that needs it.
     async with AsyncSessionLocal() as session:
         jobs = JobService(session)
         repo = JobRepository(session)
@@ -104,6 +110,7 @@ async def handle_job(job_id, worker_id: str):
 
 
 async def run_worker_loop() -> None:
+    # Polls for available jobs, claims a batch for this worker, and hands each job to the dispatcher.
     settings = get_settings()
     worker_id = _build_worker_id()
     while True:

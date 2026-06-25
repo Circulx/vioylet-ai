@@ -1,7 +1,10 @@
+# Core application plumbing lives here: settings, security helpers, dependency gates, and shared errors.
 from enum import StrEnum
 
 
 class RoleCode(StrEnum):
+    # Core runtime shape for role code; dependency and security helpers share this instead of passing loose
+    # dictionaries.
     SUPER_ADMIN = "super_admin"
     TENANT_ADMIN = "tenant_admin"
     TENANT_USER = "tenant_user"
@@ -10,6 +13,8 @@ class RoleCode(StrEnum):
 
 
 class BrandSpaceLifecycle(StrEnum):
+    # Core runtime shape for brand space lifecycle; dependency and security helpers share this instead of
+    # passing loose dictionaries.
     DRAFT = "draft"
     ACTIVE = "active"
     ARCHIVED = "archived"
@@ -17,6 +22,8 @@ class BrandSpaceLifecycle(StrEnum):
 
 
 class ContentLifecycle(StrEnum):
+    # Core runtime shape for content lifecycle; dependency and security helpers share this instead of passing
+    # loose dictionaries.
     GENERATED = "generated"
     EDITED = "edited"
     ORGANIZED = "organized"
@@ -25,6 +32,8 @@ class ContentLifecycle(StrEnum):
 
 
 class AssetLifecycle(StrEnum):
+    # Core runtime shape for asset lifecycle; dependency and security helpers share this instead of passing
+    # loose dictionaries.
     UPLOADED = "uploaded"
     PROCESSING = "processing"
     INDEXED = "indexed"
@@ -33,6 +42,8 @@ class AssetLifecycle(StrEnum):
 
 
 class BrandAssetField(StrEnum):
+    # Core runtime shape for brand asset field; dependency and security helpers share this instead of passing
+    # loose dictionaries.
     LOGO = "logo"
     AUDIENCE_INSIGHTS = "audience_insights"
     REFERENCE_CREATIVES = "reference_creatives"
@@ -47,6 +58,8 @@ class BrandAssetField(StrEnum):
 
 
 class BrandAssetCategory(StrEnum):
+    # Core runtime shape for brand asset category; dependency and security helpers share this instead of passing
+    # loose dictionaries.
     LOGO = "logo"
     AUDIENCE_INSIGHT = "audience_insight"
     REFERENCE_CREATIVE = "reference_creative"
@@ -65,6 +78,8 @@ class BrandAssetCategory(StrEnum):
 
 
 class AssetValidationState(StrEnum):
+    # Core runtime shape for asset validation state; dependency and security helpers share this instead of
+    # passing loose dictionaries.
     PENDING = "pending"
     CLEAN = "clean"
     WARNING = "warning"
@@ -72,12 +87,16 @@ class AssetValidationState(StrEnum):
 
 
 class ConflictSeverity(StrEnum):
+    # Core runtime shape for conflict severity; dependency and security helpers share this instead of passing
+    # loose dictionaries.
     INFO = "info"
     WARNING = "warning"
     ERROR = "error"
 
 
 class BrandSectionCode(StrEnum):
+    # Core runtime shape for brand section code; dependency and security helpers share this instead of passing
+    # loose dictionaries.
     IDENTITY = "identity"
     FOUNDATIONS = "foundations"
     VOICE_TONE = "voice_tone"
@@ -91,6 +110,8 @@ class BrandSectionCode(StrEnum):
 
 
 class KnowledgeChannel(StrEnum):
+    # Core runtime shape for knowledge channel; dependency and security helpers share this instead of passing
+    # loose dictionaries.
     BRAND = "brand"
     STRATEGY = "strategy"
     METADATA = "metadata"
@@ -99,12 +120,16 @@ class KnowledgeChannel(StrEnum):
 
 
 class TemplateKind(StrEnum):
+    # Core runtime shape for template kind; dependency and security helpers share this instead of passing loose
+    # dictionaries.
     PROMPT_FRAMEWORK = "prompt_framework"
     LAYOUT = "layout"
     HYBRID = "hybrid"
 
 
 class StudioFormat(StrEnum):
+    # Core runtime shape for studio format; dependency and security helpers share this instead of passing loose
+    # dictionaries.
     STATIC = "static"
     CAROUSEL = "carousel"
     PDF = "pdf"
@@ -112,6 +137,8 @@ class StudioFormat(StrEnum):
 
 
 class PlatformPreset(StrEnum):
+    # Core runtime shape for platform preset; dependency and security helpers share this instead of passing
+    # loose dictionaries.
     INSTAGRAM = "instagram"
     LINKEDIN = "linkedin"
     X = "x"
@@ -119,6 +146,8 @@ class PlatformPreset(StrEnum):
 
 
 class ExportFileType(StrEnum):
+    # Core runtime shape for export file type; dependency and security helpers share this instead of passing
+    # loose dictionaries.
     DOC = "doc"
     PDF = "pdf"
     PNG = "png"
@@ -126,6 +155,8 @@ class ExportFileType(StrEnum):
 
 
 class AssetRole(StrEnum):
+    # Core runtime shape for asset role; dependency and security helpers share this instead of passing loose
+    # dictionaries.
     LOGO = "logo"
     AI_IMAGE = "ai_image"
     TEMPLATE_PREVIEW = "template_preview"
@@ -137,12 +168,16 @@ class AssetRole(StrEnum):
 
 
 class ReviewStatus(StrEnum):
+    # Core runtime shape for review status; dependency and security helpers share this instead of passing loose
+    # dictionaries.
     PENDING = "pending"
     APPROVED = "approved"
     NEEDS_CHANGES = "needs_changes"
 
 
 class JobStatus(StrEnum):
+    # Core runtime shape for job status; dependency and security helpers share this instead of passing loose
+    # dictionaries.
     QUEUED = "queued"
     PROCESSING = "processing"
     SUCCEEDED = "succeeded"
@@ -151,6 +186,8 @@ class JobStatus(StrEnum):
 
 
 class JobType(StrEnum):
+    # Core runtime shape for job type; dependency and security helpers share this instead of passing loose
+    # dictionaries.
     KNOWLEDGE_PROCESS = "knowledge_process"
     TEMPLATE_ANALYSIS = "template_analysis"
     BRAND_CONTEXT_REFRESH = "brand_context_refresh"
@@ -161,12 +198,16 @@ class JobType(StrEnum):
 
 
 class SocialPlatform(StrEnum):
+    # Core runtime shape for social platform; dependency and security helpers share this instead of passing
+    # loose dictionaries.
     LINKEDIN = "linkedin"
     INSTAGRAM = "instagram"
     X = "x"
 
 
 class UsageMetricCode(StrEnum):
+    # Core runtime shape for usage metric code; dependency and security helpers share this instead of passing
+    # loose dictionaries.
     USERS = "users"
     BRAND_SPACES = "brand_spaces"
     CONTENT_GENERATIONS = "content_generations"

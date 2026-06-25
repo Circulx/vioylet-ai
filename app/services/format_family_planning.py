@@ -1,9 +1,12 @@
+# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
 from typing import Any
 
 
 class FormatFamilyPlanningService:
+    # Business layer for format family planning; routes and workers pass validated inputs here and receive
+    # domain results back.
     FAMILY_CONTRACTS: dict[str, dict[str, Any]] = {
         "long_form": {
             "primary_unit": "section",
@@ -132,6 +135,8 @@ class FormatFamilyPlanningService:
         content_format_brief: dict[str, Any] | None = None,
         research_editorial_brief: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Runs the build service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         studio_panel = studio_panel if isinstance(studio_panel, dict) else {}
         content_format_brief = content_format_brief if isinstance(content_format_brief, dict) else {}
         research_editorial_brief = research_editorial_brief if isinstance(research_editorial_brief, dict) else {}
@@ -174,6 +179,8 @@ class FormatFamilyPlanningService:
 
     @classmethod
     def _family_for(cls, *, format_name: str, deliverable_type: str) -> str:
+        # Internal helper for family for; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         if format_name == "carousel":
             return "carousel"
         if format_name == "infographic":
@@ -186,6 +193,8 @@ class FormatFamilyPlanningService:
 
     @staticmethod
     def _normalize_text(value: Any, limit: int | None = None) -> str:
+        # Internal helper for text; it keeps the public service method focused on orchestration instead of low-
+        # level shaping.
         text = " ".join(str(value or "").split()).strip()
         if not text or limit is None:
             return text
@@ -200,6 +209,8 @@ class FormatFamilyPlanningService:
         content_format_brief: dict[str, Any],
         research_editorial_brief: dict[str, Any],
     ) -> int | None:
+        # Internal helper for preferred slide count; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if family not in {"carousel", "infographic"}:
             return None
         for source in (
@@ -223,6 +234,8 @@ class FormatFamilyPlanningService:
         content_format_brief: dict[str, Any],
         research_editorial_brief: dict[str, Any],
     ) -> list[str]:
+        # Internal helper for planning notes; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         notes: list[str] = []
         if family == "long_form":
             notes.append("Use visible section progression and developed reasoning.")

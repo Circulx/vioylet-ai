@@ -1,3 +1,4 @@
+# Pydantic schemas define the API contracts used by routes, services, and frontend callers.
 from __future__ import annotations
 
 from datetime import datetime
@@ -10,6 +11,8 @@ from app.schemas.common import APIModel
 
 
 class TenantUsageLimitUpdate(APIModel):
+    # Shared schema for tenant usage limit update; it keeps route payloads, service data, and serialized
+    # responses aligned.
     max_users: int = Field(ge=0)
     max_brand_spaces: int = Field(ge=0)
     max_content_generations: int = Field(ge=0)
@@ -18,6 +21,8 @@ class TenantUsageLimitUpdate(APIModel):
 
 
 class TenantCreateRequest(APIModel):
+    # Request contract for tenant create; FastAPI validates incoming JSON against these fields before service
+    # code runs.
     name: str
     slug: str
     contact_email: EmailStr
@@ -31,6 +36,8 @@ class TenantCreateRequest(APIModel):
 
 
 class TenantUpdateRequest(APIModel):
+    # Request contract for tenant update; FastAPI validates incoming JSON against these fields before service
+    # code runs.
     name: str | None = None
     slug: str | None = None
     contact_email: EmailStr | None = None
@@ -45,11 +52,15 @@ class TenantUpdateRequest(APIModel):
 
 
 class TenantBrandUsageTargetsUpdate(APIModel):
+    # Shared schema for tenant brand usage targets update; it keeps route payloads, service data, and serialized
+    # responses aligned.
     brand_usage_targets: dict[str, float] = Field(default_factory=dict)
 
     @field_validator("brand_usage_targets")
     @classmethod
     def validate_brand_usage_targets(cls, value: dict[str, float]) -> dict[str, float]:
+        # Checks or reshapes brand usage targets while Pydantic prepares the model for validation or
+        # serialization.
         normalized: dict[str, float] = {}
         total = 0.0
         for brand_id, target in value.items():
@@ -68,16 +79,21 @@ class TenantBrandUsageTargetsUpdate(APIModel):
 
 
 class TenantBrandUsageTargetsResponse(APIModel):
+    # Response contract for tenant brand usage targets; routes serialize service or ORM results into this
+    # frontend-facing shape.
     brand_usage_targets: dict[str, float] = Field(default_factory=dict)
 
 
 class TenantLogoUploadRequest(APIModel):
+    # Request contract for tenant logo upload; FastAPI validates incoming JSON against these fields before
+    # service code runs.
     filename: str
     mime_type: str
     content_base64: str
 
 
 class TenantResponse(APIModel):
+    # Response contract for tenant; routes serialize service or ORM results into this frontend-facing shape.
     id: UUID
     name: str
     slug: str
@@ -91,10 +107,14 @@ class TenantResponse(APIModel):
 
 
 class TenantCreateResponse(TenantResponse):
+    # Response contract for tenant create; routes serialize service or ORM results into this frontend-facing
+    # shape.
     activation_email: ActivationEmailStatus
 
 
 class TenantSummaryResponse(TenantResponse):
+    # Response contract for tenant summary; routes serialize service or ORM results into this frontend-facing
+    # shape.
     total_users: int = 0
     brand_space_count: int = 0
     usage_limits: TenantUsageLimitUpdate | None = None
@@ -108,6 +128,8 @@ class TenantSummaryResponse(TenantResponse):
 
 
 class TenantUserCreateRequest(APIModel):
+    # Request contract for tenant user create; FastAPI validates incoming JSON against these fields before
+    # service code runs.
     full_name: str
     email: EmailStr
     phone_number: str | None = None
@@ -116,6 +138,8 @@ class TenantUserCreateRequest(APIModel):
 
 
 class TenantUserUpdateRequest(APIModel):
+    # Request contract for tenant user update; FastAPI validates incoming JSON against these fields before
+    # service code runs.
     full_name: str | None = None
     email: EmailStr | None = None
     phone_number: str | None = None
@@ -125,6 +149,8 @@ class TenantUserUpdateRequest(APIModel):
 
 
 class TenantUserResponse(APIModel):
+    # Response contract for tenant user; routes serialize service or ORM results into this frontend-facing
+    # shape.
     id: UUID
     tenant_id: UUID | None = None
     email: EmailStr
@@ -139,6 +165,8 @@ class TenantUserResponse(APIModel):
 
 
 class ActivationEmailStatus(APIModel):
+    # Shared schema for activation email status; it keeps route payloads, service data, and serialized responses
+    # aligned.
     attempted: bool
     delivered: bool
     recipient_email: EmailStr
@@ -146,10 +174,14 @@ class ActivationEmailStatus(APIModel):
 
 
 class TenantUserCreateResponse(TenantUserResponse):
+    # Response contract for tenant user create; routes serialize service or ORM results into this frontend-
+    # facing shape.
     activation_email: ActivationEmailStatus
 
 
 class TenantBrandSpaceSummaryResponse(APIModel):
+    # Response contract for tenant brand space summary; routes serialize service or ORM results into this
+    # frontend-facing shape.
     id: UUID
     tenant_id: UUID
     name: str
@@ -164,6 +196,8 @@ class TenantBrandSpaceSummaryResponse(APIModel):
 
 
 class TenantUsageMonthResponse(APIModel):
+    # Response contract for tenant usage month; routes serialize service or ORM results into this frontend-
+    # facing shape.
     month: str
     content_generations: int = 0
     image_generations: int = 0
@@ -171,6 +205,8 @@ class TenantUsageMonthResponse(APIModel):
 
 
 class TenantBrandUsageResponse(APIModel):
+    # Response contract for tenant brand usage; routes serialize service or ORM results into this frontend-
+    # facing shape.
     id: UUID
     name: str
     allocation_percent: float = 0
@@ -181,6 +217,8 @@ class TenantBrandUsageResponse(APIModel):
 
 
 class TenantUsageSummary(APIModel):
+    # Shared schema for tenant usage summary; it keeps route payloads, service data, and serialized responses
+    # aligned.
     tenant_id: UUID
     limits: TenantUsageLimitUpdate
     consumption: dict[str, int]

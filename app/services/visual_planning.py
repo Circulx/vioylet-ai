@@ -1,3 +1,4 @@
+# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
 from typing import Any
@@ -8,7 +9,10 @@ from app.services.research_editorial_planning import ResearchEditorialPlanningSe
 
 
 class VisualPlanningService:
+    # Business layer for visual planning; routes and workers pass validated inputs here and receive domain
+    # results back.
     def __init__(self) -> None:
+        # Wires the repositories and helper services this workflow reuses across its public methods.
         self.content_planning = ContentPlanningService()
         self.research_editorial = ResearchEditorialPlanningService()
         self.format_family_planning = FormatFamilyPlanningService()
@@ -28,6 +32,8 @@ class VisualPlanningService:
         template_context: dict[str, Any] | None = None,
         reference_assets: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
+        # Runs the visual plan service flow by coordinating repositories, validators, and integrations, then
+        # returns domain data.
         research_editorial_brief = self.research_editorial.build(
             prompt=prompt,
             studio_panel=studio_panel,

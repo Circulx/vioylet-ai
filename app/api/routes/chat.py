@@ -1,3 +1,4 @@
+# FastAPI route handlers live here; they validate request inputs, call services, and return response schemas.
 from uuid import UUID
 from datetime import datetime
 
@@ -28,6 +29,8 @@ async def create_chat_session(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> ChatSessionResponse:
+    # Serves the chat session creation endpoint; it checks brand scope, delegates work to services, and returns
+    # the response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
     chat_session = await ChatService(session).create_session(principal.tenant_id, brand_scope, principal.user_id, payload)
@@ -40,6 +43,8 @@ async def list_chat_sessions(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> list[ChatSessionResponse]:
+    # Serves the chat sessions listing endpoint; it checks brand scope, delegates work to services, and returns
+    # the response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
     items = await ChatService(session).list_sessions(principal.tenant_id, brand_scope)
@@ -54,6 +59,8 @@ async def update_chat_session(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> ChatSessionResponse:
+    # Serves the chat session update endpoint; it checks brand scope, delegates work to services, and returns
+    # the response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
     chat_session = await ChatService(session).update_session(
@@ -72,6 +79,8 @@ async def delete_chat_session(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict[str, str]:
+    # Serves the chat session deletion endpoint; it checks brand scope, delegates work to services, and returns
+    # the response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
     return await ChatService(session).delete_session(
@@ -88,6 +97,8 @@ async def cancel_chat_generation(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict[str, str]:
+    # Serves the cancel chat generation endpoint; it checks brand scope, delegates work to services, and returns
+    # the response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
     return await ChatService(session).cancel_generation(
@@ -107,6 +118,8 @@ async def list_chat_messages(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> list[ChatMessageResponse]:
+    # Serves the chat messages listing endpoint; it checks brand scope, delegates work to services, and returns
+    # the response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
     chat_service = ChatService(session)
@@ -128,6 +141,8 @@ async def send_chat_message(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> ChatSendResponse:
+    # Serves the send chat message endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
     try:
@@ -154,6 +169,8 @@ async def delete_chat_message(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict[str, str]:
+    # Serves the chat message deletion endpoint; it checks brand scope, delegates work to services, and returns
+    # the response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
     return await ChatService(session).delete_message(

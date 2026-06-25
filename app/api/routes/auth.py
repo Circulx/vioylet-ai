@@ -1,3 +1,4 @@
+# FastAPI route handlers live here; they validate request inputs, call services, and return response schemas.
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,26 +29,36 @@ router = APIRouter()
 
 @router.post("/login", response_model=AuthLoginResponse)
 async def login(payload: LoginRequest, session: AsyncSession = Depends(get_db_session)) -> AuthLoginResponse:
+    # Serves the login endpoint; it uses FastAPI dependencies, delegates work to services, and returns the
+    # response schema.
     return await AuthService(session).login(payload.email, payload.password)
 
 
 @router.post("/activate", response_model=TokenPairResponse)
 async def activate(payload: ActivationRequest, session: AsyncSession = Depends(get_db_session)) -> TokenPairResponse:
+    # Serves the activate endpoint; it uses FastAPI dependencies, delegates work to services, and returns the
+    # response schema.
     return await AuthService(session).activate(payload.token, payload.password)
 
 
 @router.post("/forgot-password", response_model=PasswordResetResponse)
 async def forgot_password(payload: ForgotPasswordRequest, session: AsyncSession = Depends(get_db_session)) -> PasswordResetResponse:
+    # Serves the forgot password endpoint; it uses FastAPI dependencies, delegates work to services, and returns
+    # the response schema.
     return await AuthService(session).forgot_password(payload.email)
 
 
 @router.post("/reset-password", response_model=TokenPairResponse)
 async def reset_password(payload: ResetPasswordRequest, session: AsyncSession = Depends(get_db_session)) -> TokenPairResponse:
+    # Serves the reset password endpoint; it uses FastAPI dependencies, delegates work to services, and returns
+    # the response schema.
     return await AuthService(session).reset_password(payload.token, payload.password)
 
 
 @router.post("/refresh", response_model=TokenPairResponse)
 async def refresh(payload: RefreshTokenRequest, session: AsyncSession = Depends(get_db_session)) -> TokenPairResponse:
+    # Serves the refresh endpoint; it uses FastAPI dependencies, delegates work to services, and returns the
+    # response schema.
     return await AuthService(session).refresh_access_token(payload.refresh_token)
 
 
@@ -56,6 +67,8 @@ async def me(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> CurrentUserResponse:
+    # Serves the me endpoint; it uses FastAPI dependencies, delegates work to services, and returns the response
+    # schema.
     return await AuthService(session).build_current_user_response(
         principal.user_id,
         sorted(principal.role_codes),
@@ -68,6 +81,8 @@ async def profile(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> CurrentUserResponse:
+    # Serves the profile endpoint; it uses FastAPI dependencies, delegates work to services, and returns the
+    # response schema.
     return await AuthService(session).build_current_user_response(
         principal.user_id,
         sorted(principal.role_codes),
@@ -81,6 +96,8 @@ async def update_profile(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> CurrentUserResponse:
+    # Serves the profile update endpoint; it uses FastAPI dependencies, delegates work to services, and returns
+    # the response schema.
     user = await AuthService(session).update_profile(
         principal.user_id,
         payload.full_name,
@@ -109,6 +126,8 @@ async def change_password(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> PasswordResetResponse:
+    # Serves the change password endpoint; it uses FastAPI dependencies, delegates work to services, and returns
+    # the response schema.
     return await AuthService(session).change_password(principal.user_id, payload.current_password, payload.new_password)
 
 
@@ -117,6 +136,8 @@ async def delete_profile(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> MessageResponse:
+    # Serves the profile deletion endpoint; it uses FastAPI dependencies, delegates work to services, and
+    # returns the response schema.
     result = await AuthService(session).delete_profile(principal.user_id)
     return MessageResponse(message=result.message)
 
@@ -126,6 +147,8 @@ async def two_factor_status(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> TwoFactorSetupResponse:
+    # Serves the two factor status endpoint; it uses FastAPI dependencies, delegates work to services, and
+    # returns the response schema.
     return await AuthService(session).get_two_factor_status(principal.user_id)
 
 
@@ -134,6 +157,8 @@ async def setup_two_factor(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> TwoFactorSetupResponse:
+    # Serves the setup two factor endpoint; it uses FastAPI dependencies, delegates work to services, and
+    # returns the response schema.
     return await AuthService(session).initiate_two_factor_setup(principal.user_id)
 
 
@@ -143,6 +168,8 @@ async def enable_two_factor(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> TwoFactorSetupResponse:
+    # Serves the enable two factor endpoint; it uses FastAPI dependencies, delegates work to services, and
+    # returns the response schema.
     return await AuthService(session).enable_two_factor(principal.user_id, payload.code)
 
 
@@ -152,9 +179,13 @@ async def disable_two_factor(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> TwoFactorSetupResponse:
+    # Serves the disable two factor endpoint; it uses FastAPI dependencies, delegates work to services, and
+    # returns the response schema.
     return await AuthService(session).disable_two_factor(principal.user_id, payload.code)
 
 
 @router.post("/2fa/verify", response_model=TokenPairResponse)
 async def verify_two_factor(payload: TwoFactorVerifyRequest, session: AsyncSession = Depends(get_db_session)) -> TokenPairResponse:
+    # Serves the verify two factor endpoint; it uses FastAPI dependencies, delegates work to services, and
+    # returns the response schema.
     return await AuthService(session).verify_two_factor_login(payload.ticket, payload.code)

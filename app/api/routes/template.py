@@ -1,3 +1,4 @@
+# FastAPI route handlers live here; they validate request inputs, call services, and return response schemas.
 from uuid import UUID
 from pathlib import Path
 
@@ -23,6 +24,7 @@ router = APIRouter()
 
 
 def serialize_template(template) -> TemplateResponse:
+    # Builds API response data from service or ORM objects, keeping persistence details out of route returns.
     delivery = AssetDeliveryService()
     download_name = f"{template.name}{Path(template.storage_path).suffix}"
     response = TemplateResponse.model_validate(template)
@@ -37,6 +39,7 @@ def serialize_template(template) -> TemplateResponse:
 
 
 def serialize_template_metadata(metadata) -> dict:
+    # Builds API response data from service or ORM objects, keeping persistence details out of route returns.
     if not metadata:
         return {}
     return {
@@ -57,6 +60,8 @@ async def upload_template(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> TemplateResponse:
+    # Serves the template upload endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
     template = await TemplateService(session).upload(principal.tenant_id, brand_scope, payload)
@@ -69,6 +74,8 @@ async def list_templates(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> list[TemplateResponse]:
+    # Serves the templates listing endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
     templates = await TemplateService(session).list(principal.tenant_id, brand_scope)
@@ -82,6 +89,8 @@ async def template_detail(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    # Serves the template detail endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
     template, metadata = await TemplateService(session).detail(principal.tenant_id, brand_scope, template_id)
@@ -99,6 +108,8 @@ async def update_metadata(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    # Serves the metadata update endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
     metadata = await TemplateService(session).update_metadata(principal.tenant_id, brand_scope, template_id, payload)
@@ -112,6 +123,8 @@ async def apply_template(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    # Serves the template application endpoint; it checks brand scope, delegates work to services, and returns
+    # the response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
     template, metadata = await TemplateService(session).detail(principal.tenant_id, brand_scope, payload.template_id)
@@ -130,6 +143,8 @@ async def recommend_templates(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> list[TemplateRecommendationResponse]:
+    # Serves the recommend templates endpoint; it checks brand scope, delegates work to services, and returns
+    # the response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
     return await TemplateService(session).recommend(
@@ -148,6 +163,8 @@ async def delete_template(
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> MessageResponse:
+    # Serves the template deletion endpoint; it checks brand scope, delegates work to services, and returns the
+    # response schema.
     brand_scope = require_brand_scope(brand_scope)
     assert_brand_access(principal, brand_scope)
     await TemplateService(session).delete(principal.tenant_id, brand_scope, template_id)

@@ -1,3 +1,4 @@
+# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
 import asyncio
@@ -66,7 +67,10 @@ from app.services.usage import UsageLimitService
 
 
 class BrandAssetService:
+    # Business layer for brand asset; routes and workers pass validated inputs here and receive domain results
+    # back.
     def __init__(self, session: AsyncSession) -> None:
+        # Wires the repositories and helper services this workflow reuses across its public methods.
         self.session = session
         self.assets = KnowledgeAssetRepository(session)
         self.storage = LocalObjectStorage()
@@ -103,6 +107,8 @@ class BrandAssetService:
         field_key: str,
         payload: BrandAttachmentUploadRequest,
     ) -> KnowledgeAsset:
+        # Runs the upload service flow and persists the resulting state before returning it to the route or
+        # worker.
         preflight = self.preflight.validate_base64_upload(
             filename=payload.filename,
             mime_type=payload.mime_type,
@@ -155,6 +161,8 @@ class BrandAssetService:
         return asset
 
     async def list(self, tenant_id: UUID, brand_space_id: UUID, field_key: str | None = None) -> list[KnowledgeAsset]:
+        # Runs the list service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         if field_key:
             assets = await self.assets.list_by_field(brand_space_id, field_key, tenant_id=tenant_id)
         else:
@@ -166,12 +174,16 @@ class BrandAssetService:
         ]
 
     async def get_scoped(self, tenant_id: UUID, brand_space_id: UUID, asset_id: UUID) -> KnowledgeAsset:
+        # Runs the scoped service flow by coordinating repositories, validators, and integrations, then returns
+        # domain data.
         asset = await self.assets.get_scoped(asset_id, tenant_id, brand_space_id)
         if not asset:
             raise NotFoundError("Brand attachment not found")
         return asset
 
     async def unsync(self, tenant_id: UUID, brand_space_id: UUID, asset_id: UUID) -> KnowledgeAsset:
+        # Runs the unsync service flow and persists the resulting state before returning it to the route or
+        # worker.
         asset = await self.get_scoped(tenant_id, brand_space_id, asset_id)
         await self._cleanup_attachment_side_effects(asset)
         asset.is_active = False
@@ -191,6 +203,8 @@ class BrandAssetService:
         return asset
 
     async def delete(self, tenant_id: UUID, brand_space_id: UUID, asset_id: UUID) -> KnowledgeAsset:
+        # Runs the delete service flow and persists the resulting state before returning it to the route or
+        # worker.
         asset = await self.get_scoped(tenant_id, brand_space_id, asset_id)
         await self._cleanup_attachment_side_effects(asset)
         asset.lifecycle_state = AssetLifecycle.DELETED
@@ -206,6 +220,8 @@ class BrandAssetService:
         return asset
 
     async def reprocess(self, tenant_id: UUID, brand_space_id: UUID, asset_id: UUID) -> KnowledgeAsset:
+        # Runs the reprocess service flow and persists the resulting state before returning it to the route or
+        # worker.
         asset = await self.get_scoped(tenant_id, brand_space_id, asset_id)
         asset.lifecycle_state = AssetLifecycle.UPLOADED
         asset.processing_error = None
@@ -226,6 +242,8 @@ class BrandAssetService:
         return asset
 
     async def process_asset(self, asset_id: UUID) -> KnowledgeAsset:
+        # Runs the asset service flow and persists the resulting state before returning it to the route or
+        # worker.
         asset = await self.assets.get(asset_id)
         if not asset:
             raise NotFoundError("Brand attachment not found")
@@ -239,11 +257,15 @@ class BrandAssetService:
         )
         await self.session.commit()
 
+        # Keeps the risky I/O or integration boundary contained so callers receive project-level errors
+        # instead of raw library failures.
         try:
             absolute_path = self.storage.absolute_path(asset.storage_path)
             loop = asyncio.get_running_loop()
 
             def progress_callback(current: int, total: int, message: str) -> None:
+                # Runs the progress callback service flow by coordinating repositories, validators, and
+                # integrations, then returns domain data.
                 asyncio.run_coroutine_threadsafe(
                     self._persist_processing_progress(asset.id, current, total, message),
                     loop,
@@ -338,6 +360,8 @@ class BrandAssetService:
             raise
 
     async def _index_asset(self, asset: KnowledgeAsset, outcome: AssetProcessingOutcome) -> None:
+        # Internal helper for index asset; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         self.retrieval.delete_asset(str(asset.tenant_id), str(asset.brand_space_id), asset.channel, str(asset.id))
         quality_metadata = self._analysis_quality_metadata(
             outcome.structured_data,
@@ -355,6 +379,8 @@ class BrandAssetService:
             "template_tags": list(outcome.template_tags or []),
             **quality_metadata,
         }
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if outcome.extracted_text:
             self.retrieval.index_asset(
                 tenant_id=str(asset.tenant_id),
@@ -365,6 +391,8 @@ class BrandAssetService:
                 metadata=base_metadata,
             )
         structured_documents = self._structured_retrieval_documents(asset, outcome)
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if structured_documents:
             self.retrieval.index_documents(
                 tenant_id=str(asset.tenant_id),
@@ -376,6 +404,8 @@ class BrandAssetService:
 
     @staticmethod
     def _normalize_retrieval_text(value: Any, limit: int | None = None) -> str:
+        # Internal helper for retrieval text; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if value is None:
             return ""
         if isinstance(value, str):
@@ -403,6 +433,8 @@ class BrandAssetService:
 
     @classmethod
     def _retrieval_list(cls, value: Any, *, limit: int, item_limit: int = 96) -> list[str]:
+        # Internal helper for retrieval list; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         if not isinstance(value, list):
             return []
         items: list[str] = []
@@ -422,6 +454,8 @@ class BrandAssetService:
 
     @classmethod
     def _palette_terms(cls, palette_entries: Any, *, limit: int = 4) -> list[str]:
+        # Internal helper for palette terms; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         if not isinstance(palette_entries, list):
             return []
         items: list[str] = []
@@ -446,6 +480,8 @@ class BrandAssetService:
 
     @staticmethod
     def _analysis_quality_metadata(*payloads: Any) -> dict[str, Any]:
+        # Internal helper for analysis quality metadata; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         merged: dict[str, Any] = {
             "analysis_quality_score": 0.0,
             "summary_quality_score": 0.0,
@@ -468,6 +504,8 @@ class BrandAssetService:
         observed_signal_types: list[str] = []
         available_signal_types: list[str] = []
         line_classification_counts: dict[str, int] = {}
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for payload in payloads:
             if not isinstance(payload, dict):
                 continue
@@ -531,6 +569,8 @@ class BrandAssetService:
         asset: KnowledgeAsset,
         outcome: AssetProcessingOutcome,
     ) -> list[dict[str, Any]]:
+        # Internal helper for structured retrieval documents; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         category = str(outcome.routed_category or asset.asset_category or "")
         structured = outcome.structured_data if isinstance(outcome.structured_data, dict) else {}
         normalized = outcome.normalized_data if isinstance(outcome.normalized_data, dict) else {}
@@ -590,6 +630,8 @@ class BrandAssetService:
         )
         visual_evidence_units: list[dict[str, str]] = []
         seen_visual_units: set[tuple[str, str]] = set()
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for payload in (
             structured.get("visual_evidence_units"),
             normalized.get("visual_evidence_units"),
@@ -652,6 +694,8 @@ class BrandAssetService:
             ]
             if part
         ]
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if overview_parts:
             signal_count += sum(
                 1
@@ -679,6 +723,8 @@ class BrandAssetService:
                     },
                 }
             )
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for unit in visual_evidence_units:
             documents.append(
                 {
@@ -772,6 +818,8 @@ class BrandAssetService:
         return documents
 
     async def _persist_category_records(self, asset: KnowledgeAsset, outcome: AssetProcessingOutcome) -> None:
+        # Internal helper for persist category records; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         if outcome.routed_category == "logo":
             await self._persist_logo(asset, outcome)
             await self._persist_reusable_assets(asset, outcome)
@@ -779,6 +827,8 @@ class BrandAssetService:
         if outcome.routed_category == "audience_insight":
             await self._persist_audience(asset, outcome)
             return
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if outcome.routed_category in {"reference_creative", "template"}:
             await self._persist_template_intelligence(asset, outcome)
             if outcome.routed_category == "reference_creative":
@@ -806,7 +856,10 @@ class BrandAssetService:
             await self._persist_reusable_assets(asset, outcome)
 
     async def _persist_logo(self, asset: KnowledgeAsset, outcome: AssetProcessingOutcome) -> None:
+        # Internal helper for persist logo; it keeps the public service method focused on orchestration instead
+        # of low-level shaping.
         logo_asset = await self.logo_assets.get_by_knowledge_asset(asset.id)
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if not logo_asset:
             logo_asset = BrandLogoAsset(
                 tenant_id=asset.tenant_id,
@@ -825,6 +878,7 @@ class BrandAssetService:
             logo_asset.usage_metadata = outcome.normalized_data.get("usage_metadata", {})
             logo_asset.source_metadata_json = asset.metadata_json
         metadata = await self.logo_metadata.get_by_logo_asset(logo_asset.id)
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if not metadata:
             metadata = BrandLogoMetadata(
                 tenant_id=asset.tenant_id,
@@ -847,6 +901,8 @@ class BrandAssetService:
             metadata.inference_metadata = {"source_format": outcome.source_format}
 
     async def _persist_audience(self, asset: KnowledgeAsset, outcome: AssetProcessingOutcome) -> None:
+        # Internal helper for persist audience; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         analysis_metadata = {
             "source_format": outcome.source_format,
             "audience_evidence": outcome.structured_data.get("research_evidence", {}),
@@ -858,6 +914,7 @@ class BrandAssetService:
             "analysis_metadata": analysis_metadata,
         }
         audience_asset = await self.audience_assets.get_by_knowledge_asset(asset.id)
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if not audience_asset:
             audience_asset = AudienceInsightAsset(
                 tenant_id=asset.tenant_id,
@@ -880,6 +937,7 @@ class BrandAssetService:
             source_agreement_score = float(analysis_quality.get("source_agreement_score"))
         except (TypeError, ValueError, AttributeError):
             source_agreement_score = None
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if not structured:
             structured = AudienceInsightStructuredData(
                 tenant_id=asset.tenant_id,
@@ -926,6 +984,8 @@ class BrandAssetService:
             structured.source_agreement_score = source_agreement_score
 
     async def _persist_visual_reference(self, asset: KnowledgeAsset, outcome: AssetProcessingOutcome) -> None:
+        # Internal helper for persist visual reference; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         template = await self.templates.get_by_source_asset(asset.id)
         reference = await self.visual_references.get_by_knowledge_asset(asset.id)
         if not reference:
@@ -948,6 +1008,8 @@ class BrandAssetService:
             reference.brand_score = outcome.structured_data.get("brand_score")
 
     async def _persist_mood_board(self, asset: KnowledgeAsset, outcome: AssetProcessingOutcome) -> None:
+        # Internal helper for persist mood board; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         board = await self.mood_boards.get_by_knowledge_asset(asset.id)
         if not board:
             board = MoodBoardAsset(
@@ -969,7 +1031,11 @@ class BrandAssetService:
             board.enhancement_components = outcome.structured_data.get("enhancement_components", [])
 
     async def _persist_reusable_assets(self, asset: KnowledgeAsset, outcome: AssetProcessingOutcome) -> None:
+        # Internal helper for persist reusable assets; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         await self._clear_reusable_assets(asset.id)
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for candidate in outcome.derived_assets:
             asset_kind = str(candidate.get("asset_kind") or "reference_fragment")
             normalized_metadata = candidate.get("normalized_metadata", {})
@@ -1001,11 +1067,15 @@ class BrandAssetService:
             )
 
     async def _clear_reusable_assets(self, knowledge_asset_id: UUID) -> None:
+        # Internal helper for clear reusable assets; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         for reusable_asset in await self.reusable_assets.list_by_knowledge_asset(knowledge_asset_id):
             self.storage.delete(reusable_asset.storage_path)
         await self.reusable_assets.delete_by_knowledge_asset(knowledge_asset_id)
 
     async def _cleanup_attachment_side_effects(self, asset: KnowledgeAsset) -> None:
+        # Internal helper for cleanup attachment side effects; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         self.retrieval.delete_asset(str(asset.tenant_id), str(asset.brand_space_id), asset.channel, str(asset.id))
         await self._clear_reusable_assets(asset.id)
         await self.palette_entries.delete_by_asset(asset.id)
@@ -1014,6 +1084,8 @@ class BrandAssetService:
         await self.session.flush()
 
     async def _delete_linked_records(self, knowledge_asset_id: UUID) -> None:
+        # Internal helper for linked records; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         logo_asset = await self.logo_assets.get_by_knowledge_asset(knowledge_asset_id)
         if logo_asset:
             await self.session.delete(logo_asset)
@@ -1046,6 +1118,8 @@ class BrandAssetService:
             await self.session.delete(template)
 
     def _delete_attachment_storage_artifacts(self, storage_path: str | None) -> None:
+        # Internal helper for attachment storage artifacts; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         normalized_path = str(storage_path or "").strip()
         if not normalized_path:
             return
@@ -1088,6 +1162,8 @@ class BrandAssetService:
 
     @staticmethod
     def _remove_storage_target(target: Path) -> None:
+        # Internal helper for storage target; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         try:
             if target.is_dir():
                 shutil.rmtree(target, ignore_errors=True)
@@ -1097,6 +1173,8 @@ class BrandAssetService:
             return
 
     def _prune_empty_storage_dirs(self, directories: list[Path]) -> None:
+        # Internal helper for prune empty storage dirs; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         base_path = self.storage.base_path
         for directory in directories:
             current = directory
@@ -1108,9 +1186,13 @@ class BrandAssetService:
                 current = current.parent
 
     def _store_reusable_asset_payload(self, asset: KnowledgeAsset, candidate: dict) -> dict | None:
+        # Internal helper for store reusable asset payload; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         source_path = str(candidate.get("source_path") or "").strip()
         if not source_path:
             return None
+        # Keeps the risky I/O or integration boundary contained so callers receive project-level errors
+        # instead of raw library failures.
         try:
             with open_image_asset(source_path) as source:
                 crop_box = candidate.get("crop_box")
@@ -1142,6 +1224,8 @@ class BrandAssetService:
         }
 
     async def _persist_palette(self, asset: KnowledgeAsset, outcome: AssetProcessingOutcome) -> None:
+        # Internal helper for persist palette; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         await self.palette_entries.delete_by_asset(asset.id)
         entries = outcome.structured_data.get("palette_entries", [])
         if not isinstance(entries, list) or not entries:
@@ -1169,6 +1253,8 @@ class BrandAssetService:
             )
 
     async def _persist_typography(self, asset: KnowledgeAsset, outcome: AssetProcessingOutcome) -> None:
+        # Internal helper for persist typography; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         font_families = outcome.structured_data.get("font_families", [])
         if (not isinstance(font_families, list) or not font_families) and isinstance(outcome.template_analysis, dict):
             font_families = outcome.template_analysis.get("font_families", [])
@@ -1178,6 +1264,7 @@ class BrandAssetService:
             style_hierarchy = outcome.template_analysis.get("typography_dna", {})
 
         usage_patterns = outcome.structured_data.get("usage_patterns", {})
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if (not isinstance(usage_patterns, dict) or not usage_patterns) and isinstance(outcome.template_analysis, dict):
             usage_patterns = {
                 "heading": outcome.template_analysis.get("heading"),
@@ -1192,6 +1279,7 @@ class BrandAssetService:
             return
 
         guide = await self.typography_guides.get_by_knowledge_asset(asset.id)
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if not guide:
             guide = TypographyGuide(
                 tenant_id=asset.tenant_id,
@@ -1210,7 +1298,10 @@ class BrandAssetService:
             guide.confidence = outcome.confidence
 
     async def _persist_word_bank(self, asset: KnowledgeAsset, outcome: AssetProcessingOutcome) -> None:
+        # Internal helper for persist word bank; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         upload = await self.word_bank_uploads.get_by_knowledge_asset(asset.id)
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if not upload:
             upload = WordBankUpload(
                 tenant_id=asset.tenant_id,
@@ -1231,6 +1322,8 @@ class BrandAssetService:
         await self.negative_words.delete_by_upload(upload.id)
         await self.replaceable_words.delete_by_upload(upload.id)
 
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if outcome.routed_category == "positive_word_bank":
             for term in upload.normalized_terms:
                 self.session.add(
@@ -1264,6 +1357,8 @@ class BrandAssetService:
                 )
 
     async def _persist_template_intelligence(self, asset: KnowledgeAsset, outcome: AssetProcessingOutcome) -> None:
+        # Internal helper for persist template intelligence; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         template = await self.templates.get_by_source_asset(asset.id)
         kind = (
             "hybrid"
@@ -1277,6 +1372,7 @@ class BrandAssetService:
             "layout_type": outcome.normalized_data.get("layout_type"),
             "brand_score": outcome.normalized_data.get("brand_score"),
         }
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if not template:
             template = Template(
                 tenant_id=asset.tenant_id,
@@ -1319,6 +1415,7 @@ class BrandAssetService:
             "analysis_status": "indexed",
         }
         export_rules = {"supported_formats": ["pdf", "png", "jpg", "doc"]}
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if not metadata:
             metadata = TemplateMetadata(
                 tenant_id=asset.tenant_id,
@@ -1340,6 +1437,8 @@ class BrandAssetService:
 
     async def _persist_legal_disclaimers(self, asset: KnowledgeAsset, outcome: AssetProcessingOutcome) -> None:
         """Extract and persist legal disclaimers from template/reference creative footer text"""
+        # Handles the persist legal disclaimers flow by coordinating repositories, validators, and downstream
+        # integrations as needed.
         structured = outcome.structured_data or {}
         footer_text = structured.get("footer")
         footer_style = structured.get("footer_style") or {}
@@ -1373,6 +1472,8 @@ class BrandAssetService:
         # Extract styling information
         font_size = 8
         text_color = "#666666"
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if footer_style:
             if "font_size" in footer_style:
                 try:
@@ -1394,6 +1495,8 @@ class BrandAssetService:
         elif "privacy" in footer_lower:
             asset_type = "privacy"
 
+        # This branch separates the special case from the normal path so later logic can work with cleaner
+        # assumptions.
         if existing:
             # Update existing legal asset
             existing.text_template = footer_text
@@ -1422,6 +1525,8 @@ class BrandAssetService:
 
     async def _persist_cta_templates(self, asset: KnowledgeAsset, outcome: AssetProcessingOutcome) -> None:
         """Extract and persist CTA templates from reference creative vision analysis"""
+        # Handles the persist cta templates flow by coordinating repositories, validators, and downstream
+        # integrations as needed.
         structured = outcome.structured_data or {}
         vision = structured.get("vision_analysis") or {}
         component_motifs = vision.get("component_motifs") or {}
@@ -1445,6 +1550,8 @@ class BrandAssetService:
 
         ocr_lower = ocr_text.lower()
         detected_cta = None
+        # Builds the grouped response or persistence payload one record at a time because later steps expect
+        # this exact shape.
         for keyword in cta_keywords:
             if keyword in ocr_lower:
                 # Extract the actual CTA text (with proper capitalization)
@@ -1493,6 +1600,7 @@ class BrandAssetService:
         # Check if this specific template already exists
         template_exists = any(t.template_name == template_name for t in existing_templates)
 
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if not template_exists:
             # Create new CTA template
             cta_template = BrandCTATemplate(
@@ -1513,6 +1621,8 @@ class BrandAssetService:
             await self.session.flush()
 
     async def _upsert_routing(self, asset: KnowledgeAsset, outcome: AssetProcessingOutcome) -> None:
+        # Internal helper for routing; it keeps the public service method focused on orchestration instead of
+        # low-level shaping.
         routing = await self.routing_repo.get_by_asset(asset.id)
         payload = {
             "tenant_id": asset.tenant_id,
@@ -1548,7 +1658,10 @@ class BrandAssetService:
         progress_total: int = 0,
         raw_status_json: dict | None = None,
     ) -> None:
+        # Internal helper for processing status; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         status = await self.processing_status.get_by_asset(asset.id)
+        # This guard handles missing or invalid input early so the main workflow can stay straightforward.
         if not status:
             status = AssetProcessingStatus(
                 tenant_id=asset.tenant_id,
@@ -1580,6 +1693,8 @@ class BrandAssetService:
         total: int,
         message: str,
     ) -> None:
+        # Internal helper for persist processing progress; it keeps the public service method focused on
+        # orchestration instead of low-level shaping.
         async with AsyncSessionLocal() as session:
             asset_repo = KnowledgeAssetRepository(session)
             status_repo = AssetProcessingStatusRepository(session)
@@ -1599,6 +1714,8 @@ class BrandAssetService:
 
     @staticmethod
     def _default_channel(field_key: str, desired_category: str | None) -> str:
+        # Internal helper for default channel; it keeps the public service method focused on orchestration
+        # instead of low-level shaping.
         category = desired_category or field_key
         mapping = {
             "logo": "metadata",

@@ -34,7 +34,7 @@ export default function PlatformOwnerDashboard({
   const router = useRouter();
   const [dashboardTab, setDashboardTab] = useState("platform");
   const [provider, setProvider] = useState("openai");
-  const metrics = useMemo(() => buildPlatformMetricCards(analytics, tenants), [analytics, tenants]);
+  const metrics = useMemo(() => buildPlatformMetricCards(analytics), [analytics]);
   const tenantRows = useMemo(() => buildTenantBreakdownRows(tenants), [tenants]);
   const usageSeries = useMemo(() => buildTenantUsageSeries(tenants).slice(0, 10), [tenants]);
   const dateLabel = useMemo(() => {
@@ -56,25 +56,19 @@ export default function PlatformOwnerDashboard({
     if (monthlyUsage.length) {
       return monthlyUsage.map((item) => ({
         label: formatMonthLabel(item.month).split(" ")[0],
-        primary: Math.max(item.input_tokens, 1),
-        secondary: Math.max(item.output_tokens, 1),
+        primary: item.input_tokens,
+        secondary: item.output_tokens,
       }));
     }
-    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    const seed = Math.max(Number(analytics?.metrics?.content_generations || 0), 12);
-    return months.map((label, index) => ({
-      label,
-      primary: Math.round((seed / 12) * (0.55 + index * 0.06)),
-      secondary: Math.round((seed / 14) * (0.42 + index * 0.05)),
-    }));
+    return [];
   }, [analytics?.metrics]);
 
   const ocrTrend = useMemo(
-    () => usageSeries.map((item, index) => item.ocr + index * 3).slice(0, 8),
+    () => usageSeries.map((item) => item.ocr).slice(0, 8),
     [usageSeries],
   );
   const visualTrend = useMemo(
-    () => usageSeries.map((item, index) => item.visual + index * 2).slice(0, 8),
+    () => usageSeries.map((item) => item.visual).slice(0, 8),
     [usageSeries],
   );
 
@@ -83,7 +77,7 @@ export default function PlatformOwnerDashboard({
       usageSeries.map((item, index) => ({
         name: item.label,
         color: ["#F7C5EA", "#DDEEFF", "#F6E3A3", "#B9F2D0", "#DCC7FF", "#F4CFA7"][index % 6],
-        value: Math.max(item.ocr, 1),
+        value: item.ocr,
       })),
     [usageSeries],
   );
@@ -93,13 +87,13 @@ export default function PlatformOwnerDashboard({
       usageSeries.map((item, index) => ({
         name: item.label,
         color: ["#F7C5EA", "#DDEEFF", "#F6E3A3", "#B9F2D0", "#DCC7FF", "#F4CFA7"][index % 6],
-        value: Math.max(item.visual, 1),
+        value: item.visual,
       })),
     [usageSeries],
   );
 
   return (
-    <div className="w-full px-6 py-6">
+    <div className="container">
       <div className="max-w-[1110px] space-y-6">
         <PlatformPageTitle
           title="Dashboard"
@@ -197,11 +191,15 @@ export default function PlatformOwnerDashboard({
                 </span>
               </div>
               <SimpleBarChart
-                data={usageSeries.map((item) => ({
-                  label: item.label.slice(0, 3),
-                  primary: Math.max((item.inputTokens || 0) || item.content * 12, 1),
-                  secondary: Math.max((item.outputTokens || 0) || item.content * 8, 1),
-                }))}
+                data={
+                  usageSeries
+                    .filter((item) => item.inputTokens || item.outputTokens)
+                    .map((item) => ({
+                      label: item.label.slice(0, 3),
+                      primary: item.inputTokens || 0,
+                      secondary: item.outputTokens || 0,
+                    }))
+                }
               />
             </SectionCard>
 
@@ -227,7 +225,7 @@ export default function PlatformOwnerDashboard({
                 data={usageSeries.map((item) => ({
                   label: item.label.slice(0, 3),
                   primary: item.total,
-                  secondary: Math.max(Math.round(item.total * 0.72), 1),
+                  secondary: 0,
                 }))}
                 tone="stack"
               />
@@ -235,9 +233,9 @@ export default function PlatformOwnerDashboard({
 
             <SectionCard title="Top 5 by Capacity">
               <div className="overflow-x-auto">
-                <table className="min-w-full text-left text-sm">
+                <table className="table">
                   <thead className="border-b border-[#ECEEF5] text-[#6B7280]">
-                    <tr>
+                    <tr className="bg-slate-100/50 text-black">
                       <th className="pb-3 font-medium">Tenant Name</th>
                       <th className="pb-3 font-medium">Date Created</th>
                       <th className="pb-3 font-medium">Total Capacity Used</th>

@@ -1,7 +1,14 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { InfiniteData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { API } from "@/lib/api/endpoints";
 import { request } from "@/lib/api/request";
-import type { StudioPanelSelection } from "@/lib/api/contracts";
+import type { ChatMessageResponse, ChatSessionResponse, ChatSessionUpdateRequest, StudioPanelSelection } from "@/lib/api/contracts";
+
+const CHAT_MESSAGES_PAGE_SIZE = 10;
+
+type ChatMessageCursor = {
+  created_at: string;
+  id: string;
+};
 
 function brandHeaders(brandId: string) {
   return {
@@ -41,60 +48,6 @@ export const useExportContent = (brandId: string) =>
         headers: brandHeaders(brandId),
       }),
   });
-
-export const useArchiveContent = (brandId: string, sessionId?: string) => {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (contentId: string) =>
-      request(API.CONTENT.ARCHIVE, {
-        pathParams: contentId,
-        headers: brandHeaders(brandId),
-      }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["brand", brandId, "content-history"] });
-      await queryClient.invalidateQueries({ queryKey: ["brand", brandId, "chat-sessions"] });
-      if (sessionId) {
-        await queryClient.invalidateQueries({ queryKey: ["brand", brandId, "chat-session", sessionId, "messages"] });
-      }
-    },
-  });
-};
-
-export const useDeleteContent = (brandId: string, sessionId?: string) => {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (contentId: string) =>
-      request(API.CONTENT.DELETE, {
-        pathParams: contentId,
-        headers: brandHeaders(brandId),
-      }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["brand", brandId, "content-history"] });
-      await queryClient.invalidateQueries({ queryKey: ["brand", brandId, "chat-sessions"] });
-      if (sessionId) {
-        await queryClient.invalidateQueries({ queryKey: ["brand", brandId, "chat-session", sessionId, "messages"] });
-      }
-    },
-  });
-};
-
-export const useDeleteChatMessage = (brandId: string, sessionId?: string) => {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (messageId: string) =>
-      request(API.CHAT.DELETE_MESSAGE, {
-        pathParams: messageId,
-        headers: brandHeaders(brandId),
-      }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["brand", brandId, "chat-sessions"] });
-      if (sessionId) {
-        await queryClient.invalidateQueries({ queryKey: ["brand", brandId, "chat-session", sessionId, "messages"] });
-      }
-      await queryClient.invalidateQueries({ queryKey: ["brand", brandId, "content-history"] });
-    },
-  });
-};
 
 export const useTemplateRecommendations = (
   brandId: string,
@@ -160,34 +113,130 @@ export const useChatSessions = (brandId: string) =>
       }),
   });
 
-export const useChatMessages = (brandId: string, sessionId: string) =>
-  useQuery({
-    queryKey: ["brand", brandId, "chat-session", sessionId, "messages"],
-    enabled: Boolean(brandId && sessionId),
-    queryFn: () =>
-      request(API.CHAT.LIST_MESSAGES, {
+export const useUpdateChatSession = (brandId: string) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ sessionId, data }: { sessionId: string; data: ChatSessionUpdateRequest }) =>
+      request(API.CHAT.UPDATE_SESSION, {
+        pathParams: sessionId,
+        data,
+        headers: brandHeaders(brandId),
+      }),
+    onMutate: async ({ sessionId, data }) => {
+      const queryKey = ["brand", brandId, "chat-sessions"];
+      await queryClient.cancelQueries({ queryKey });
+      const previousSessions = queryClient.getQueryData<ChatSessionResponse[]>(queryKey);
+      if (data.title !== undefined) {
+        queryClient.setQueryData<ChatSessionResponse[]>(queryKey, (current) =>
+          (current || []).map((item) => (item.id === sessionId ? { ...item, title: data.title } : item)),
+        );
+      }
+      return { previousSessions };
+    },
+    onError: (_error, _variables, context) => {
+      if (context?.previousSessions) {
+        queryClient.setQueryData(["brand", brandId, "chat-sessions"], context.previousSessions);
+      }
+    },
+    onSuccess: (session) => {
+      queryClient.setQueryData<ChatSessionResponse[]>(["brand", brandId, "chat-sessions"], (current) => {
+        if (!current) {
+          return [session];
+        }
+        return current.map((item) => (item.id === session.id ? session : item));
+      });
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ["brand", brandId, "chat-sessions"] });
+    },
+  });
+};
+
+export const useDeleteChatSession = (brandId: string) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (sessionId: string) =>
+      request(API.CHAT.DELETE_SESSION, {
         pathParams: sessionId,
         headers: brandHeaders(brandId),
       }),
+    onMutate: async (sessionId) => {
+      const queryKey = ["brand", brandId, "chat-sessions"];
+      await queryClient.cancelQueries({ queryKey });
+      const previousSessions = queryClient.getQueryData<ChatSessionResponse[]>(queryKey);
+      queryClient.setQueryData<ChatSessionResponse[]>(queryKey, (current) =>
+        (current || []).filter((item) => item.id !== sessionId),
+      );
+      queryClient.removeQueries({ queryKey: ["brand", brandId, "chat-session", sessionId, "messages"] });
+      return { previousSessions };
+    },
+    onError: (_error, _sessionId, context) => {
+      if (context?.previousSessions) {
+        queryClient.setQueryData(["brand", brandId, "chat-sessions"], context.previousSessions);
+      }
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ["brand", brandId, "chat-sessions"] });
+    },
+  });
+};
+
+export const useChatMessages = (brandId: string, sessionId: string) =>
+  useInfiniteQuery({
+    queryKey: ["brand", brandId, "chat-session", sessionId, "messages"],
+    enabled: Boolean(brandId && sessionId),
+    initialPageParam: undefined as ChatMessageCursor | undefined,
+    queryFn: ({ pageParam }) =>
+      request(API.CHAT.LIST_MESSAGES, {
+        pathParams: sessionId,
+        params: {
+          limit: CHAT_MESSAGES_PAGE_SIZE,
+          before_created_at: pageParam?.created_at,
+          before_id: pageParam?.id,
+        },
+        headers: brandHeaders(brandId),
+      }),
+    getNextPageParam: (lastPage: ChatMessageResponse[]) => {
+      if (lastPage.length < CHAT_MESSAGES_PAGE_SIZE) {
+        return undefined;
+      }
+      const oldestMessage = lastPage[0];
+      return oldestMessage ? { created_at: oldestMessage.created_at, id: oldestMessage.id } : undefined;
+    },
+    select: (data) => [...data.pages].reverse().flat(),
   });
 
 export const useSendChatMessage = (brandId: string) => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ sessionId, data }: { sessionId: string; data: unknown }) =>
+    mutationFn: ({ sessionId, data, signal }: { sessionId: string; data: unknown; signal?: AbortSignal }) =>
       request(API.CHAT.SEND_MESSAGE, {
         pathParams: sessionId,
         data,
         headers: brandHeaders(brandId),
+        signal,
       }),
     onSuccess: async (response, variables) => {
-      queryClient.setQueryData(
+      queryClient.setQueryData<InfiniteData<ChatMessageResponse[]>>(
         ["brand", brandId, "chat-session", variables.sessionId, "messages"],
-        (current: Array<{ id: string }> | undefined) => {
-          const items = current || [];
-          const seen = new Set(items.map((item) => item.id));
+        (current) => {
+          if (!current) {
+            return {
+              pages: [[response.user_message, response.assistant_message]],
+              pageParams: [undefined],
+            };
+          }
+          const seen = new Set(current.pages.flat().map((item) => item.id));
           const appended = [response.user_message, response.assistant_message].filter((item) => !seen.has(item.id));
-          return [...items, ...appended];
+          if (!appended.length) {
+            return current;
+          }
+          const pages = current.pages.length ? [...current.pages] : [[]];
+          pages[0] = [...(pages[0] || []), ...appended];
+          return {
+            ...current,
+            pages,
+          };
         },
       );
       await queryClient.invalidateQueries({
@@ -198,6 +247,15 @@ export const useSendChatMessage = (brandId: string) => {
     },
   });
 };
+
+export const useCancelChatGeneration = (brandId: string) =>
+  useMutation({
+    mutationFn: (sessionId: string) =>
+      request(API.CHAT.CANCEL_GENERATION, {
+        pathParams: sessionId,
+        headers: brandHeaders(brandId),
+      }),
+  });
 
 export const useCreateShareLink = (brandId: string) =>
   useMutation({

@@ -10,7 +10,8 @@ import { Button } from "@/components/ui/button";
 import { FormField, StyledInput } from "@/components/brandSpaces/tabs/FormFields";
 import { PlatformPageTitle, SectionCard } from "@/components/platformOwner/PlatformOwnerPrimitives";
 import { useBrands } from "@/hooks/useBrands";
-import { useSaveTenantUser, useTenantUserDetail } from "@/hooks/useTeamAccess";
+import { getTenantUserRequestId, useSaveTenantUser, useTenantUserDetail } from "@/hooks/useTeamAccess";
+import { useGetMe } from "@/hooks/useUser";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 
 type UserEditorFormProps = {
@@ -22,7 +23,7 @@ type UserEditorState = {
     fullName: string;
     email: string;
     contactNumber: string;
-    roleCode: "tenant_user" | "brand_user";
+    roleCode: "tenant_admin" | "tenant_user" | "brand_user";
     selectedBrands: string[];
 };
 
@@ -53,8 +54,11 @@ function getMutationErrorMessage(error: unknown, mode: UserEditorFormProps["mode
 export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
     const router = useRouter();
     const { data: brands } = useBrands();
+    const { data: currentUser } = useGetMe();
     const { data: liveUser, isLoading } = useTenantUserDetail(userId || "");
-    const saveUser = useSaveTenantUser(userId);
+    const saveUserId = mode === "edit" ? getTenantUserRequestId(liveUser) || userId : undefined;
+
+    const saveUser = useSaveTenantUser(saveUserId);
     const [confirmOpen, setConfirmOpen] = useState(false);
     const [errors, setErrors] = useState<FormErrorState>({});
     const [submissionFeedback, setSubmissionFeedback] = useState<SubmissionFeedback | null>(null);
@@ -66,7 +70,11 @@ export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
                 fullName: liveUser.full_name,
                 email: liveUser.email,
                 contactNumber: liveUser.phone_number || "",
-                roleCode: liveUser.role_codes.includes("tenant_user") ? "tenant_user" : "brand_user",
+                roleCode: liveUser.role_codes.includes("tenant_admin")
+                    ? "tenant_admin"
+                    : liveUser.role_codes.includes("tenant_user")
+                        ? "tenant_user"
+                        : "brand_user",
                 selectedBrands: liveUser.brand_space_ids,
             };
         }
@@ -74,7 +82,7 @@ export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
             fullName: "",
             email: "",
             contactNumber: "",
-            roleCode: "brand_user",
+            roleCode: "tenant_user",
             selectedBrands: [],
         };
     }, [liveUser]);
@@ -89,13 +97,20 @@ export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
         [brands],
     );
 
-    const roleLabel = resolvedForm.roleCode === "tenant_user" ? "Tenant User" : "Brand User";
+    const roleLabel =
+        resolvedForm.roleCode === "tenant_admin"
+            ? "Tenant Admin"
+            : resolvedForm.roleCode === "tenant_user"
+                ? "Tenant User"
+                : "Brand User";
     const title =
         mode === "create"
             ? "Create User"
-            : `Edit ${resolvedForm.fullName || (resolvedForm.roleCode === "tenant_user" ? "{Tenant User name}" : "{Brand user name}")}`;
+            : `Edit ${resolvedForm.fullName || (resolvedForm.roleCode === "brand_user" ? "{Brand user name}" : "{Tenant User name}")}`;
 
     const showBrandAssignment = resolvedForm.roleCode === "brand_user";
+    const liveUserId = getTenantUserRequestId(liveUser);
+    const isSelfEdit = mode === "edit" && Boolean(currentUser?.id) && liveUserId === currentUser?.id;
 
     const updateForm = (patch: Partial<UserEditorState>) => {
         setForm((current) => ({ ...(current ?? resolvedForm), ...patch }));
@@ -129,6 +144,9 @@ export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
     };
 
     const submit = () => {
+        if (saveUser.isPending) {
+            return;
+        }
         setSubmissionFeedback(null);
         saveUser.mutate(
             {
@@ -157,7 +175,7 @@ export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
                         router.push(`/user_management?${params.toString()}`);
                         return;
                     }
-                    router.push(`/user_management/${savedUser.id}`);
+                    router.push(`/user_management/${getTenantUserRequestId(savedUser)}`);
                 },
                 onError: (error) => {
                     setSubmissionFeedback({
@@ -167,6 +185,17 @@ export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
                 },
             },
         );
+    };
+
+    const handleSaveClick = () => {
+        if (!validate()) {
+            return;
+        }
+        if (mode === "edit") {
+            setConfirmOpen(true);
+            return;
+        }
+        submit();
     };
 
     if (mode === "edit" && isLoading && !liveUser) {
@@ -179,18 +208,15 @@ export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
 
     return (
         <>
-            <div className="w-full px-6 py-5">
-                <div className="mx-auto max-w-[1110px] space-y-6">
+            <div className="w-full px-4 py-6">
+                <div className="mx-auto ">
                     <PlatformPageTitle
                         title={title}
                         action={
                             <Button
-                                onClick={() => {
-                                    if (validate()) {
-                                        setConfirmOpen(true);
-                                    }
-                                }}
-                                className="h-12 rounded-[10px] bg-primary px-6 text-[15px] font-medium hover:bg-primary/90"
+                                onClick={handleSaveClick}
+                                disabled={saveUser.isPending}
+                                className="h-12 rounded-none bg-primary/72 px-10 py-6 text-[15px] font-medium hover:bg-primary/90"
                             >
                                 {saveUser.isPending ? (mode === "create" ? "Creating..." : "Saving...") : mode === "create" ? "Create" : "Save"}
                             </Button>
@@ -204,8 +230,8 @@ export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
                         </Alert>
                     ) : null}
 
-                    <SectionCard title="User Details">
-                        <div className="max-w-[458px] space-y-5">
+                    <SectionCard className="border-none shadow-none p-0">
+                        <div className="max-w-md space-y-6">
                             <FormField label="Full Name" required error={errors.fullName}>
                                 <StyledInput
                                     placeholder="Enter full name"
@@ -243,7 +269,11 @@ export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
                                 <Select
                                     // className="h-12 w-full rounded-[10px] border-none bg-input-field px-4 text-sm text-slate-700 outline-none"
                                     value={resolvedForm.roleCode}
+                                    disabled={isSelfEdit}
                                     onValueChange={(event) => {
+                                        if (isSelfEdit) {
+                                            return;
+                                        }
                                         const nextRole = event as UserEditorState["roleCode"];
                                         updateForm({
                                             roleCode: nextRole,
@@ -257,6 +287,9 @@ export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
 
                                     <SelectContent>
                                         <SelectGroup>
+                                            {mode === "edit" && resolvedForm.roleCode === "tenant_admin" ? (
+                                                <SelectItem value="tenant_admin">Tenant Admin</SelectItem>
+                                            ) : null}
                                             <SelectItem value="tenant_user">Tenant User</SelectItem>
                                             <SelectItem value="brand_user">Brand User</SelectItem>
                                         </SelectGroup>
@@ -269,8 +302,8 @@ export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
                                     <p className="text-base font-medium text-slate-700">
                                         Brand Assignment <span className="text-red-500">*</span>
                                     </p>
-                                    <div className="overflow-hidden rounded-[2px] border border-[#ECEEF5] bg-white">
-                                        <div className="border-b border-[#ECEEF5] bg-[#F5F6FB] px-4 py-3 text-sm text-[#6B7280]">
+                                    <div className="overflow-hidden rounded-xs bg-white">
+                                        <div className="rounded-md bg-[#F5F6FB] px-4 py-3 text-sm text-[#6B7280]">
                                             Assign brand space
                                         </div>
                                         <div className="divide-y divide-slate-100">
@@ -297,21 +330,24 @@ export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
             </div>
 
             <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-                <AlertDialogContent className="max-w-[460px] rounded-2xl border-0 px-8 py-10 shadow-[0_20px_80px_-24px_rgba(15,23,42,0.25)]">
-                    <AlertDialogHeader className="items-center text-center">
-                        <AlertDialogTitle className="text-5xl font-semibold tracking-tight text-slate-900">Save Changes?</AlertDialogTitle>
-                        <AlertDialogDescription className="text-xl text-slate-700">
+                <AlertDialogContent className="w-[432px] max-w-[calc(100vw-32px)] gap-0 rounded-[4px] border-0 bg-white px-0 pb-[60px] pt-[60px] shadow-none">
+                    <AlertDialogCancel className="absolute right-4 top-3 flex h-6 w-6 items-center justify-center rounded-full border-0 bg-[#F5F2F2] p-0 text-sm leading-none text-black hover:bg-[#F5F2F2] focus-visible:outline-none focus-visible:ring-0">
+                        ×
+                    </AlertDialogCancel>
+                    <AlertDialogHeader className="flex items-center justify-center gap-1 text-center">
+                        <AlertDialogTitle className="text-[30px] font-semibold leading-9 tracking-normal text-black">Save Changes?</AlertDialogTitle>
+                        <AlertDialogDescription className="whitespace-nowrap text-[18px] leading-6 text-black">
                             Are you sure you want to save these changes?
                         </AlertDialogDescription>
                     </AlertDialogHeader>
-                    <AlertDialogFooter className="mt-4 flex-row justify-center gap-6">
+                    <AlertDialogFooter className="mx-auto mt-[25px] flex w-[306px] !flex-row items-center justify-center gap-[26px]">
                         <AlertDialogAction
-                            className="h-12 min-w-[152px] rounded-none bg-primary text-base hover:bg-primary/90"
+                            className="h-11 w-[140px] rounded-none bg-primary/72 p-0 text-base text-white hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-0"
                             onClick={submit}
                         >
                             Confirm
                         </AlertDialogAction>
-                        <AlertDialogCancel className="h-12 min-w-[152px] rounded-none border-slate-900 text-base text-slate-900 hover:bg-slate-50">
+                        <AlertDialogCancel className="h-11 w-[140px] rounded-none border border-black bg-white p-0 text-base text-black hover:bg-white focus-visible:outline-none focus-visible:ring-0">
                             Cancel
                         </AlertDialogCancel>
                     </AlertDialogFooter>

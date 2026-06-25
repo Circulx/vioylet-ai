@@ -25,13 +25,13 @@ export const sidebarItems: SidebarItemProps[] = [
     icon: "/box",
     module: "TENANT_MANAGEMENT",
   },
-  {
-    id: 3,
-    name: "Analytics",
-    href: "/analytics",
-    icon: "/analytics",
-    module: "ANALYTICS",
-  },
+//   {
+//     id: 3,
+//     name: "Analytics",
+//     href: "/analytics",
+//     icon: "/analytics",
+//     module: "ANALYTICS",
+//   },
   {
     id: 4,
     name: "Brand Spaces",

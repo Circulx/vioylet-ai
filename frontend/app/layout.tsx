@@ -7,6 +7,7 @@ import { SidebarProvider } from "@/context/SidebarContext";
 import OfflineBanner from "@/components/OfflineBanner";
 import { NetworkProvider } from "@/context/network-provider";
 import { TanstackProviders } from "@/providers/tanstackProvider";
+import { Toaster } from "@/components/ui/toaster";
 
 const manrope = localFont({
     src: "../public/fonts/Manrope/Manrope-VariableFont_wght.ttf",
@@ -40,6 +41,7 @@ export default function RootLayout({
                         <SidebarProvider>
                             <OfflineBanner />
                             {children}
+                            <Toaster />
                         </SidebarProvider>
                     </NetworkProvider>
                 </TanstackProviders>

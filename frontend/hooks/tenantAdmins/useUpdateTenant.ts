@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { API } from "@/lib/api/endpoints";
 import { request } from "@/lib/api/request";
+import type { TenantUserResponse } from "@/lib/api/contracts";
 
 export const useUpdateTenantAdmin = () => {
   const queryClient = useQueryClient();
@@ -20,17 +21,31 @@ export const useUpdateTenantAdmin = () => {
   });
 };
 
-export const useDeleteTenantAdmin = () => {
+export const useUpdateBrandUsageTargets = () => {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (id: string) =>
-      request(API.TENANTS.DELETE, {
+    mutationFn: ({ id, brandUsageTargets }: { id: string; brandUsageTargets: Record<string, number> }) =>
+      request(API.TENANTS.UPDATE_BRAND_USAGE_TARGETS, {
         pathParams: id,
+        data: { brand_usage_targets: brandUsageTargets },
       }),
-    onSuccess: async (_, id) => {
-      queryClient.removeQueries({ queryKey: ["tenant", id] });
-      await queryClient.invalidateQueries({ queryKey: ["tenants"] });
+    onSuccess: (response, variables) => {
+      queryClient.setQueryData(["tenant", variables.id], (current: unknown) => {
+        if (!current || typeof current !== "object") {
+          return current;
+        }
+        const tenant = current as { metadata_json?: Record<string, unknown> };
+        return {
+          ...tenant,
+          metadata_json: {
+            ...(tenant.metadata_json || {}),
+            brand_usage_targets: response.brand_usage_targets,
+          },
+        };
+      });
+      void queryClient.invalidateQueries({ queryKey: ["tenant", variables.id], refetchType: "inactive" });
+      void queryClient.invalidateQueries({ queryKey: ["tenant", variables.id, "usage-summary"] });
     },
   });
 };
@@ -60,9 +75,13 @@ export const useUpdateTenantUser = (tenantId: string, userId: string) => {
         pathParams: { tenantId, userId },
         data,
       }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["tenant", tenantId, "users"] });
-      await queryClient.invalidateQueries({ queryKey: ["tenant", tenantId, "user", userId] });
+    onSuccess: (updatedUser) => {
+      queryClient.setQueryData(["tenant", tenantId, "user", userId], updatedUser);
+      queryClient.setQueryData<TenantUserResponse[]>(["tenant", tenantId, "users"], (current) =>
+        current?.map((user) => (user.id === updatedUser.id ? updatedUser : user)),
+      );
+      void queryClient.invalidateQueries({ queryKey: ["tenant", tenantId, "users"] });
+      void queryClient.invalidateQueries({ queryKey: ["tenant", tenantId, "user", userId] });
     },
   });
 };

@@ -59,6 +59,7 @@ To use the live backend instead, set:
 ```env
 NEXT_PUBLIC_API_BASE_URI=http://localhost:8000
 NEXT_PUBLIC_ENABLE_MOCK_UI=false
+GOOGLE_FONTS_API_KEY=your_google_fonts_developer_api_key
 ```
 
 Supported mock roles:

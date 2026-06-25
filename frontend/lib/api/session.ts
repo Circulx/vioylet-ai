@@ -32,13 +32,6 @@ export function setAuthTokens(accessToken: string, refreshToken?: string) {
   clearTwoFactorTicket();
 }
 
-export function setAccessToken(accessToken: string) {
-  if (!canUseStorage()) {
-    return;
-  }
-  window.localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
-}
-
 export function clearAuthTokens() {
   if (!canUseStorage()) {
     return;

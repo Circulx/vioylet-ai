@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { MoreVertical } from "lucide-react";
+import { Archive, Edit2, Edit3Icon, MoreVertical, NotebookPen, Trash2 } from "lucide-react";
 import { StatusChip } from "@/components/common/DesignPrimitives";
 import {
   DropdownMenu,
@@ -13,6 +13,7 @@ import {
 import type { BrandResponse } from "@/lib/api/contracts";
 import { buildBrandEditHref, buildBrandWorkspaceHref } from "@/lib/brand-routing";
 import { resolveBrandLogoUrl } from "@/lib/brand-assets";
+import { Button } from "../ui/button";
 
 type BrandSpaceListItem = BrandResponse & {
   logo?: string;
@@ -51,19 +52,19 @@ export default function BrandSpaces({
         return (
           <div
             key={item.id}
-            className="group relative flex min-h-[156px] flex-col justify-between rounded-[2px] border border-[#ECEEF5] bg-white p-5 shadow-[0_10px_24px_-22px_rgba(15,23,42,0.45)] transition hover:border-primary/30 hover:shadow-[0_20px_32px_-24px_rgba(60,47,143,0.35)]"
+            className="group relative flex min-h-30 flex-col justify-between border border-[#C5C5C5] p-4 transition hover:border-primary/30 hover:shadow-[0_20px_32px_-24px_rgba(60,47,143,0.35)]"
           >
             <div className="flex items-start justify-between gap-3">
               {helperLabel ? <StatusChip tone={helperLabel === "Active" ? "success" : "neutral"}>{helperLabel}</StatusChip> : <span />}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <button
-                    type="button"
+                  <Button
+                  variant={"ghost"}
                     aria-label={`${item.name} actions`}
-                    className="rounded-full p-1 text-slate-300 transition hover:bg-slate-100 hover:text-slate-500"
+                    className="rounded-full p-1 text-slate-300 transition"
                   >
                     <MoreVertical className="h-4 w-4" />
-                  </button>
+                  </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-44">
                   {lifecycleState === "draft" ? (
@@ -73,11 +74,13 @@ export default function BrandSpaces({
                   ) : null}
                   {lifecycleState === "active" ? (
                     <DropdownMenuItem onClick={() => onUnpublish?.(item)}>
+                        <NotebookPen />
                       Move to Draft
                     </DropdownMenuItem>
                   ) : null}
                   {lifecycleState !== "archived" ? (
                     <DropdownMenuItem onClick={() => onArchive?.(item)}>
+                        <Archive />
                       Archive
                     </DropdownMenuItem>
                   ) : null}
@@ -87,9 +90,13 @@ export default function BrandSpaces({
                     </DropdownMenuItem>
                   ) : null}
                   <DropdownMenuItem asChild>
-                    <Link href={buildBrandEditHref(item)}>Edit</Link>
+                    <Link href={buildBrandEditHref(item)}>
+                        <Edit3Icon />
+                      Edit
+                    </Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem variant="destructive" onClick={() => onDelete?.(item)}>
+                  <Trash2 />
                     Delete
                   </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -99,13 +106,14 @@ export default function BrandSpaces({
             <Link href={buildBrandWorkspaceHref(item)} className="block">
               <div className="flex min-h-[56px] items-center justify-center py-3">
                 {logoUrl ? (
-                  <div className="relative h-12 w-24">
+                  <div className="relative h-24 w-48 overflow-hidden">
                     <Image
                       src={logoUrl}
                       alt={item.name}
                       fill
-                      className="object-contain"
-                      sizes="128px"
+                      unoptimized
+                      className="scale-[1.65] object-contain"
+                      sizes="192px"
                     />
                   </div>
                 ) : (
@@ -116,8 +124,8 @@ export default function BrandSpaces({
               </div>
 
               <div className="space-y-1 border-t border-[#F1F2F6] pt-4">
-                <p className="text-base font-semibold text-[#2F3342]">{item.name}</p>
-                <p className="text-sm text-[#7A7F8F]">Open workspace</p>
+                <p className="text-sm font-medium text-[#2F3342]">{item.name}</p>
+                {/* <p className="text-sm text-[#7A7F8F]">Open workspace</p> */}
               </div>
             </Link>
           </div>

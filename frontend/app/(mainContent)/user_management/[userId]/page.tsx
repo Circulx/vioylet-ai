@@ -1,16 +1,21 @@
 import UserEditorForm from "@/components/userManagement/UserEditorForm";
 import UserOverview from "@/components/userManagement/UserOverview";
 
-export default function UserDetailPage({
+type UserDetailPageProps = {
+  params: Promise<{ userId: string }>;
+  searchParams: Promise<{ edit?: string }>;
+};
+
+export default async function UserDetailPage({
   params,
   searchParams,
-}: {
-  params: { userId: string };
-  searchParams: { edit?: string };
-}) {
-  return searchParams.edit === "true" ? (
-    <UserEditorForm mode="edit" userId={params.userId} />
+}: UserDetailPageProps) {
+  const { userId } = await params;
+  const resolvedSearchParams = await searchParams;
+
+  return resolvedSearchParams.edit === "true" ? (
+    <UserEditorForm mode="edit" userId={userId} />
   ) : (
-    <UserOverview userId={params.userId} />
+    <UserOverview userId={userId} />
   );
 }

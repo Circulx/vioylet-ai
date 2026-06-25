@@ -44,6 +44,7 @@ export interface CoreBrandFields {
 
 export interface VoiceToneFields {
   coreToneAttributes: string[];
+  coreToneAttributeWeights: Record<string, number>;
   primaryEmotion: string;
   secondaryEmotion: string;
   avoidedEmotion: string;
@@ -60,6 +61,7 @@ export interface TargetAudienceFields {
   objections: string;
   contentConsumptionBehavior: string;
   audienceInsights: BrandUploadItem[];
+  audienceType: string;
   ageRange: string;
   gender: string;
   location: string;
@@ -82,8 +84,7 @@ export interface AdditionalColorField {
 export interface VisualIdentityFields {
   brandMood: string;
   visualStyle: string;
-  allowedLogoPlacements: string[];
-  defaultLogoPlacement: string;
+  logoPlacements: string[];
   referenceCreatives: BrandUploadItem[];
   moodBoards: BrandUploadItem[];
   primaryColor: string;
@@ -91,6 +92,7 @@ export interface VisualIdentityFields {
   additionalColors: AdditionalColorField[];
   colorPaletteUploads: BrandUploadItem[];
   typography: string;
+  uploadedFonts: BrandUploadItem[];
   fontStyleGuide: BrandUploadItem[];
 }
 
@@ -114,6 +116,14 @@ export interface BrandKnowledgeFields {
   otherDocuments: BrandUploadItem[];
 }
 
+export interface CompetitorBrandField {
+  name: string;
+  websiteUrl: string;
+  linkedin: string;
+  instagram: string;
+  x: string;
+}
+
 export interface AdditionalDetailFields {
   brandMission: string;
   brandVision: string;
@@ -135,6 +145,7 @@ export interface AdditionalDetailFields {
   linkedin: string;
   instagram: string;
   x: string;
+  competitorBrands: CompetitorBrandField[];
 }
 
 export interface BrandFormState {
@@ -158,6 +169,7 @@ export const emptyBrandFormState: BrandFormState = {
   },
   voiceTone: {
     coreToneAttributes: [],
+    coreToneAttributeWeights: {},
     primaryEmotion: "",
     secondaryEmotion: "",
     avoidedEmotion: "",
@@ -173,6 +185,7 @@ export const emptyBrandFormState: BrandFormState = {
     objections: "",
     contentConsumptionBehavior: "",
     audienceInsights: [],
+    audienceType: "",
     ageRange: "",
     gender: "",
     location: "",
@@ -189,8 +202,7 @@ export const emptyBrandFormState: BrandFormState = {
   visualIdentity: {
     brandMood: "",
     visualStyle: "",
-    allowedLogoPlacements: [],
-    defaultLogoPlacement: "",
+    logoPlacements: [],
     referenceCreatives: [],
     moodBoards: [],
     primaryColor: "",
@@ -198,6 +210,7 @@ export const emptyBrandFormState: BrandFormState = {
     additionalColors: [{ name: "", hex: "" }],
     colorPaletteUploads: [],
     typography: "",
+    uploadedFonts: [],
     fontStyleGuide: [],
   },
   brandRules: {
@@ -239,6 +252,15 @@ export const emptyBrandFormState: BrandFormState = {
     linkedin: "",
     instagram: "",
     x: "",
+    competitorBrands: [
+      {
+        name: "",
+        websiteUrl: "",
+        linkedin: "",
+        instagram: "",
+        x: "",
+      },
+    ],
   },
 };
 
@@ -249,7 +271,6 @@ export interface BrandTabProps {
   form: BrandFormState;
   setForm: BrandFormSetter;
   onRemoveUpload?: (itemId: string) => void | Promise<void>;
-  onFontGuideUploadAdded?: (items: BrandUploadItem[]) => void | Promise<void>;
 }
 
 export function updateBrandFormSection<
@@ -296,6 +317,10 @@ export function createPersistedBrandUploadItem(item: BrandUploadItem): BrandUplo
   };
 }
 
+export function normalizeBrandLogoItems(items: BrandUploadItem[]) {
+  return items.slice(0, 1);
+}
+
 export function updateBrandUploadItemState(
   form: BrandFormState,
   itemId: string,
@@ -322,7 +347,7 @@ export function updateBrandUploadItemState(
               ...normalizedPatch,
             }
           : form.core.logo,
-      logos: updateList(form.core.logos),
+      logos: normalizeBrandLogoItems(updateList(form.core.logos)),
     },
     targetAudience: {
       ...form.targetAudience,
@@ -333,6 +358,7 @@ export function updateBrandUploadItemState(
       referenceCreatives: updateList(form.visualIdentity.referenceCreatives),
       moodBoards: updateList(form.visualIdentity.moodBoards),
       colorPaletteUploads: updateList(form.visualIdentity.colorPaletteUploads),
+      uploadedFonts: updateList(form.visualIdentity.uploadedFonts),
       fontStyleGuide: updateList(form.visualIdentity.fontStyleGuide),
     },
     brandRules: {
@@ -357,6 +383,7 @@ export function findBrandUploadItem(form: BrandFormState, itemId: string): Brand
     ...form.visualIdentity.referenceCreatives,
     ...form.visualIdentity.moodBoards,
     ...form.visualIdentity.colorPaletteUploads,
+    ...form.visualIdentity.uploadedFonts,
     ...form.visualIdentity.fontStyleGuide,
     ...form.brandRules.positiveWordBankUploads,
     ...form.brandRules.replaceableWordUploads,
@@ -370,7 +397,7 @@ export function findBrandUploadItem(form: BrandFormState, itemId: string): Brand
 
 export function removeBrandUploadItem(form: BrandFormState, itemId: string): BrandFormState {
   const removeFromList = (items: BrandUploadItem[]) => items.filter((item) => item.id !== itemId);
-  const nextLogos = removeFromList(form.core.logos);
+  const nextLogos = normalizeBrandLogoItems(removeFromList(form.core.logos));
   const primaryLogo =
     form.core.logo?.id === itemId
       ? nextLogos[0] || null
@@ -392,6 +419,7 @@ export function removeBrandUploadItem(form: BrandFormState, itemId: string): Bra
       referenceCreatives: removeFromList(form.visualIdentity.referenceCreatives),
       moodBoards: removeFromList(form.visualIdentity.moodBoards),
       colorPaletteUploads: removeFromList(form.visualIdentity.colorPaletteUploads),
+      uploadedFonts: removeFromList(form.visualIdentity.uploadedFonts),
       fontStyleGuide: removeFromList(form.visualIdentity.fontStyleGuide),
     },
     brandRules: {

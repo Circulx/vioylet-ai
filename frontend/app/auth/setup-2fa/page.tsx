@@ -10,7 +10,7 @@ export const metadata = {
 export default function SetupTwoFactorPage() {
   return (
     <MainAuthLandingPage>
-      <div className="w-full max-w-md">
+      <div className="w-full max-w-md ">
         <div className="mb-8 text-start">
           <Image src="/logo.svg" alt="Violyt Logo" width={56} height={56} />
           <h1 className="my-4 font-dmSans text-5xl font-extrabold tracking-tight text-gray-900">

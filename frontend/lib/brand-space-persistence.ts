@@ -10,6 +10,7 @@ import { fileToDataUrl, stripFileExtension } from "@/lib/file-utils";
 import {
   createPersistedBrandUploadItem,
   emptyBrandFormState,
+  normalizeBrandLogoItems,
   type BrandFormState,
   type BrandUploadItem,
 } from "@/types/brand-space.types";
@@ -21,6 +22,7 @@ export type UploadedBrandAssets = {
   referenceCreatives: BrandAttachmentResponse[];
   moodBoards: BrandAttachmentResponse[];
   colorPaletteUploads: BrandAttachmentResponse[];
+  uploadedFonts: BrandAttachmentResponse[];
   fontStyleGuide: BrandAttachmentResponse[];
   positiveWordBankUploads: BrandAttachmentResponse[];
   replaceableWordUploads: BrandAttachmentResponse[];
@@ -36,6 +38,7 @@ export const emptyUploadedBrandAssets: UploadedBrandAssets = {
   referenceCreatives: [],
   moodBoards: [],
   colorPaletteUploads: [],
+  uploadedFonts: [],
   fontStyleGuide: [],
   positiveWordBankUploads: [],
   replaceableWordUploads: [],
@@ -46,7 +49,7 @@ export const emptyUploadedBrandAssets: UploadedBrandAssets = {
 
 export const BRAND_SPACE_CREATE_DRAFT_STORAGE_KEY = "violyt.brand-space-create-draft.v1";
 
-export type UploadProgressUpdate = {
+type UploadProgressUpdate = {
   itemId: string;
   uploadedAssetId?: string;
   storagePath?: string;
@@ -69,7 +72,7 @@ export type UploadProgressUpdate = {
   isActive?: boolean;
 };
 
-export type UploadProgressCallback = (update: UploadProgressUpdate) => void;
+type UploadProgressCallback = (update: UploadProgressUpdate) => void;
 
 type PersistedBrandSpaceDraft = {
   brandId?: string;
@@ -85,6 +88,7 @@ type AttachmentFieldConfig = {
     | "reference_creatives"
     | "mood_board"
     | "color_palette"
+    | "font_file"
     | "font_guide"
     | "positive_word_bank"
     | "replaceable_word_bank"
@@ -124,6 +128,12 @@ const ATTACHMENT_FIELDS: AttachmentFieldConfig[] = [
     getItems: (form) => form.visualIdentity.colorPaletteUploads,
     desiredCategory: "color_palette",
     defaultTags: ["Color Palette"],
+  },
+  {
+    key: "font_file",
+    getItems: (form) => form.visualIdentity.uploadedFonts,
+    desiredCategory: "typography_font",
+    defaultTags: ["Font File"],
   },
   {
     key: "font_guide",
@@ -208,7 +218,9 @@ function serializeUploadList(items: BrandUploadItem[]) {
 }
 
 export function serializeBrandSpaceDraftForm(form: BrandFormState): BrandFormState {
-  const logoItems = dedupeUploads(form.core.logos.length ? form.core.logos : form.core.logo ? [form.core.logo] : []);
+  const logoItems = normalizeBrandLogoItems(
+    dedupeUploads(form.core.logos.length ? form.core.logos : form.core.logo ? [form.core.logo] : []),
+  );
   return {
     ...form,
     core: {
@@ -225,6 +237,7 @@ export function serializeBrandSpaceDraftForm(form: BrandFormState): BrandFormSta
       referenceCreatives: serializeUploadList(form.visualIdentity.referenceCreatives),
       moodBoards: serializeUploadList(form.visualIdentity.moodBoards),
       colorPaletteUploads: serializeUploadList(form.visualIdentity.colorPaletteUploads),
+      uploadedFonts: serializeUploadList(form.visualIdentity.uploadedFonts),
       fontStyleGuide: serializeUploadList(form.visualIdentity.fontStyleGuide),
     },
     brandRules: {
@@ -287,18 +300,21 @@ export function loadBrandSpaceDraft(): PersistedBrandSpaceDraft | null {
         ...structuredClone(emptyBrandFormState.core),
         ...parsed.form.core,
       },
+      visualIdentity: {
+        ...structuredClone(emptyBrandFormState.visualIdentity),
+        ...parsed.form.visualIdentity,
+      },
     };
-    restoredForm.core.logos = dedupeUploads(
-      restoredForm.core.logos.length
-        ? restoredForm.core.logos
-        : restoredForm.core.logo
-          ? [restoredForm.core.logo]
-          : [],
+    restoredForm.core.logos = normalizeBrandLogoItems(
+      dedupeUploads(
+        restoredForm.core.logos.length
+          ? restoredForm.core.logos
+          : restoredForm.core.logo
+            ? [restoredForm.core.logo]
+            : [],
+      ),
     );
     restoredForm.core.logo = restoredForm.core.logos[0] || restoredForm.core.logo || null;
-    if (isUnknownFontName(restoredForm.visualIdentity.typography)) {
-      restoredForm.visualIdentity.typography = "";
-    }
     return {
       brandId: parsed.brandId,
       lifecycleState: parsed.lifecycleState,
@@ -379,43 +395,6 @@ function mergeAttachmentItems(
     return Boolean(item.file);
   });
   return [...persistedItems, ...unsavedItems];
-}
-
-function toRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-}
-
-function isUnknownFontName(value: string) {
-  return ["unknown", "unknown font", "unknown visual font", "font"].includes(value.trim().toLowerCase());
-}
-
-function extractedFontName(font: Record<string, unknown>) {
-  const value = String(font.name || font.full_name || font.family || "").trim();
-  return value && !isUnknownFontName(value) ? value : "";
-}
-
-function typographyTextFromAttachments(assets: BrandAttachmentResponse[]) {
-  for (const asset of assets) {
-    const structuredData = toRecord(asset.structured_data_json);
-    const normalizedData = toRecord(asset.normalized_data_json);
-    const directName = String(
-      structuredData.detected_font_name || normalizedData.detected_font_name || "",
-    ).trim();
-    if (directName && !isUnknownFontName(directName)) {
-      return directName;
-    }
-
-    const fontFamilies = Array.isArray(structuredData.font_families)
-      ? structuredData.font_families
-      : Array.isArray(normalizedData.font_families)
-        ? normalizedData.font_families
-        : [];
-    const detectedName = fontFamilies.map(toRecord).map(extractedFontName).find(Boolean);
-    if (detectedName) {
-      return detectedName;
-    }
-  }
-  return "";
 }
 
 function attachmentToProgressUpdate(itemId: string, asset: BrandAttachmentResponse): UploadProgressUpdate {
@@ -569,7 +548,7 @@ async function uploadAttachmentItem(
       desired_category: field.desiredCategory,
       skip_processing: false,
       metadata: {
-        tags: field.defaultTags || item.tags || [],
+        tags: item.tags?.length ? item.tags : field.defaultTags || [],
         uploaded_from: "brand_space_editor",
       },
     },
@@ -606,6 +585,7 @@ function mapUploadedAssets(
     referenceCreatives: uploads.reference_creatives || [],
     moodBoards: uploads.mood_board || [],
     colorPaletteUploads: uploads.color_palette || [],
+    uploadedFonts: uploads.font_file || [],
     fontStyleGuide: uploads.font_guide || [],
     positiveWordBankUploads: uploads.positive_word_bank || [],
     replaceableWordUploads: uploads.replaceable_word_bank || [],
@@ -630,18 +610,6 @@ export async function uploadBrandSpaceAssets(
   return mapUploadedAssets(
     Object.fromEntries(entries) as Record<AttachmentFieldConfig["key"], BrandAttachmentResponse[]>,
   );
-}
-
-export async function uploadFontStyleGuideAsset(
-  brandId: string,
-  item: BrandUploadItem,
-  onProgress?: UploadProgressCallback,
-) {
-  const fontGuideField = ATTACHMENT_FIELDS.find((field) => field.key === "font_guide");
-  if (!fontGuideField) {
-    return null;
-  }
-  return uploadAttachmentItem(brandId, fontGuideField, item, onProgress);
 }
 
 function collectTrackedItems(form: BrandFormState) {
@@ -695,10 +663,10 @@ export function mergeBrandAttachmentsIntoForm(
     assetsByField.set(group.field_key, group.assets || []);
   });
 
-  const currentLogoItems = dedupeUploads(form.core.logos.length ? form.core.logos : form.core.logo ? [form.core.logo] : []);
-  const logoItems = mergeAttachmentItems(currentLogoItems, assetsByField.get("logo") || []);
-  const fontGuideAssets = assetsByField.get("font_guide") || [];
-  const detectedTypography = typographyTextFromAttachments(fontGuideAssets);
+  const currentLogoItems = normalizeBrandLogoItems(
+    dedupeUploads(form.core.logos.length ? form.core.logos : form.core.logo ? [form.core.logo] : []),
+  );
+  const logoItems = normalizeBrandLogoItems(mergeAttachmentItems(currentLogoItems, assetsByField.get("logo") || []));
 
   return {
     ...form,
@@ -716,10 +684,6 @@ export function mergeBrandAttachmentsIntoForm(
     },
     visualIdentity: {
       ...form.visualIdentity,
-      typography:
-        !form.visualIdentity.typography || isUnknownFontName(form.visualIdentity.typography)
-          ? detectedTypography || form.visualIdentity.typography
-          : form.visualIdentity.typography,
       referenceCreatives: mergeAttachmentItems(
         form.visualIdentity.referenceCreatives,
         assetsByField.get("reference_creatives") || [],
@@ -729,7 +693,8 @@ export function mergeBrandAttachmentsIntoForm(
         form.visualIdentity.colorPaletteUploads,
         assetsByField.get("color_palette") || [],
       ),
-      fontStyleGuide: mergeAttachmentItems(form.visualIdentity.fontStyleGuide, fontGuideAssets),
+      uploadedFonts: mergeAttachmentItems(form.visualIdentity.uploadedFonts, assetsByField.get("font_file") || []),
+      fontStyleGuide: mergeAttachmentItems(form.visualIdentity.fontStyleGuide, assetsByField.get("font_guide") || []),
     },
     brandRules: {
       ...form.brandRules,

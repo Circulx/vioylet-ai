@@ -45,7 +45,8 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
-  --color-input-field: var(--input-field)
+  --color-input-field: var(--input-field);
+  --color-section-input-field: var(--section-input-field);
 }
 
 :root {
@@ -55,7 +56,7 @@
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
-  --primary: #3C2F8F;
+  --primary: #3c2f8f;
   --primary-foreground: oklch(0.985 0 0);
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
@@ -82,6 +83,7 @@
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
   --input-field: oklch(0.9755 0.0045 258.32);
+  --section-input-field: oklch(1 0 0);
 }
 
 .dark {
@@ -117,6 +119,7 @@
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
   --input-field: oklch(0.9755 0.0045 258.32);
+  --section-input-field: oklch(1 0 0);
 }
 
 @layer base {
@@ -125,7 +128,46 @@
   }
   body {
     @apply bg-background text-foreground;
-    font-family: var(--font-manrope), system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    font-family:
+      var(--font-manrope),
+      system-ui,
+      -apple-system,
+      Segoe UI,
+      Roboto,
+      Arial,
+      sans-serif;
     /* font-family: "sans", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; */
   }
+
+  .table {
+    @apply min-w-full text-left text-sm;
+  }
+
+  .container {
+    @apply w-full px-4 py-6;
+  }
+}
+
+/* Thin scrollbar styling */
+.thin-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--muted-foreground) var(--muted);
+}
+
+.thin-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.thin-scrollbar::-webkit-scrollbar-track {
+  background: var(--muted);
+}
+
+.thin-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--muted-foreground);
+  border-radius: 3px;
+}
+
+.thin-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--ring);
 }

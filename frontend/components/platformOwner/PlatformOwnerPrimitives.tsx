@@ -5,6 +5,8 @@ import { CalendarDays, ChevronLeft, ChevronRight, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { Button } from "../ui/button";
+import Image from "next/image";
+import Link from "next/link";
 
 export function PlatformPageTitle({
     title,
@@ -18,7 +20,7 @@ export function PlatformPageTitle({
     return (
         <div className="space-y-6">
             <div className="flex items-start justify-between gap-4">
-                <h1 className="font-dmSans text-[32px] font-bold leading-none  text-primary">{title}</h1>
+                <h1 className="font-dmSans text-[32px] font-bold leading-none text-primary">{title}</h1>
                 {action}
             </div>
             {children}
@@ -43,8 +45,39 @@ export function PlatformTabSwitcher({
                     type="button"
                     onClick={() => onChange(tab.id)}
                     className={cn(
-                        "h-12 min-w-[92px] rounded-[10px] border border-[#D4D8E5] bg-white px-5 text-[15px] font-medium text-[#2F3342] transition",
+                        "h-12 min-w-[161px] rounded-[10px] border border-[#D4D8E5] bg-white px-5 text-[15px] font-medium text-[#2F3342] transition",
                         active === tab.id ? "bg-[#CDCDCD]/22 shadow-[inset_0_0_0_1px_rgba(60,47,143,0.14)]" : "hover:bg-[#FAFAFD]",
+                    )}
+                >
+                    {tab.label}
+                </Button>
+            ))}
+        </div>
+    );
+}
+
+export function UserPlatformTabSwitcher({
+    tabs,
+    active,
+    className,
+    onChange,
+}: {
+    tabs: Array<{ id: string; label: string }>;
+    active: string;
+    className?: string;
+    onChange: (tab: string) => void;
+}) {
+    return (
+        <div className={cn("flex flex-wrap items-center border-b", className)}>
+            {tabs.map((tab) => (
+                <Button
+                    key={tab.id}
+                    variant={"ghost"}
+                    type="button"
+                    onClick={() => onChange(tab.id)}
+                    className={cn(
+                        "h-12 w-28 min-w-24 px-4 rounded-none bg-white px-5 text-[15px] font-medium text-[#2F3342] transition",
+                        active === tab.id ? "bg-[#EFEFEF70]" : "hover:bg-[#FAFAFD]",
                     )}
                 >
                     {tab.label}
@@ -69,33 +102,96 @@ export function SectionCard({
     toolbar,
     children,
     className,
+    titleClassName,
+    externalLink,
+    externalLinkText,
 }: {
-    title: string;
+    title?: string;
     description?: string;
     toolbar?: ReactNode;
     children: ReactNode;
     className?: string;
+    titleClassName?: string;
+    externalLink?: string;
+    externalLinkText?: string;
 }) {
     return (
-        <div className={cn("rounded-[2px] border border-[#ECEEF5] bg-white p-6 shadow-[0_10px_24px_-22px_rgba(15,23,42,0.45)]", className)}>
-            <div className="mb-5 flex flex-col items-start justify-between">
-                <div className="w-full flex items-center justify-between">
-                    <h2 className="text-xl font-semibold text-[#4B5563]">{title}</h2>
-                    {toolbar}
+        <div className={cn("border border-[#E4E7EC] bg-white p-3", className)}>
+            <div className={cn(
+                "flex flex-col gap-2",
+                toolbar ? "sm:flex-row sm:items-start sm:justify-between" : "items-start",
+            )}>
+                <div className="min-w-0 flex flex-col items-start justify-center">
+                    <h2 className={cn`text-xl font-semibold text-black ${!toolbar ? 'py-4' : ''}`}>{title}</h2>
+                    {description ? (
+                        <p className="text-sm text-[#6B7280]">
+                            {description}
+                            {externalLink && externalLinkText ? (
+                                <Link href={externalLink} target="_self" rel="noopener noreferrer" className="ml-1 text-sm text-primary underline">
+                                    {externalLinkText}
+                                </Link>
+                            ) : null}
+                        </p>
+                    ) : null}
                 </div>
-                <p className="text-sm text-[#6B7280]">{description}</p>
-
+                {toolbar ? <div className="shrink-0 pb-4">{toolbar}</div> : null}
             </div>
             {children}
         </div>
     );
 }
 
+export function OwnerSectionCard({
+    title,
+    description,
+    toolbar,
+    children,
+    className,
+    titleClassName,
+    externalLink,
+    externalLinkText,
+}: {
+    title?: string;
+    description?: string;
+    toolbar?: ReactNode;
+    children: ReactNode;
+    className?: string;
+    titleClassName?: string;
+    externalLink?: string;
+    externalLinkText?: string;
+}) {
+    return (
+        <div className={cn("border border-[#E4E7EC] bg-white p-3", className)}>
+            <div className={cn(
+                "flex flex-col gap-2",
+                toolbar ? "sm:flex-row sm:items-start sm:justify-between" : "items-start",
+            )}>
+                <div className="min-w-0 flex flex-col items-start justify-center">
+                    <h2 className={cn`text-base font-semibold text-black`}>{title}</h2>
+                    {description ? (
+                        <p className="text-sm text-[#6B7280]">
+                            {description}
+                            {externalLink && externalLinkText ? (
+                                <Link href={externalLink} target="_self" rel="noopener noreferrer" className="ml-1 text-sm text-primary underline">
+                                    {externalLinkText}
+                                </Link>
+                            ) : null}
+                        </p>
+                    ) : null}
+                </div>
+                {toolbar ? <div className="shrink-0 pb-4">{toolbar}</div> : null}
+            </div>
+            {children}
+        </div>
+    );
+}
+
+
 export function MetricTile({ label, value }: { label: string; value: string }) {
     return (
-        <div className="rounded-[2px] border border-[#ECEEF5] bg-white px-5 py-4 shadow-[0_10px_24px_-22px_rgba(15,23,42,0.45)]">
+        <div className="rounded-xs border border-[#ECEEF5] bg-white px-5 py-4">
             <p className="text-sm text-[#6B7280]">{label}</p>
-            <p className="mt-3 text-[32px] font-semibold leading-none text-[#2F3342]">{value}</p>
+            <p className="mt-3 text-xl font-semibold leading-none text-[#2F3342]">{value}</p>
         </div>
     );
 }
@@ -105,7 +201,7 @@ export function ToolbarToggle({
     active,
     onChange,
 }: {
-    items: Array<{ id: string; label: string }>;
+    items: Array<{ id: string; label: string; icon?: string }>;
     active: string;
     onChange: (value: string) => void;
 }) {
@@ -113,7 +209,7 @@ export function ToolbarToggle({
         <div className="inline-flex items-center gap-2 rounded-md">
             {items.map((item) => (
                 <Button
-                variant={"ghost"}
+                    variant={"ghost"}
                     key={item.id}
                     type="button"
                     onClick={() => onChange(item.id)}
@@ -122,6 +218,7 @@ export function ToolbarToggle({
                         active === item.id && "bg-[#85829940] text-[#2F3342]",
                     )}
                 >
+                    {item.icon ? <Image src={item.icon} alt={item.label} width={16} height={16} className="h-7 w-7" /> : null}
                     {item.label}
                 </Button>
             ))}
@@ -141,7 +238,7 @@ export function SimpleBarChart({
     const max = Math.max(...data.flatMap((item) => [item.primary, item.secondary || 0, 1]));
 
     return (
-        <div className="space-y-4">
+        <div className="space-y-4 mt-20">
             <div className="flex h-[180px] items-end gap-5">
                 {data.map((item) => {
                     const primaryHeight = `${Math.max(10, (item.primary / max) * height)}px`;
@@ -181,7 +278,7 @@ export function SearchField({
                 value={value}
                 onChange={(event) => onChange(event.target.value)}
                 placeholder={placeholder}
-                className="h-10 w-[210px] rounded-none border-[#E5E7EB] bg-white pl-9"
+                className="h-10 w-[289px] rounded-none border-[#E5E7EB] bg-white pl-9"
             />
         </div>
     );

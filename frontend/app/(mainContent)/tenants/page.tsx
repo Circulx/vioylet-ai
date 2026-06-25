@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { TableFilterPopover } from "@/components/common/TableFilterPopover";
 import { PlatformPageTitle, Pager, SearchField } from "@/components/platformOwner/PlatformOwnerPrimitives";
 import { useGetTenants } from "@/hooks/tenantAdmins/useGetTenants";
-import { formatShortDate, getActivityLabel } from "@/lib/platform-owner";
+import { formatShortDate, formatTenantDisplayName, getActivityLabel } from "@/lib/platform-owner";
 import {
     CREATED_DATE_FILTER_OPTIONS,
     RECENT_ACTIVITY_FILTER_OPTIONS,
@@ -35,7 +35,7 @@ export default function TenantManagementPage() {
         return source.filter((tenant) => {
             const matchesQuery =
                 !search.trim() ||
-                [tenant.name, tenant.tenant_admin_name, tenant.contact_email].some((value) =>
+                [tenant.name, formatTenantDisplayName(tenant.name), tenant.tenant_admin_name, tenant.contact_email].some((value) =>
                     value?.toLowerCase().includes(query),
                 );
             const matchesCreated = matchesCreatedDateFilter(tenant.created_at, createdFilter);
@@ -60,8 +60,8 @@ export default function TenantManagementPage() {
     }
 
     return (
-        <div className="w-full px-6 py-6">
-            <div className="max-w-[1110px] space-y-8">
+        <div className="w-full px-4 py-6">
+            <div className="space-y-8">
                 <PlatformPageTitle
                     title="Tenant Management"
                     action={
@@ -69,7 +69,7 @@ export default function TenantManagementPage() {
                             onClick={() => router.push("/tenants/create")}
                             className="flex h-12 items-center gap-2 rounded-xs bg-primary/72 px-5 text-base font-semibold hover:bg-primary/90"
                         >
-                            <Image src={"/actions_icons/add.svg"} alt="Add" width={16} height={16} />
+                            <Image src={"/actions_icons/add.svg"} alt="Add" width={16} height={16} className="w-5.5 h-5.5" />
                             {/* <PlusCircle fill="white" className="text-primary/72 h-6 w-6" /> */}
                             New Tenant
                         </Button>
@@ -78,7 +78,7 @@ export default function TenantManagementPage() {
 
                 <div className="flex items-center justify-between gap-4">
                     <h2 className="text-xl font-semibold tracking-tight text-[#2F3342]">Tenant Accounts</h2>
-                    <div className="flex flex-wrap gap-4">
+                    <div className="flex flex-wrap gap-1">
                         <SearchField value={search} onChange={(value) => {
                             setSearch(value);
                             setPage(1);
@@ -109,16 +109,16 @@ export default function TenantManagementPage() {
                     </div>
                 </div>
 
-                <div className="rounded-[2px] border border-[#ECEEF5] bg-white shadow-[0_10px_24px_-22px_rgba(15,23,42,0.45)]">
-                    <div className="overflow-x-auto">
-                        <table className="min-w-full text-left text-sm">
+                <div className="flex max-h-[calc(100vh-17rem)] min-h-0 flex-col overflow-hidden rounded-[2px] border border-[#ECEEF5] bg-white shadow-[0_10px_24px_-22px_rgba(15,23,42,0.45)]">
+                    <div className="min-h-0 flex-1 overflow-auto">
+                        <table className="table">
                             <thead className="bg-[#F6F7FC] text-[#4B5563]">
                                 <tr>
-                                    <th className="px-4 py-4 font-bold">Tenant Name</th>
-                                    <th className="px-4 py-4 font-bold">Date Created</th>
-                                    <th className="px-4 py-4 font-bold">Tenant Admin</th>
-                                    <th className="px-4 py-4 font-bold">Brand Spaces</th>
-                                    <th className="px-4 py-4 font-bold">Active (Last 30 Days)</th>
+                                    <th className="w-1/6 px-4 py-4 font-bold text-black">Tenant Name</th>
+                                    <th className="w-1/6 px-4 py-4 font-bold text-black">Date Created</th>
+                                    <th className="w-1/6 px-4 py-4 font-bold text-black">Tenant Admin</th>
+                                    <th className="w-1/6 px-4 py-4 font-bold text-black">Brand Spaces</th>
+                                    <th className="w-1/6 px-4 py-4 font-bold text-black">Active (Last 30 Days)</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -129,7 +129,7 @@ export default function TenantManagementPage() {
                                             className="cursor-pointer border-b border-[#F1F2F6] text-[#4B5563] hover:bg-[#FAFAFD]"
                                             onClick={() => router.push(`/tenants/${tenant.id}`)}
                                         >
-                                            <td className="px-4 py-3">{tenant.name}</td>
+                                            <td className="px-4 py-3">{formatTenantDisplayName(tenant.name)}</td>
                                             <td className="px-4 py-3">{formatShortDate(tenant.created_at)}</td>
                                             <td className="px-4 py-3">{tenant.tenant_admin_name || "-"}</td>
                                             <td className="px-4 py-3">{tenant.brand_space_count}</td>
@@ -146,10 +146,11 @@ export default function TenantManagementPage() {
                             </tbody>
                         </table>
                     </div>
+
                 </div>
 
-                <div className="flex items-center justify-between text-sm text-[#4B5563]">
-                    <div className="flex items-center gap-3">
+                <div className="absolute bottom-0 left-0 right-0 z-10 flex items-center justify-between gap-4 overflow-x-auto bg-white px-4 py-3 text-sm text-[#4B5563]">
+                    <div className="flex shrink-0 items-center gap-3">
                         <span>Show</span>
                         <select
                             className="h-9 rounded-[8px] border border-[#D5D8E8] bg-white px-3"
@@ -167,12 +168,14 @@ export default function TenantManagementPage() {
                         </select>
                         <span>Entries</span>
                     </div>
-                    <Pager
-                        page={currentPage}
-                        totalPages={totalPages}
-                        onPrevious={() => setPage((value) => Math.max(1, value - 1))}
-                        onNext={() => setPage((value) => Math.min(totalPages, value + 1))}
-                    />
+                    <div className="shrink-0">
+                        <Pager
+                            page={currentPage}
+                            totalPages={totalPages}
+                            onPrevious={() => setPage((value) => Math.max(1, value - 1))}
+                            onNext={() => setPage((value) => Math.min(totalPages, value + 1))}
+                        />
+                    </div>
                 </div>
             </div>
         </div>

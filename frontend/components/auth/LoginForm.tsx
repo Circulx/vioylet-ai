@@ -41,8 +41,8 @@ export function LoginForm() {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="w-full space-y-6">
-      <div className="space-y-2">
+    <form onSubmit={handleSubmit} className="w-full space-y-6 font-manrope">
+      <div className="flex flex-col gap-2">
         <label htmlFor="email" className="text-base font-normal leading-6 text-[#121212]">
           Work Email
         </label>
@@ -58,7 +58,7 @@ export function LoginForm() {
       </div>
 
       <div className="space-y-3">
-        <div className="space-y-2">
+        <div className="flex flex-col gap-2">
           <label htmlFor="password" className="text-base font-normal leading-6 text-[#121212]">
             Password
           </label>

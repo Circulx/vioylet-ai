@@ -16,7 +16,7 @@ export default function LoginPage() {
         <div className="mb-8 flex flex-col gap-8">
           <Image src="/logo.svg" alt="Violyt Logo" width={54} height={54} priority />
           <div className="space-y-3 text-left">
-            <h1 className="font-dmSans text-[42px] font-bold leading-none tracking-[-0.04em] text-black md:text-[48px]">
+            <h1 className="font-dmSans text-[42px] font-bold leading-none text-black md:text-[48px]">
               Welcome to Violyt
             </h1>
             <p className="font-manrope text-[18px] font-medium leading-6 text-[#2D2D2D]">

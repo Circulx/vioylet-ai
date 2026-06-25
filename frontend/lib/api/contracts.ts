@@ -133,6 +133,7 @@ export interface TenantLogoUploadRequest {
 
 export interface TenantUserResponse {
   id: UUID;
+  user_id?: UUID;
   tenant_id?: UUID;
   email: string;
   full_name: string;
@@ -186,6 +187,41 @@ export interface TenantUsageSummary {
   tenant_id: UUID;
   limits: TenantUsageLimits;
   consumption: Record<string, number>;
+  monthly_usage?: Array<{
+    month: string;
+    content_generations: number;
+    image_generations: number;
+    ocr_pages: number;
+  }>;
+  brand_usage?: Array<{
+    id: UUID;
+    name: string;
+    allocation_percent: number;
+    content_generations: number;
+    image_generations: number;
+    ocr_pages: number;
+    monthly_usage?: Array<{
+      month: string;
+      content_generations: number;
+      image_generations: number;
+      ocr_pages: number;
+    }>;
+  }>;
+}
+
+export interface BrandUsageMetricResponse {
+  code: string;
+  used: number;
+  allocated_limit: number;
+  percent: number;
+}
+
+export interface BrandUsageResponse {
+  brand_space_id: UUID;
+  tenant_id: UUID;
+  capacity_percent: number;
+  usage_percent: number;
+  metrics: BrandUsageMetricResponse[];
 }
 
 export interface BrandResponse {
@@ -366,15 +402,10 @@ export interface TemplateResponse {
 export interface TemplateRecommendationResponse {
   template_id: UUID;
   name: string;
-  display_name?: string | null;
   asset_url?: string | null;
   score: number;
   match_type: string;
   decision_confidence?: number | null;
-  format_family?: string | null;
-  is_primary_adaptation?: boolean;
-  selection_reason?: string | null;
-  recommendation_group_key?: string | null;
   reasons: string[];
   score_breakdown: Record<string, unknown>;
   adaptation_plan: Record<string, unknown>;
@@ -407,7 +438,6 @@ export interface StudioPanelSelection {
   platform_preset: PlatformPreset;
   file_type: ExportFileType;
   size?: { width: number; height: number };
-  pinned_template_id?: string;
 }
 
 export interface StructuredTextPayload {
@@ -488,27 +518,6 @@ export interface ChatMessageResponse {
   created_at: string;
 }
 
-export interface BrandScoringPayload {
-  overall_score: number;
-  score_breakdown: {
-    on_brand: number;
-    prompt_adherence: number;
-    relevance: number;
-  };
-  score_explanations?: Record<
-    string,
-    {
-      positive?: string;
-      improvement?: string;
-    }
-  >;
-  weighting?: Record<string, number>;
-  scoring_mode?: Record<string, string>;
-  summary?: string[];
-  llm_prompt_relevance_analysis?: Record<string, unknown> | null;
-  developer_explanation?: Record<string, unknown>;
-}
-
 export interface ChatAssistantStructuredPayload {
   content_version_id?: UUID;
   generated_payload?: StructuredTextPayload;
@@ -522,32 +531,6 @@ export interface ChatAssistantStructuredPayload {
   image_generation_requested?: boolean;
   image_generation_status?: string;
   image_asset_count?: number;
-  brand_scoring?: BrandScoringPayload;
-  mode?: string;
-  retrieval_type?: string;
-  retrieval_status?: string;
-  matched_entries?: Array<{
-    memory_entry_id: UUID;
-    storage_path: string;
-    score: number;
-  }>;
-  selected_asset?: AssetReference | null;
-  selection_required?: boolean;
-  selection_prompt?: string | null;
-  display_retrieved_asset?: boolean;
-  selection_options?: Array<{
-    rank: number;
-    asset_id?: UUID | null;
-    content_version_id?: UUID | null;
-    memory_entry_id?: UUID | null;
-    asset_url?: string | null;
-    storage_path?: string | null;
-    label: string;
-    summary?: string | null;
-    asset_role?: string | null;
-    width?: number | null;
-    height?: number | null;
-  }>;
 }
 
 export interface ChatSendResponse {
@@ -558,6 +541,12 @@ export interface ChatSendResponse {
 export interface ChatSessionCreateRequest {
   title?: string;
   studio_panel: StudioPanelSelection;
+}
+
+export interface ChatSessionUpdateRequest {
+  title?: string;
+  studio_panel?: StudioPanelSelection;
+  is_active?: boolean;
 }
 
 export interface ChatMessageCreateRequest {

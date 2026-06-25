@@ -2,7 +2,7 @@
 
 import { apiOrigin } from "@/lib/env";
 import Image from "next/image";
-import { UploadCloud } from "lucide-react";
+import { UploadCloud, UploadIcon } from "lucide-react";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Label } from "../ui/label";
 
@@ -67,7 +67,7 @@ const TenantLogoUpload = ({ value, onChange }: { value?: File | string | null; o
   };
 
   return (
-    <div className="w-full space-y-3">
+    <div className="w-full flex-1 space-y-3">
       <Label className="flex flex-col items-start gap-1 text-base font-medium leading-6 text-[#2F3342]">
         <span className="text-base">Tenant logo</span>
         <span className="text-base font-normal text-[#4B5563]">Custom branding in widget</span>
@@ -89,8 +89,8 @@ const TenantLogoUpload = ({ value, onChange }: { value?: File | string | null; o
             handleFile(droppedFile);
           }
         }}
-        className={`flex h-[77px] w-[191px] flex-col items-center justify-center rounded-[10px] border hover:border-2 cursor-pointer border-dashed text-center transition ${
-          dragActive ? "border-primary bg-primary/5" : "border-primary/80 bg-white"
+        className={`flex h-[77px] w-[191px] flex-col items-center justify-center rounded-[10px] border-2 hover:border-4 cursor-pointer border-dashed text-center transition ${
+          dragActive ? "border-primary bg-primary/5" : "border-primary/80 bg-[#F6F6F6]"
         }`}
       >
         {preview ? (
@@ -104,8 +104,9 @@ const TenantLogoUpload = ({ value, onChange }: { value?: File | string | null; o
           />
         ) : (
           <>
-            <UploadCloud className="mb-1 h-5 w-5 text-primary" />
-            <span className="text-base font-medium leading-[22px] text-[#2F3342]">Upload logo</span>
+          <Image src="/actions_icons/document-upload.svg" alt="upload placeholder" width={32} height={32} className="mb-1 h-5 w-5" />
+            {/* <UploadIcon className="mb-1 h-5 w-5 text-primary" /> */}
+            <span className="text-base font-medium leading-[22px] text-[#2F3342] underline">Upload logo</span>
           </>
         )}
       </button>

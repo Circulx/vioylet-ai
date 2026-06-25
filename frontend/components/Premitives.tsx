@@ -8,19 +8,22 @@ import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 
 export function ProgressRow({ label, value, icon }: { label: string; value: number; icon?: string; }) {
     return (
-        <div className="space-y-2 border border-[#E4E7EC] p-4">
+        <div className="space-y-2 border border-[#E4E7EC] p-2">
             <div className="flex items-center gap-4 text-sm">
                 {icon && (
-                    <div className="bg-[#EAE6F74D] p-3">
+                    <div className="w-12 h-12 bg-[#EAE6F74D] p-3">
                         <Image src={icon} alt={`${label} icon`} width={16} height={16} className="w-auto h-auto" />
                     </div>
                 )}
                 <div className="flex flex-col gap-1">
-                    <span className="text-[#666666] font-semibold">{label}</span>
-                    <span className="text-xl font-semibold">{value}%</span>
+                    <span className="text-base text-[#666666] font-semibold">{label}</span>
+                    <div className=" flex items-end">
+                        <span className="text-xl font-medium">{value}</span>
+                        <span className="text-xl font-medium">%</span>
+                    </div>
                 </div>
             </div>
-            <Progress value={value} className="w-full mt-4" />
+            <Progress value={value} className="w-full my-1 h-2" />
         </div>
     );
 }
@@ -43,26 +46,25 @@ export function MiniMetric({
     icon?: string;
 }) {
     return (
-        <div className="rounded-xs border border-[#E4E7EC] bg-white px-4 py-4">
+        <div className="h-24 flex flex-col items-start justify-center rounded-xs border border-[#E4E7EC] bg-white p-2">
             <div className="flex items-center justify-start gap-3 text-sm">
                 {
                     icon && (
-                        <div className="bg-[#EAE6F74D] p-3">
-                            <Image src={icon} alt={`${label} icon`} width={16} height={16} className="w-auto h-auto mb-2" />
+                        <div className="w-12 h-12 bg-[#EAE6F74D] p-3">
+                            <Image src={icon} alt={`${label} icon`} width={24} height={24} className="w-6 h-6 mb-2" />
                         </div>
                     )
                 }
-                <div className="flex flex-col items-center justify-center">
+                <div className="flex flex-col items-start justify-center">
                     <p className="text-base font-semibold text-[#666666]">{label}</p>
-                    <div className="mt-1 flex items-end gap-2">
-                        <p className="text-2xl font-semibold text-[#2F3342]">{value}</p>
-                        {helper ? <p className="pb-1 text-xs text-[#6B7280]">/{helper}</p> : null}
-                        {compact ? null : <span className="pb-1 text-xs text-[#6B7280]">%</span>}
+                    <div className="flex items-end">
+                        <p className="text-xl font-medium text-[#2F3342]">{value}</p>
+                        {helper ? <p className="text-xl font-medium text-[#2F3342]">/{helper}</p> : null}
+                        {compact ? null : <span className="text-xl font-medium">%</span>}
                     </div>
-
                 </div>
             </div>
-            {progress && <Progress value={value} className="mt-2 h-2" />
+            {progress && <Progress value={value} indicatorClassName="bg-[#9E9E9E]" className="mt-2 h-2" />
             }
         </div>
     );

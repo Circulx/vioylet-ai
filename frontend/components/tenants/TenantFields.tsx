@@ -16,51 +16,51 @@ interface TenantFieldsProps {
 
 export default function TenantFields({ form, setForm, errors, clearError }: TenantFieldsProps) {
     return (
-        <div className="grid gap-10 xl:grid-cols-[minmax(0,692px)_191px] xl:items-start">
+        <div className="w-full max-w-[1110px]">
             <div className="space-y-7">
-                <div className="grid gap-6 xl:grid-cols-[454px_395px] xl:items-start">
-                    <div className="space-y-6">
-                        <Field
-                            id="tenant-name"
-                            label="Tenant Name"
-                            value={form.name}
-                            placeholder="Enter name"
-                            error={errors?.name}
-                            onChange={(value) => {
-                                setForm({ ...form, name: value });
-                                clearError("name");
-                            }}
-                        />
+                <div className="grid gap-8 items-start">
+                    <div className="w-full flex gap-12">
+                        <div className="max-w-md flex-1 space-y-6">
+                            <Field
+                                id="tenant-name"
+                                label="Tenant Name"
+                                value={form.name}
+                                placeholder="Enter name"
+                                error={errors?.name}
+                                onChange={(value) => {
+                                    setForm({ ...form, name: value });
+                                    clearError("name");
+                                }}
+                            />
 
-                        <Field
-                            id="tenant-email"
-                            label="Tenant Contact Email"
-                            value={form.email}
-                            placeholder="Enter email address"
-                            error={errors?.email}
-                            onChange={(value) => {
-                                setForm({ ...form, email: value });
-                                clearError("email");
-                            }}
-                        />
+                            <Field
+                                id="tenant-email"
+                                label="Tenant Contact Email"
+                                value={form.email}
+                                placeholder="Enter email address"
+                                error={errors?.email}
+                                onChange={(value) => {
+                                    setForm({ ...form, email: value });
+                                    clearError("email");
+                                }}
+                            />
 
-                        <Field
-                            id="tenant-phone"
-                            label="Tenant Contact Number"
-                            value={form.phone}
-                            placeholder="Enter contact number"
-                            error={errors?.phone}
-                            onChange={(value) => {
-                                setForm({ ...form, phone: value });
-                                clearError("phone");
-                            }}
-                        />
-                    </div>
-
-                    <div className="pt-0.5">
+                            <Field
+                                id="tenant-phone"
+                                label="Tenant Contact Number"
+                                value={form.phone}
+                                placeholder="Enter contact number"
+                                error={errors?.phone}
+                                onChange={(value) => {
+                                    setForm({ ...form, phone: value });
+                                    clearError("phone");
+                                }}
+                            />
+                        </div>
                         <TenantLogoUpload value={form.logo} onChange={(logo) => setForm({ ...form, logo })} />
+
                     </div>
-                    <div className="space-y-5">
+                    <div className="max-w-md space-y-5">
                         <h2 className="text-lg font-medium leading-[26px] text-[#2F3342]">Tenant Address</h2>
 
                         <Field

@@ -15,6 +15,7 @@ import {
   INDUSTRY_OPTIONS,
   INCOME_LEVEL_OPTIONS,
   LANGUAGE_PREFERENCE_OPTIONS,
+  LOGO_PLACEMENT_OPTIONS,
   LOCATION_OPTIONS,
   MARKET_MATURITY_OPTIONS,
   PERSPECTIVE_OPTIONS,
@@ -23,8 +24,12 @@ import {
   sanitizeOption,
   sanitizeOptionArray,
 } from "@/lib/brand-space-options";
-import { normalizeLogoPlacementPolicy } from "@/lib/logo-placement";
-import { createPersistedBrandUploadItem, emptyBrandFormState, type BrandFormState } from "@/types/brand-space.types";
+import {
+  createPersistedBrandUploadItem,
+  emptyBrandFormState,
+  normalizeBrandLogoItems,
+  type BrandFormState,
+} from "@/types/brand-space.types";
 import type { UploadedBrandAssets } from "@/lib/brand-space-persistence";
 
 type AttachmentLike = Pick<
@@ -63,15 +68,6 @@ function toRecord(value: unknown) {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
-}
-
-function isUnknownFontName(value: string) {
-  return ["unknown", "unknown font", "unknown visual font", "font"].includes(value.trim().toLowerCase());
-}
-
-function cleanTypographyValue(value: unknown) {
-  const text = String(value || "").trim();
-  return text && !isUnknownFontName(text) ? text : "";
 }
 
 function resolveAssetUrl(value: unknown) {
@@ -173,6 +169,64 @@ function createTemplateItems(descriptors: unknown) {
     .filter((item): item is NonNullable<typeof item> => Boolean(item));
 }
 
+function createCompetitorBrand(record: Record<string, unknown>) {
+  const socialProfiles = toRecord(record.social_profiles);
+  return {
+    name: String(record.name || record.competitor_brand_name || ""),
+    websiteUrl: String(record.website_url || record.website || ""),
+    linkedin: String(socialProfiles.linkedin || record.linkedin || ""),
+    instagram: String(socialProfiles.instagram || record.instagram || ""),
+    x: String(socialProfiles.x || record.x || ""),
+  };
+}
+
+function createCompetitorBrands(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map((item) => createCompetitorBrand(toRecord(item))).filter((item) =>
+    Boolean(item.name || item.websiteUrl || item.linkedin || item.instagram || item.x),
+  );
+}
+
+function normalizeCompetitorBrands(form: BrandFormState) {
+  const competitors = form.additional.competitorBrands?.length
+    ? form.additional.competitorBrands
+    : [
+        {
+          name: form.additional.competitorBrandName,
+          websiteUrl: form.additional.websiteUrl,
+          linkedin: form.additional.linkedin,
+          instagram: form.additional.instagram,
+          x: form.additional.x,
+        },
+      ];
+
+  return competitors
+    .slice(0, 3)
+    .filter((competitor) =>
+      Boolean(
+        competitor.name ||
+          competitor.websiteUrl ||
+          competitor.linkedin ||
+          competitor.instagram ||
+          competitor.x,
+      ),
+    );
+}
+
+function competitorDescriptors(form: BrandFormState) {
+  return normalizeCompetitorBrands(form).map((competitor) => ({
+    name: competitor.name,
+    website_url: competitor.websiteUrl,
+    social_profiles: {
+      linkedin: competitor.linkedin,
+      instagram: competitor.instagram,
+      x: competitor.x,
+    },
+  }));
+}
+
 export function mapBrandOverviewToForm(overview: BrandOverviewResponse): BrandFormState {
   const form: BrandFormState = structuredClone(emptyBrandFormState);
   const sectionMap = Object.fromEntries(
@@ -186,7 +240,6 @@ export function mapBrandOverviewToForm(overview: BrandOverviewResponse): BrandFo
   const guardrails = toRecord(sectionMap.guardrails);
   const objectives = toRecord(sectionMap.objectives);
   const visualIdentity = toRecord(sectionMap.visual_identity);
-  const logoPlacement = toRecord(visualIdentity.logo_placement);
   const knowledge = toRecord(sectionMap.knowledge);
   const promptIntelligence = toRecord(sectionMap.prompt_intelligence);
 
@@ -203,6 +256,20 @@ export function mapBrandOverviewToForm(overview: BrandOverviewResponse): BrandFo
   const colorPalette = toRecord(visualIdentity.brand_color_palette);
   const typography = toRecord(visualIdentity.typography);
   const socialProfiles = toRecord(identity.social_profiles);
+  const competitorBrands = createCompetitorBrands(
+    industryContext.competitor_brands || knowledge.competitor_brands,
+  );
+  const primaryCompetitor =
+    competitorBrands[0] ||
+    createCompetitorBrand({
+      name: industryContext.competitor_brand_name || knowledge.competitor_brand_name,
+      website_url: identity.website_url || knowledge.website,
+      social_profiles: {
+        linkedin: socialProfiles.linkedin || toRecord(knowledge.social_profiles).linkedin,
+        instagram: socialProfiles.instagram || toRecord(knowledge.social_profiles).instagram,
+        x: socialProfiles.x || toRecord(knowledge.social_profiles).x,
+      },
+    });
 
   form.core = {
     logo: null,
@@ -228,13 +295,24 @@ export function mapBrandOverviewToForm(overview: BrandOverviewResponse): BrandFo
         ["Logo"],
       ) || null;
   const uploadedLogos = createKnowledgeItems(identity.logo_assets, "brand_asset", ["Logo"]);
-  form.core.logos = uploadedLogos.length ? uploadedLogos : primaryLogo ? [primaryLogo] : [];
+  form.core.logos = normalizeBrandLogoItems(uploadedLogos.length ? uploadedLogos : primaryLogo ? [primaryLogo] : []);
   form.core.logo = form.core.logos[0] || primaryLogo;
 
   form.voiceTone = {
     coreToneAttributes: Array.isArray(voiceTone.tone_attributes)
       ? voiceTone.tone_attributes.map((item) => String(item))
       : [],
+    coreToneAttributeWeights: Object.fromEntries(
+      Object.entries(toRecord(voiceTone.tone_intensity)).map(([key, value]) => {
+        const numericValue = Number(value);
+        const percentage = Number.isFinite(numericValue)
+          ? numericValue <= 10
+            ? numericValue * 10
+            : numericValue
+          : 50;
+        return [key, Math.max(0, Math.min(100, percentage))];
+      }),
+    ),
     primaryEmotion: String(voiceTone.primary_emotion || ""),
     secondaryEmotion: String(voiceTone.secondary_emotion || ""),
     avoidedEmotion: String(voiceTone.avoided_emotion || ""),
@@ -259,6 +337,7 @@ export function mapBrandOverviewToForm(overview: BrandOverviewResponse): BrandFo
       personaPsychographics.content_consumption_behavior || personaContentBehavior.preferred_channels,
     ),
     audienceInsights: createKnowledgeItems(personaContentBehavior.audience_insights, "audience_insights"),
+    audienceType: String(primaryPersona.audience_type || identity.audience_type || ""),
     ageRange: String(personaDemographics.age_range || ""),
     gender: String(personaDemographics.gender || ""),
     location: String(personaDemographics.region || toRecord(identity.target_geography).country || ""),
@@ -276,7 +355,11 @@ export function mapBrandOverviewToForm(overview: BrandOverviewResponse): BrandFo
   form.visualIdentity = {
     brandMood: String(visualIdentity.brand_mood || ""),
     visualStyle: String(visualIdentity.visual_style || ""),
-    ...normalizeLogoPlacementPolicy(logoPlacement.allowed_positions, logoPlacement.default_position),
+    logoPlacements: Array.isArray(visualIdentity.logo_placements)
+      ? visualIdentity.logo_placements.map((item) => String(item))
+      : visualIdentity.logo_placement
+        ? [String(visualIdentity.logo_placement)]
+        : [],
     referenceCreatives: createKnowledgeItems(visualIdentity.reference_creatives, "reference_creative"),
     moodBoards: createKnowledgeItems(visualIdentity.mood_boards, "mood_board", ["Mood Board"]),
     primaryColor: String(colorPalette.primary || ""),
@@ -289,17 +372,10 @@ export function mapBrandOverviewToForm(overview: BrandOverviewResponse): BrandFo
           }))
         : [{ name: "", hex: "" }],
     colorPaletteUploads: createKnowledgeItems(visualIdentity.color_palette_uploads, "visual_identity", ["Color Palette"]),
-    typography: cleanTypographyValue(typography.primary_style),
+    typography: String(typography.primary_style || ""),
+    uploadedFonts: [],
     fontStyleGuide: createKnowledgeItems(visualIdentity.font_style_guides, "visual_identity", ["Font Guide"]),
   };
-  if (
-    overview.brand.name.trim().toLowerCase() === "jiraaf" &&
-    !form.visualIdentity.allowedLogoPlacements.length &&
-    !form.visualIdentity.defaultLogoPlacement
-  ) {
-    form.visualIdentity.allowedLogoPlacements = ["top-right"];
-    form.visualIdentity.defaultLogoPlacement = "top-right";
-  }
 
   form.brandRules = {
     selectedRules: Array.isArray(guardrails.custom_rules) ? guardrails.custom_rules.map((item) => String(item)) : [],
@@ -345,11 +421,12 @@ export function mapBrandOverviewToForm(overview: BrandOverviewResponse): BrandFo
     brandArchetype: String(industryContext.brand_archetype || objectiveConfig.brand_archetype || ""),
     buyingStage: String(industryContext.buying_stage || objectiveConfig.buying_stage || ""),
     complianceLevel: String(industryContext.compliance_level || objectiveConfig.compliance_level || ""),
-    competitorBrandName: String(industryContext.competitor_brand_name || knowledge.competitor_brand_name || ""),
-    websiteUrl: String(identity.website_url || knowledge.website || ""),
-    linkedin: String(socialProfiles.linkedin || toRecord(knowledge.social_profiles).linkedin || ""),
-    instagram: String(socialProfiles.instagram || toRecord(knowledge.social_profiles).instagram || ""),
-    x: String(socialProfiles.x || toRecord(knowledge.social_profiles).x || ""),
+    competitorBrandName: primaryCompetitor.name,
+    websiteUrl: primaryCompetitor.websiteUrl,
+    linkedin: primaryCompetitor.linkedin,
+    instagram: primaryCompetitor.instagram,
+    x: primaryCompetitor.x,
+    competitorBrands: competitorBrands.length ? competitorBrands : [primaryCompetitor],
   };
 
   return form;
@@ -389,8 +466,13 @@ function templateDescriptors(items: AttachmentLike[]) {
   }));
 }
 
-function toneIntensity(attributes: string[]) {
-  return Object.fromEntries(attributes.map((attribute) => [attribute, 8]));
+function toneIntensity(attributes: string[], weights: Record<string, number> = {}) {
+  return Object.fromEntries(
+    attributes.map((attribute) => {
+      const value = Number(weights[attribute] ?? 50);
+      return [attribute, Math.max(0, Math.min(100, Number.isFinite(value) ? value : 50))];
+    }),
+  );
 }
 
 function normalizeBrandSelections(form: BrandFormState) {
@@ -401,6 +483,7 @@ function normalizeBrandSelections(form: BrandFormState) {
     sentenceLength: sanitizeOption(SENTENCE_LENGTH_OPTIONS, form.voiceTone.sentenceLength),
     perspective: sanitizeOption(PERSPECTIVE_OPTIONS, form.voiceTone.perspective),
     selectedAudiences: sanitizeOptionArray(AUDIENCE_OPTIONS, form.targetAudience.selectedAudiences),
+    logoPlacements: sanitizeOptionArray(LOGO_PLACEMENT_OPTIONS, form.visualIdentity.logoPlacements),
     location: sanitizeOption(LOCATION_OPTIONS, form.targetAudience.location),
     educationLevel: sanitizeOption(EDUCATION_LEVEL_OPTIONS, form.targetAudience.educationLevel),
     employmentStatus: sanitizeOption(EMPLOYMENT_STATUS_OPTIONS, form.targetAudience.employmentStatus),
@@ -426,6 +509,8 @@ function normalizeBrandSelections(form: BrandFormState) {
 export function mapBrandFormToCreateRequest(form: BrandFormState, uploads?: UploadedBrandAssets) {
   const normalized = normalizeBrandSelections(form);
   const logoAssets = uploads?.logos?.length ? uploads.logos : uploads?.logo ? [uploads.logo] : [];
+  const competitors = normalizeCompetitorBrands(form);
+  const primaryCompetitor = competitors[0];
 
   return {
     identity: {
@@ -439,11 +524,11 @@ export function mapBrandFormToCreateRequest(form: BrandFormState, uploads?: Uplo
       key_differentiators: splitList(form.core.differentiators),
       logo_asset_id: logoAssets[0]?.id,
       logo_asset_ids: assetIds(logoAssets),
-      website_url: form.additional.websiteUrl || undefined,
+      website_url: primaryCompetitor?.websiteUrl || form.additional.websiteUrl || undefined,
       social_profiles: {
-        linkedin: form.additional.linkedin || undefined,
-        instagram: form.additional.instagram || undefined,
-        x: form.additional.x || undefined,
+        linkedin: primaryCompetitor?.linkedin || form.additional.linkedin || undefined,
+        instagram: primaryCompetitor?.instagram || form.additional.instagram || undefined,
+        x: primaryCompetitor?.x || form.additional.x || undefined,
       },
     },
     foundations: {
@@ -453,7 +538,7 @@ export function mapBrandFormToCreateRequest(form: BrandFormState, uploads?: Uplo
     },
     voice_tone: {
       tone_attributes: normalized.coreToneAttributes,
-      tone_intensity: toneIntensity(normalized.coreToneAttributes),
+      tone_intensity: toneIntensity(normalized.coreToneAttributes, form.voiceTone.coreToneAttributeWeights),
       primary_emotion: form.voiceTone.primaryEmotion || "confident",
       secondary_emotion: form.voiceTone.secondaryEmotion || undefined,
       avoided_emotion: form.voiceTone.avoidedEmotion || undefined,
@@ -468,10 +553,9 @@ export function mapBrandSections(form: BrandFormState, uploads?: UploadedBrandAs
   const uploaded = uploads;
   const normalized = normalizeBrandSelections(form);
   const logoAssets = uploaded?.logos?.length ? uploaded.logos : uploaded?.logo ? [uploaded.logo] : [];
-  const logoPlacementPolicy = normalizeLogoPlacementPolicy(
-    form.visualIdentity.allowedLogoPlacements,
-    form.visualIdentity.defaultLogoPlacement,
-  );
+  const competitors = normalizeCompetitorBrands(form);
+  const primaryCompetitor = competitors[0];
+  const competitorPayloads = competitorDescriptors(form);
 
   return [
     {
@@ -486,11 +570,11 @@ export function mapBrandSections(form: BrandFormState, uploads?: UploadedBrandAs
         logo_asset_path: logoAssets[0]?.storage_path || null,
         logo_asset_url: logoAssets[0]?.asset_url || null,
         logo_assets: assetDescriptors(logoAssets),
-        website_url: form.additional.websiteUrl || "",
+        website_url: primaryCompetitor?.websiteUrl || form.additional.websiteUrl || "",
         social_profiles: {
-          linkedin: form.additional.linkedin || "",
-          instagram: form.additional.instagram || "",
-          x: form.additional.x || "",
+          linkedin: primaryCompetitor?.linkedin || form.additional.linkedin || "",
+          instagram: primaryCompetitor?.instagram || form.additional.instagram || "",
+          x: primaryCompetitor?.x || form.additional.x || "",
         },
         audience_type: normalized.selectedAudiences[0] || "",
         target_geography: {
@@ -518,7 +602,8 @@ export function mapBrandSections(form: BrandFormState, uploads?: UploadedBrandAs
           brand_archetype: normalized.brandArchetype || "",
           buying_stage: normalized.buyingStage || "",
           compliance_level: normalized.complianceLevel || "",
-          competitor_brand_name: form.additional.competitorBrandName || "",
+          competitor_brand_name: primaryCompetitor?.name || form.additional.competitorBrandName || "",
+          competitor_brands: competitorPayloads,
         },
       },
       completion_percent: 100,
@@ -527,7 +612,7 @@ export function mapBrandSections(form: BrandFormState, uploads?: UploadedBrandAs
       section_code: "voice_tone",
       payload: {
         tone_attributes: normalized.coreToneAttributes,
-        tone_intensity: toneIntensity(normalized.coreToneAttributes),
+        tone_intensity: toneIntensity(normalized.coreToneAttributes, form.voiceTone.coreToneAttributeWeights),
         primary_emotion: form.voiceTone.primaryEmotion || "",
         secondary_emotion: form.voiceTone.secondaryEmotion || "",
         avoided_emotion: form.voiceTone.avoidedEmotion || "",
@@ -637,10 +722,7 @@ export function mapBrandSections(form: BrandFormState, uploads?: UploadedBrandAs
       payload: {
         brand_mood: form.visualIdentity.brandMood || "",
         visual_style: form.visualIdentity.visualStyle || "",
-        logo_placement: {
-          allowed_positions: logoPlacementPolicy.allowedLogoPlacements,
-          default_position: logoPlacementPolicy.defaultLogoPlacement,
-        },
+        logo_placements: normalized.logoPlacements,
         brand_color_palette: {
           primary: form.visualIdentity.primaryColor || "",
           secondary: form.visualIdentity.secondaryColor || "",
@@ -686,12 +768,13 @@ export function mapBrandSections(form: BrandFormState, uploads?: UploadedBrandAs
         other_document_asset_ids: assetIds(uploaded?.otherDocuments || []),
         other_documents: assetDescriptors(uploaded?.otherDocuments || []),
         audience_insight_asset_ids: assetIds(uploaded?.audienceInsights || []),
-        website: form.additional.websiteUrl || "",
-        competitor_brand_name: form.additional.competitorBrandName || "",
+        website: primaryCompetitor?.websiteUrl || form.additional.websiteUrl || "",
+        competitor_brand_name: primaryCompetitor?.name || form.additional.competitorBrandName || "",
+        competitor_brands: competitorPayloads,
         social_profiles: {
-          linkedin: form.additional.linkedin || "",
-          instagram: form.additional.instagram || "",
-          x: form.additional.x || "",
+          linkedin: primaryCompetitor?.linkedin || form.additional.linkedin || "",
+          instagram: primaryCompetitor?.instagram || form.additional.instagram || "",
+          x: primaryCompetitor?.x || form.additional.x || "",
         },
       },
       completion_percent: 100,

@@ -3,7 +3,6 @@
 import { CalendarDays } from "lucide-react";
 import { PlatformPageTitle, SectionCard } from "@/components/platformOwner/PlatformOwnerPrimitives";
 import { useBrands } from "@/hooks/useBrands";
-import { useTenantAnalytics } from "@/hooks/useContentWorkspace";
 import { useGetMe } from "@/hooks/useUser";
 import { useGetTenantData, useGetTenantUsageSummary } from "@/hooks/tenantAdmins/useGetTenants";
 import {
@@ -180,37 +179,40 @@ type BrandUsageSlice = {
     color: string;
 };
 
-function buildBrandUsageSlices(
-    brands: Array<{ id: string; name: string }>,
-    targets: Record<string, number>,
-    totalValue: number,
+type BrandUsageMetricKey = "content_generations" | "image_generations" | "ocr_pages";
+
+function buildBrandMetricSlices(
+    brands: Array<{ id: string; name: string; value: number }>,
 ) {
-    if (!brands.length || totalValue <= 0) {
+    const visibleBrands = brands.filter((brand) => brand.value > 0);
+    const totalValue = visibleBrands.reduce((sum, brand) => sum + brand.value, 0);
+    if (!visibleBrands.length || totalValue <= 0) {
         return [] as BrandUsageSlice[];
     }
 
-    const evenWeight = brands.length ? 100 / brands.length : 0;
-    const weightedBrands = brands.map((brand, index) => ({
+    return visibleBrands.map((brand, index) => ({
         id: brand.id,
         name: brand.name,
         color: chartPalette[index % chartPalette.length],
-        weight: typeof targets[brand.id] === "number" && targets[brand.id] > 0 ? targets[brand.id] : evenWeight,
+        percentage: (brand.value / totalValue) * 100,
+        value: brand.value,
     }));
-    const totalWeight = weightedBrands.reduce((sum, brand) => sum + brand.weight, 0);
-    if (!totalWeight) {
-        return [] as BrandUsageSlice[];
+}
+
+function sumBrandMonthlyMetric(
+    monthlyUsage: Array<{ month: string; content_generations: number; image_generations: number; ocr_pages: number }> | undefined,
+    metricKey: BrandUsageMetricKey,
+    startMonth: string,
+    endMonth: string,
+    fallbackValue: number,
+) {
+    if (!monthlyUsage?.length || !startMonth || !endMonth) {
+        return fallbackValue;
     }
 
-    return weightedBrands.map((brand) => {
-        const percentage = (brand.weight / totalWeight) * 100;
-        return {
-            id: brand.id,
-            name: brand.name,
-            color: brand.color,
-            percentage,
-            value: (totalValue * percentage) / 100,
-        };
-    });
+    return monthlyUsage
+        .filter((row) => row.month >= startMonth && row.month <= endMonth)
+        .reduce((sum, row) => sum + (row[metricKey] || 0), 0);
 }
 
 function hexToRgba(hex: string, alpha: number) {
@@ -324,7 +326,6 @@ function BrandUsagePieTooltip({
 }
 
 export default function TenantAdminDashboard() {
-    const { data: analytics } = useTenantAnalytics();
     const { data: currentUser } = useGetMe();
     const { data: tenant } = useGetTenantData(currentUser?.tenantId ?? "");
     const { data: usageSummary } = useGetTenantUsageSummary(currentUser?.tenantId ?? "");
@@ -335,14 +336,12 @@ export default function TenantAdminDashboard() {
     const [ocrEndMonth, setOcrEndMonth] = useState("");
     const [generationStartMonth, setGenerationStartMonth] = useState("");
     const [generationEndMonth, setGenerationEndMonth] = useState("");
-    const [brandUsageStartMonth, setBrandUsageStartMonth] = useState("");
-    const [brandUsageEndMonth, setBrandUsageEndMonth] = useState("");
+    const [brandOcrUsageStartMonth, setBrandOcrUsageStartMonth] = useState("");
+    const [brandOcrUsageEndMonth, setBrandOcrUsageEndMonth] = useState("");
+    const [brandAiUsageStartMonth, setBrandAiUsageStartMonth] = useState("");
+    const [brandAiUsageEndMonth, setBrandAiUsageEndMonth] = useState("");
 
 
-    const metrics = (analytics?.metrics || {}) as Record<string, unknown>;
-    const contentGenerationCount = Number(metrics.content_generations || 0);
-    const templateCount = Number(metrics.templates || 0);
-    const knowledgeAssetCount = Number(metrics.knowledge_assets || 0);
     const totalCapacity = Math.round(
         [
             toPercent(usageSummary?.consumption.content_generations, usageSummary?.limits.max_content_generations),
@@ -352,14 +351,12 @@ export default function TenantAdminDashboard() {
             toPercent(usageSummary?.consumption.brand_spaces, usageSummary?.limits.max_brand_spaces),
         ].reduce((sum, current) => sum + current, 0) / 5,
     );
-    const liveTargets = useMemo(
-        () => (tenant?.metadata_json?.brand_usage_targets as Record<string, number> | undefined) ?? {},
-        [tenant?.metadata_json?.brand_usage_targets],
-    );
     const liveActiveBrands = useMemo(
         () => (brands || []).filter((brand) => brand.lifecycle_state !== "archived" && brand.lifecycle_state !== "deleted"),
         [brands],
     );
+    const monthlyUsage = usageSummary?.monthly_usage;
+    const brandUsage = usageSummary?.brand_usage;
     const brandRows = liveActiveBrands.map((brand) => ({
         name: brand.name,
         createdAt: formatDateLabel(brand.created_at),
@@ -368,31 +365,48 @@ export default function TenantAdminDashboard() {
         lastUsed: formatDateLabel(brand.updated_at),
     }));
 
-    const usageRows = useMemo(() => buildUsageWindowRows(usageSummary, tenant?.metadata_json), [tenant?.metadata_json, usageSummary]);
+    const usageRows = useMemo(() => {
+        if (usageSummary && monthlyUsage?.length) {
+            return monthlyUsage.map((row) => ({
+                month: row.month,
+                content: `${row.content_generations || 0}/${usageSummary.limits.max_content_generations || 0}`,
+                visuals: `${row.image_generations || 0}/${usageSummary.limits.max_image_generations || 0}`,
+                ocr: `${row.ocr_pages || 0}/${usageSummary.limits.max_ocr_pages || 0}`,
+                brandSpaces: `${usageSummary.consumption.brand_spaces || 0}/${usageSummary.limits.max_brand_spaces || 0}`,
+                users: `${usageSummary.consumption.users || 0}/${usageSummary.limits.max_users || 0}`,
+            }));
+        }
+        return buildUsageWindowRows(usageSummary, tenant?.metadata_json);
+    }, [monthlyUsage, tenant?.metadata_json, usageSummary]);
     const usageWindow = useMemo(
         () => (tenant?.metadata_json?.usage_window as Record<string, unknown> | undefined) ?? {},
         [tenant?.metadata_json?.usage_window],
     );
-    const liveUsageRows = liveActiveBrands.map((brand) => {
-        const percentage =
-            typeof liveTargets[brand.id] === "number"
-                ? liveTargets[brand.id] / 100
-                : 1 / Math.max(liveActiveBrands.length || 1, 1);
-        return {
-            brand: brand.name,
-            contentGenerations: Math.round(contentGenerationCount * percentage),
-            visuals: Math.round(templateCount * percentage),
-            ocrPages: Math.round(knowledgeAssetCount * percentage),
-        };
-    });
+    const liveUsageRows = useMemo(
+        () =>
+            (brandUsage || []).map((brand) => ({
+                brand: brand.name,
+                contentGenerations: brand.content_generations || 0,
+                visuals: brand.image_generations || 0,
+                ocrPages: brand.ocr_pages || 0,
+            })),
+        [brandUsage],
+    );
 
     const usageMonthOptions = useMemo(
-        () =>
-            buildMonthYearOptions(
+        () => {
+            if (monthlyUsage?.length) {
+                return monthlyUsage.map((row) => ({
+                    value: row.month,
+                    label: formatCompactMonthLabel(row.month),
+                }));
+            }
+            return buildMonthYearOptions(
                 typeof usageWindow.start_month === "string" ? usageWindow.start_month : undefined,
                 typeof usageWindow.end_month === "string" ? usageWindow.end_month : undefined,
-            ),
-        [usageWindow.end_month, usageWindow.start_month],
+            );
+        },
+        [monthlyUsage, usageWindow.end_month, usageWindow.start_month],
     );
 
      const resolvedUsageMonth = usageMonthOptions.some((option) => option.value === selectedUsageMonth)
@@ -490,57 +504,73 @@ export default function TenantAdminDashboard() {
             }),
         [filteredGenerationRows],
     );
-    const resolvedBrandUsageStartMonth = usageLimitRows.some((row) => row.monthValue === brandUsageStartMonth)
-        ? brandUsageStartMonth
+    const resolvedBrandOcrUsageStartMonth = usageLimitRows.some((row) => row.monthValue === brandOcrUsageStartMonth)
+        ? brandOcrUsageStartMonth
         : usageLimitMinMonth;
-    const resolvedBrandUsageEndMonth = usageLimitRows.some((row) => row.monthValue === brandUsageEndMonth)
-        ? brandUsageEndMonth
+    const resolvedBrandOcrUsageEndMonth = usageLimitRows.some((row) => row.monthValue === brandOcrUsageEndMonth)
+        ? brandOcrUsageEndMonth
         : usageLimitMaxMonth;
-    const normalizedBrandUsageRange = useMemo(
-        () => normalizeMonthWindow(resolvedBrandUsageStartMonth, resolvedBrandUsageEndMonth),
-        [resolvedBrandUsageEndMonth, resolvedBrandUsageStartMonth],
+    const normalizedBrandOcrUsageRange = useMemo(
+        () => normalizeMonthWindow(resolvedBrandOcrUsageStartMonth, resolvedBrandOcrUsageEndMonth),
+        [resolvedBrandOcrUsageEndMonth, resolvedBrandOcrUsageStartMonth],
     );
-    const filteredBrandUsageRows = useMemo(() => {
-        if (!usageLimitRows.length) return usageLimitRows;
-        if (!normalizedBrandUsageRange.start || !normalizedBrandUsageRange.end) {
-            return usageLimitRows;
-        }
-
-        return usageLimitRows.filter((row) =>
-            row.monthValue >= normalizedBrandUsageRange.start && row.monthValue <= normalizedBrandUsageRange.end,
-        );
-    }, [normalizedBrandUsageRange.end, normalizedBrandUsageRange.start, usageLimitRows]);
-    const brandUsageDateLabel = useMemo(() => {
-        if (!normalizedBrandUsageRange.start || !normalizedBrandUsageRange.end) {
+    const brandOcrUsageDateLabel = useMemo(() => {
+        if (!normalizedBrandOcrUsageRange.start || !normalizedBrandOcrUsageRange.end) {
             return "Select month window";
         }
 
-        return `${formatCompactMonthLabel(normalizedBrandUsageRange.start)} - ${formatCompactMonthLabel(normalizedBrandUsageRange.end)}`;
-    }, [normalizedBrandUsageRange.end, normalizedBrandUsageRange.start]);
-    const brandOcrTotal = useMemo(
-        () => filteredBrandUsageRows.reduce((sum, row) => sum + parseUsageValue(row.ocr).used, 0),
-        [filteredBrandUsageRows],
+        return `${formatCompactMonthLabel(normalizedBrandOcrUsageRange.start)} - ${formatCompactMonthLabel(normalizedBrandOcrUsageRange.end)}`;
+    }, [normalizedBrandOcrUsageRange.end, normalizedBrandOcrUsageRange.start]);
+    const resolvedBrandAiUsageStartMonth = usageLimitRows.some((row) => row.monthValue === brandAiUsageStartMonth)
+        ? brandAiUsageStartMonth
+        : usageLimitMinMonth;
+    const resolvedBrandAiUsageEndMonth = usageLimitRows.some((row) => row.monthValue === brandAiUsageEndMonth)
+        ? brandAiUsageEndMonth
+        : usageLimitMaxMonth;
+    const normalizedBrandAiUsageRange = useMemo(
+        () => normalizeMonthWindow(resolvedBrandAiUsageStartMonth, resolvedBrandAiUsageEndMonth),
+        [resolvedBrandAiUsageEndMonth, resolvedBrandAiUsageStartMonth],
     );
-    const brandAiTotal = useMemo(
-        () =>
-            filteredBrandUsageRows.reduce((sum, row) => {
-                const contentMetric = parseUsageValue(row.content);
-                const visualsMetric = parseUsageValue(row.visuals);
-                return sum + contentMetric.used + visualsMetric.used;
-            }, 0),
-        [filteredBrandUsageRows],
-    );
-    const brandUsageBrands = useMemo(
-        () => liveActiveBrands.map((brand) => ({ id: brand.id, name: brand.name })),
-        [liveActiveBrands],
-    );
+    const brandAiUsageDateLabel = useMemo(() => {
+        if (!normalizedBrandAiUsageRange.start || !normalizedBrandAiUsageRange.end) {
+            return "Select month window";
+        }
+
+        return `${formatCompactMonthLabel(normalizedBrandAiUsageRange.start)} - ${formatCompactMonthLabel(normalizedBrandAiUsageRange.end)}`;
+    }, [normalizedBrandAiUsageRange.end, normalizedBrandAiUsageRange.start]);
     const brandOcrSlices = useMemo(
-        () => buildBrandUsageSlices(brandUsageBrands, liveTargets, brandOcrTotal),
-        [brandOcrTotal, brandUsageBrands, liveTargets],
+        () =>
+            buildBrandMetricSlices(
+                (brandUsage || []).map((brand) => ({
+                    id: brand.id,
+                    name: brand.name,
+                    value: sumBrandMonthlyMetric(
+                        brand.monthly_usage,
+                        "ocr_pages",
+                        normalizedBrandOcrUsageRange.start,
+                        normalizedBrandOcrUsageRange.end,
+                        brand.ocr_pages || 0,
+                    ),
+                })),
+            ),
+        [brandUsage, normalizedBrandOcrUsageRange.end, normalizedBrandOcrUsageRange.start],
     );
     const brandAiSlices = useMemo(
-        () => buildBrandUsageSlices(brandUsageBrands, liveTargets, brandAiTotal),
-        [brandAiTotal, brandUsageBrands, liveTargets],
+        () =>
+            buildBrandMetricSlices(
+                (brandUsage || []).map((brand) => ({
+                    id: brand.id,
+                    name: brand.name,
+                    value: sumBrandMonthlyMetric(
+                        brand.monthly_usage,
+                        "image_generations",
+                        normalizedBrandAiUsageRange.start,
+                        normalizedBrandAiUsageRange.end,
+                        brand.image_generations || 0,
+                    ),
+                })),
+            ),
+        [brandUsage, normalizedBrandAiUsageRange.end, normalizedBrandAiUsageRange.start],
     );
 
     const resetOcrWindow = () => {
@@ -551,9 +581,13 @@ export default function TenantAdminDashboard() {
         setGenerationStartMonth(usageLimitMinMonth);
         setGenerationEndMonth(usageLimitMaxMonth);
     };
-    const resetBrandUsageWindow = () => {
-        setBrandUsageStartMonth(usageLimitMinMonth);
-        setBrandUsageEndMonth(usageLimitMaxMonth);
+    const resetBrandOcrUsageWindow = () => {
+        setBrandOcrUsageStartMonth(usageLimitMinMonth);
+        setBrandOcrUsageEndMonth(usageLimitMaxMonth);
+    };
+    const resetBrandAiUsageWindow = () => {
+        setBrandAiUsageStartMonth(usageLimitMinMonth);
+        setBrandAiUsageEndMonth(usageLimitMaxMonth);
     };
 
     const selectedUsageMetrics = (() => {
@@ -596,9 +630,9 @@ export default function TenantAdminDashboard() {
     })();
 
     return (
-        <div className="w-full px-5 py-5">
-            <div className="mx-auto max-w-6xl space-y-6">
-                <PlatformPageTitle title="Dashboard" ></PlatformPageTitle>
+        <div className="container">
+            <div className="space-y-6">
+                <PlatformPageTitle title="Dashboard"></PlatformPageTitle>
                 <SectionCard title="Monthly Usage"
                     toolbar={
                         <Popover>
@@ -653,6 +687,7 @@ export default function TenantAdminDashboard() {
                 <div className="grid gap-4 xl:grid-cols-2">
                     <SectionCard
                         title="Total OCR Pages"
+                        className="min-h-96"
                         toolbar={
                             <MonthWindowPopoverButton
                                 label={ocrDateLabel}
@@ -666,15 +701,18 @@ export default function TenantAdminDashboard() {
                             />
                         }
                     >
-                        <UsageTrendChart
-                            data={ocrWindowData}
-                            series={[{ dataKey: "ocrPages", label: "OCR Pages", color: "#7E7E7E" }]}
-                            emptyMessage="No OCR usage is available for the selected window."
-                        />
+                        <div className={!ocrWindowData.length ? "pt-[60px]" : undefined}>
+                            <UsageTrendChart
+                                data={ocrWindowData}
+                                series={[{ dataKey: "ocrPages", label: "OCR Pages", color: "#7E7E7E" }]}
+                                emptyMessage="No OCR usage is available for the selected window."
+                            />
+                        </div>
                     </SectionCard>
 
                     <SectionCard
                         title="Total Generations"
+                        className="min-h-96"
                         toolbar={
                             <MonthWindowPopoverButton
                                 label={generationDateLabel}
@@ -711,26 +749,26 @@ export default function TenantAdminDashboard() {
                     </SectionCard>
                 </div>
 
-                <SectionCard title="Brand Spaces" >
+                <SectionCard title="Brand Spaces" className="border-none p-0" >
                     <div className="overflow-x-auto">
-                        <table className="min-w-full text-left text-sm">
-                            <thead className="bg-slate-50 text-slate-500">
-                                <tr>
-                                    <th className="px-5 py-3 font-medium">Name</th>
-                                    <th className="px-5 py-3 font-medium">Date Created</th>
-                                    <th className="px-5 py-3 font-medium">Created By</th>
-                                    <th className="px-5 py-3 font-medium">Active (Last 30 Days)</th>
-                                    <th className="px-5 py-3 font-medium">Last Used</th>
+                        <table className="table">
+                            <thead>
+                                <tr className="bg-slate-100/50 text-black">
+                                    <th className="w-1/6 border-2 border-white px-5 py-3 font-medium text-black">Name</th>
+                                    <th className="w-1/6 border-2 border-white px-5 py-3 font-medium text-black">Date Created</th>
+                                    <th className="w-1/6 border-2 border-white px-5 py-3 font-medium text-black">Created By</th>
+                                    <th className="w-1/6 border-2 border-white px-5 py-3 font-medium text-black">Active (Last 30 Days)</th>
+                                    <th className="w-1/6 border-2 border-white px-5 py-3 font-medium text-black">Last Used</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {brandRows.map((brand) => (
-                                    <tr key={brand.name} className="border-t border-slate-100 text-slate-600">
-                                        <td className="px-5 py-3">{brand.name}</td>
-                                        <td className="px-5 py-3">{brand.createdAt}</td>
-                                        <td className="px-5 py-3">{brand.createdBy}</td>
-                                        <td className="px-5 py-3">{brand.activeLast30Days}</td>
-                                        <td className="px-5 py-3">{brand.lastUsed}</td>
+                                    <tr key={brand.name} className="bg-slate-100/50 text-[#666666]">
+                                        <td className="w-1/6 border-2 border-white px-5 py-3">{brand.name}</td>
+                                        <td className="w-1/6 border-2 border-white px-5 py-3">{brand.createdAt}</td>
+                                        <td className="w-1/6 border-2 border-white px-5 py-3">{brand.createdBy}</td>
+                                        <td className="w-1/6 border-2 border-white px-5 py-3">{brand.activeLast30Days}</td>
+                                        <td className="w-1/6 border-2 border-white px-5 py-3">{brand.lastUsed}</td>
                                     </tr>
                                 ))}
                             </tbody>
@@ -743,14 +781,14 @@ export default function TenantAdminDashboard() {
                         title="Brand OCR Usage"
                         toolbar={
                             <MonthWindowPopoverButton
-                                label={brandUsageDateLabel}
-                                startMonth={resolvedBrandUsageStartMonth}
-                                endMonth={resolvedBrandUsageEndMonth}
+                                label={brandOcrUsageDateLabel}
+                                startMonth={resolvedBrandOcrUsageStartMonth}
+                                endMonth={resolvedBrandOcrUsageEndMonth}
                                 minMonth={usageLimitMinMonth}
                                 maxMonth={usageLimitMaxMonth}
-                                onStartChange={setBrandUsageStartMonth}
-                                onEndChange={setBrandUsageEndMonth}
-                                onReset={resetBrandUsageWindow}
+                                onStartChange={setBrandOcrUsageStartMonth}
+                                onEndChange={setBrandOcrUsageEndMonth}
+                                onReset={resetBrandOcrUsageWindow}
                             />
                         }
                     >
@@ -765,14 +803,14 @@ export default function TenantAdminDashboard() {
                         title="Brand AI Usage"
                         toolbar={
                             <MonthWindowPopoverButton
-                                label={brandUsageDateLabel}
-                                startMonth={resolvedBrandUsageStartMonth}
-                                endMonth={resolvedBrandUsageEndMonth}
+                                label={brandAiUsageDateLabel}
+                                startMonth={resolvedBrandAiUsageStartMonth}
+                                endMonth={resolvedBrandAiUsageEndMonth}
                                 minMonth={usageLimitMinMonth}
                                 maxMonth={usageLimitMaxMonth}
-                                onStartChange={setBrandUsageStartMonth}
-                                onEndChange={setBrandUsageEndMonth}
-                                onReset={resetBrandUsageWindow}
+                                onStartChange={setBrandAiUsageStartMonth}
+                                onEndChange={setBrandAiUsageEndMonth}
+                                onReset={resetBrandAiUsageWindow}
                             />
                         }
                     >
@@ -784,24 +822,24 @@ export default function TenantAdminDashboard() {
                     </SectionCard>
                 </div>
 
-                <SectionCard title="Usage Overview">
+                <SectionCard title="Usage Overview" className="border-none p-0">
                     <div className="overflow-x-auto">
-                        <table className="min-w-full text-left text-sm">
-                            <thead className="bg-slate-50 text-slate-500">
-                                <tr>
-                                    <th className="px-5 py-3 font-medium">Brand</th>
-                                    <th className="px-5 py-3 font-medium">Content Generations</th>
-                                    <th className="px-5 py-3 font-medium">Visuals</th>
-                                    <th className="px-5 py-3 font-medium">OCR Pages</th>
+                        <table className="table">
+                            <thead>
+                                <tr className="bg-slate-100/50 text-black">
+                                    <th className="w-1/6 border-2 border-white px-5 py-3 font-medium text-black">Brand</th>
+                                    <th className="w-1/6 border-2 border-white px-5 py-3 font-medium text-black">Content Generations</th>
+                                    <th className="w-1/6 border-2 border-white px-5 py-3 font-medium text-black">Visuals</th>
+                                    <th className="w-1/6 border-2 border-white px-5 py-3 font-medium text-black">OCR Pages</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {liveUsageRows.map((row) => (
-                                    <tr key={row.brand} className="border-t border-slate-100 text-slate-600">
-                                        <td className="px-5 py-3">{row.brand}</td>
-                                        <td className="px-5 py-3">{row.contentGenerations}</td>
-                                        <td className="px-5 py-3">{row.visuals}</td>
-                                        <td className="px-5 py-3">{row.ocrPages}</td>
+                                    <tr key={row.brand} className="bg-slate-100/50 text-[#666666]">
+                                        <td className="w-1/6 border-2 border-white px-5 py-3">{row.brand}</td>
+                                        <td className="w-1/6 border-2 border-white px-5 py-3">{row.contentGenerations}</td>
+                                        <td className="w-1/6 border-2 border-white px-5 py-3">{row.visuals}</td>
+                                        <td className="w-1/6 border-2 border-white px-5 py-3">{row.ocrPages}</td>
                                     </tr>
                                 ))}
                             </tbody>

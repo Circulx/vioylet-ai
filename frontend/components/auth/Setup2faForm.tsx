@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Copy, ShieldCheck } from "lucide-react";
+import { Check, Copy, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -133,7 +133,7 @@ export default function Setup2faForm({ compact = false, onConfigured }: Setup2fa
             className="h-40 w-40 rounded-xl border border-slate-200 bg-white p-2"
           />
         </div>
-        <p className="text-center text-sm text-slate-500">
+        <p className="text-sm text-slate-500">
           Scan the QR code using Google Authenticator, or enter the secret key manually.
         </p>
         <div className="rounded-xl bg-[#F6F7FC] p-4">
@@ -141,8 +141,8 @@ export default function Setup2faForm({ compact = false, onConfigured }: Setup2fa
           <div className="mt-2 flex items-center justify-between gap-3">
             <p className="break-all text-sm font-semibold tracking-[0.2em] text-slate-900">{setupData.secret}</p>
             <Button type="button" variant="outline" className="rounded-none" onClick={handleCopySecret}>
-              <Copy className="mr-2 h-4 w-4" />
-              {copied ? "Copied" : "Copy"}
+              {copied ? <Check className="mr-2 h-4 w-4" /> : <Copy className="mr-2 h-4 w-4" />}
+              {/* {copied ? "Copied" : "Copy"} */}
             </Button>
           </div>
         </div>

@@ -36,9 +36,9 @@ export function ForgotPasswordForm() {
   };
 
   return (
-    <div className="w-full max-w-[417px] space-y-6">
+    <div className="w-full max-w-112 space-y-6">
       <div className="space-y-3 text-left">
-        <h1 className="font-dmSans text-[42px] font-bold leading-none tracking-[-0.04em] text-black md:text-[48px]">
+        <h1 className="font-dmSans text-[42px] font-bold leading-none text-black md:text-[48px]">
           Reset your password
         </h1>
         <p className="font-manrope text-[18px] font-medium leading-6 text-[#2D2D2D]">
@@ -46,8 +46,8 @@ export function ForgotPasswordForm() {
         </p>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-5 rounded-[2px] border border-[#ECEEF5] bg-white p-6 shadow-[0_10px_24px_-22px_rgba(15,23,42,0.45)]">
-        <div className="space-y-2">
+      <form onSubmit={handleSubmit} className="space-y-5 rounded-xs border border-[#ECEEF5] bg-white p-6 shadow-[0_10px_24px_-22px_rgba(15,23,42,0.45)]">
+        <div className="flex flex-col gap-2">
           <label htmlFor="forgot-email" className="text-base font-normal leading-6 text-[#121212]">
             Work Email
           </label>
@@ -76,7 +76,7 @@ export function ForgotPasswordForm() {
         <Button
           type="submit"
           disabled={isSubmitting}
-          className="h-12 w-full rounded-none bg-primary text-base font-bold text-white hover:bg-primary/90"
+          className="h-12 w-full rounded-none bg-primary/72 text-base font-bold text-white hover:bg-primary/90"
         >
           {isSubmitting ? "Sending..." : "Send Reset Link"}
         </Button>

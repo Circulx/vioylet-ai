@@ -11,6 +11,7 @@ type RequestOptions<TReq> = {
     params?: RequestParams;
     pathParams?: PathParams;
     headers?: Record<string, string>;
+    signal?: AbortSignal;
 };
 
 export async function request<TReq, TRes>(
@@ -33,6 +34,7 @@ export async function request<TReq, TRes>(
         data: options?.data,
         params: options?.params,
         headers,
+        signal: options?.signal,
     });
 
     return response.data;

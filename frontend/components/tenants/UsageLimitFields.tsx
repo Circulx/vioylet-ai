@@ -134,10 +134,15 @@ function MonthField({
         type="month"
         value={value}
         placeholder={placeholder}
-        className="h-12 rounded-[10px] border-none bg-input-field px-4 pr-11 text-sm text-[#2F3342] placeholder:text-[#A7A7A7] focus-visible:ring-2 focus-visible:ring-primary/20"
+        className={`h-12 rounded-[10px] border-none bg-input-field px-4 text-sm focus-visible:ring-2 focus-visible:ring-primary/20 ${value ? "text-[#2F3342]" : "text-transparent"}`}
         onChange={(event) => onChange(event.target.value)}
       />
-      <CalendarDays className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7A7A7A]" />
+      {!value ? (
+        <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-sm text-[#A7A7A7]">
+          {placeholder}
+        </span>
+      ) : null}
+      {/* <CalendarDays className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7A7A7A]" /> */}
     </div>
   );
 }

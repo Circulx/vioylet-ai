@@ -68,14 +68,16 @@ export function usagePercentage(consumed = 0, limit = 0) {
   return Math.max(0, Math.min(100, Math.round((consumed / limit) * 100)));
 }
 
-export function buildPlatformMetricCards(analytics?: AnalyticsResponse, tenants?: TenantSummaryResponse[]) {
+export function formatTenantDisplayName(name?: string | null) {
+  const cleaned = (name || "").trim().replace(
+    /\s+[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    "",
+  );
+  return cleaned || "Unnamed Tenant";
+}
+
+export function buildPlatformMetricCards(analytics?: AnalyticsResponse) {
   const metrics = analytics?.metrics || {};
-  const averageContent = (tenants || []).length
-    ? Math.round(
-        (tenants || []).reduce((total, tenant) => total + (tenant.usage_consumption.content_generations || 0), 0) /
-          (tenants || []).length,
-      )
-    : 0;
   const errorRate = metrics.pending_jobs && metrics.content_generations
     ? `${Math.round((Number(metrics.pending_jobs) / Math.max(Number(metrics.content_generations), 1)) * 100)}%`
     : "0%";
@@ -84,7 +86,7 @@ export function buildPlatformMetricCards(analytics?: AnalyticsResponse, tenants?
     { label: "Tenants", value: String(metrics.tenants || 0) },
     { label: "Brand Spaces", value: String(metrics.brand_spaces || 0) },
     { label: "Users", value: String(metrics.users || 0) },
-    { label: "Avg Response Time", value: averageContent ? `${averageContent} sec` : "--" },
+    { label: "Avg Response Time", value: "--" },
     { label: "Error Rate", value: errorRate },
   ];
 }
@@ -99,7 +101,7 @@ export function buildTenantBreakdownRows(tenants: TenantSummaryResponse[] = []) 
 
     return {
       id: tenant.id,
-      name: tenant.name,
+      name: formatTenantDisplayName(tenant.name),
       createdAt: tenant.created_at,
       adminName: tenant.tenant_admin_name || "-",
       brandSpaces: tenant.brand_space_count,

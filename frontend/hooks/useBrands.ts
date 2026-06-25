@@ -24,6 +24,13 @@ export const useBrandOverview = (brandId: string) =>
     queryFn: () => request(API.BRANDS.OVERVIEW, { pathParams: brandId }),
   });
 
+export const useBrandUsage = (brandId: string) =>
+  useQuery({
+    queryKey: ["brand", brandId, "usage"],
+    enabled: Boolean(brandId),
+    queryFn: () => request(API.BRANDS.USAGE, { pathParams: brandId }),
+  });
+
 export const useCreateBrand = () => {
   const queryClient = useQueryClient();
   return useMutation({

@@ -21,6 +21,10 @@ export function buildBrandWorkspaceHref(brand: RoutableBrand) {
   return `/brand_space/${resolveBrandRouteKey(brand)}`;
 }
 
+export function buildBrandChatHref(brand: RoutableBrand, chatId: string) {
+  return `${buildBrandWorkspaceHref(brand)}?chat=${encodeURIComponent(chatId)}`;
+}
+
 export function buildBrandEditHref(brand: RoutableBrand) {
   return `${buildBrandWorkspaceHref(brand)}/edit`;
 }

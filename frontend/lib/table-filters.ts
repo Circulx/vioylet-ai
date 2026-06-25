@@ -1,7 +1,7 @@
 export type CreatedDateFilter = "all" | "last30" | "last90" | "thisYear";
 export type RecentActivityStatus = "engaged" | "dormant";
 export type RecentActivityFilter = "all" | RecentActivityStatus;
-export type UserActivityStatus = RecentActivityStatus | "pending";
+export type UserActivityStatus = RecentActivityStatus;
 export type UserActivityFilter = "all" | UserActivityStatus;
 
 const DAY_MS = 1000 * 60 * 60 * 24;
@@ -23,7 +23,6 @@ export const USER_ACTIVITY_FILTER_OPTIONS: ReadonlyArray<{ value: UserActivityFi
   { value: "all", label: "All activity" },
   { value: "engaged", label: "Engaged" },
   { value: "dormant", label: "Dormant" },
-  { value: "pending", label: "Pending activation" },
 ];
 
 function parseDate(value?: string | null) {
@@ -65,16 +64,16 @@ export function getRecentActivityStatus(value?: string | null): RecentActivitySt
   return ageInMs <= 30 * DAY_MS ? "engaged" : "dormant";
 }
 
-export function getUserActivityStatus(lastLoginAt?: string | null, isActivated?: boolean): UserActivityStatus {
-  if (!isActivated) {
-    return "pending";
-  }
-
-  if (!lastLoginAt) {
-    return "engaged";
-  }
-
+export function getUserActivityStatus(lastLoginAt?: string | null): UserActivityStatus {
   return getRecentActivityStatus(lastLoginAt);
+}
+
+export function formatUserAccountStatus(isActive: boolean, isActivated: boolean) {
+  if (!isActivated) {
+    return "Pending";
+  }
+
+  return isActive ? "Active" : "Deactive";
 }
 
 export function formatRecentActivityStatus(status: RecentActivityStatus) {
@@ -82,9 +81,5 @@ export function formatRecentActivityStatus(status: RecentActivityStatus) {
 }
 
 export function formatUserActivityStatus(status: UserActivityStatus) {
-  if (status === "pending") {
-    return "Pending Activation";
-  }
-
   return formatRecentActivityStatus(status);
 }

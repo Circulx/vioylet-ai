@@ -1,12 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { CalendarDays, Trash2 } from "lucide-react";
+import { CalendarDays } from "lucide-react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { toast } from "@/components/ui/use-toast";
 import {
     DatePill,
     PlatformPageTitle,
@@ -15,7 +14,7 @@ import {
     ToolbarToggle,
 } from "@/components/platformOwner/PlatformOwnerPrimitives";
 import { useGetTenantBrandSpaces, useGetTenantData, useGetTenantUsageSummary, useGetTenantUsers } from "@/hooks/tenantAdmins/useGetTenants";
-import { useDeleteTenantAdmin, useUpdateTenantAdmin } from "@/hooks/tenantAdmins/useUpdateTenant";
+import { useUpdateTenantAdmin } from "@/hooks/tenantAdmins/useUpdateTenant";
 import {
     buildRangeLabel,
     buildUsageWindowRows,
@@ -38,7 +37,6 @@ export default function TenantDetailsPage() {
     const { data: usage } = useGetTenantUsageSummary(tenantId);
     const { data: brandSpaces } = useGetTenantBrandSpaces(tenantId);
     const { mutate: updateTenant, isPending: isUpdatingTenant } = useUpdateTenantAdmin();
-    const { mutateAsync: deleteTenant, isPending: isDeletingTenant } = useDeleteTenantAdmin();
     const [tab, setTab] = useState("tenant");
     const [provider, setProvider] = useState("openai");
     const [selectedUsageMonth, setSelectedUsageMonth] = useState("");
@@ -48,8 +46,10 @@ export default function TenantDetailsPage() {
     const [ocrEndMonth, setOcrEndMonth] = useState("");
     const [generationStartMonth, setGenerationStartMonth] = useState("");
     const [generationEndMonth, setGenerationEndMonth] = useState("");
-    const [brandUsageStartMonth, setBrandUsageStartMonth] = useState("");
-    const [brandUsageEndMonth, setBrandUsageEndMonth] = useState("");
+    const [brandOcrUsageStartMonth, setBrandOcrUsageStartMonth] = useState("");
+    const [brandOcrUsageEndMonth, setBrandOcrUsageEndMonth] = useState("");
+    const [brandAiUsageStartMonth, setBrandAiUsageStartMonth] = useState("");
+    const [brandAiUsageEndMonth, setBrandAiUsageEndMonth] = useState("");
 
     const usageWindow = useMemo(
         () => (tenant?.metadata_json?.usage_window as Record<string, unknown> | undefined) ?? {},
@@ -173,33 +173,60 @@ export default function TenantDetailsPage() {
 
         return `${formatCompactMonthLabel(normalizedGenerationRange.start)} - ${formatCompactMonthLabel(normalizedGenerationRange.end)}`;
     }, [normalizedGenerationRange.end, normalizedGenerationRange.start]);
-    const resolvedBrandUsageStartMonth = usageLimitRows.some((row) => row.monthValue === brandUsageStartMonth)
-        ? brandUsageStartMonth
+    const resolvedBrandOcrUsageStartMonth = usageLimitRows.some((row) => row.monthValue === brandOcrUsageStartMonth)
+        ? brandOcrUsageStartMonth
         : usageLimitMinMonth;
-    const resolvedBrandUsageEndMonth = usageLimitRows.some((row) => row.monthValue === brandUsageEndMonth)
-        ? brandUsageEndMonth
+    const resolvedBrandOcrUsageEndMonth = usageLimitRows.some((row) => row.monthValue === brandOcrUsageEndMonth)
+        ? brandOcrUsageEndMonth
         : usageLimitMaxMonth;
-    const normalizedBrandUsageRange = useMemo(
-        () => normalizeMonthWindow(resolvedBrandUsageStartMonth, resolvedBrandUsageEndMonth),
-        [resolvedBrandUsageEndMonth, resolvedBrandUsageStartMonth],
+    const normalizedBrandOcrUsageRange = useMemo(
+        () => normalizeMonthWindow(resolvedBrandOcrUsageStartMonth, resolvedBrandOcrUsageEndMonth),
+        [resolvedBrandOcrUsageEndMonth, resolvedBrandOcrUsageStartMonth],
     );
-    const filteredBrandUsageRows = useMemo(() => {
+    const filteredBrandOcrUsageRows = useMemo(() => {
         if (!usageLimitRows.length) return usageLimitRows;
-        if (!normalizedBrandUsageRange.start || !normalizedBrandUsageRange.end) {
+        if (!normalizedBrandOcrUsageRange.start || !normalizedBrandOcrUsageRange.end) {
             return usageLimitRows;
         }
 
         return usageLimitRows.filter((row) =>
-            row.monthValue >= normalizedBrandUsageRange.start && row.monthValue <= normalizedBrandUsageRange.end,
+            row.monthValue >= normalizedBrandOcrUsageRange.start && row.monthValue <= normalizedBrandOcrUsageRange.end,
         );
-    }, [normalizedBrandUsageRange.end, normalizedBrandUsageRange.start, usageLimitRows]);
-    const brandUsageDateLabel = useMemo(() => {
-        if (!normalizedBrandUsageRange.start || !normalizedBrandUsageRange.end) {
+    }, [normalizedBrandOcrUsageRange.end, normalizedBrandOcrUsageRange.start, usageLimitRows]);
+    const brandOcrUsageDateLabel = useMemo(() => {
+        if (!normalizedBrandOcrUsageRange.start || !normalizedBrandOcrUsageRange.end) {
             return "Select month window";
         }
 
-        return `${formatCompactMonthLabel(normalizedBrandUsageRange.start)} - ${formatCompactMonthLabel(normalizedBrandUsageRange.end)}`;
-    }, [normalizedBrandUsageRange.end, normalizedBrandUsageRange.start]);
+        return `${formatCompactMonthLabel(normalizedBrandOcrUsageRange.start)} - ${formatCompactMonthLabel(normalizedBrandOcrUsageRange.end)}`;
+    }, [normalizedBrandOcrUsageRange.end, normalizedBrandOcrUsageRange.start]);
+    const resolvedBrandAiUsageStartMonth = usageLimitRows.some((row) => row.monthValue === brandAiUsageStartMonth)
+        ? brandAiUsageStartMonth
+        : usageLimitMinMonth;
+    const resolvedBrandAiUsageEndMonth = usageLimitRows.some((row) => row.monthValue === brandAiUsageEndMonth)
+        ? brandAiUsageEndMonth
+        : usageLimitMaxMonth;
+    const normalizedBrandAiUsageRange = useMemo(
+        () => normalizeMonthWindow(resolvedBrandAiUsageStartMonth, resolvedBrandAiUsageEndMonth),
+        [resolvedBrandAiUsageEndMonth, resolvedBrandAiUsageStartMonth],
+    );
+    const filteredBrandAiUsageRows = useMemo(() => {
+        if (!usageLimitRows.length) return usageLimitRows;
+        if (!normalizedBrandAiUsageRange.start || !normalizedBrandAiUsageRange.end) {
+            return usageLimitRows;
+        }
+
+        return usageLimitRows.filter((row) =>
+            row.monthValue >= normalizedBrandAiUsageRange.start && row.monthValue <= normalizedBrandAiUsageRange.end,
+        );
+    }, [normalizedBrandAiUsageRange.end, normalizedBrandAiUsageRange.start, usageLimitRows]);
+    const brandAiUsageDateLabel = useMemo(() => {
+        if (!normalizedBrandAiUsageRange.start || !normalizedBrandAiUsageRange.end) {
+            return "Select month window";
+        }
+
+        return `${formatCompactMonthLabel(normalizedBrandAiUsageRange.start)} - ${formatCompactMonthLabel(normalizedBrandAiUsageRange.end)}`;
+    }, [normalizedBrandAiUsageRange.end, normalizedBrandAiUsageRange.start]);
     const llmMonthlyUsage = useMemo(
         () => resolveTenantProviderMonthlyUsage(tenant, provider),
         [provider, tenant],
@@ -268,12 +295,12 @@ export default function TenantDetailsPage() {
         [generationWindowData],
     );
     const brandOcrTotal = useMemo(
-        () => filteredBrandUsageRows.reduce((sum, row) => sum + parseUsageValue(row.ocr).used, 0),
-        [filteredBrandUsageRows],
+        () => filteredBrandOcrUsageRows.reduce((sum, row) => sum + parseUsageValue(row.ocr).used, 0),
+        [filteredBrandOcrUsageRows],
     );
     const brandVisualTotal = useMemo(
-        () => filteredBrandUsageRows.reduce((sum, row) => sum + parseUsageValue(row.visuals).used, 0),
-        [filteredBrandUsageRows],
+        () => filteredBrandAiUsageRows.reduce((sum, row) => sum + parseUsageValue(row.visuals).used, 0),
+        [filteredBrandAiUsageRows],
     );
     const brandOcrSegments = useMemo(
         () => scaleSegmentsToTotal(brandCharts.ocrSegments, brandOcrTotal),
@@ -312,9 +339,13 @@ export default function TenantDetailsPage() {
         setUsageLimitStartMonth(usageLimitMinMonth);
         setUsageLimitEndMonth(usageLimitMaxMonth);
     };
-    const resetBrandUsageWindow = () => {
-        setBrandUsageStartMonth(usageLimitMinMonth);
-        setBrandUsageEndMonth(usageLimitMaxMonth);
+    const resetBrandOcrUsageWindow = () => {
+        setBrandOcrUsageStartMonth(usageLimitMinMonth);
+        setBrandOcrUsageEndMonth(usageLimitMaxMonth);
+    };
+    const resetBrandAiUsageWindow = () => {
+        setBrandAiUsageStartMonth(usageLimitMinMonth);
+        setBrandAiUsageEndMonth(usageLimitMaxMonth);
     };
     const resetOcrWindow = () => {
         setOcrStartMonth(usageLimitMinMonth);
@@ -363,28 +394,6 @@ export default function TenantDetailsPage() {
         };
     })();
 
-    const handleDeleteTenant = async () => {
-        if (!tenant) {
-            return;
-        }
-
-        if (!window.confirm(`Delete "${tenant.name}"? This will permanently remove the tenant and related data.`)) {
-            return;
-        }
-
-        try {
-            await deleteTenant(tenantId);
-            toast({ title: "Tenant deleted" });
-            router.push("/tenants");
-        } catch (error) {
-            toast({
-                title: "Unable to delete this tenant right now.",
-                description: error instanceof Error ? error.message : "Please try again.",
-                variant: "destructive",
-            });
-        }
-    };
-
     if (isLoading || !tenant) {
         return <div className="p-5 text-sm text-slate-500">Loading tenant details...</div>;
     }
@@ -419,15 +428,6 @@ export default function TenantDetailsPage() {
                             <Image src={"/actions_icons/deactivate_user.svg"} alt="Edit" width={16} height={16} className="w-auto h-auto" />
 
                             {tenant.is_active ? "Deactivate" : "Reactivate"}
-                        </Button>
-                        <Button
-                            variant="outline"
-                            className="rounded-none border-[#FFB4AA] bg-[#FF6D5E] px-5 py-5 text-base text-white hover:bg-[#F35F50] hover:text-white"
-                            disabled={isDeletingTenant}
-                            onClick={handleDeleteTenant}
-                        >
-                            <Trash2 className="h-4 w-4" />
-                            Delete
                         </Button>
                     </div>
                 }
@@ -520,7 +520,7 @@ export default function TenantDetailsPage() {
                         <MiniMetric label="Users" value={selectedUsageMetrics.usersUsed} helper={`${selectedUsageMetrics.usersLimit}`} compact icon="/tenants/users.svg" />
                     </div>
 
-                    <SectionCard title="Usage Limit" toolbar={
+                    <SectionCard className="border-none p-0 py-2" title="Usage Limit" toolbar={
                         <MonthWindowPopoverButton
                             label={usageLimitDateLabel}
                             startMonth={resolvedUsageLimitStartMonth}
@@ -533,69 +533,88 @@ export default function TenantDetailsPage() {
                         />
                     }>
                         <div className="overflow-x-auto">
-                            <table className="min-w-full text-left text-sm">
-                                <thead className="border-b border-[#ECEEF5] text-[#6B7280]">
-                                    <tr>
-                                        <th className="pb-3 font-medium">Month</th>
-                                        <th className="pb-3 font-medium">Content Generations</th>
-                                        <th className="pb-3 font-medium">Visuals</th>
-                                        <th className="pb-3 font-medium">OCR Pages</th>
-                                        <th className="pb-3 font-medium">Brand Spaces</th>
-                                        <th className="pb-3 font-medium">Users</th>
+                            <table className="table">
+                                <thead className="border-b border-white text-[#2A2A2A]">
+                                    <tr className="border-b-2 border-white bg-slate-100/50 text-black">
+                                        <th className="w-1/6 p-3 text-left font-medium border-r-2 border-white">Month</th>
+                                        <th className="w-1/6 p-3 font-medium border-r-2 border-white">Content Generations</th>
+                                        <th className="w-1/6 p-3 font-medium border-r-2 border-white">Visuals</th>
+                                        <th className="w-1/6 p-3 font-medium border-r-2 border-white">OCR Pages</th>
+                                        <th className="w-1/6 p-3 font-medium border-r-2 border-white">Brand Spaces</th>
+                                        <th className="w-1/6 p-3 font-medium border-r-2 border-white">Users</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {filteredUsageRows.map((row) => (
-                                        <tr key={row.month} className="border-b border-[#F1F2F6] text-[#4B5563]">
-                                            <td className="py-3">{row.monthLabel}</td>
-                                            <td className="py-3">{row.content}</td>
-                                            <td className="py-3">{row.visuals}</td>
-                                            <td className="py-3">{row.ocr}</td>
-                                            <td className="py-3">{row.brandSpaces}</td>
-                                            <td className="py-3">{row.users}</td>
+                                    {filteredUsageRows.length ? (
+                                        filteredUsageRows.map((row) => (
+                                            <tr key={row.month} className="border-b-2 border-white bg-slate-100/50 text-[#666666]">
+                                                <td className="w-1/6 py-3 text-left border-r-2 border-white px-4">{row.monthLabel}</td>
+                                                <td className="w-1/6 py-3 border-r-2 border-white px-4">{row.content}</td>
+                                                <td className="w-1/6 py-3 border-r-2 border-white px-4">{row.visuals}</td>
+                                                <td className="w-1/6 py-3 border-r-2 border-white px-4">{row.ocr}</td>
+                                                <td className="w-1/6 py-3 border-r-2 border-white px-4">{row.brandSpaces}</td>
+                                                <td className="w-1/6 py-3 border-r-2 border-white px-4">{row.users}</td>
+                                            </tr>
+                                        ))
+                                    ) : (
+                                        <tr>
+                                            <td colSpan={6} className="py-8 text-center text-[#6B7280]">
+                                                No data yet
+                                            </td>
                                         </tr>
-                                    ))}
+                                    )}
                                 </tbody>
                             </table>
                         </div>
                     </SectionCard>
 
-                    <SectionCard title="Tenant Admin">
-                        <div className="grid gap-3 text-sm text-[#4B5563]">
+                    <SectionCard title="Tenant Admin" className="border-none p-0 py-2">
+                        <div className="grid gap-3 text-sm text-[#4B5563] border p-4">
                             <InfoPair label="Name" value={tenant.tenant_admin_name || "-"} />
                             <InfoPair label="Email" value={tenant.tenant_admin_email || "-"} />
                             <InfoPair label="Contact Number" value={tenant.tenant_admin_phone_number || "-"} />
                         </div>
                     </SectionCard>
 
-                    <SectionCard title="Tenant Users">
+                    <SectionCard title="Tenant Users"
+                        className="border-none p-0 py-2"
+                    >
                         <div className="overflow-x-auto">
-                            <table className="min-w-full text-left text-base">
-                                <thead className="border-b border-[#ECEEF5]">
-                                    <tr>
-                                        <th className="pb-3 font-medium">Name</th>
-                                        <th className="pb-3 font-medium">Date Created</th>
-                                        <th className="pb-3 font-medium">Status</th>
-                                        <th className="pb-3 font-medium">Active (Last 30 Days)</th>
-                                        <th className="pb-3 font-medium">Last Login</th>
+                            <table className="table">
+                                <thead className="border-b-2 border-[#ECEEF5]">
+                                    <tr className="border-b-2 border-white bg-slate-100/50 text-black">
+                                        <th className="w-1/6 py-3 px-4 font-medium border-r-2 border-white">Name</th>
+                                        <th className="w-1/6 py-3 px-4 font-medium border-r-2 border-white">Date Created</th>
+                                        <th className="w-1/6 py-3 px-4 font-medium border-r-2 border-white">Status</th>
+                                        <th className="w-1/6 py-3 px-4 font-medium border-r-2 border-white">Active (Last 30 Days)</th>
+                                        <th className="w-1/6 py-3 px-4 font-medium border-r-2 border-white">Last Login</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {(users || []).map((user) => (
-                                        <tr key={user.id} className="border-b border-[#F1F2F6] text-[#4B5563]">
-                                            <td className="py-3">{user.full_name}</td>
-                                            <td className="py-3">{formatShortDate(user.created_at)}</td>
-                                            <td className="py-3">{user.is_active ? "Active" : "Inactive"}</td>
-                                            <td className="py-3">{getActivityLabel(user.last_login_at)}</td>
-                                            <td className="py-3">{formatShortDate(user.last_login_at)}</td>
+                                    {(users || []).length ? (
+                                        (users || []).map((user) => (
+                                            <tr key={user.id} className="border-b-2 border-white bg-slate-100/50 text-[#4B5563]">
+                                                <td className="w-1/6 py-3 px-4 border-r-2 border-white">{user.full_name}</td>
+                                                <td className="w-1/6 py-3 px-4 border-r-2 border-white">{formatShortDate(user.created_at)}</td>
+                                                <td className="w-1/6 py-3 px-4 border-r-2 border-white">{user.is_active ? "Active" : "Inactive"}</td>
+                                                <td className="w-1/6 py-3 px-4 border-r-2 border-white">{getActivityLabel(user.last_login_at)}</td>
+                                                <td className="w-1/6 py-3 px-4 border-r-2 border-white">{formatShortDate(user.last_login_at)}</td>
+                                            </tr>
+                                        ))
+                                    ) : (
+                                        <tr>
+                                            <td colSpan={5} className="py-8 text-center text-[#6B7280]">
+                                                No data yet
+                                            </td>
                                         </tr>
-                                    ))}
+                                    )}
                                 </tbody>
                             </table>
                         </div>
                     </SectionCard>
 
                     <SectionCard
+                        className="bg-[#3C2F8F05]"
                         title="LLM Tokens"
                         toolbar={
                             <div className="flex items-center gap-3">
@@ -613,14 +632,14 @@ export default function TenantDetailsPage() {
                         }
                     >
                         <div className="w-full flex items-center justify-center">
-                        <ToolbarToggle
-                            items={[
-                                { id: "openai", label: "OpenAI" },
-                                { id: "anthropic", label: "Anthropic" },
-                            ]}
-                            active={provider}
-                            onChange={setProvider}
-                        />
+                            <ToolbarToggle
+                                items={[
+                                    { id: "openai", label: "OpenAI", icon: "/tenants/gpt.svg" },
+                                    { id: "anthropic", label: "Anthropic", icon: "/tenants/anthropic.svg" },
+                                ]}
+                                active={provider}
+                                onChange={setProvider}
+                            />
                         </div>
                         <TokenUsageChart
                             data={llmWindowData}
@@ -631,6 +650,7 @@ export default function TenantDetailsPage() {
 
                     <div className="grid gap-4 xl:grid-cols-2">
                         <SectionCard
+                            className="min-h-99"
                             title={`Total OCR Pages: ${formatCount(totalOcrPages)}`}
                             toolbar={
                                 <MonthWindowPopoverButton
@@ -645,13 +665,16 @@ export default function TenantDetailsPage() {
                                 />
                             }
                         >
-                            <UsageTrendChart
-                                data={ocrWindowData}
-                                series={[{ dataKey: "ocrPages", label: "OCR Pages", color: "#7E7E7E" }]}
-                                emptyMessage="No OCR usage is available for the selected window."
-                            />
+                            <div className={!ocrWindowData.length ? "pt-[60px]" : undefined}>
+                                <UsageTrendChart
+                                    data={ocrWindowData}
+                                    series={[{ dataKey: "ocrPages", label: "OCR Pages", color: "#7E7E7E" }]}
+                                    emptyMessage="No OCR usage is available for the selected window."
+                                />
+                            </div>
                         </SectionCard>
                         <SectionCard
+                            className="min-h-99"
                             title={`Total Generations: ${formatCount(generationTotals.total)}`}
                             toolbar={
                                 <MonthWindowPopoverButton
@@ -691,28 +714,38 @@ export default function TenantDetailsPage() {
                 </div>
             ) : (
                 <div className="space-y-5">
-                    <SectionCard title="Brand Spaces">
+                    <SectionCard title="Brand Spaces"
+                        className="border-none p-0"
+                    >
                         <div className="overflow-x-auto">
-                            <table className="min-w-full text-left text-sm">
-                                <thead className="border-b border-[#ECEEF5] text-[#6B7280]">
-                                    <tr>
-                                        <th className="pb-3 font-medium">Name</th>
-                                        <th className="pb-3 font-medium">Date Created</th>
-                                        <th className="pb-3 font-medium">Status</th>
-                                        <th className="pb-3 font-medium">Active (Last 30 Days)</th>
-                                        <th className="pb-3 font-medium">Last Login</th>
+                            <table className="table">
+                                <thead className="border-b-2 border-white text-black">
+                                    <tr className="bg-slate-100/50 text-black">
+                                        <th className="w-1/6 p-3 font-medium border-r-2 border-white">Name</th>
+                                        <th className="w-1/6 p-3 font-medium border-r-2 border-white">Date Created</th>
+                                        <th className="w-1/6 p-3 font-medium border-r-2 border-white">Status</th>
+                                        <th className="w-1/6 p-3 font-medium border-r-2 border-white">Active (Last 30 Days)</th>
+                                        <th className="w-1/6 p-3 font-medium">Last Login</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {(brandSpaces || []).map((brand) => (
-                                        <tr key={brand.id} className="border-b border-[#F1F2F6] text-[#4B5563]">
-                                            <td className="py-3">{brand.name}</td>
-                                            <td className="py-3">{formatShortDate(brand.created_at)}</td>
-                                            <td className="py-3">{brand.lifecycle_state === "active" ? "Active" : "Inactive"}</td>
-                                            <td className="py-3">{getActivityLabel(brand.last_active_at)}</td>
-                                            <td className="py-3">{formatShortDate(brand.last_login_at)}</td>
+                                    {(brandSpaces || []).length ? (
+                                        (brandSpaces || []).map((brand) => (
+                                            <tr key={brand.id} className="border-b-2 border-white text-[#4B5563] bg-slate-100/50">
+                                                <td className="w-1/6 p-3 border-r-2 border-white">{brand.name}</td>
+                                                <td className="w-1/6 p-3 border-r-2 border-white">{formatShortDate(brand.created_at)}</td>
+                                                <td className="w-1/6 p-3 border-r-2 border-white">{brand.lifecycle_state === "active" ? "Active" : "Inactive"}</td>
+                                                <td className="w-1/6 p-3 border-r-2 border-white">{getActivityLabel(brand.last_active_at)}</td>
+                                                <td className="w-1/6 p-3">{formatShortDate(brand.last_login_at)}</td>
+                                            </tr>
+                                        ))
+                                    ) : (
+                                        <tr>
+                                            <td colSpan={5} className="py-8 text-center text-[#6B7280]">
+                                                No data yet
+                                            </td>
                                         </tr>
-                                    ))}
+                                    )}
                                 </tbody>
                             </table>
                         </div>
@@ -723,14 +756,14 @@ export default function TenantDetailsPage() {
                             title="Brand OCR Usage"
                             toolbar={
                                 <MonthWindowPopoverButton
-                                    label={brandUsageDateLabel}
-                                    startMonth={resolvedBrandUsageStartMonth}
-                                    endMonth={resolvedBrandUsageEndMonth}
+                                    label={brandOcrUsageDateLabel}
+                                    startMonth={resolvedBrandOcrUsageStartMonth}
+                                    endMonth={resolvedBrandOcrUsageEndMonth}
                                     minMonth={usageLimitMinMonth}
                                     maxMonth={usageLimitMaxMonth}
-                                    onStartChange={setBrandUsageStartMonth}
-                                    onEndChange={setBrandUsageEndMonth}
-                                    onReset={resetBrandUsageWindow}
+                                    onStartChange={setBrandOcrUsageStartMonth}
+                                    onEndChange={setBrandOcrUsageEndMonth}
+                                    onReset={resetBrandOcrUsageWindow}
                                 />
                             }
                         >
@@ -744,14 +777,14 @@ export default function TenantDetailsPage() {
                             title="Brand AI Usage"
                             toolbar={
                                 <MonthWindowPopoverButton
-                                    label={brandUsageDateLabel}
-                                    startMonth={resolvedBrandUsageStartMonth}
-                                    endMonth={resolvedBrandUsageEndMonth}
+                                    label={brandAiUsageDateLabel}
+                                    startMonth={resolvedBrandAiUsageStartMonth}
+                                    endMonth={resolvedBrandAiUsageEndMonth}
                                     minMonth={usageLimitMinMonth}
                                     maxMonth={usageLimitMaxMonth}
-                                    onStartChange={setBrandUsageStartMonth}
-                                    onEndChange={setBrandUsageEndMonth}
-                                    onReset={resetBrandUsageWindow}
+                                    onStartChange={setBrandAiUsageStartMonth}
+                                    onEndChange={setBrandAiUsageEndMonth}
+                                    onReset={resetBrandAiUsageWindow}
                                 />
                             }
                         >
@@ -763,26 +796,36 @@ export default function TenantDetailsPage() {
                         </SectionCard>
                     </div>
 
-                    <SectionCard title="Usage Overview" toolbar={<DatePill label={dateLabel} />}>
+                    <SectionCard title="Usage Overview" toolbar={<DatePill label={dateLabel} />}
+                        className="border-none p-0"
+                    >
                         <div className="overflow-x-auto">
-                            <table className="min-w-full text-left text-sm">
-                                <thead className="border-b border-[#ECEEF5] text-[#6B7280]">
-                                    <tr>
-                                        <th className="pb-3 font-medium">Brand</th>
-                                        <th className="pb-3 font-medium">Content Generations</th>
-                                        <th className="pb-3 font-medium">Visuals</th>
-                                        <th className="pb-3 font-medium">OCR Pages</th>
+                            <table className="table">
+                                <thead className="border-2 border-white text-black">
+                                    <tr className="bg-slate-100/50 text-black">
+                                        <th className="w-1/6 p-3 border-r-2 border-white font-medium">Brand</th>
+                                        <th className="w-1/6 p-3 border-r-2 border-white font-medium">Content Generations</th>
+                                        <th className="w-1/6 p-3 border-r-2 border-white font-medium">Visuals</th>
+                                        <th className="w-1/6 p-3 font-medium">OCR Pages</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {(brandSpaces || []).map((brand) => (
-                                        <tr key={brand.id} className="border-b border-[#F1F2F6] text-[#4B5563]">
-                                            <td className="py-3">{brand.name}</td>
-                                            <td className="py-3">{brand.content_generations}</td>
-                                            <td className="py-3">{brand.visual_generations}</td>
-                                            <td className="py-3">{brand.ocr_pages}</td>
+                                    {(brandSpaces || []).length ? (
+                                        (brandSpaces || []).map((brand) => (
+                                            <tr key={brand.id} className="border border-[#F1F2F6] bg-slate-100/50 text-[#4B5563]">
+                                                <td className="w-1/6 border-2 border-white p-3">{brand.name}</td>
+                                                <td className="w-1/6 border-2 border-white p-3">{brand.content_generations}</td>
+                                                <td className="w-1/6 border-2 border-white p-3">{brand.visual_generations}</td>
+                                                <td className="w-1/6 border-2 border-white p-3">{brand.ocr_pages}</td>
+                                            </tr>
+                                        ))
+                                    ) : (
+                                        <tr>
+                                            <td colSpan={4} className="py-8 text-center text-[#6B7280]">
+                                                No data yet
+                                            </td>
                                         </tr>
-                                    ))}
+                                    )}
                                 </tbody>
                             </table>
                         </div>
@@ -1214,7 +1257,7 @@ function formatCount(value: number) {
 
 function InfoPair({ label, value }: { label: string; value: string }) {
     return (
-        <div className="flex  items-center justify-start border-b border-[#F1F2F6] pb-3 last:border-none last:pb-0">
+        <div className="flex  items-center justify-start border-b border-[#F1F2F6] pb-2 last:border-none last:pb-0">
             <p className="text-base text-[#666666]">{label} : </p>
             <p className="ml-2 text-base text-black"> {value}</p>
         </div>

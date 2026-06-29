@@ -16,23 +16,12 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "content_history",
-        sa.Column("token_input_tokens", sa.BigInteger(), nullable=False, server_default="0"),
-    )
-    op.add_column(
-        "content_history",
-        sa.Column("token_output_tokens", sa.BigInteger(), nullable=False, server_default="0"),
-    )
-    op.add_column(
-        "content_history",
-        sa.Column("token_total_tokens", sa.BigInteger(), nullable=False, server_default="0"),
-    )
-    op.create_index(
-        "ix_content_history_tenant_brand_created_at",
-        "content_history",
-        ["tenant_id", "brand_space_id", "created_at"],
-        unique=False,
+    op.execute("ALTER TABLE content_history ADD COLUMN IF NOT EXISTS token_input_tokens BIGINT NOT NULL DEFAULT 0")
+    op.execute("ALTER TABLE content_history ADD COLUMN IF NOT EXISTS token_output_tokens BIGINT NOT NULL DEFAULT 0")
+    op.execute("ALTER TABLE content_history ADD COLUMN IF NOT EXISTS token_total_tokens BIGINT NOT NULL DEFAULT 0")
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_content_history_tenant_brand_created_at"
+        " ON content_history (tenant_id, brand_space_id, created_at)"
     )
 
     op.execute(

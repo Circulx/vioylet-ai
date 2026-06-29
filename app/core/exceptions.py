@@ -1,5 +1,9 @@
 # Core application plumbing lives here: settings, security helpers, dependency gates, and shared errors.
-class DomainError(Exception):
+class ViolytBaseException(Exception):
+    """Base exception for all Violyt errors."""
+
+
+class DomainError(ViolytBaseException):
     """Base domain error."""
 # Represents a domain-level failure for DomainError; route handlers translate it into a stable API response.
 
@@ -91,3 +95,11 @@ class ChatGenerationCancelledError(DomainError):
     """Raised when a user cancels an in-flight chat generation."""
     # Represents a domain-level failure for ChatGenerationCancelledError; route handlers translate it into a
     # stable API response.
+
+
+class LayerException(ViolytBaseException):
+    """Raised when an intelligence layer fails execution or validation."""
+
+
+class BrandIsolationException(ViolytBaseException):
+    """Raised when cross-namespace brand contamination is detected."""

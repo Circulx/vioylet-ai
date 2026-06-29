@@ -53,7 +53,7 @@ services:
   violyt-frontend:
     image: violyt-frontend:local
     build:
-      context: ../violyt-frontend
+      context: ./frontend
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_ENV: development
@@ -92,6 +92,20 @@ services:
       timeout: 5s
       retries: 20
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
 volumes:
   postgres_data:
     name: violyt_postgres_data
+  redis_data:
+    name: violyt_redis_data

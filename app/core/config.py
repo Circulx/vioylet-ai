@@ -67,7 +67,9 @@ class Settings(BaseSettings):
 
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
+    pinecone_api_key: str | None = None
     google_application_credentials: str | None = None
+    redis_url: str = "redis://localhost:6379/0"
 
     research_provider: str = "anthropic"
     text_provider: str = "openai"

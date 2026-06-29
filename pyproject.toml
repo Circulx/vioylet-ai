@@ -46,6 +46,10 @@ dependencies = [
   "sqlalchemy>=2.0.36",
   "uvicorn[standard]>=0.31.0",
   "webcolors>=24.8.0",
+  "langgraph>=0.1.0",
+  "pinecone-client>=3.0.0",
+  "structlog>=24.0.0",
+  "tenacity>=8.0.0",
 ]
 
 [project.optional-dependencies]

@@ -344,6 +344,7 @@ class BrandAssetAnalyzer:
 
         if not images and source_format == "pdf" and routed_category in {
             BrandAssetCategory.LOGO,
+            BrandAssetCategory.COLOR_PALETTE,
             BrandAssetCategory.REFERENCE_CREATIVE,
             BrandAssetCategory.TEMPLATE,
             BrandAssetCategory.MOOD_BOARD,
@@ -2746,10 +2747,22 @@ class BrandAssetAnalyzer:
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         # Extracts palette from text, local asset path, and image candidates for retrieval and visual grounding.
         # It calls _extract_palette_from_text and _classified_text_lines to turn raw evidence into the structured signal the caller needs.
-        entries = self._extract_palette_from_text(text)
+        palette_source = next(iter(images or [absolute_path]), absolute_path)
+        entries = self._extract_palette_from_vision(palette_source)
+        text_entries = self._extract_palette_from_text(text)
+        hex_text_entries = [
+            entry
+            for entry in text_entries
+            if isinstance(entry, dict) and self._is_hex_color(str(entry.get("hex_code") or ""))
+        ]
         if not entries:
-            palette_source = next(iter(images or [absolute_path]), absolute_path)
-            entries = self._dominant_palette(palette_source)
+            entries = hex_text_entries
+            if not entries:
+                entries = self._extract_swatch_palette(palette_source) or self._dominant_palette(palette_source)
+            if not entries:
+                entries = text_entries
+            if entries:
+                entries = self._apply_palette_fallback_roles(entries, palette_source)
         classified_lines = self._classified_text_lines(text)
         source_agreement = self._source_agreement(
             classified_lines,
@@ -5068,6 +5081,517 @@ class BrandAssetAnalyzer:
         # Centralizes rgb hex from color for retrieval and visual grounding.
         # The helper owns a small rule that would distract from the surrounding flow.
         return "#{:02X}{:02X}{:02X}".format(*color)
+
+    @staticmethod
+    def _is_hex_color(value: str) -> bool:
+        # Keeps color-token text like "blue" from blocking visual swatch extraction.
+        return bool(re.fullmatch(r"#[0-9A-Fa-f]{6}", str(value or "").strip()))
+
+    @staticmethod
+    def _is_near_white_background_color(rgb: tuple[int, int, int]) -> bool:
+        # Palette guide pages often have large off-white panels; those are page surfaces, not brand swatches.
+        max_channel = max(rgb)
+        min_channel = min(rgb)
+        return min_channel >= 235 and max_channel - min_channel <= 24
+
+    @staticmethod
+    def _rgb_distance(first: tuple[int, int, int], second: tuple[int, int, int]) -> float:
+        # Simple RGB distance is enough here because this only dedupes anti-aliased variants of the same swatch.
+        return sum((a - b) ** 2 for a, b in zip(first, second)) ** 0.5
+
+    def _extract_swatch_palette(self, image_path: str) -> list[dict[str, Any]]:
+        # Extracts exact high-coverage swatch colors from a rendered palette guide page.
+        path = Path(image_path)
+        if not path.exists():
+            return []
+        try:
+            with open_image_asset(path) as image:
+                image = image.convert("RGB")
+                if max(image.size) > 2400:
+                    image.thumbnail((2400, 2400), Image.Resampling.NEAREST)
+                pixels = list(image.getdata())
+        except Exception:  # noqa: BLE001
+            return []
+
+        total_pixels = max(len(pixels), 1)
+        color_counts = Counter(pixels).most_common()
+        entries: list[dict[str, Any]] = []
+        selected_rgbs: list[tuple[int, int, int]] = []
+        for rgb, count in color_counts:
+            pixel_fraction = count / total_pixels
+            if pixel_fraction < 0.001:
+                break
+            if self._is_near_white_background_color(rgb):
+                continue
+            if any(self._rgb_distance(rgb, selected) < 12 for selected in selected_rgbs):
+                continue
+            selected_rgbs.append(rgb)
+            role = "primary" if not entries else ("secondary" if len(entries) == 1 else "accent")
+            entries.append(
+                {
+                    "role": role,
+                    "hex_code": self._rgb_to_hex(rgb),
+                    "color_name": None,
+                    "rgb_value": {"r": rgb[0], "g": rgb[1], "b": rgb[2]},
+                    "source": "image_exact_swatch",
+                    "count": count,
+                    "pixel_fraction": round(pixel_fraction, 6),
+                }
+            )
+            if len(entries) >= 10:
+                break
+
+        region_entries = self._extract_region_swatch_palette(path)
+        if region_entries:
+            merged_entries: list[dict[str, Any]] = []
+            merged_rgbs: list[tuple[int, int, int]] = []
+            for entry in [*region_entries, *entries]:
+                rgb_value = entry.get("rgb_value", {}) if isinstance(entry, dict) else {}
+                rgb = (
+                    int(rgb_value.get("r", 0) or 0),
+                    int(rgb_value.get("g", 0) or 0),
+                    int(rgb_value.get("b", 0) or 0),
+                )
+                if any(self._rgb_distance(rgb, selected) < 18 for selected in merged_rgbs):
+                    continue
+                merged_rgbs.append(rgb)
+                entry["role"] = "primary" if not merged_entries else (
+                    "secondary" if len(merged_entries) == 1 else "accent"
+                )
+                merged_entries.append(entry)
+                if len(merged_entries) >= 10:
+                    break
+            return merged_entries
+
+        return entries
+
+    def _extract_region_swatch_palette(self, image_path: Path) -> list[dict[str, Any]]:
+        # Recovers swatch colors from anti-aliased or compressed rendered PDFs where exact pixels fragment.
+        try:
+            with open_image_asset(image_path) as image:
+                image = image.convert("RGB")
+                if max(image.size) > 2400:
+                    image.thumbnail((2400, 2400), Image.Resampling.BILINEAR)
+                img_rgb = np.array(image)
+        except Exception:  # noqa: BLE001
+            return []
+
+        if img_rgb.size == 0:
+            return []
+        height, width = img_rgb.shape[:2]
+        total_pixels = max(height * width, 1)
+        hsv = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2HSV)
+        saturation = hsv[:, :, 1]
+        value = hsv[:, :, 2]
+        min_channel = img_rgb.min(axis=2)
+        max_channel = img_rgb.max(axis=2)
+        near_white = (min_channel >= 235) & ((max_channel - min_channel) <= 24)
+        colored_or_dark = (saturation >= 25) | (value <= 230)
+        mask = ((~near_white) & colored_or_dark).astype(np.uint8) * 255
+        kernel = np.ones((5, 5), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        candidates: list[dict[str, Any]] = []
+        for contour in contours:
+            area = float(cv2.contourArea(contour))
+            if area / total_pixels < 0.001:
+                continue
+            x, y, width_box, height_box = cv2.boundingRect(contour)
+            if width_box < 12 or height_box < 12:
+                continue
+            if area / max(width_box * height_box, 1) < 0.35:
+                continue
+            component_mask = np.zeros((height, width), dtype=np.uint8)
+            cv2.drawContours(component_mask, [contour], -1, 255, thickness=cv2.FILLED)
+            component_pixels = img_rgb[component_mask > 0]
+            if len(component_pixels) == 0:
+                continue
+            component_near_white = (
+                (component_pixels.min(axis=1) >= 235)
+                & ((component_pixels.max(axis=1) - component_pixels.min(axis=1)) <= 24)
+            )
+            component_pixels = component_pixels[~component_near_white]
+            if len(component_pixels) == 0:
+                continue
+            quantized = (component_pixels // 4) * 4
+            unique, counts = np.unique(quantized, axis=0, return_counts=True)
+            dominant = unique[int(np.argmax(counts))]
+            close_pixels = component_pixels[
+                np.linalg.norm(component_pixels.astype(float) - dominant.astype(float), axis=1) < 18
+            ]
+            source_pixels = close_pixels if len(close_pixels) else component_pixels
+            rgb = tuple(int(round(value)) for value in np.median(source_pixels, axis=0))
+            if self._is_near_white_background_color(rgb):
+                continue
+            candidates.append(
+                {
+                    "role": "accent",
+                    "hex_code": self._rgb_to_hex(rgb),
+                    "color_name": None,
+                    "rgb_value": {"r": rgb[0], "g": rgb[1], "b": rgb[2]},
+                    "source": "image_region_swatch",
+                    "count": int(len(component_pixels)),
+                    "pixel_fraction": round(len(component_pixels) / total_pixels, 6),
+                    "region": {
+                        "x": int(x),
+                        "y": int(y),
+                        "width": int(width_box),
+                        "height": int(height_box),
+                    },
+                }
+            )
+
+        candidates.sort(key=lambda item: float(item.get("pixel_fraction") or 0.0), reverse=True)
+        return candidates
+
+    def _extract_palette_from_vision(self, image_path: str) -> list[dict[str, Any]]:
+        # The configured vision model is the primary source for palette role classification.
+        vision = getattr(self, "vision", None)
+        if vision is None or not hasattr(vision, "analyze_color_palette"):
+            return []
+        analysis = vision.analyze_color_palette(image_path)
+        if not isinstance(analysis, dict):
+            return []
+        entries = self._normalize_vision_palette_entries(analysis)
+        if not entries:
+            return []
+        if not any(entry.get("role") in {"primary", "secondary"} for entry in entries):
+            return []
+        snapped_entries = self._snap_palette_entries_to_local_swatches(entries, image_path)
+        return self._dedupe_palette_entries(snapped_entries)
+
+    def _normalize_vision_palette_entries(self, analysis: dict[str, Any]) -> list[dict[str, Any]]:
+        grouped_entries: list[tuple[str, dict[str, Any]]] = []
+        for group_key, source_section in (
+            ("primary_colors", "primary"),
+            ("secondary_colors", "secondary"),
+            ("accent_colors", "accent"),
+            ("additional_colors", "accent"),
+        ):
+            colors = analysis.get(group_key) or []
+            if not isinstance(colors, list):
+                continue
+            for color in colors:
+                if isinstance(color, str):
+                    color = {"hex": color}
+                if not isinstance(color, dict):
+                    continue
+                hex_code = self._normalize_hex(color.get("hex") or color.get("hex_code"))
+                if not hex_code:
+                    continue
+                rgb = self._hex_to_rgb(hex_code)
+                if not rgb:
+                    continue
+                grouped_entries.append(
+                    (
+                        source_section,
+                        {
+                            "role": "accent",
+                            "hex_code": hex_code,
+                            "color_name": color.get("name") or color.get("color_name"),
+                            "rgb_value": {"r": rgb[0], "g": rgb[1], "b": rgb[2]},
+                            "source": "vision_palette_classification",
+                            "source_section": source_section,
+                            "vision_evidence": color.get("evidence"),
+                        },
+                    )
+                )
+
+        if not grouped_entries:
+            return []
+
+        primary_entries = [entry for section, entry in grouped_entries if section == "primary"]
+        secondary_entries = [entry for section, entry in grouped_entries if section == "secondary"]
+        accent_entries = [entry for section, entry in grouped_entries if section == "accent"]
+        ordered = [*primary_entries, *secondary_entries, *accent_entries]
+        for entry in ordered:
+            entry["role"] = "accent"
+        if primary_entries:
+            primary_entries[0]["role"] = "primary"
+            if len(primary_entries) >= 2:
+                primary_entries[1]["role"] = "secondary"
+            elif secondary_entries:
+                secondary_entries[0]["role"] = "secondary"
+        elif secondary_entries:
+            secondary_entries[0]["role"] = "primary"
+            if len(secondary_entries) >= 2:
+                secondary_entries[1]["role"] = "secondary"
+        return ordered
+
+    def _snap_palette_entries_to_local_swatches(
+        self,
+        entries: list[dict[str, Any]],
+        image_path: str,
+    ) -> list[dict[str, Any]]:
+        local_entries = self._extract_swatch_palette(image_path)
+        if not local_entries:
+            return entries
+        local_by_rgb = [
+            (self._entry_rgb(entry), entry)
+            for entry in local_entries
+            if self._entry_rgb(entry)
+        ]
+        snapped: list[dict[str, Any]] = []
+        for entry in entries:
+            rgb = self._entry_rgb(entry)
+            if not rgb:
+                snapped.append(entry)
+                continue
+            best: tuple[float, dict[str, Any]] | None = None
+            for local_rgb, local_entry in local_by_rgb:
+                if local_rgb is None:
+                    continue
+                distance = self._rgb_distance(rgb, local_rgb)
+                if distance <= 18 and (best is None or distance < best[0]):
+                    best = (distance, local_entry)
+            if best is None:
+                snapped.append(entry)
+                continue
+            _distance, local_entry = best
+            snapped_entry = {
+                **entry,
+                "hex_code": local_entry.get("hex_code", entry.get("hex_code")),
+                "rgb_value": local_entry.get("rgb_value", entry.get("rgb_value")),
+                "source": "vision_palette_classification",
+                "swatch_source": local_entry.get("source"),
+                "pixel_fraction": local_entry.get("pixel_fraction"),
+                "region": local_entry.get("region", entry.get("region")),
+            }
+            snapped.append(snapped_entry)
+        return snapped
+
+    @classmethod
+    def _normalize_hex(cls, value: Any) -> str | None:
+        text = str(value or "").strip()
+        if not re.fullmatch(r"#?[0-9A-Fa-f]{6}", text):
+            return None
+        return text.upper() if text.startswith("#") else f"#{text.upper()}"
+
+    def _dedupe_palette_entries(self, entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        deduped: list[dict[str, Any]] = []
+        seen_hexes: set[str] = set()
+        role_seen: set[str] = set()
+        for entry in entries:
+            hex_code = self._normalize_hex(entry.get("hex_code"))
+            if not hex_code or hex_code in seen_hexes:
+                continue
+            role = str(entry.get("role") or "accent").strip().lower()
+            if role in {"primary", "secondary"}:
+                if role in role_seen:
+                    role = "accent"
+                else:
+                    role_seen.add(role)
+            elif role != "accent":
+                role = "accent"
+            entry["hex_code"] = hex_code
+            entry["role"] = role
+            seen_hexes.add(hex_code)
+            deduped.append(entry)
+        return deduped
+
+    def _apply_palette_fallback_roles(self, entries: list[dict[str, Any]], image_path: str) -> list[dict[str, Any]]:
+        # Uses OCR layout headings such as "Primary Color" and "Secondary Color" to map swatches to UI roles.
+        analysis = self._load_visual_analysis(image_path)
+        if not isinstance(analysis, dict) or not analysis:
+            return self._apply_palette_coverage_roles(entries)
+
+        headings = self._palette_section_headings(analysis)
+        if not headings:
+            return self._apply_palette_coverage_roles(entries)
+
+        buckets: dict[str, list[tuple[dict[str, Any], tuple[int, int, int, int]]]] = {
+            "primary": [],
+            "secondary": [],
+        }
+        unresolved: list[dict[str, Any]] = []
+        for entry in entries:
+            region = self._palette_entry_region(entry, analysis)
+            if not region:
+                unresolved.append(entry)
+                continue
+            section = self._nearest_palette_section(region, headings)
+            if section in buckets:
+                entry["source_section"] = section
+                buckets[section].append((entry, region))
+            else:
+                unresolved.append(entry)
+
+        if not buckets["primary"] and not buckets["secondary"]:
+            return self._apply_palette_coverage_roles(entries)
+
+        for bucket in buckets.values():
+            bucket.sort(key=lambda item: (item[1][1], item[1][0]))
+
+        assigned_ids: set[int] = set()
+        for entry in entries:
+            entry["role"] = "accent"
+
+        primary_bucket = buckets["primary"]
+        secondary_bucket = buckets["secondary"]
+
+        if len(primary_bucket) >= 2:
+            primary_bucket[0][0]["role"] = "primary"
+            primary_bucket[1][0]["role"] = "secondary"
+            assigned_ids.update({id(primary_bucket[0][0]), id(primary_bucket[1][0])})
+        elif primary_bucket:
+            primary_bucket[0][0]["role"] = "primary"
+            assigned_ids.add(id(primary_bucket[0][0]))
+
+        if not any(entry.get("role") == "secondary" for entry in entries) and secondary_bucket:
+            secondary_bucket[0][0]["role"] = "secondary"
+            assigned_ids.add(id(secondary_bucket[0][0]))
+
+        for entry, _region in [*primary_bucket, *secondary_bucket]:
+            if id(entry) not in assigned_ids and entry.get("role") not in {"primary", "secondary"}:
+                entry["role"] = "accent"
+
+        return self._dedupe_palette_entries(entries)
+
+    def _apply_palette_coverage_roles(self, entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        # Fallback when vision classification is absent: larger swatches become UI primary/secondary.
+        sortable = list(entries)
+        sortable.sort(key=lambda item: float(item.get("pixel_fraction") or item.get("count") or 0), reverse=True)
+        for entry in sortable:
+            entry["role"] = "accent"
+        if sortable:
+            sortable[0]["role"] = "primary"
+        if len(sortable) >= 2:
+            sortable[1]["role"] = "secondary"
+        return self._dedupe_palette_entries(sortable)
+
+    @classmethod
+    def _palette_section_headings(cls, analysis: dict[str, Any]) -> list[dict[str, Any]]:
+        headings: list[dict[str, Any]] = []
+        for entry in cls._analysis_text_entries(analysis):
+            text = " ".join(str(entry.get("text", "")).split()).strip()
+            if not text:
+                continue
+            lowered = text.casefold()
+            role = None
+            if re.search(r"\bprimary\b", lowered) and re.search(r"\bcolou?rs?\b", lowered):
+                role = "primary"
+            elif re.search(r"\bsecondary\b", lowered) and re.search(r"\bcolou?rs?\b", lowered):
+                role = "secondary"
+            if not role:
+                continue
+            x, y, width, height = cls._bbox_dimensions(entry.get("bounding_box"))
+            if width <= 0 or height <= 0:
+                continue
+            headings.append(
+                {
+                    "role": role,
+                    "text": text,
+                    "box": (x, y, x + width, y + height),
+                    "center": (x + width / 2, y + height / 2),
+                }
+            )
+        headings.sort(key=lambda item: (item["box"][1], item["box"][0]))
+        return headings
+
+    @staticmethod
+    def _analysis_text_entries(analysis: dict[str, Any]) -> list[dict[str, Any]]:
+        entries: list[dict[str, Any]] = []
+        for key in ("sentences", "structured_text"):
+            values = analysis.get(key) or []
+            if isinstance(values, list):
+                entries.extend(item for item in values if isinstance(item, dict))
+        return entries
+
+    def _palette_entry_region(
+        self,
+        entry: dict[str, Any],
+        analysis: dict[str, Any],
+    ) -> tuple[int, int, int, int] | None:
+        region = entry.get("region") if isinstance(entry, dict) else None
+        if isinstance(region, dict):
+            x = int(region.get("x", 0) or 0)
+            y = int(region.get("y", 0) or 0)
+            width = int(region.get("width", region.get("w", 0)) or 0)
+            height = int(region.get("height", region.get("h", 0)) or 0)
+            if width > 0 and height > 0:
+                return x, y, x + width, y + height
+
+        target_rgb = self._entry_rgb(entry)
+        if not target_rgb:
+            return None
+
+        best: tuple[float, tuple[int, int, int, int]] | None = None
+        for color_entry in analysis.get("dominant_colors") or []:
+            if not isinstance(color_entry, dict):
+                continue
+            candidate_rgb = self._entry_rgb(
+                {
+                    "hex_code": color_entry.get("hex"),
+                    "rgb_value": {
+                        "r": color_entry.get("r"),
+                        "g": color_entry.get("g"),
+                        "b": color_entry.get("b"),
+                    },
+                }
+            )
+            if not candidate_rgb:
+                continue
+            distance = self._rgb_distance(target_rgb, candidate_rgb)
+            if distance > 24:
+                continue
+            for raw_region in color_entry.get("regions") or []:
+                if not isinstance(raw_region, dict):
+                    continue
+                x = int(raw_region.get("x", 0) or 0)
+                y = int(raw_region.get("y", 0) or 0)
+                width = int(raw_region.get("w", raw_region.get("width", 0)) or 0)
+                height = int(raw_region.get("h", raw_region.get("height", 0)) or 0)
+                if width <= 0 or height <= 0:
+                    continue
+                area = width * height
+                score = distance - min(area / 1_000_000, 3.0)
+                candidate = (x, y, x + width, y + height)
+                if best is None or score < best[0]:
+                    best = (score, candidate)
+        return best[1] if best else None
+
+    @classmethod
+    def _entry_rgb(cls, entry: dict[str, Any]) -> tuple[int, int, int] | None:
+        rgb_value = entry.get("rgb_value") if isinstance(entry, dict) else None
+        if isinstance(rgb_value, dict):
+            try:
+                return (
+                    int(rgb_value.get("r")),
+                    int(rgb_value.get("g")),
+                    int(rgb_value.get("b")),
+                )
+            except (TypeError, ValueError):
+                pass
+        return cls._hex_to_rgb(str(entry.get("hex_code") or entry.get("hex") or ""))
+
+    @staticmethod
+    def _nearest_palette_section(
+        region: tuple[int, int, int, int],
+        headings: list[dict[str, Any]],
+    ) -> str | None:
+        left, top, right, bottom = region
+        center_x = (left + right) / 2
+        center_y = (top + bottom) / 2
+        best: tuple[float, str] | None = None
+        for heading in headings:
+            heading_left, heading_top, heading_right, heading_bottom = heading["box"]
+            heading_center_x, heading_center_y = heading["center"]
+            if heading_top > bottom + 24:
+                continue
+            vertical_gap = max(0.0, top - heading_bottom)
+            horizontal_gap = 0.0
+            if center_x < heading_left:
+                horizontal_gap = heading_left - center_x
+            elif center_x > heading_right:
+                horizontal_gap = center_x - heading_right
+            center_distance = abs(center_x - heading_center_x) * 0.15 + abs(center_y - heading_center_y) * 0.05
+            score = vertical_gap + (horizontal_gap * 0.35) + center_distance
+            if heading_bottom <= top + 24:
+                score -= 80
+            if best is None or score < best[0]:
+                best = (score, str(heading["role"]))
+        return best[1] if best else None
 
     def _dominant_palette(self, image_path: str) -> list[dict[str, Any]]:
         # Derives dominant palette from image path for retrieval and visual grounding.

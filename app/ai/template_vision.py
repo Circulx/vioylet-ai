@@ -296,6 +296,63 @@ class TemplateVisionAnalyzer:
             self.last_usage = None
             return fallback
 
+    def analyze_color_palette(self, image_path: str) -> dict[str, Any]:
+        # Uses the configured vision model to classify palette swatches by brand-guideline semantics.
+        if not self.client:
+            self.last_usage = None
+            return {}
+        path = Path(image_path)
+        if not path.exists():
+            self.last_usage = None
+            return {}
+        try:
+            image_bytes = path.read_bytes()
+            encoded = base64.b64encode(image_bytes).decode("utf-8")
+            response = self.client.responses.create(
+                model=self.model,
+                input=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a brand guideline analyst. Analyze the uploaded color-palette page visually. "
+                            "Classify visible color swatches by the guideline meaning shown in the layout: "
+                            "primary colors, secondary colors, and accent/additional colors. "
+                            "Use visual structure, section grouping, labels, and relative layout. Do not classify by extraction order alone. "
+                            "Return JSON only with keys primary_colors, secondary_colors, accent_colors, confidence, notes. "
+                            "Each color item must be {name:string|null, hex:string, evidence:string}. "
+                            "If the page does not clearly show color swatches or classification is unreliable, return empty color arrays."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_text",
+                                "text": (
+                                    "Identify which colors are primary, secondary, and accent/additional. "
+                                    "Return JSON only."
+                                ),
+                            },
+                            {
+                                "type": "input_image",
+                                "image_url": f"data:image/png;base64,{encoded}",
+                            },
+                        ],
+                    },
+                ],
+                text={"format": {"type": "json_object"}},
+            )
+            self.last_usage = OpenAITextProvider._extract_usage(
+                response,
+                model=self.model,
+                operation="palette_vision_classification",
+            )
+            parsed = json.loads(response.output_text or "{}")
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:  # noqa: BLE001
+            self.last_usage = None
+            return {}
+
     @staticmethod
     def _merge_string_vote(values: list[Any]) -> str:
         # Merges string vote from values for layout DNA and sample blueprints.

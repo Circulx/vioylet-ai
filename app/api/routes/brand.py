@@ -1,12 +1,15 @@
 # FastAPI route handlers live here; they validate request inputs, call services, and return response schemas.
 from uuid import UUID
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.dependencies import CurrentPrincipal, assert_brand_access, forbid_super_admin_brand_access, get_current_principal
 from app.db.session import get_db_session
+from app.integrations.object_storage import LocalObjectStorage
 from app.schemas.brand import (
     BrandCreateRequest,
     BrandFinalizeRequest,
@@ -26,6 +29,8 @@ from app.schemas.brand_assets import (
 from app.schemas.common import MessageResponse
 from app.services.brand import BrandSpaceService
 from app.services.data_validation import DataValidatorService
+from app.services.vectorstore.ingestion_service import IngestionService
+from app.workers.ingestion_worker import process_document_sync
 
 
 router = APIRouter()
@@ -334,3 +339,79 @@ async def brand_resolved_context(
         brand_space_id=brand_id,
         context_json=brand.resolved_brand_context,
     )
+
+
+@router.post("/{brand_id}/documents", response_model=MessageResponse)
+async def upload_brand_document(
+    brand_id: UUID,
+    file: UploadFile,
+    principal: CurrentPrincipal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db_session),
+) -> MessageResponse:
+    """Upload and ingest a brand guideline document (DOCX, PDF, TXT)."""
+    forbid_super_admin_brand_access(principal)
+    assert_brand_access(principal, brand_id)
+
+    settings = get_settings()
+    allowed_extensions = {".docx", ".pdf", ".txt"}
+    file_extension = Path(file.filename).suffix.lower()
+
+    # Validate file extension
+    if file_extension not in allowed_extensions:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid file type. Allowed: {', '.join(allowed_extensions)}"
+        )
+
+    # Validate file size
+    file_content = await file.read()
+    if len(file_content) > settings.upload_max_file_bytes:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large. Maximum size: {settings.upload_max_file_bytes / (1024 * 1024)}MB"
+        )
+
+    # Store file using LocalObjectStorage
+    storage = LocalObjectStorage()
+    stored = storage.save_bytes(
+        tenant_id=principal.tenant_id,
+        brand_space_id=brand_id,
+        category="brand_documents",
+        filename=file.filename,
+        content=file_content
+    )
+
+    # Process document (synchronous fallback for now)
+    try:
+        result = process_document_sync(str(brand_id), stored.absolute_path)
+        return MessageResponse(
+            message=f"Document queued for ingestion. Processed {result['total_chunks']} chunks."
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Document ingestion failed: {str(e)}")
+
+
+@router.get("/{brand_id}/documents/search")
+async def search_brand_documents(
+    brand_id: UUID,
+    q: str,
+    top_k: int = 10,
+    principal: CurrentPrincipal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db_session),
+):
+    """Search ingested brand guideline documents."""
+    forbid_super_admin_brand_access(principal)
+    assert_brand_access(principal, brand_id)
+
+    ingestion_service = IngestionService()
+
+    try:
+        results = ingestion_service.search_pinecone(str(brand_id), q, top_k)
+        return {
+            "query": q,
+            "brand_id": str(brand_id),
+            "results": results,
+            "total": len(results)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")

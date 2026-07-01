@@ -68,8 +68,14 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
     pinecone_api_key: str | None = None
+    pinecone_index_name: str = "brandlove"
     google_application_credentials: str | None = None
     redis_url: str = "redis://localhost:6379/0"
+    celery_broker_url: str = "redis://localhost:6379/0"
+    ingestion_embedding_model: str = "text-embedding-3-large"
+    ingestion_embedding_dimensions: int = 3072
+    ingestion_chunk_size: int = 800
+    ingestion_chunk_overlap: int = 100
 
     research_provider: str = "anthropic"
     text_provider: str = "openai"
@@ -136,7 +142,6 @@ class Settings(BaseSettings):
     smtp_from_name: str = "Violyt"
 
 
-@lru_cache
 def get_settings() -> Settings:
     # Returns shared settings used by dependency injection and service initialization.
     return Settings()

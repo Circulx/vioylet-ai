@@ -50,10 +50,10 @@ services:
       - ./vector_store:/app/vector_store
     command: ["python", "scripts/run_worker.py"]
 
-  violyt-frontend:
+  frontend:
     image: violyt-frontend:local
     build:
-      context: ../violyt-frontend
+      context: ./frontend
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_ENV: development

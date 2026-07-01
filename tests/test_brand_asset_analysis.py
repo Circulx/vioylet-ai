@@ -2,9 +2,271 @@ import json
 from pathlib import Path
 from shutil import rmtree
 from tempfile import mkdtemp
+from types import SimpleNamespace
+
+from PIL import Image
 
 from app.ai.brand_asset_analysis import BrandAssetAnalyzer
 from app.ai.template_vision import TemplateVisionAnalyzer
+
+
+def test_color_palette_pdf_without_page_images_uses_visual_candidate_fallback(tmp_path) -> None:
+    image_path = tmp_path / "palette_page.png"
+    image = Image.new("RGB", (80, 40), "#123456")
+    image.paste(Image.new("RGB", (40, 40), "#FF8800"), (40, 0))
+    image.save(image_path)
+
+    pdf_path = tmp_path / "palette.pdf"
+
+    class OcrStub:
+        def __init__(self) -> None:
+            self.visual_candidate_calls: list[str] = []
+
+        def extract(self, _path, progress_callback=None):
+            return {
+                "text": "Visual identity palette guide",
+                "images": [],
+                "page_count": 1,
+                "source_format": "pdf",
+            }
+
+        def extract_visual_candidates(self, path):
+            self.visual_candidate_calls.append(str(path))
+            return [str(image_path)]
+
+    analyzer = BrandAssetAnalyzer.__new__(BrandAssetAnalyzer)
+    analyzer.ocr = OcrStub()
+    analyzer.vision = None
+    analyzer._derive_reusable_assets = lambda **_kwargs: []
+
+    outcome = analyzer.analyze(
+        absolute_path=str(pdf_path),
+        filename="palette.pdf",
+        mime_type="application/pdf",
+        requested_field_key="color_palette",
+    )
+
+    assert analyzer.ocr.visual_candidate_calls == [str(pdf_path)]
+    assert outcome.image_candidates == [str(image_path)]
+    extracted_hexes = {
+        entry.get("hex_code")
+        for entry in outcome.structured_data["palette_entries"]
+    }
+    assert {"#123456", "#FF8800"}.issubset(extracted_hexes)
+
+
+def test_color_palette_page_prefers_exact_swatch_pixels_over_text_color_words(tmp_path) -> None:
+    image_path = tmp_path / "palette_page.png"
+    image = Image.new("RGB", (1000, 600), "#FBFFFF")
+    for box, color in [
+        ((520, 100, 710, 500), "#003A79"),
+        ((710, 100, 910, 300), "#FF9E00"),
+        ((710, 300, 810, 400), "#00CE8B"),
+        ((810, 300, 910, 400), "#66757B"),
+        ((710, 400, 810, 500), "#3D3DC3"),
+        ((810, 400, 910, 500), "#FFC6C8"),
+    ]:
+        image.paste(Image.new("RGB", (box[2] - box[0], box[3] - box[1]), color), box[:2])
+    image.save(image_path)
+
+    analyzer = BrandAssetAnalyzer.__new__(BrandAssetAnalyzer)
+    text = "\n".join(
+        [
+            "COLOR PALETTE",
+            "Regal Blue",
+            "Orange Peel",
+            "Caribbean Green",
+            "Moon Sand",
+            "Governor Bay",
+            "Pastel Heart",
+        ]
+    )
+
+    structured, _normalized = analyzer._extract_palette(text, str(image_path), [str(image_path)])
+    extracted_hexes = [entry.get("hex_code") for entry in structured["palette_entries"]]
+
+    assert {"#003A79", "#FF9E00", "#00CE8B", "#66757B", "#3D3DC3", "#FFC6C8"}.issubset(
+        set(extracted_hexes)
+    )
+    assert "blue" not in extracted_hexes
+    assert "orange" not in extracted_hexes
+    assert "#FBFFFF" not in extracted_hexes
+    assert all(
+        entry.get("source") in {"image_exact_swatch", "image_region_swatch"}
+        for entry in structured["palette_entries"]
+    )
+
+
+def test_color_palette_page_recovers_noisy_rendered_swatch_regions(tmp_path) -> None:
+    image_path = tmp_path / "noisy_palette_page.png"
+    image = Image.new("RGB", (600, 360), "#FBFFFF")
+    base_colors = [
+        ((260, 60, 390, 240), (0, 58, 121)),
+        ((390, 60, 540, 170), (255, 158, 0)),
+        ((390, 170, 465, 240), (0, 206, 139)),
+    ]
+    offsets = [-4, -2, 0, 2, 4]
+    for box, base in base_colors:
+        left, top, right, bottom = box
+        for y in range(top, bottom):
+            for x in range(left, right):
+                delta = offsets[(x + y) % len(offsets)]
+                image.putpixel(
+                    (x, y),
+                    tuple(max(0, min(255, channel + delta)) for channel in base),
+                )
+    image.save(image_path)
+
+    analyzer = BrandAssetAnalyzer.__new__(BrandAssetAnalyzer)
+    text = "COLOR PALETTE\nRegal Blue\nOrange Peel\nCaribbean Green"
+
+    structured, _normalized = analyzer._extract_palette(text, str(image_path), [str(image_path)])
+    extracted_hexes = [entry.get("hex_code") for entry in structured["palette_entries"]]
+
+    expected = [(0, 58, 121), (255, 158, 0), (0, 206, 139)]
+    extracted_rgb = [
+        (
+            int((entry.get("rgb_value") or {}).get("r") or 0),
+            int((entry.get("rgb_value") or {}).get("g") or 0),
+            int((entry.get("rgb_value") or {}).get("b") or 0),
+        )
+        for entry in structured["palette_entries"]
+    ]
+    for rgb in expected:
+        assert any(analyzer._rgb_distance(rgb, candidate) <= 8 for candidate in extracted_rgb)
+
+
+def test_color_palette_roles_use_vision_classification_first(tmp_path) -> None:
+    image_path = tmp_path / "vision_palette.png"
+    image = Image.new("RGB", (1000, 720), "#FBFFFF")
+    swatches = [
+        ("#003A79", (120, 110, 320, 250)),
+        ("#FF9E00", (340, 110, 540, 250)),
+        ("#00CE8B", (120, 390, 270, 520)),
+        ("#66757B", (290, 390, 440, 520)),
+        ("#3D3DC3", (460, 390, 610, 520)),
+        ("#FFC6C8", (630, 390, 780, 520)),
+    ]
+    for color, box in swatches:
+        image.paste(Image.new("RGB", (box[2] - box[0], box[3] - box[1]), color), box[:2])
+    image.save(image_path)
+
+    analyzer = BrandAssetAnalyzer.__new__(BrandAssetAnalyzer)
+    analyzer.vision = SimpleNamespace(
+        analyze_color_palette=lambda _path: {
+            "primary_colors": [
+                {"name": "Regal Blue", "hex": "#003B78", "evidence": "left primary swatch"},
+                {"name": "Orange Peel", "hex": "#FF9F01", "evidence": "right primary swatch"},
+            ],
+            "secondary_colors": [
+                {"name": "Caribbean Green", "hex": "#00CE8B", "evidence": "secondary row"},
+                {"name": "Moon Sand", "hex": "#66757B", "evidence": "secondary row"},
+            ],
+            "accent_colors": [
+                {"name": "Governor Bay", "hex": "#3D3DC3", "evidence": "additional swatch"},
+                {"name": "Pastel Heart", "hex": "#FFC6C8", "evidence": "additional swatch"},
+            ],
+        }
+    )
+
+    structured, _normalized = analyzer._extract_palette(
+        "COLOR PALETTE\nPrimary Colors\nSecondary Colors",
+        str(image_path),
+        [str(image_path)],
+    )
+    entries = structured["palette_entries"]
+    roles_by_hex = {
+        entry.get("hex_code"): (entry.get("role"), entry.get("source_section"), entry.get("source"))
+        for entry in entries
+    }
+
+    assert roles_by_hex["#003A79"] == ("primary", "primary", "vision_palette_classification")
+    assert roles_by_hex["#FF9E00"] == ("secondary", "primary", "vision_palette_classification")
+    assert roles_by_hex["#00CE8B"] == ("accent", "secondary", "vision_palette_classification")
+    assert roles_by_hex["#66757B"] == ("accent", "secondary", "vision_palette_classification")
+    assert roles_by_hex["#3D3DC3"] == ("accent", "accent", "vision_palette_classification")
+    assert roles_by_hex["#FFC6C8"] == ("accent", "accent", "vision_palette_classification")
+
+
+def test_color_palette_vision_does_not_assign_same_color_to_multiple_roles(tmp_path) -> None:
+    image_path = tmp_path / "duplicate_vision_palette.png"
+    image = Image.new("RGB", (400, 160), "#FBFFFF")
+    image.paste(Image.new("RGB", (120, 100), "#003A79"), (40, 30))
+    image.paste(Image.new("RGB", (120, 100), "#FF9E00"), (220, 30))
+    image.save(image_path)
+
+    analyzer = BrandAssetAnalyzer.__new__(BrandAssetAnalyzer)
+    analyzer.vision = SimpleNamespace(
+        analyze_color_palette=lambda _path: {
+            "primary_colors": [{"name": "Regal Blue", "hex": "#003A79"}],
+            "secondary_colors": [{"name": "Regal Blue Again", "hex": "#003A79"}],
+            "accent_colors": [{"name": "Orange Peel", "hex": "#FF9E00"}],
+        }
+    )
+
+    structured, _normalized = analyzer._extract_palette("", str(image_path), [str(image_path)])
+    entries = structured["palette_entries"]
+    hexes = [entry.get("hex_code") for entry in entries]
+
+    assert hexes.count("#003A79") == 1
+    assert {entry.get("role") for entry in entries if entry.get("hex_code") == "#003A79"} == {"primary"}
+    assert len(hexes) == len(set(hexes))
+
+
+def test_color_palette_roles_follow_primary_and_secondary_layout_headings(tmp_path) -> None:
+    image_path = tmp_path / "sectioned_palette.png"
+    image = Image.new("RGB", (1000, 720), "#FBFFFF")
+    swatches = [
+        ("#003A79", (120, 110, 320, 250)),
+        ("#FF9E00", (340, 110, 540, 250)),
+        ("#00CE8B", (120, 390, 270, 520)),
+        ("#66757B", (290, 390, 440, 520)),
+        ("#3D3DC3", (460, 390, 610, 520)),
+        ("#FFC6C8", (630, 390, 780, 520)),
+    ]
+    for color, box in swatches:
+        image.paste(Image.new("RGB", (box[2] - box[0], box[3] - box[1]), color), box[:2])
+    image.save(image_path)
+
+    analysis = {
+        "page_dimensions": {"image_width_px": 1000, "image_height_px": 720},
+        "sentences": [
+            {"text": "Primary Colors", "bounding_box": {"x": 120, "y": 60, "width": 260, "height": 34}},
+            {"text": "Secondary Colors", "bounding_box": {"x": 120, "y": 335, "width": 300, "height": 34}},
+        ],
+        "dominant_colors": [
+            {
+                "hex": color,
+                "r": int(color[1:3], 16),
+                "g": int(color[3:5], 16),
+                "b": int(color[5:7], 16),
+                "regions": [{"x": box[0], "y": box[1], "w": box[2] - box[0], "h": box[3] - box[1]}],
+            }
+            for color, box in swatches
+        ],
+    }
+    image_path.with_name(f"{image_path.stem}_analysis.json").write_text(
+        json.dumps(analysis),
+        encoding="utf-8",
+    )
+
+    analyzer = BrandAssetAnalyzer.__new__(BrandAssetAnalyzer)
+    structured, _normalized = analyzer._extract_palette(
+        "COLOR PALETTE\nPrimary Colors\nSecondary Colors",
+        str(image_path),
+        [str(image_path)],
+    )
+    roles_by_hex = {
+        entry.get("hex_code"): (entry.get("role"), entry.get("source_section"))
+        for entry in structured["palette_entries"]
+    }
+
+    assert roles_by_hex["#003A79"] == ("primary", "primary")
+    assert roles_by_hex["#FF9E00"] == ("secondary", "primary")
+    assert roles_by_hex["#00CE8B"] == ("accent", "secondary")
+    assert roles_by_hex["#66757B"] == ("accent", "secondary")
+    assert roles_by_hex["#3D3DC3"] == ("accent", "secondary")
+    assert roles_by_hex["#FFC6C8"] == ("accent", "secondary")
 
 
 def test_brand_asset_analyzer_selects_cover_dense_and_cta_pages() -> None:

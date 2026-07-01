@@ -1145,7 +1145,11 @@ export default function BrandSpaceEditor({
                     pathParams: { brandId: effectiveBrandId, assetId: targetItem.uploadedAssetId },
                 });
             }
-            setForm((current) => removeBrandUploadItem(current, itemId));
+            setForm((current) => {
+                const next = removeBrandUploadItem(current, itemId);
+                formRef.current = next;
+                return next;
+            });
             showSuccessToast("File removed", `Removed ${targetItem.name}.`);
         } catch (error) {
             const detail = axios.isAxiosError(error)

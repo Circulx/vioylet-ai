@@ -57,6 +57,7 @@ from app.repositories.brand_assets import (
     VisualReferenceAssetRepository,
     WordBankUploadRepository,
 )
+from app.repositories.brand import BrandSectionRepository
 from app.repositories.knowledge import KnowledgeAssetRepository, TemplateMetadataRepository, TemplateRepository
 from app.schemas.brand_assets import BrandAttachmentUploadRequest
 from app.services.data_validation import DataValidatorService
@@ -99,6 +100,7 @@ class BrandAssetService:
         self.cta_templates = BrandCTATemplateRepository(session)
         self.validator = DataValidatorService(session)
         self.preflight = UploadPreflightService()
+        self.sections = BrandSectionRepository(session)
 
     async def upload(
         self,
@@ -1080,8 +1082,51 @@ class BrandAssetService:
         await self._clear_reusable_assets(asset.id)
         await self.palette_entries.delete_by_asset(asset.id)
         await self._delete_linked_records(asset.id)
+        await self._clear_visual_identity_palette_if_orphaned(asset)
         self._delete_attachment_storage_artifacts(asset.storage_path)
         await self.session.flush()
+
+    @staticmethod
+    def _is_color_palette_attachment(asset: KnowledgeAsset) -> bool:
+        # Internal helper for color palette cleanup; upload removal should clear only the matching form field.
+        return "color_palette" in {
+            str(asset.field_key or "").strip().lower(),
+            str(asset.asset_category or "").strip().lower(),
+            str(asset.source_intent or "").strip().lower(),
+        }
+
+    async def _clear_visual_identity_palette_if_orphaned(self, asset: KnowledgeAsset) -> None:
+        # Internal helper for color palette removal; if no palette upload remains, saved form colors must reset.
+        if not self._is_color_palette_attachment(asset):
+            return
+
+        active_palette_assets = await self.assets.list_by_field(
+            asset.brand_space_id,
+            "color_palette",
+            tenant_id=asset.tenant_id,
+            active_only=True,
+        )
+        has_other_palette_asset = any(
+            candidate.id != asset.id
+            and str(candidate.lifecycle_state or "").lower() != AssetLifecycle.DELETED.value
+            for candidate in active_palette_assets
+        )
+        if has_other_palette_asset:
+            return
+
+        sections = await self.sections.list_current_sections(asset.brand_space_id, asset.tenant_id)
+        visual_identity = next(
+            (section for section in sections if section.section_code == "visual_identity"),
+            None,
+        )
+        if not visual_identity or not isinstance(visual_identity.payload, dict):
+            return
+
+        payload = dict(visual_identity.payload)
+        payload["brand_color_palette"] = {}
+        payload["color_palette_asset_ids"] = []
+        payload["color_palette_uploads"] = []
+        visual_identity.payload = payload
 
     async def _delete_linked_records(self, knowledge_asset_id: UUID) -> None:
         # Internal helper for linked records; it keeps the public service method focused on orchestration

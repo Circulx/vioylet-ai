@@ -6,20 +6,13 @@ import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react"
 import axios from "axios";
 import {
     ArrowUp,
-    BadgePlus,
     Download,
     Loader2,
-    Megaphone,
     Paperclip,
-    PanelRightClose,
-    PanelRightOpen,
     Plus,
-    RefreshCw,
     Search,
     Share2,
-    Sparkles,
     Square,
-    Wand2,
     X,
     ChevronDown,
     ChevronUp,
@@ -50,7 +43,6 @@ import {
     useCreateChatSession,
     useSendChatMessage,
     useTemplateRecommendations,
-    useToneCheck,
     useUploadKnowledgeAsset,
 } from "@/hooks/useContentWorkspace";
 import { fileToDataUrl, stripFileExtension } from "@/lib/file-utils";
@@ -63,30 +55,16 @@ import {
     getGenerationDecisionTemplatePreview,
     getRecommendationConfidence,
 } from "@/lib/generation-decision";
-import { FormField, StyledInput, StyledSelect } from "../brandSpaces/tabs/FormFields";
+import { FormField } from "../brandSpaces/tabs/FormFields";
 import Image from "next/image";
 import { AUDIENCE_OPTIONS } from "@/lib/brand-space-options";
-import { Label } from "../ui/label";
 
 type WorkspaceChatProps = { brandKey: string };
-type ActionMode = "none" | "idea" | "social" | "repurpose" | "alignment";
 type Platform = "instagram" | "linkedin" | "x" | "youtube_thumbnail";
 type FormatMode = "static" | "carousel" | "infographic" | "video";
 type FileType = "doc" | "pdf" | "jpg" | "png";
 
-const actionOptions = [
-    { id: "idea", label: "Generate Campaign Idea", icon: "/actions_icons/chat/generate_idea.svg" },
-    { id: "social", label: "Create Social Media Post", icon: "/actions_icons/chat/social_media.svg" },
-    { id: "repurpose", label: "Repurpose Content", icon: "/actions_icons/chat/repurpose_content.svg" },
-    { id: "alignment", label: "Check Brand Alignment", icon: "/actions_icons/chat/brand_alignment.svg" },
-] as const;
-const actionOptionById = Object.fromEntries(actionOptions.map((action) => [action.id, action])) as Record<
-    Exclude<ActionMode, "none">,
-    (typeof actionOptions)[number]
->;
-
 const platformOptions: Platform[] = ["instagram", "linkedin"];
-const chatPlatformOptions: Platform[] = ["instagram", "linkedin", "x"];
 const platformLabels: Record<Platform, string> = {
     instagram: "Instagram",
     linkedin: "LinkedIn",
@@ -101,17 +79,6 @@ const campaignGoalOptions = [
     "Consideration Influence",
     "Engagement Activation",
     "Community Growth",
-];
-const campaignObjectiveOptions = [
-    "Brand Awareness",
-    "Lead Generation",
-    "User Acquisition",
-    "Engagement Growth",
-    "Product Launch Promotion",
-    "Customer Retention",
-    "Community Building",
-    "Event Promotion",
-    "Thought Leadership",
 ];
 const sizeOptionsByPlatform: Record<Platform, Array<{ label: string; width: number; height: number }>> = {
     instagram: [{ label: "1:1", width: 1080, height: 1080 }, { label: "9:16", width: 1080, height: 1920 }, { label: "4:5", width: 1080, height: 1350 }, { label: "16:9", width: 1200, height: 675 }],
@@ -341,31 +308,6 @@ function getTemplatePreviewUrl(recommendation: TemplateRecommendationResponse) {
         }
     }
     return undefined;
-}
-
-function ActionButton({
-    selected,
-    onClick,
-    icon,
-    label,
-}: {
-    selected: boolean;
-    onClick: () => void;
-    icon: string;
-    label: string;
-}) {
-    return (
-        <Button
-            type="button"
-            variant={"ghost"}
-            onClick={onClick}
-            className={`inline-flex h-8 items-center rounded-none gap-2 border px-3 py-5 text-sm font-medium transition ${selected ? "border-primary bg-primary/8 text-primary" : "border-[#D9DDE8] bg-white text-[#121212] hover:border-primary/40"
-                }`}
-        >
-            <Image src={icon} alt={`${label} icon`} width={18} height={18} className="w-auto h-auto" />
-            <span>{label}</span>
-        </Button>
-    );
 }
 
 function TemplateRecommendationRail({
@@ -667,49 +609,93 @@ function GeneratedImageViewer({ assets }: { assets: AssetReference[] }) {
 }
 
 function CampaignGoalMultiSelect({
+    dropdownId,
     value,
     onChange,
+    options = campaignGoalOptions,
+    placeholder = "Select",
+    openDropdown,
+    setOpenDropdown,
 }: {
+    dropdownId: "campaignGoal" | "targetAudience";
     value: string;
     onChange: (value: string) => void;
+    options?: string[];
+    placeholder?: string;
+    openDropdown: "campaignGoal" | "targetAudience" | null;
+    setOpenDropdown: (value: "campaignGoal" | "targetAudience" | null) => void;
 }) {
-    const [isOpen, setIsOpen] = useState(false);
+    const dropdownRef = useRef<HTMLDivElement | null>(null);
+    const menuRef = useRef<HTMLDivElement | null>(null);
+    const isOpen = openDropdown === dropdownId;
     const selectedValues = useMemo(
         () => value.split(",").map((item) => item.trim()).filter(Boolean),
         [value],
     );
 
-    const toggleGoal = (goal: string) => {
-        const nextValues = selectedValues.includes(goal)
-            ? selectedValues.filter((item) => item !== goal)
-            : [...selectedValues, goal];
+    useEffect(() => {
+        if (!isOpen) {
+            return;
+        }
+
+        const scrollFrame = window.requestAnimationFrame(() => {
+            menuRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        });
+
+        const handlePointerDown = (event: MouseEvent) => {
+            if (!dropdownRef.current?.contains(event.target as Node)) {
+                setOpenDropdown(null);
+            }
+        };
+        const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+            if (event.key === "Escape") {
+                setOpenDropdown(null);
+            }
+        };
+
+        document.addEventListener("mousedown", handlePointerDown);
+        document.addEventListener("keydown", handleKeyDown);
+        return () => {
+            window.cancelAnimationFrame(scrollFrame);
+            document.removeEventListener("mousedown", handlePointerDown);
+            document.removeEventListener("keydown", handleKeyDown);
+        };
+    }, [isOpen, setOpenDropdown]);
+
+    const toggleOption = (option: string) => {
+        const nextValues = selectedValues.includes(option)
+            ? selectedValues.filter((item) => item !== option)
+            : [...selectedValues, option];
         onChange(nextValues.join(", "));
     };
 
     return (
-        <div className="relative">
+        <div ref={dropdownRef} className="relative">
             <button
                 type="button"
-                onClick={() => setIsOpen((current) => !current)}
-                className="flex h-12 w-full items-center justify-between rounded-xl bg-input-field px-4 text-left text-sm text-[#8B8B94]"
+                aria-expanded={isOpen}
+                onClick={() => setOpenDropdown(isOpen ? null : dropdownId)}
+                className={`flex h-14 w-full items-center justify-between rounded-xl bg-section-input-field px-4 text-left text-sm transition-colors ${isOpen ? "rounded-b-none" : ""}`}
             >
-                <span className="truncate">{selectedValues.length ? selectedValues.join(", ") : "Select"}</span>
-                <ChevronDown className="h-4 w-4 shrink-0 text-[#8B8B94]" />
+                <span className={`truncate ${selectedValues.length ? "text-[#121212]" : "text-[#9A9AA2]"}`}>
+                    {selectedValues.length ? selectedValues.join(", ") : placeholder}
+                </span>
+                <ChevronDown className={`h-5 w-5 shrink-0 text-[#8B8B94] transition-transform ${isOpen ? "rotate-180" : ""}`} />
             </button>
             {isOpen ? (
-                <div className="absolute left-0 right-0 z-20 max-h-72 overflow-y-auto rounded-b-xl border border-t-0 border-[#ECEEF5] bg-white shadow-[0_12px_24px_-18px_rgba(15,23,42,0.35)] thin-scrollbar">
-                    {campaignGoalOptions.map((goal) => (
+                <div ref={menuRef} className="max-h-86 overflow-y-auto rounded-b-xl border border-t-0 border-[#ECEEF5] bg-white shadow-[0_16px_30px_-22px_rgba(15,23,42,0.45)] thin-scrollbar">
+                    {options.map((option) => (
                         <label
-                            key={goal}
-                            className="flex cursor-pointer items-center gap-4 border-b border-[#F0F1F5] px-4 py-3 text-sm text-[#121212] last:border-b-0"
+                            key={option}
+                            className="flex min-h-14 cursor-pointer items-center gap-4 border-b border-[#F0F1F5] px-4 py-3 text-base text-[#121212] last:border-b-0 hover:bg-[#F8F8FA]"
                         >
                             <input
                                 type="checkbox"
-                                checked={selectedValues.includes(goal)}
-                                onChange={() => toggleGoal(goal)}
-                                className="h-4 w-4 rounded border-[#8D8D95] accent-[#121212]"
+                                checked={selectedValues.includes(option)}
+                                onChange={() => toggleOption(option)}
+                                className="h-5 w-5 rounded border-[#8D8D95] accent-[#121212]"
                             />
-                            <span>{goal}</span>
+                            <span className="min-w-0 flex-1 truncate">{option}</span>
                         </label>
                     ))}
                 </div>
@@ -729,6 +715,9 @@ function StudioPanel({
     setSizeLabel,
     campaignGoal,
     setCampaignGoal,
+    targetAudience,
+    setTargetAudience,
+    targetAudienceOptions,
     onToggle,
     className,
 }: {
@@ -742,15 +731,19 @@ function StudioPanel({
     setSizeLabel: (value: string) => void;
     campaignGoal: string;
     setCampaignGoal: (value: string) => void;
+    targetAudience: string;
+    setTargetAudience: (value: string) => void;
+    targetAudienceOptions: string[];
     onToggle?: () => void;
     className?: string;
 }) {
     const sizeOptions = sizeOptionsByPlatform[platform];
+    const [openStudioDropdown, setOpenStudioDropdown] = useState<"campaignGoal" | "targetAudience" | null>(null);
 
     return (
-        <aside className={`w-full relative min-h-[calc(100vh-64px)] overflow-y-auto space-y-6 border-l border-[#E5E7F0] bg-white px-5 ${className || ""} thin-scrollbar`}>
+        <aside className={`w-full relative min-h-[calc(100vh-24px)] rounded-tl-xl rounded-bl-xl overflow-y-auto space-y-6 border-l border-[#E5E7F0] bg-[#F7F7FB] px-5 ${className || ""} thin-scrollbar`}>
             {/* Header */}
-            <div className="sticky top-0 flex items-center justify-between py-5 bg-white">
+            <div className="sticky top-0 flex items-center justify-between py-5 bg-[#F7F7FB]">
                 <h3 className="text-lg font-bold text-[#121212]">Studio</h3>
                 <Button
                     type="button"
@@ -758,7 +751,7 @@ function StudioPanel({
                     onClick={onToggle}
                     className={`flex h-10 w-10 items-center justify-center text-[#121212]`}
                 >
-                    <Image src="/actions_icons/toggle.svg" alt="Close panel" width={16} height={16} className="h-4 w-4" />
+                    <Image src="/toggleSidebar.svg" alt="Open panel" width={16} height={16} className="h-4 w-4" />
                     {/* <PanelRightClose className="h-4 w-4" /> */}
                 </Button>
             </div>
@@ -778,11 +771,11 @@ function StudioPanel({
                             type="button"
                             disabled={!option.enabled}
                             onClick={() => option.enabled && setFormat(option.value as FormatMode)}
-                            className={`min-w-0 rounded-none p-6 text-center text-sm font-medium ${format === option.value
+                            className={`min-w-0 rounded-xl p-6 text-center text-sm font-medium ${format === option.value
                                 ? "bg-[#EBEBEB] text-[#919191]"
                                 : option.enabled
-                                    ? "bg-[#F9F9F9] text-[#8D8D95]"
-                                    : "cursor-not-allowed bg-[#FAFAFB] text-[#B8B8BE]"
+                                    ? "bg-white text-[#8D8D95]"
+                                    : "cursor-not-allowed bg-white text-[#B8B8BE]"
                                 }`}
                         >
                             {option.label}
@@ -816,7 +809,7 @@ function StudioPanel({
                             key={option.label}
                             type="button"
                             onClick={() => setSizeLabel(option.label)}
-                            className={`p-6 rounded-none text-center text-sm font-medium text-[#919191] ${sizeLabel === option.label ? "bg-[#EBEBEB]" : "bg-[#F9F9F9]"
+                            className={`p-6 rounded-xl text-center text-sm font-medium text-[#919191] ${sizeLabel === option.label ? "bg-[#EBEBEB]" : "bg-white"
                                 }`}
                         >
                             {option.label}
@@ -834,7 +827,7 @@ function StudioPanel({
                             key={option}
                             type="button"
                             onClick={() => setFileType(option)}
-                            className={`p-6 text-[#919191] rounded-none text-center text-sm font-medium uppercase ${fileType === option ? "bg-[#EBEBEB]" : "bg-[#F9F9F9]"
+                            className={`p-6 text-[#919191] rounded-xl text-center text-sm font-medium uppercase ${fileType === option ? "bg-[#EBEBEB]" : "bg-white"
                                 }`}
                         >
                             {option}
@@ -846,8 +839,25 @@ function StudioPanel({
             <div className="space-y-3">
                 <FormField label="Campaign Goal">
                     <CampaignGoalMultiSelect
+                        dropdownId="campaignGoal"
                         value={campaignGoal}
                         onChange={setCampaignGoal}
+                        openDropdown={openStudioDropdown}
+                        setOpenDropdown={setOpenStudioDropdown}
+                    />
+                </FormField>
+            </div>
+
+            <div className="space-y-3 pb-6">
+                <FormField label="Target Audience">
+                    <CampaignGoalMultiSelect
+                        dropdownId="targetAudience"
+                        value={targetAudience}
+                        onChange={setTargetAudience}
+                        options={targetAudienceOptions}
+                        placeholder="Select target audience"
+                        openDropdown={openStudioDropdown}
+                        setOpenDropdown={setOpenStudioDropdown}
                     />
                 </FormField>
             </div>
@@ -885,25 +895,14 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
     } = useChatMessages(brandId, resolvedActiveSessionId);
     const sendMessage = useSendChatMessage(brandId);
     const cancelChatGeneration = useCancelChatGeneration(brandId);
-    const toneCheck = useToneCheck(brandId);
-
-    const [selectedAction, setSelectedAction] = useState<ActionMode>("none");
     const [workspacePrompt, setWorkspacePrompt] = useState("");
-    const [campaignFocus, setCampaignFocus] = useState("");
-    const [campaignAudience, setCampaignAudience] = useState("");
-    const [campaignObjective, setCampaignObjective] = useState("");
-    const [socialTopic, setSocialTopic] = useState("");
-    const [socialGoal, setSocialGoal] = useState("");
-    const [repurposeSource, setRepurposeSource] = useState("");
-    const [repurposeTarget, setRepurposeTarget] = useState("");
-    const [alignmentContent, setAlignmentContent] = useState("");
     const [composerDraft, setComposerDraft] = useState("");
     const [studioPlatform, setStudioPlatform] = useState<Platform>("instagram");
-    const [actionPlatform, setActionPlatform] = useState<Platform | "">("");
     const [studioFormat, setStudioFormat] = useState<FormatMode>("static");
     const [studioFileType, setStudioFileType] = useState<FileType>("png");
     const [studioSizeLabel, setStudioSizeLabel] = useState("1:1");
     const [campaignGoal, setCampaignGoal] = useState("");
+    const [studioTargetAudience, setStudioTargetAudience] = useState("");
     const [attachedAssets, setAttachedAssets] = useState<KnowledgeAssetResponse[]>([]);
     const [selectedTemplateId, setSelectedTemplateId] = useState("");
     const [selectedTemplateName, setSelectedTemplateName] = useState("");
@@ -937,36 +936,13 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
     const brandLifecycle = brand?.lifecycle_state || "draft";
     const canGenerateInWorkspace = brandLifecycle === "active";
     const isGeneratingMessage = createSession.isPending || sendMessage.isPending;
-    const recommendationPrompt = useMemo(() => {
-        if (selectedAction === "idea") {
-            return [campaignFocus, campaignAudience, campaignObjective || campaignGoal, workspacePrompt]
-                .map((item) => item.trim())
-                .filter(Boolean)
-                .join("\n");
-        }
-        if (selectedAction === "social") {
-            return [workspacePrompt, socialTopic || campaignGoal].map((item) => item.trim()).filter(Boolean).join("\n");
-        }
-        if (selectedAction === "repurpose") {
-            return [repurposeSource, repurposeTarget, workspacePrompt].map((item) => item.trim()).filter(Boolean).join("\n");
-        }
-        if (selectedAction === "alignment") {
-            return alignmentContent.trim();
-        }
-        return composerDraft.trim() || workspacePrompt.trim();
-    }, [
-        alignmentContent,
-        campaignAudience,
-        campaignFocus,
-        campaignGoal,
-        campaignObjective,
-        composerDraft,
-        repurposeSource,
-        repurposeTarget,
-        selectedAction,
-        socialGoal,
-        workspacePrompt,
-    ]);
+    const recommendationPrompt = useMemo(
+        () => [composerDraft.trim() || workspacePrompt.trim(), campaignGoal, studioTargetAudience]
+            .map((item) => item.trim())
+            .filter(Boolean)
+            .join("\n"),
+        [campaignGoal, composerDraft, studioTargetAudience, workspacePrompt],
+    );
     const debouncedRecommendationPrompt = useDebouncedValue(recommendationPrompt, 400);
     const { data: templateRecommendations = [], isFetching: isFetchingTemplateRecommendations } = useTemplateRecommendations(
         brandId,
@@ -989,18 +965,17 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
         0,
         Math.min(100, Math.round((allocationPercent * (100 - usedWithinAllocationPercent)) / 100)),
     );
-    const usagePendingLabel = `${brand?.name ?? "Brand"} Usage Pending: ${usageRemainingPercent}%`;
-    const freshChatHistory = useMemo(
-        () =>
-            [...(sessions || [])]
-                .filter((session) => session.id !== resolvedActiveSessionId || session.title?.trim())
-                .sort((left: ChatSessionResponse, right: ChatSessionResponse) =>
-                    new Date(right.updated_at || right.created_at).getTime() - new Date(left.updated_at || left.created_at).getTime(),
-                )
-                .slice(0, 8),
-        [resolvedActiveSessionId, sessions],
-    );
-    const activeActionOption = selectedAction === "none" ? null : actionOptionById[selectedAction];
+    const usagePendingLabel = `Pending Usage: ${usageRemainingPercent}%`;
+    // const freshChatHistory = useMemo(
+    //     () =>
+    //         [...(sessions || [])]
+    //             .filter((session) => session.id !== resolvedActiveSessionId || session.title?.trim())
+    //             .sort((left: ChatSessionResponse, right: ChatSessionResponse) =>
+    //                 new Date(right.updated_at || right.created_at).getTime() - new Date(left.updated_at || left.created_at).getTime(),
+    //             )
+    //             .slice(0, 8),
+    //     [resolvedActiveSessionId, sessions],
+    // );
     const orderedMessages = useMemo(
         () =>
             [...(messages || [])].sort((left: ChatMessageResponse, right: ChatMessageResponse) => {
@@ -1196,13 +1171,17 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
             setWorkspaceError("");
             setGenerationProgressIndex(0);
             const sessionId = await ensureSession();
+            const selectedAudiences = studioTargetAudience.split(",").map((item) => item.trim()).filter(Boolean);
+            const outgoingMessage = selectedAudiences.length
+                ? `Target audience: ${selectedAudiences.join(", ")}\n\n${message}`
+                : message;
             const controller = new AbortController();
             activeGenerationControllerRef.current = controller;
             activeGenerationSessionRef.current = sessionId;
             await sendMessage.mutateAsync({
                 sessionId,
                 data: {
-                    message,
+                    message: outgoingMessage,
                     studio_panel: studioPanel,
                     generate_image: studioFormat !== "video",
                     template_id: selectedTemplateId || undefined,
@@ -1210,7 +1189,6 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                 },
                 signal: controller.signal,
             });
-            setSelectedAction("none");
             setComposerDraft("");
             setWorkspacePrompt((current) => (current.trim() === message.trim() ? "" : current));
             setAttachedAssets([]);
@@ -1263,31 +1241,6 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
         );
     };
 
-    const handleActionGenerate = async () => {
-        const actionPlatformLabel = actionPlatform ? platformLabels[actionPlatform] : "";
-        if (selectedAction === "idea") {
-            await dispatchGeneration(
-                `Generate campaign ideas.\nCampaign focus: ${campaignFocus}\nTarget audience: ${campaignAudience}\nCampaign objective: ${campaignObjective || campaignGoal}\nPlatform: ${actionPlatformLabel || "Not specified"}\nAdditional context: ${workspacePrompt}`,
-            );
-            return;
-        }
-        if (selectedAction === "social") {
-            await dispatchGeneration(
-                `Create a ${actionPlatformLabel ? `${actionPlatformLabel} ` : ""}social media post.\nGoal: ${socialGoal || campaignGoal}\nTopic: ${workspacePrompt}\nCampaign focus: ${campaignFocus}`,
-            );
-            return;
-        }
-        if (selectedAction === "repurpose") {
-            await dispatchGeneration(
-                `Repurpose the following content.\nSource content: ${repurposeSource}\nTarget outcome: ${repurposeTarget}\nPlatform: ${actionPlatformLabel || "Not specified"}\nAdditional context: ${workspacePrompt}`,
-            );
-            return;
-        }
-        if (alignmentContent.trim()) {
-            await toneCheck.mutateAsync({ content: alignmentContent });
-        }
-    };
-
     const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
         if (event.key === "Enter" && !event.shiftKey) {
             event.preventDefault();
@@ -1337,7 +1290,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                             {workspaceError}
                         </div>
                     ) : null}
-                    {hasConversation ? (
+                    {hasConversation && (
                         <div className="flex h-[calc(100vh-32px)] flex-col">
                             <div className={`grid min-h-0 flex-1 ${isStudioOpen ? "xl:grid-cols-[minmax(0,1fr)_296px]" : "xl:grid-cols-1"}`}>
 
@@ -1370,7 +1323,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                                         placeholder="Search"
                                                         value={chatSearchQuery}
                                                         onChange={(event) => setChatSearchQuery(event.target.value)}
-                                                        className="h-10 w-68 rounded-none border-[#E1E3EC] bg-blue pl-10 pr-24 text-sm text-[#77759A] shadow-none focus-visible:ring-0"
+                                                        className="h-10 w-68 rounded-md border-[#E1E3EC] bg-blue pl-10 pr-24 text-sm text-[#77759A] shadow-none focus-visible:ring-0"
                                                     />
                                                     {chatSearchQuery.trim() ? (
                                                         <div className={`absolute ${isStudioOpen ? "right-8" : "right-2"} top-1/2 flex -translate-y-1/2 items-center gap-1 text-[11px] text-[#77759A]`}>
@@ -1399,7 +1352,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                                     ) : null}
                                                 </div>
                                             ) : null}
-                                            {hasConversation ? (
+                                            {!isStudioOpen ? (
                                                 <Button
                                                     type="button"
                                                     variant={"ghost"}
@@ -1435,7 +1388,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                                     }}
                                                     className={`${isStudioOpen ? "px-3" : "pr-10 pl-3"} ${message.role === "user" ? "ml-auto w-fit max-w-[70%]" : "mr-auto max-w-[78%]"}`}
                                                 >
-                                                    <div className={`p-3 text-base text-[#353030]  ${message.role === "user"
+                                                    <div className={`p-3 text-base text-[#353030] rounded-md  ${message.role === "user"
                                                         ? "bg-[#F4F4F4]"
                                                         : "bg-[#F8F8F8]"
                                                         }`}>
@@ -1515,7 +1468,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                             </p>
                                         ) : null}
                                         {attachmentError ? <p className="mb-2 text-sm text-red-500">{attachmentError}</p> : null}
-                                        <SurfaceCard className={`flex items-end gap-3 border border-[#E1E4ED] bg-white px-3 pb-2 shadow-[0_14px_28px_-24px_rgba(15,23,42,0.45)]`}>
+                                        <SurfaceCard className={`flex items-end gap-3 rounded-xl border border-[#E1E4ED] bg-white px-3 pb-2 shadow-[0_14px_28px_-24px_rgba(15,23,42,0.45)]`}>
                                             <button
                                                 type="button"
                                                 onClick={() => attachmentInputRef.current?.click()}
@@ -1563,14 +1516,20 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                         setSizeLabel={setStudioSizeLabel}
                                         campaignGoal={campaignGoal}
                                         setCampaignGoal={setCampaignGoal}
+                                        targetAudience={studioTargetAudience}
+                                        setTargetAudience={setStudioTargetAudience}
+                                        targetAudienceOptions={targetAudienceOptions}
                                         onToggle={() => setIsStudioOpen(false)}
                                         className="hidden xl:block"
                                     />
                                 ) : null}
                             </div>
                         </div>
-                    ) : (
-                        <div className="w-full mx-auto min-h-[calc(100vh-100px-68px)] overflow-y-auto">
+                    )}
+                    {!hasConversation && (
+                        <div className="flex h-[calc(100vh-32px)] flex-col">
+                            <div className={`grid min-h-0 flex-1 ${isStudioOpen ? "xl:grid-cols-[minmax(0,1fr)_296px]" : "xl:grid-cols-1"}`}>
+                                <div className="min-h-0 overflow-y-auto bg-white">
                             {/* Header */}
                             <div className="flex h-[61px] py-10 items-center justify-between border-b border-[#E5E5EA] bg-white">
                                 <div className="w-full flex items-center justify-between gap-3 px-4">
@@ -1599,7 +1558,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                             />
                                         </div>
                                     ) : null}
-                                    {hasConversation ? (
+                                    {!isStudioOpen ? (
                                         <Button
                                             type="button"
                                             variant={"ghost"}
@@ -1607,7 +1566,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                             className={`flex h-10 w-10 items-center justify-center text-[#121212] ${isStudioOpen && 'hidden'}`}
                                             aria-label={isStudioOpen ? "Hide Studio" : "Show Studio"}
                                         >
-                                            {!isStudioOpen && <Image src="/actions_icons/toggle.svg" alt="Close panel" width={16} height={16} className="h-4 w-4" />}
+                                            {!isStudioOpen && <Image src="/toggleSidebar.svg" alt="Open panel" width={16} height={16} className="h-4 w-4" />}
                                         </Button>
                                     ) : null}
                                 </div>
@@ -1617,13 +1576,13 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                     This Brand Space is currently <span className="font-medium capitalize">{brandLifecycle}</span>. Finish activation before generating content or images in the workspace.
                                 </div>
                             ) : null}
-                            <div className="max-w-5xl mx-auto flex flex-col items-center px-4 pt-[8vh]">
+                            <div className="max-w-5xl mx-auto flex flex-col items-center px-4 my-[22vh]">
                                 <div className="flex items-center gap-5">
                                     <Image src="/logo.svg" alt="Violyt Icon" width={40} height={40} className="" />
                                     <h2 className="font-dmSans text-2xl md:text-3xl xl:text-4xl font-medium tracking-normal text-[#121212]">Greeting message</h2>
                                 </div>
 
-                                <SurfaceCard className="mt-9 w-full border border-[#DDE1EA] bg-white px-4 py-3 shadow-[0_16px_30px_-25px_rgba(15,23,42,0.45)]">
+                                <SurfaceCard className="mt-9 w-full rounded-xl border border-[#DDE1EA] bg-white px-4 py-3 shadow-[0_16px_30px_-25px_rgba(15,23,42,0.45)]">
                                     <Textarea
                                         ref={promptTextareaRef}
                                         placeholder="What do you want to create today?"
@@ -1688,214 +1647,27 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                     </p>
                                 ) : null}
 
-                                <div className="mt-6 flex flex-wrap justify-center gap-3">
-                                    {actionOptions.map((action) => (
-                                        <ActionButton
-                                            key={action.id}
-                                            selected={selectedAction === action.id}
-                                            onClick={() => {
-                                                setSelectedAction((current) => (current === action.id ? "none" : action.id));
-                                                setActionPlatform("");
-                                            }}
-                                            icon={action.icon}
-                                            label={action.label}
-                                        />
-                                    ))}
                                 </div>
-                                {/* <Link href={buildBrandSharingHref(brand)} className="inline-flex h-10 items-center gap-2 border border-[#D9DDE8] bg-white my-4 p-3 text-sm font-medium text-[#121212] hover:bg-slate-50">
-                                    <BadgePlus className="h-4 w-4" />
-                                    <span>Open Review</span>
-                                </Link> */}
-
-                                {activeActionOption ? (
-                                    <SurfaceCard className="mt-6 w-full border border-[#DDE1EA] bg-white px-8 py-4 shadow-none">
-                                        <div className="mb-6 flex items-center gap-2 text-[12px] font-medium text-[#121212]">
-                                            <Image
-                                                src={activeActionOption.icon}
-                                                alt=""
-                                                width={16}
-                                                height={16}
-                                                className="h-4 w-4"
-                                            />
-                                            <span>
-                                                {selectedAction === "idea" && "Generate Campaign Idea"}
-                                                {selectedAction === "social" && "Create Social Media Post"}
-                                                {selectedAction === "repurpose" && "Repurpose Content"}
-                                                {selectedAction === "alignment" && "Check Brand Alignment"}
-                                            </span>
-                                        </div>
-
-                                        <div className="grid gap-5 md:max-w-md">
-                                            {selectedAction === "idea" ? (
-                                                <>
-                                                    <FormField label="Campaign focus">
-                                                        <StyledInput
-                                                            placeholder="What product, service, or initiative is this campaign for"
-                                                            value={campaignFocus}
-                                                            onChange={(e) => setCampaignFocus(e.target.value)}
-                                                        />
-                                                    </FormField>
-                                                    {/* <Label className="space-y-2"> */}
-                                                    {/* <span className="text-sm font-normal text-[#121212]">Target Audience</span> */}
-                                                    <FormField label="Target Audience">
-                                                        <StyledSelect
-                                                            value={campaignAudience}
-                                                            onValueChange={(value) => setCampaignAudience(value)}
-                                                            placeholder="Select target audience"
-                                                            options={targetAudienceOptions}
-                                                        />
-                                                    </FormField>
-                                                    {/* </Label> */}
-
-                                                    <FormField label="Campaign Objective">
-                                                        <StyledSelect
-                                                            value={campaignObjective}
-                                                            onValueChange={(value) => setCampaignObjective(value)}
-                                                            placeholder="Select campaign objective"
-                                                            options={campaignObjectiveOptions}
-                                                        />
-                                                    </FormField>
-                                                </>
-                                            ) : null}
-
-                                            {selectedAction === "social" ? (
-                                                <>
-                                                    <FormField label="Topic">
-                                                        <StyledInput
-                                                            placeholder="What should this post be about"
-                                                            value={socialTopic}
-                                                            onChange={(e) => setSocialTopic(e.target.value)}
-                                                        />
-                                                    </FormField>
-                                                    <FormField label="Goal">
-                                                        <StyledInput
-                                                            placeholder="What is the goal of this post"
-                                                            value={socialGoal}
-                                                            onChange={(e) => setSocialGoal(e.target.value)}
-                                                        />
-                                                    </FormField>
-                                                </>
-                                            ) : null}
-
-                                            {selectedAction === "repurpose" ? (
-                                                <>
-                                                    <FormField label="Source Content">
-                                                        <StyledInput
-                                                            placeholder="Paste the content you would like to repurpose"
-                                                            value={repurposeSource}
-                                                            onChange={(e) => setRepurposeSource(e.target.value)}
-                                                        />
-                                                    </FormField>
-                                                    <FormField label="Target">
-                                                        <StyledInput
-                                                            placeholder="Specify what the repurposed content should aim to achieve"
-                                                            value={repurposeTarget}
-                                                            onChange={(e) => setRepurposeTarget(e.target.value)}
-                                                        />
-                                                    </FormField>
-                                                </>
-                                            ) : null}
-
-                                            {selectedAction === "alignment" ? (
-                                                <label className="space-y-2">
-                                                    <span className="text-sm font-normal text-[#121212]">Content</span>
-                                                    <Textarea placeholder="Paste the content you want to evaluate for brand alignment" className="min-h-24 rounded-[8px] border-none bg-[#F3F5F8] text-xs shadow-none" value={alignmentContent} onChange={(event) => setAlignmentContent(event.target.value)} />
-                                                </label>
-                                            ) : null}
-
-                                            {selectedAction !== "alignment" ? (
-                                                <FormField label="Platform">
-                                                    <StyledSelect
-                                                        value={actionPlatform}
-                                                        onValueChange={(value: string) => {
-                                                            const platformValue = value as Platform | "";
-                                                            setActionPlatform(platformValue);
-                                                            if (platformValue) {
-                                                                setStudioPlatform(platformValue);
-                                                                setStudioSizeLabel(sizeOptionsByPlatform[platformValue][0].label);
-                                                            }
-                                                        }}
-                                                        placeholder="Select platform"
-                                                        options={chatPlatformOptions}
-                                                        getOptionLabel={(value) => platformLabels[value as Platform] || value}
-                                                    />
-                                                </FormField>
-                                            ) : null}
-
-                                            {/* <label className="space-y-2">
-                                            <span className="text-sm font-normal text-[#121212]">Platform</span>
-                                            <select
-                                                className="h-9 w-full rounded-[8px] border-none bg-[#F3F5F8] px-3 text-xs text-[#8B8B94] outline-none"
-                                                value={studioPlatform}
-                                                onChange={(event) => {
-                                                    const value = event.target.value as Platform;
-                                                    setStudioPlatform(value);
-                                                    setStudioSizeLabel(sizeOptionsByPlatform[value][0].label);
-                                                }}
-                                            >
-                                                {platformOptions.map((option) => (
-                                                    <option key={option} value={option}>
-                                                        {option}
-                                                    </option>
-                                                ))}
-                                            </select>
-                                        </label> */}
-                                        </div>
-
-                                        <div className="mt-8 flex justify-end">
-                                            <Button
-                                                className="h-9 rounded-none bg-primary/72 p-6 text-base font-bold hover:bg-primary/90"
-                                                onClick={handleActionGenerate}
-                                                disabled={!canGenerateInWorkspace || isGeneratingMessage}
-                                            >
-                                                {selectedAction === "alignment" ? (toneCheck.isPending ? "Checking..." : "Generate") : isGeneratingMessage ? "Generating..." : "Generate"}
-                                            </Button>
-                                        </div>
-
-                                        {toneCheck.data && selectedAction === "alignment" ? (
-                                            <div className="mt-5 rounded-xl bg-slate-50 p-4 text-sm text-slate-700">
-                                                <p className="font-semibold">Tone Score: {toneCheck.data.score}</p>
-                                                <p className="mt-2">Deviations: {toneCheck.data.deviations.join(", ") || "None"}</p>
-                                            </div>
-                                        ) : null}
-                                    </SurfaceCard>
+                                </div>
+                                {isStudioOpen ? (
+                                    <StudioPanel
+                                        platform={studioPlatform}
+                                        setPlatform={setStudioPlatform}
+                                        format={studioFormat}
+                                        setFormat={setStudioFormat}
+                                        fileType={studioFileType}
+                                        setFileType={setStudioFileType}
+                                        sizeLabel={studioSizeLabel}
+                                        setSizeLabel={setStudioSizeLabel}
+                                        campaignGoal={campaignGoal}
+                                        setCampaignGoal={setCampaignGoal}
+                                        targetAudience={studioTargetAudience}
+                                        setTargetAudience={setStudioTargetAudience}
+                                        targetAudienceOptions={targetAudienceOptions}
+                                        onToggle={() => setIsStudioOpen(false)}
+                                        className="hidden xl:block"
+                                    />
                                 ) : null}
-
-                                {freshChatHistory.length ? (
-                                    <div className="mt-9 w-full max-w-xl">
-                                        <div className="mb-4 flex justify-center">
-                                            <span className="bg-[#F4F4F4] px-4 py-2 text-base font-bold text-[#121212]">
-                                                Chats
-                                            </span>
-                                        </div>
-                                        <div className="space-y-5">
-                                            {freshChatHistory.map((session) => {
-                                                const title = session.title?.trim() || "Untitled chat";
-                                                const updatedDate = formatChatHistoryDate(session.updated_at || session.created_at);
-                                                return (
-                                                    <Link
-                                                        key={session.id}
-                                                        href={buildBrandChatHref(brand, session.id)}
-                                                        className="grid grid-cols-[minmax(0,1fr)_auto] gap-6 p-2 text-left transition hover:bg-[#F8F8F8]"
-                                                    >
-                                                        <span className="min-w-0">
-                                                            <span className="block truncate text-base font-bold text-[#121212]">
-                                                                {title}
-                                                            </span>
-                                                            <span className="mt-1 block truncate text-[15px] text-[#8A8A8A]">
-                                                                Open previous chat
-                                                            </span>
-                                                        </span>
-                                                        {updatedDate ? (
-                                                            <span className="pt-0.5 text-sm text-[#9C9CA3]">{updatedDate}</span>
-                                                        ) : null}
-                                                    </Link>
-                                                );
-                                            })}
-                                        </div>
-                                    </div>
-                                ) : null}
-
                             </div>
                         </div>
                     )}

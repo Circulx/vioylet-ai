@@ -49,6 +49,7 @@ export default function Sidebar() {
     const { user, canAccessModule } = useRBAC();
     const { data: brands } = useBrands(user?.role !== "PLATFORM_OWNER");
     const path = usePathname();
+    const router = useRouter();
     const searchParams = useSearchParams();
     const activeChatId = searchParams.get("chat") || "";
 
@@ -74,9 +75,9 @@ export default function Sidebar() {
             )}
         >
             <div className={cn("flex items-center justify-between pl-3 pr-1 py-5", !isSidebarOpen && "justify-center px-3")}>
-                <span className={cn("font-dmSans text-[32px] font-bold tracking-[-0.01em] text-primary", !isSidebarOpen && "hidden")}>
-                    <Image src="/VIOLYT-LOGO-PurpleTM.svg" alt="Violyt" width={34} height={28} className="h-7 w-24 border-none p-0" />
-                </span>
+                <button className={cn("font-dmSans text-[32px] font-bold tracking-[-0.01em] text-primary", !isSidebarOpen && "hidden")}>
+                    <Image src="/VIOLYT-LOGO-PurpleTM.svg" alt="Violyt" width={34} height={28} className="h-7 w-24 border-none p-0 cursor-pointer" onClick={() => router.push("/dashboard")} />
+                </button>
                 <abbr title={!isSidebarOpen && "Toggle Sidebar" || ""}>
                     <Button
                         variant="ghost"
@@ -135,8 +136,8 @@ export default function Sidebar() {
 
                                 {isBrandSpacesItem && isSidebarOpen && isWorkspacePath && currentBrand ? (
                                     <div
-                                        className="mt-2 min-h-0 space-y-2 overflow-y-auto pl-3 pr-1"
-                                        style={{ maxHeight: "clamp(96px, calc(100vh - 520px), 240px)" }}
+                                        className="mt-2 min-h-0 space-y-2 overflow-y-auto pl-3 pr-1 thin-scrollbar"
+                                        style={{ maxHeight: "clamp(96px, calc(100vh - 420px), 240px)" }}
                                     >
                                         {workspaceBrands.map((brand) => (
                                             <BrandChatGroup

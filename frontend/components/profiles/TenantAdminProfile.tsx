@@ -338,18 +338,18 @@ export default function TenantAdminProfile() {
             </Dialog>
 
             <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-                <AlertDialogContent className="max-w-[460px] rounded-2xl border-0 px-8 py-10 shadow-[0_20px_80px_-24px_rgba(15,23,42,0.25)]">
+                <AlertDialogContent className="max-w-115 font-dmSans rounded-xl border-0 px-8 py-10 shadow-[0_20px_80px_-24px_rgba(15,23,42,0.25)]">
                     <AlertDialogHeader className="items-center text-center">
-                        <AlertDialogTitle className="text-5xl font-semibold tracking-tight text-slate-900">Delete Account?</AlertDialogTitle>
-                        <AlertDialogDescription className="text-xl text-slate-700">
+                        <AlertDialogTitle className="text-2xl font-semibold tracking-tight text-slate-900">Delete Account?</AlertDialogTitle>
+                        <AlertDialogDescription className="text-base text-slate-700">
                             This action will deactivate your account and sign you out immediately.
                         </AlertDialogDescription>
                     </AlertDialogHeader>
-                    <AlertDialogFooter className="mt-4 flex-row justify-center gap-6">
-                        <AlertDialogAction className="h-12 min-w-[152px] rounded-none bg-[#FF6D5E] text-base hover:bg-[#FF6D5E]/90" onClick={handleDeleteAccount}>
+                    <AlertDialogFooter className=" flex-row justify-center gap-2">
+                        <AlertDialogAction className="h-12 min-w-30 rounded-none bg-[#FF6D5E]/52 text-base hover:bg-[#FF6D5E]/90" onClick={handleDeleteAccount}>
                             Confirm
                         </AlertDialogAction>
-                        <AlertDialogCancel className="h-12 min-w-[152px] rounded-none border-slate-900 text-base text-slate-900 hover:bg-slate-50">
+                        <AlertDialogCancel className="h-12 min-w-30 rounded-none border-slate-900 text-base text-slate-900 hover:bg-slate-50">
                             Cancel
                         </AlertDialogCancel>
                     </AlertDialogFooter>

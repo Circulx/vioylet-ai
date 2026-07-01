@@ -544,13 +544,13 @@ function VisualPendingUploadCard({
                 </div>
             ) : (
                 <div className="mt-5 space-y-2">
-                    <p className="text-sm font-medium text-[#8191A7]">Metadata Tags</p>
+                    <p className="text-sm font-medium text-[#8191A7]">Description</p>
                     <Input
                         value={upload.tagDraft}
                         onChange={(event) => onTagChange(event.target.value)}
                         onKeyDown={onTagKeyDown}
                         onBlur={onTagBlur}
-                        placeholder="Add metadata"
+                        placeholder="Add description"
                         className="h-12 rounded-xl border-[#DDE7F0] bg-[#F9FBFD] text-sm shadow-none"
                     />
                 </div>

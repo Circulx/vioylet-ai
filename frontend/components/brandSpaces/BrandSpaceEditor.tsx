@@ -1427,17 +1427,21 @@ export default function BrandSpaceEditor({
                                     key={tab.id}
                                     value={tab.value}
                                     className={cn(
-                                        "group relative overflow-visible rounded-lg border border-[#CDCDCD] bg-white px-4 py-2.5 text-[15px] shadow-none hover:bg-[#CDCDCD]/20 data-[state=active]:font-bold data-[state=active]:border-black data-[state=active]:border-2",
+                                        "group relative overflow-visible rounded-lg border border-[#CDCDCD] bg-white p-1.5 text-[15px] shadow-none hover:bg-[#F7F7FB] data-[state=active]:font-bold",
                                         fillPercent === 100 ? "border-primary/40" : "",
                                     )}
-                                    style={{
-                                        backgroundImage: `linear-gradient(90deg, rgba(201, 201, 201, 1) ${fillPercent}%, transparent ${fillPercent}%)`,
-                                    }}
                                 >
                                     <span className="pointer-events-none absolute -top-6 left-1/2 z-20 hidden -translate-x-1/2 whitespace-nowrap rounded-sm bg-primary px-1.5 py-0.5 text-[10px] font-medium text-white group-hover:inline-flex">
                                         {fillPercent}% Completed
                                     </span>
-                                    {tab.label}
+                                    <span
+                                        className="rounded-md px-3 py-2"
+                                        style={{
+                                            backgroundImage: `linear-gradient(90deg, rgba(201, 201, 201, 1) ${fillPercent}%, transparent ${fillPercent}%)`,
+                                        }}
+                                    >
+                                        {tab.label}
+                                    </span>
                                 </TabsTrigger>
                             );
                         })}

@@ -67,3 +67,6 @@ tests/_logo_pipeline_output/
 tests/ai-final-render-logo-*/
 tests/scene-graph-image-led-*/
 tests/scene-graph-overlay-minimal-*/
+deploy/images/*.tar
+*.tar
+*.zip

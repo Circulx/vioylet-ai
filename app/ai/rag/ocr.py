@@ -141,6 +141,11 @@ class OCRService:
         return Path(file_path).parent / "_ocr"
 
     @staticmethod
+    def _pdf_page_images_dir(file_path: str) -> Path:
+        # Keeps rendered PDF page images scoped to the uploaded file so palette extraction cannot reuse another PDF.
+        return OCRService._scratch_root(file_path) / Path(file_path).stem / "page_images"
+
+    @staticmethod
     def _analysis_paths_for_images(image_paths: list[str]) -> list[str]:
         # Centralizes analysis paths images from image paths for asset ingestion.
         # The helper owns a small rule that would distract from the surrounding flow.
@@ -158,7 +163,7 @@ class OCRService:
         scratch_root = self._scratch_root(file_path)
         scratch_root.mkdir(parents=True, exist_ok=True)
         if suffix == ".pdf":
-            output_dir = scratch_root / "page_images"
+            output_dir = self._pdf_page_images_dir(file_path)
             output_dir.mkdir(parents=True, exist_ok=True)
             return [
                 str(image_path)
@@ -190,7 +195,7 @@ class OCRService:
                 output_dir=str(scratch_root),
                 progress_callback=progress_callback,
             )
-            page_images_dir = scratch_root / "page_images"
+            page_images_dir = self._pdf_page_images_dir(file_path)
             page_images = (
                 [str(path) for path in sorted(page_images_dir.glob("*.png"))]
                 if page_images_dir.exists()

@@ -1,6 +1,7 @@
 # FastAPI route handlers live here; they validate request inputs, call services, and return response schemas.
 from __future__ import annotations
 
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
@@ -23,6 +24,32 @@ from app.services.brand_assets import BrandAssetService
 
 
 router = APIRouter()
+
+
+def is_color_palette_asset(asset) -> bool:
+    # Keeps palette-specific response shaping scoped to the color palette upload field.
+    return "color_palette" in {
+        str(asset.field_key or "").strip().lower(),
+        str(asset.asset_category or "").strip().lower(),
+        str(asset.source_intent or "").strip().lower(),
+    }
+
+
+def palette_entry_payload(entry) -> dict[str, Any]:
+    # Rebuilds the API palette item from the stored row while preserving extra extraction metadata.
+    metadata = entry.source_metadata_json if isinstance(entry.source_metadata_json, dict) else {}
+    payload = dict(metadata)
+    payload.update(
+        {
+            "role": entry.role,
+            "color_name": entry.color_name,
+            "hex_code": entry.hex_code,
+            "hex": entry.hex_code,
+            "rgb_value": entry.rgb_value,
+            "confidence": entry.confidence,
+        }
+    )
+    return payload
 
 
 def trust_level_for_validation_state(validation_state: str | None) -> str:
@@ -49,12 +76,30 @@ async def serialize_attachment(service: BrandAssetService, asset) -> BrandAttach
     )
     routing = await service.routing_repo.get_by_asset(asset.id)
     reusable_assets = await service.reusable_assets.list_by_knowledge_asset(asset.id)
+    structured_data_json = asset.structured_data_json if isinstance(asset.structured_data_json, dict) else {}
+    normalized_data_json = asset.normalized_data_json if isinstance(asset.normalized_data_json, dict) else {}
+    if is_color_palette_asset(asset):
+        palette_entries = [palette_entry_payload(entry) for entry in await service.palette_entries.list_by_asset(asset.id)]
+        structured_data_json = {
+            **structured_data_json,
+            "palette_entries": palette_entries,
+            "palette": palette_entries,
+            "all": palette_entries,
+        }
+        normalized_data_json = {
+            **normalized_data_json,
+            "palette_entries": palette_entries,
+            "palette": palette_entries,
+            "all": palette_entries,
+        }
     return BrandAttachmentResponse.model_validate(asset).model_copy(
         update={
             "asset_url": delivery.build_signed_url(
                 storage_path=asset.storage_path,
                 filename=asset.original_filename,
             ),
+            "structured_data_json": structured_data_json,
+            "normalized_data_json": normalized_data_json,
             "processing_status": AssetProcessingStatusResponse.model_validate(status) if status else None,
             "validation_result": AssetValidationResultResponse.model_validate(validation).model_copy(
                 update={"trust_level": trust_level_for_validation_state(validation.validation_state)}

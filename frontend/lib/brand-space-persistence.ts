@@ -667,6 +667,20 @@ export function mergeBrandAttachmentsIntoForm(
     dedupeUploads(form.core.logos.length ? form.core.logos : form.core.logo ? [form.core.logo] : []),
   );
   const logoItems = normalizeBrandLogoItems(mergeAttachmentItems(currentLogoItems, assetsByField.get("logo") || []));
+  const colorPaletteUploads = mergeAttachmentItems(
+    form.visualIdentity.colorPaletteUploads,
+    assetsByField.get("color_palette") || [],
+  );
+  const currentActivePalette = form.visualIdentity.colorPaletteUploads.find(
+    (item) => item.id === form.visualIdentity.activeColorPaletteUploadId,
+  );
+  const activeColorPaletteUploadId =
+    colorPaletteUploads.find((item) => item.id === form.visualIdentity.activeColorPaletteUploadId)?.id ||
+    colorPaletteUploads.find(
+      (item) => currentActivePalette?.uploadedAssetId && item.uploadedAssetId === currentActivePalette.uploadedAssetId,
+    )?.id ||
+    colorPaletteUploads[0]?.id ||
+    "";
 
   return {
     ...form,
@@ -689,10 +703,8 @@ export function mergeBrandAttachmentsIntoForm(
         assetsByField.get("reference_creatives") || [],
       ),
       moodBoards: mergeAttachmentItems(form.visualIdentity.moodBoards, assetsByField.get("mood_board") || []),
-      colorPaletteUploads: mergeAttachmentItems(
-        form.visualIdentity.colorPaletteUploads,
-        assetsByField.get("color_palette") || [],
-      ),
+      colorPaletteUploads,
+      activeColorPaletteUploadId,
       uploadedFonts: mergeAttachmentItems(form.visualIdentity.uploadedFonts, assetsByField.get("font_file") || []),
       fontStyleGuide: mergeAttachmentItems(form.visualIdentity.fontStyleGuide, assetsByField.get("font_guide") || []),
     },

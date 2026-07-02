@@ -230,6 +230,27 @@ function dedupeImageAssets(assets: AssetReference[]) {
     });
 }
 
+function assetSequenceIndex(asset: AssetReference, fallbackIndex: number) {
+    const metadata = (asset as AssetReference & { metadata?: Record<string, unknown> }).metadata || {};
+    const metadataIndex = Number(metadata.slide_index || metadata.page_index || metadata.order);
+    if (Number.isFinite(metadataIndex) && metadataIndex > 0) {
+        return metadataIndex;
+    }
+    const path = `${asset.storage_path || ""} ${asset.asset_url || ""}`;
+    const match = path.match(/(?:slide|page|p)[-_]?(\d+)/i);
+    if (match) {
+        return Number(match[1]);
+    }
+    return fallbackIndex + 1;
+}
+
+function sortAssetsBySequence(assets: AssetReference[]) {
+    return assets
+        .map((asset, index) => ({ asset, sequence: assetSequenceIndex(asset, index), index }))
+        .sort((left, right) => left.sequence - right.sequence || left.index - right.index)
+        .map((entry) => entry.asset);
+}
+
 function resolveGeneratedImageAssets(payload: ChatAssistantStructuredPayload | Record<string, unknown> | undefined) {
     if (!payload || Array.isArray(payload)) {
         return [];
@@ -239,18 +260,18 @@ function resolveGeneratedImageAssets(payload: ChatAssistantStructuredPayload | R
         (asset) => asset.mime_type.startsWith("image/") && Boolean(asset.asset_url),
     );
     if (exportImages.length) {
-        return dedupeImageAssets(exportImages);
+        return sortAssetsBySequence(dedupeImageAssets(exportImages));
     }
     if (typedPayload.preview_asset?.asset_url && typedPayload.preview_asset.mime_type.startsWith("image/")) {
         return [typedPayload.preview_asset];
     }
-    return dedupeImageAssets(
+    return sortAssetsBySequence(dedupeImageAssets(
         (typedPayload.assets || []).filter((asset) =>
             asset.mime_type.startsWith("image/") &&
             Boolean(asset.asset_url) &&
             ["render_export", "render_preview", "ai_image"].includes(asset.asset_role),
         ),
-    );
+    ));
 }
 
 function resolveGeneratedExportAssets(payload: ChatAssistantStructuredPayload | Record<string, unknown> | undefined) {
@@ -352,7 +373,8 @@ function generatedDownloadFilename(prompt: string, asset: AssetReference | undef
 function generatedSlideDownloadFilename(prompt: string, asset: AssetReference | undefined, slideIndex: number, totalSlides: number) {
     const baseName = filenameTopicFromPrompt(prompt);
     const extension = assetExtension(asset);
-    return totalSlides > 1 ? `${baseName}-slide-${slideIndex}.${extension}` : `${baseName}.${extension}`;
+    const paddedIndex = String(slideIndex).padStart(String(totalSlides).length, "0");
+    return totalSlides > 1 ? `${baseName}-slide-${paddedIndex}.${extension}` : `${baseName}.${extension}`;
 }
 
 function assetMatchesFileType(asset: AssetReference, fileType: FileType) {
@@ -397,6 +419,22 @@ function downloadAsset(asset: AssetReference, filename: string) {
         return;
     }
     triggerDownload(downloadUrlWithFilename(downloadUrl, filename), filename);
+}
+
+async function assetToShareFile(asset: AssetReference, filename: string) {
+    const assetUrl = asset.asset_url || "";
+    if (!assetUrl) {
+        throw new Error("Generated file is not ready to share.");
+    }
+    const shareUrl = new URL(assetUrl, window.location.href);
+    shareUrl.searchParams.set("_share_fetch", `${Date.now()}`);
+    const response = await fetch(shareUrl.toString(), { cache: "no-store" });
+    if (!response.ok) {
+        throw new Error("Could not load generated file for sharing.");
+    }
+    const blob = await response.blob();
+    const mimeType = asset.mime_type || blob.type || "image/png";
+    return new File([blob], filename, { type: mimeType });
 }
 
 function resolveGenerationDecision(payload: ChatAssistantStructuredPayload | Record<string, unknown> | undefined) {
@@ -695,6 +733,7 @@ function GeneratedImageViewer({
     contentVersionId,
     fileType,
     onExport,
+    onExportForType,
     sourcePrompt,
 }: {
     assets: AssetReference[];
@@ -702,14 +741,96 @@ function GeneratedImageViewer({
     contentVersionId: string;
     fileType: FileType;
     onExport: (contentVersionId: string) => Promise<AssetReference[]>;
+    onExportForType: (contentVersionId: string, fileType: FileType) => Promise<AssetReference[]>;
     sourcePrompt: string;
 }) {
     const [activeIndex, setActiveIndex] = useState(0);
     const [isSaving, setIsSaving] = useState(false);
-    const imageAssets = assets
-        .map((asset) => ({ ...asset, resolvedUrl: asset.asset_url || "" }))
-        .filter((asset) => Boolean(asset.resolvedUrl));
+    const [isSharing, setIsSharing] = useState(false);
+    const [isPreparingShare, setIsPreparingShare] = useState(false);
+    const [shareError, setShareError] = useState("");
+    const preparedShareRef = useRef<{ key: string; files: File[] } | null>(null);
+    const sharePreparationRef = useRef<{ key: string; promise: Promise<File[]> } | null>(null);
+    const imageAssets = useMemo(
+        () =>
+            assets
+                .map((asset) => ({ ...asset, resolvedUrl: asset.asset_url || "" }))
+                .filter((asset) => Boolean(asset.resolvedUrl)),
+        [assets],
+    );
     const activeAsset = imageAssets[Math.min(activeIndex, Math.max(imageAssets.length - 1, 0))];
+    const shareCacheKey = useMemo(
+        () =>
+            [
+                contentVersionId,
+                fileType,
+                sourcePrompt,
+                ...assets.map((asset) => `${asset.asset_url || ""}:${asset.storage_path || ""}:${asset.mime_type || ""}`),
+                ...existingExportAssets.map((asset) => `${asset.asset_url || ""}:${asset.storage_path || ""}:${asset.mime_type || ""}`),
+            ].join("|"),
+        [assets, contentVersionId, existingExportAssets, fileType, sourcePrompt],
+    );
+    const prepareShareFiles = useCallback(async () => {
+        if (preparedShareRef.current?.key === shareCacheKey) {
+            return preparedShareRef.current.files;
+        }
+        if (sharePreparationRef.current?.key === shareCacheKey) {
+            return sharePreparationRef.current.promise;
+        }
+        const promise = (async () => {
+            setIsPreparingShare(true);
+            const matchingExistingAssets = existingExportAssets.filter((asset) => assetMatchesFileType(asset, fileType) && Boolean(asset.asset_url));
+            const refreshedAssets = contentVersionId
+                ? (await onExportForType(contentVersionId, fileType)).filter((asset) => assetMatchesFileType(asset, fileType) && Boolean(asset.asset_url))
+                : [];
+            const selectedFormatAssets = refreshedAssets.length ? refreshedAssets : matchingExistingAssets;
+            const fallbackAssets = imageAssets.filter((asset) => assetMatchesFileType(asset, fileType));
+            const assetsToShare = sortAssetsBySequence(selectedFormatAssets.length ? selectedFormatAssets : fallbackAssets);
+            if (!assetsToShare.length) {
+                throw new Error(`Could not prepare a ${fileType.toUpperCase()} file for sharing.`);
+            }
+            const files = await Promise.all(
+                assetsToShare.map((asset, index) =>
+                    assetToShareFile(
+                        asset,
+                        generatedSlideDownloadFilename(sourcePrompt, asset, index + 1, assetsToShare.length),
+                    ),
+                ),
+            );
+            preparedShareRef.current = { key: shareCacheKey, files };
+            return files;
+        })();
+        sharePreparationRef.current = { key: shareCacheKey, promise };
+        try {
+            return await promise;
+        } finally {
+            if (sharePreparationRef.current?.key === shareCacheKey) {
+                sharePreparationRef.current = null;
+            }
+            setIsPreparingShare(false);
+        }
+    }, [contentVersionId, existingExportAssets, fileType, imageAssets, onExportForType, shareCacheKey, sourcePrompt]);
+    const startSharePreparation = useCallback(() => {
+        if (!imageAssets.length) {
+            return;
+        }
+        if (preparedShareRef.current?.key === shareCacheKey || sharePreparationRef.current?.key === shareCacheKey) {
+            return;
+        }
+        void prepareShareFiles().catch((error) => {
+            setShareError(error instanceof Error ? error.message : "Could not prepare generated files for sharing.");
+        });
+    }, [imageAssets.length, prepareShareFiles, shareCacheKey]);
+
+    useEffect(() => {
+        if (preparedShareRef.current?.key !== shareCacheKey) {
+            preparedShareRef.current = null;
+        }
+        if (sharePreparationRef.current?.key !== shareCacheKey) {
+            sharePreparationRef.current = null;
+        }
+        setShareError("");
+    }, [shareCacheKey]);
 
     if (!activeAsset) {
         return null;
@@ -737,12 +858,39 @@ function GeneratedImageViewer({
         }
     };
 
-    const handleShare = async () => {
-        if (navigator.share) {
-            await navigator.share({ title: "Generated image", url: activeAsset.resolvedUrl });
-            return;
+    const handleShare = () => {
+        setShareError("");
+        try {
+            if (!navigator.share) {
+                throw new Error("File sharing is not supported in this browser.");
+            }
+            const preparedShare = preparedShareRef.current;
+            if (!preparedShare || preparedShare.key !== shareCacheKey) {
+                startSharePreparation();
+                setShareError(`Preparing ${fileType.toUpperCase()} file for sharing. Please click Share again when ready.`);
+                return;
+            }
+            const shareData: ShareData = {
+                title: filenameTopicFromPrompt(sourcePrompt),
+                files: preparedShare.files,
+            };
+            if (navigator.canShare && !navigator.canShare(shareData)) {
+                throw new Error(`This browser cannot share generated ${fileType.toUpperCase()} files.`);
+            }
+            setIsSharing(true);
+            void navigator.share(shareData)
+                .catch((error) => {
+                    if (error instanceof DOMException && error.name === "AbortError") {
+                        return;
+                    }
+                    setShareError(error instanceof Error ? error.message : "Could not share generated files.");
+                })
+                .finally(() => {
+                    setIsSharing(false);
+                });
+        } catch (error) {
+            setShareError(error instanceof Error ? error.message : "Could not share generated files.");
         }
-        await navigator.clipboard.writeText(activeAsset.resolvedUrl);
     };
 
     return (
@@ -761,14 +909,18 @@ function GeneratedImageViewer({
                     </button>
                     <button
                         type="button"
-                        onClick={() => void handleShare()}
-                        className="inline-flex h-7 items-center gap-1.5 bg-primary px-2.5 text-[11px] font-medium text-white"
+                        onPointerEnter={startSharePreparation}
+                        onFocus={startSharePreparation}
+                        onClick={handleShare}
+                        disabled={isSharing}
+                        className="inline-flex h-7 items-center gap-1.5 bg-primary px-2.5 text-[11px] font-medium text-white disabled:cursor-not-allowed disabled:opacity-70"
                     >
-                        <Share2 className="h-3.5 w-3.5" />
-                        <span>Share</span>
+                        {isSharing || isPreparingShare ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Share2 className="h-3.5 w-3.5" />}
+                        <span>{isPreparingShare ? "Preparing..." : isSharing ? "Sharing..." : "Share"}</span>
                     </button>
                 </div>
             </div>
+            {shareError ? <p className="mb-3 text-[11px] font-medium text-red-600">{shareError}</p> : null}
             <div className="flex items-center gap-4">
                 <div className="flex min-h-[220px] flex-1 items-center justify-center bg-[#EEF0F5] p-4">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1678,6 +1830,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                                             contentVersionId={contentVersionId}
                                                             fileType={studioFileType}
                                                             onExport={exportGeneratedAssets}
+                                                            onExportForType={exportGeneratedAssetsForType}
                                                             sourcePrompt={sourcePrompt}
                                                         />
                                                     ) : null}

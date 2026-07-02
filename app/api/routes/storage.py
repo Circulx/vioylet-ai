@@ -4,10 +4,12 @@ from __future__ import annotations
 import mimetypes
 from pathlib import Path
 import re
+from urllib.parse import urlparse
 
-from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import FileResponse, Response
 
+from app.core.config import get_settings
 from app.integrations.object_storage import LocalObjectStorage
 from app.services.asset_delivery import AssetDeliveryService
 
@@ -15,8 +17,41 @@ from app.services.asset_delivery import AssetDeliveryService
 router = APIRouter()
 
 
+def _is_allowed_download_origin(origin: str) -> bool:
+    settings = get_settings()
+    allowed_origins = {
+        *settings.cors_origins,
+        settings.frontend_base_url,
+    }
+    if origin in allowed_origins:
+        return True
+    parsed = urlparse(origin)
+    return parsed.scheme in {"http", "https"} and parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+
+
+def _download_cors_headers(request: Request) -> dict[str, str]:
+    origin = request.headers.get("origin", "").strip()
+    if not origin:
+        return {}
+    if not _is_allowed_download_origin(origin):
+        return {}
+    return {
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Credentials": "true",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": request.headers.get("access-control-request-headers", "*"),
+        "Vary": "Origin",
+    }
+
+
+@router.options("/download")
+async def download_asset_options(request: Request) -> Response:
+    return Response(status_code=204, headers=_download_cors_headers(request))
+
+
 @router.get("/download")
 async def download_asset(
+    request: Request,
     token: str = Query(..., min_length=1),
     filename: str | None = Query(default=None),
     download: bool | None = Query(default=None),
@@ -48,4 +83,5 @@ async def download_asset(
         media_type=media_type,
         filename=resolved_filename,
         content_disposition_type=disposition,
+        headers=_download_cors_headers(request),
     )

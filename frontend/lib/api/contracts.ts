@@ -99,12 +99,14 @@ export interface TenantCreateResponse {
   is_active: boolean;
   metadata_json: Record<string, unknown>;
   created_at: string;
-  activation_email: {
-    attempted: boolean;
-    delivered: boolean;
-    recipient_email: string;
-    reason?: string | null;
-  };
+  activation_email: ActivationEmailStatus;
+}
+
+export interface ActivationEmailStatus {
+  attempted: boolean;
+  delivered: boolean;
+  recipient_email: string;
+  reason?: string | null;
 }
 
 export interface TenantCreateRequest {
@@ -144,12 +146,9 @@ export interface TenantUserResponse {
   brand_space_ids: UUID[];
   created_at: string;
   last_login_at?: string | null;
-  activation_email?: {
-    attempted: boolean;
-    delivered: boolean;
-    recipient_email: string;
-    reason?: string | null;
-  };
+  activation_link_sent_count?: number;
+  activation_link_attempts_left?: number;
+  activation_email?: ActivationEmailStatus;
 }
 
 export interface TenantBrandSpaceSummaryResponse {

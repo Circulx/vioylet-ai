@@ -759,6 +759,8 @@ function GeneratedImageViewer({
         [assets],
     );
     const activeAsset = imageAssets[Math.min(activeIndex, Math.max(imageAssets.length - 1, 0))];
+    const sharePreparingNotice = `${fileType.toUpperCase()} file is being prepared.`;
+    const isSharePreparingNotice = shareError.startsWith(sharePreparingNotice);
     const shareCacheKey = useMemo(
         () =>
             [
@@ -798,6 +800,7 @@ function GeneratedImageViewer({
                 ),
             );
             preparedShareRef.current = { key: shareCacheKey, files };
+            setShareError("");
             return files;
         })();
         sharePreparationRef.current = { key: shareCacheKey, promise };
@@ -867,7 +870,7 @@ function GeneratedImageViewer({
             const preparedShare = preparedShareRef.current;
             if (!preparedShare || preparedShare.key !== shareCacheKey) {
                 startSharePreparation();
-                setShareError(`Preparing ${fileType.toUpperCase()} file for sharing. Please click Share again when ready.`);
+                setShareError(`${sharePreparingNotice} Click Share again when the button is ready.`);
                 return;
             }
             const shareData: ShareData = {
@@ -920,7 +923,7 @@ function GeneratedImageViewer({
                     </button>
                 </div>
             </div>
-            {shareError ? <p className="mb-3 text-[11px] font-medium text-red-600">{shareError}</p> : null}
+            {shareError ? <p className={`mb-3 text-[11px] font-medium ${isSharePreparingNotice ? "text-[#57536E]" : "text-red-600"}`}>{shareError}</p> : null}
             <div className="flex items-center gap-4">
                 <div className="flex min-h-[220px] flex-1 items-center justify-center bg-[#EEF0F5] p-4">
                     {/* eslint-disable-next-line @next/next/no-img-element */}

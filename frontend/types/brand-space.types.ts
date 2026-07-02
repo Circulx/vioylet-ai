@@ -91,6 +91,7 @@ export interface VisualIdentityFields {
   secondaryColor: string;
   additionalColors: AdditionalColorField[];
   colorPaletteUploads: BrandUploadItem[];
+  activeColorPaletteUploadId: string;
   typography: string;
   uploadedFonts: BrandUploadItem[];
   fontStyleGuide: BrandUploadItem[];
@@ -209,6 +210,7 @@ export const emptyBrandFormState: BrandFormState = {
     secondaryColor: "",
     additionalColors: [{ name: "", hex: "" }],
     colorPaletteUploads: [],
+    activeColorPaletteUploadId: "",
     typography: "",
     uploadedFonts: [],
     fontStyleGuide: [],
@@ -271,6 +273,7 @@ export interface BrandTabProps {
   form: BrandFormState;
   setForm: BrandFormSetter;
   onRemoveUpload?: (itemId: string) => void | Promise<void>;
+  onSelectColorPaletteUpload?: (itemId: string) => void;
 }
 
 export function updateBrandFormSection<
@@ -397,6 +400,11 @@ export function findBrandUploadItem(form: BrandFormState, itemId: string): Brand
 
 export function removeBrandUploadItem(form: BrandFormState, itemId: string): BrandFormState {
   const removeFromList = (items: BrandUploadItem[]) => items.filter((item) => item.id !== itemId);
+  const wasColorPaletteUpload = form.visualIdentity.colorPaletteUploads.some((item) => item.id === itemId);
+  const nextColorPaletteUploads = removeFromList(form.visualIdentity.colorPaletteUploads);
+  const shouldClearPalette = wasColorPaletteUpload && nextColorPaletteUploads.length === 0;
+  const shouldReplaceActivePalette =
+    wasColorPaletteUpload && form.visualIdentity.activeColorPaletteUploadId === itemId;
   const nextLogos = normalizeBrandLogoItems(removeFromList(form.core.logos));
   const primaryLogo =
     form.core.logo?.id === itemId
@@ -418,7 +426,15 @@ export function removeBrandUploadItem(form: BrandFormState, itemId: string): Bra
       ...form.visualIdentity,
       referenceCreatives: removeFromList(form.visualIdentity.referenceCreatives),
       moodBoards: removeFromList(form.visualIdentity.moodBoards),
-      colorPaletteUploads: removeFromList(form.visualIdentity.colorPaletteUploads),
+      primaryColor: shouldClearPalette ? "" : form.visualIdentity.primaryColor,
+      secondaryColor: shouldClearPalette ? "" : form.visualIdentity.secondaryColor,
+      additionalColors: shouldClearPalette ? [{ name: "", hex: "" }] : form.visualIdentity.additionalColors,
+      colorPaletteUploads: nextColorPaletteUploads,
+      activeColorPaletteUploadId: shouldClearPalette
+        ? ""
+        : shouldReplaceActivePalette
+          ? nextColorPaletteUploads[0]?.id || ""
+          : form.visualIdentity.activeColorPaletteUploadId,
       uploadedFonts: removeFromList(form.visualIdentity.uploadedFonts),
       fontStyleGuide: removeFromList(form.visualIdentity.fontStyleGuide),
     },

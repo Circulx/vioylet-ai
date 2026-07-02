@@ -27,7 +27,7 @@ import {
 } from "@/components/ui/collapsible";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageHeading } from "@/components/common/DesignPrimitives";
-import type { BrandResponse, ValidationSummaryResponse } from "@/lib/api/contracts";
+import type { BrandAttachmentResponse, BrandResponse, ValidationSummaryResponse } from "@/lib/api/contracts";
 import { API } from "@/lib/api/endpoints";
 import { request } from "@/lib/api/request";
 import { buildBrandWorkspaceHref } from "@/lib/brand-routing";
@@ -169,6 +169,142 @@ function extractedRole(entry: Record<string, unknown>) {
     return String(entry.role || "").trim().toLowerCase();
 }
 
+function colorPaletteEntriesFromData(data: Record<string, unknown>) {
+    const structuredEntries = Array.isArray(data.palette_entries)
+        ? data.palette_entries
+        : Array.isArray(data.palette)
+            ? data.palette
+            : Array.isArray(data.all)
+                ? data.all
+                : [];
+    const seenHexes = new Set<string>();
+    return structuredEntries
+        .map(toRecord)
+        .filter((entry) => {
+            const hex = extractedHex(entry).toUpperCase();
+            if (!hex || seenHexes.has(hex)) {
+                return false;
+            }
+            seenHexes.add(hex);
+            return true;
+        });
+}
+
+function colorPaletteEntriesFromUploadItem(item: BrandUploadItem | null | undefined) {
+    if (!item) {
+        return [];
+    }
+    return [
+        ...colorPaletteEntriesFromData(item.structuredDataJson || {}),
+        ...colorPaletteEntriesFromData(item.normalizedDataJson || {}),
+    ].filter((entry, index, entries) => {
+        const hex = extractedHex(entry).toUpperCase();
+        return hex && entries.findIndex((candidate) => extractedHex(candidate).toUpperCase() === hex) === index;
+    });
+}
+
+function colorNameFromPaletteEntry(entry: Record<string, unknown>) {
+    return String(
+        entry.color_name ||
+        entry.name ||
+        extractedRole(entry) ||
+        "Additional color",
+    );
+}
+
+function applyColorPaletteEntries(
+    form: BrandFormState,
+    activeColorPaletteUploadId: string,
+    entries: Record<string, unknown>[],
+): BrandFormState {
+    const primary = entries.find((entry) => extractedRole(entry) === "primary") || entries[0];
+    const secondary = entries.find((entry) => extractedRole(entry) === "secondary") || entries[1];
+    const additional = entries.filter((entry) => ![primary, secondary].includes(entry));
+    return {
+        ...form,
+        visualIdentity: {
+            ...form.visualIdentity,
+            activeColorPaletteUploadId,
+            primaryColor: primary ? extractedHex(primary) : "",
+            secondaryColor: secondary ? extractedHex(secondary) : "",
+            additionalColors: additional.length
+                ? additional.map((entry) => ({
+                    name: colorNameFromPaletteEntry(entry),
+                    hex: extractedHex(entry),
+                }))
+                : [{ name: "", hex: "" }],
+        },
+    };
+}
+
+function selectColorPaletteUpload(form: BrandFormState, itemId: string): BrandFormState {
+    const selectedItem = form.visualIdentity.colorPaletteUploads.find((item) => item.id === itemId);
+    if (!selectedItem) {
+        return form;
+    }
+    const entries = colorPaletteEntriesFromUploadItem(selectedItem);
+    if (!entries.length) {
+        return {
+            ...form,
+            visualIdentity: {
+                ...form.visualIdentity,
+                activeColorPaletteUploadId: itemId,
+                primaryColor: "",
+                secondaryColor: "",
+                additionalColors: [{ name: "", hex: "" }],
+            },
+        };
+    }
+    return applyColorPaletteEntries(form, itemId, entries);
+}
+
+function attachmentToUploadPatch(asset: BrandAttachmentResponse): UploadStatePatch {
+    return {
+        uploadedAssetId: asset.id,
+        assetUrl: asset.asset_url || undefined,
+        storagePath: asset.storage_path,
+        lifecycleState: asset.processing_status?.lifecycle_state || asset.lifecycle_state,
+        channel: asset.channel,
+        mimeType: asset.mime_type,
+        pageCount: asset.page_count,
+        processingError: asset.processing_error,
+        fieldKey: asset.field_key || undefined,
+        assetCategory: asset.asset_category || undefined,
+        validationState: asset.validation_state,
+        validationSummaryJson: asset.validation_summary_json,
+        structuredDataJson: asset.structured_data_json,
+        normalizedDataJson: asset.normalized_data_json,
+        processingStatus: asset.processing_status || undefined,
+        routing: asset.routing || undefined,
+        isActive: asset.is_active,
+    };
+}
+
+function syncActiveColorPaletteFields(form: BrandFormState): BrandFormState {
+    const activeId = form.visualIdentity.activeColorPaletteUploadId;
+    if (activeId) {
+        return selectColorPaletteUpload(form, activeId);
+    }
+    const firstProcessedItem = form.visualIdentity.colorPaletteUploads.find(
+        (item) => colorPaletteEntriesFromUploadItem(item).length > 0,
+    );
+    if (firstProcessedItem) {
+        return selectColorPaletteUpload(form, firstProcessedItem.id);
+    }
+    return form.visualIdentity.colorPaletteUploads.length
+        ? form
+        : {
+            ...form,
+            visualIdentity: {
+                ...form.visualIdentity,
+                primaryColor: "",
+                secondaryColor: "",
+                additionalColors: [{ name: "", hex: "" }],
+                activeColorPaletteUploadId: "",
+            },
+        };
+}
+
 function isSyncedUploadPatch(patch: UploadStatePatch) {
     const state = normalizeUploadState(
         patch.lifecycleState || patch.processingStatus?.lifecycle_state,
@@ -176,7 +312,11 @@ function isSyncedUploadPatch(patch: UploadStatePatch) {
     return ["indexed", "complete", "ready"].includes(state);
 }
 
-function applyExtractedVisualIdentityData(form: BrandFormState, patch: UploadStatePatch): BrandFormState {
+function applyExtractedVisualIdentityData(
+    form: BrandFormState,
+    patch: UploadStatePatch,
+    itemId?: string,
+): BrandFormState {
     if (!isSyncedUploadPatch(patch)) {
         return form;
     }
@@ -188,34 +328,10 @@ function applyExtractedVisualIdentityData(form: BrandFormState, patch: UploadSta
     let changed = false;
 
     if (fieldKey === "color_palette" || assetCategory === "color_palette") {
-        const entries = Array.isArray(structuredData.palette_entries)
-            ? structuredData.palette_entries.map(toRecord).filter((entry) => extractedHex(entry))
-            : [];
-        if (entries.length) {
-            const primary = entries.find((entry) => extractedRole(entry) === "primary") || entries[0];
-            const secondary = entries.find((entry) => extractedRole(entry) === "secondary") || entries[1];
-            const additional = entries.filter((entry) => ![primary, secondary].includes(entry));
-            const nextVisualIdentity = { ...visualIdentity };
-
-            if (!nextVisualIdentity.primaryColor && primary) {
-                nextVisualIdentity.primaryColor = extractedHex(primary);
-                changed = true;
-            }
-            if (!nextVisualIdentity.secondaryColor && secondary) {
-                nextVisualIdentity.secondaryColor = extractedHex(secondary);
-                changed = true;
-            }
-            if (
-                additional.length &&
-                !nextVisualIdentity.additionalColors.some((color) => color.name.trim() || color.hex.trim())
-            ) {
-                nextVisualIdentity.additionalColors = additional.map((entry) => ({
-                    name: String(entry.color_name || entry.name || extractedRole(entry) || "Additional color"),
-                    hex: extractedHex(entry),
-                }));
-                changed = true;
-            }
-            visualIdentity = nextVisualIdentity;
+        const entries = colorPaletteEntriesFromData(structuredData);
+        const activeId = form.visualIdentity.activeColorPaletteUploadId;
+        if (entries.length && itemId && (!activeId || activeId === itemId)) {
+            return applyColorPaletteEntries(form, itemId, entries);
         }
     }
 
@@ -731,7 +847,7 @@ export default function BrandSpaceEditor({
                     return;
                 }
                 setForm((current) => {
-                    const merged = mergeBrandAttachmentsIntoForm(current, attachments);
+                    const merged = syncActiveColorPaletteFields(mergeBrandAttachmentsIntoForm(current, attachments));
                     formRef.current = merged;
                     return merged;
                 });
@@ -887,10 +1003,54 @@ export default function BrandSpaceEditor({
     const applyUploadUpdate = (itemId: string, patch: Parameters<typeof updateBrandUploadItemState>[2]) => {
         setForm((current) => {
             const updated = updateBrandUploadItemState(current, itemId, patch);
-            const next = applyExtractedVisualIdentityData(updated, patch);
+            const next = applyExtractedVisualIdentityData(updated, patch, itemId);
             formRef.current = next;
             return next;
         });
+    };
+
+    const handleSelectColorPaletteUpload = async (itemId: string) => {
+        const targetItem = findBrandUploadItem(formRef.current, itemId);
+        if (!targetItem) {
+            return;
+        }
+
+        if (!targetItem.uploadedAssetId || !effectiveBrandId) {
+            setForm((current) => {
+                const next = selectColorPaletteUpload(current, itemId);
+                formRef.current = next;
+                return next;
+            });
+            return;
+        }
+
+        setForm((current) => {
+            const next = selectColorPaletteUpload(current, itemId);
+            formRef.current = next;
+            return next;
+        });
+
+        try {
+            const asset = await request(API.BRANDS.ATTACHMENT_DETAIL, {
+                pathParams: { brandId: effectiveBrandId, assetId: targetItem.uploadedAssetId },
+            });
+            const patch = attachmentToUploadPatch(asset);
+            setForm((current) => {
+                if (current.visualIdentity.activeColorPaletteUploadId !== itemId) {
+                    return current;
+                }
+                const updated = updateBrandUploadItemState(current, itemId, patch);
+                const next = selectColorPaletteUpload(updated, itemId);
+                formRef.current = next;
+                return next;
+            });
+        } catch {
+            setForm((current) => {
+                const next = selectColorPaletteUpload(current, itemId);
+                formRef.current = next;
+                return next;
+            });
+        }
     };
 
     useEffect(() => {
@@ -1040,7 +1200,7 @@ export default function BrandSpaceEditor({
 
             if (hydratedAttachmentBrandId !== currentBrand.id) {
                 const existingAttachments = await listBrandSpaceAttachments(currentBrand.id);
-                formSnapshot = mergeBrandAttachmentsIntoForm(formSnapshot, existingAttachments);
+                formSnapshot = syncActiveColorPaletteFields(mergeBrandAttachmentsIntoForm(formSnapshot, existingAttachments));
                 formRef.current = formSnapshot;
                 setForm(formSnapshot);
             }
@@ -1071,7 +1231,7 @@ export default function BrandSpaceEditor({
                 }),
             );
             const latestAttachments = await listBrandSpaceAttachments(currentBrand.id);
-            formSnapshot = mergeBrandAttachmentsIntoForm(formRef.current, latestAttachments);
+            formSnapshot = syncActiveColorPaletteFields(mergeBrandAttachmentsIntoForm(formRef.current, latestAttachments));
             formRef.current = formSnapshot;
             setForm(formSnapshot);
             setHydratedAttachmentBrandId(currentBrand.id);
@@ -1145,7 +1305,11 @@ export default function BrandSpaceEditor({
                     pathParams: { brandId: effectiveBrandId, assetId: targetItem.uploadedAssetId },
                 });
             }
-            setForm((current) => removeBrandUploadItem(current, itemId));
+            setForm((current) => {
+                const next = syncActiveColorPaletteFields(removeBrandUploadItem(current, itemId));
+                formRef.current = next;
+                return next;
+            });
             showSuccessToast("File removed", `Removed ${targetItem.name}.`);
         } catch (error) {
             const detail = axios.isAxiosError(error)
@@ -1456,7 +1620,12 @@ export default function BrandSpaceEditor({
                         const TabComponent = tab.content;
                         return (
                             <TabsContent key={tab.id} value={tab.value} className="w-full">
-                                <TabComponent form={form} setForm={setForm} onRemoveUpload={handleRemoveUpload} />
+                                <TabComponent
+                                    form={form}
+                                    setForm={setForm}
+                                    onRemoveUpload={handleRemoveUpload}
+                                    onSelectColorPaletteUpload={handleSelectColorPaletteUpload}
+                                />
                             </TabsContent>
                         );
                     })}

@@ -39,7 +39,7 @@ type VisualMetadataUpload = {
     tagDraft: string;
 };
 
-const VisualIdentity = ({ form, setForm, onRemoveUpload }: BrandTabProps) => {
+const VisualIdentity = ({ form, setForm, onRemoveUpload, onSelectColorPaletteUpload }: BrandTabProps) => {
     const googleFontsQuery = useGoogleFonts();
 
     const updateField = <TKey extends keyof typeof form.visualIdentity>(
@@ -190,6 +190,8 @@ const VisualIdentity = ({ form, setForm, onRemoveUpload }: BrandTabProps) => {
                         bgColor="bg-[#FFFFFF]"
                         items={form.visualIdentity.colorPaletteUploads}
                         onAdd={(files) => addUploads("colorPaletteUploads", files)}
+                        activeItemId={form.visualIdentity.activeColorPaletteUploadId}
+                        onSelect={onSelectColorPaletteUpload}
                         onRemove={(itemId) => {
                             if (onRemoveUpload) {
                                 void onRemoveUpload(itemId);

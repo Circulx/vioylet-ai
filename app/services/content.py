@@ -15,7 +15,8 @@ from uuid import UUID, uuid4
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 from docx import Document
-from docx.shared import Inches
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.shared import Inches, Pt
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas as pdf_canvas
 
@@ -823,6 +824,53 @@ class ContentService:
                 filename=asset.storage_path.rsplit("/", 1)[-1],
             ),
             "metadata": asset.metadata_json,
+        }
+
+    @staticmethod
+    def _asset_matches_export_file_type(asset: GeneratedAsset, file_type: str) -> bool:
+        mime_type = str(asset.mime_type or "").strip().lower()
+        if file_type == "png":
+            return mime_type == "image/png"
+        if file_type == "jpg":
+            return mime_type in {"image/jpeg", "image/jpg"}
+        if file_type == "pdf":
+            return mime_type == "application/pdf"
+        if file_type == "doc":
+            return "wordprocessingml" in mime_type or mime_type == "application/msword"
+        return False
+
+    def _cached_export_payload(
+        self,
+        *,
+        assets: list[GeneratedAsset],
+        file_type: str,
+    ) -> dict | None:
+        cached_exports = [
+            asset
+            for asset in assets
+            if str((asset.metadata_json or {}).get("output_file_type") or "").strip().lower() == file_type
+            and self._asset_matches_export_file_type(asset, file_type)
+            and str(asset.asset_role) in {AssetRole.RENDER_EXPORT.value, AssetRole.GENERATED_DOCUMENT.value}
+        ]
+        if not cached_exports:
+            return None
+        cached_exports = sorted(cached_exports, key=lambda item: (item.created_at, str(item.id)))
+        preview_asset = next(
+            (
+                asset
+                for asset in sorted(assets, key=lambda item: (item.created_at, str(item.id)))
+                if str(asset.asset_role) == AssetRole.RENDER_PREVIEW.value
+            ),
+            None,
+        )
+        return {
+            "preview_asset": self._generated_asset_payload(preview_asset) if preview_asset else None,
+            "export_assets": [self._generated_asset_payload(asset) for asset in cached_exports],
+            "renderer_metadata": {
+                "cached_export": True,
+                "output_file_type": file_type,
+                "page_count": len(cached_exports),
+            },
         }
 
     @staticmethod
@@ -7941,7 +7989,7 @@ class ContentService:
         image: Image.Image,
         filename_prefix: str,
         suffix: str = "png",
-        quality: int = 92,
+        quality: int = 86,
     ) -> dict:
         # Internal helper for store AI final render image; it keeps the public service method focused on
         # orchestration instead of low-level shaping.
@@ -7950,7 +7998,7 @@ class ContentService:
             self._flatten_image_for_jpg(image).save(buffer, format="JPEG", quality=quality, optimize=True)
             mime_type = "image/jpeg"
         else:
-            image.save(buffer, format="PNG")
+            image.save(buffer, format="PNG", optimize=True)
             mime_type = "image/png"
         stored = self.storage.save_bytes(
             content.tenant_id,
@@ -7968,6 +8016,72 @@ class ContentService:
             "height": image.height,
         }
 
+    @staticmethod
+    def _optimized_export_image(image: Image.Image, *, max_dimension: int = 1800) -> Image.Image:
+        # Keeps export artifacts smaller while preserving enough pixels for sharp social/document previews.
+        optimized = image.convert("RGB")
+        longest_edge = max(optimized.size)
+        if longest_edge > max_dimension:
+            scale = max_dimension / float(longest_edge)
+            optimized = optimized.resize(
+                (max(1, round(optimized.width * scale)), max(1, round(optimized.height * scale))),
+                Image.Resampling.LANCZOS,
+            )
+        return optimized
+
+    @classmethod
+    def _jpeg_export_buffer(cls, image: Image.Image, *, max_dimension: int = 1800, quality: int = 86) -> BytesIO:
+        buffer = BytesIO()
+        cls._optimized_export_image(image, max_dimension=max_dimension).save(
+            buffer,
+            format="JPEG",
+            quality=quality,
+            optimize=True,
+            progressive=True,
+            subsampling=1,
+        )
+        buffer.seek(0)
+        return buffer
+
+    @staticmethod
+    def _prepare_export_document() -> Document:
+        document = Document()
+        for section in document.sections:
+            section.top_margin = Inches(0.35)
+            section.bottom_margin = Inches(0.35)
+            section.left_margin = Inches(0.35)
+            section.right_margin = Inches(0.35)
+        return document
+
+    @staticmethod
+    def _document_content_width_inches(document: Document) -> float:
+        section = document.sections[0]
+        content_width_emu = section.page_width - section.left_margin - section.right_margin
+        return max(1.0, float(content_width_emu) / 914400.0)
+
+    @staticmethod
+    def _document_content_height_inches(document: Document) -> float:
+        section = document.sections[0]
+        content_height_emu = section.page_height - section.top_margin - section.bottom_margin
+        return max(1.0, float(content_height_emu) / 914400.0)
+
+    @classmethod
+    def _append_export_image_to_document(cls, document: Document, image: Image.Image) -> None:
+        paragraph = document.add_paragraph()
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        paragraph.paragraph_format.space_before = Pt(0)
+        paragraph.paragraph_format.space_after = Pt(0)
+        paragraph.paragraph_format.line_spacing = 1
+        run = paragraph.add_run()
+        max_width = cls._document_content_width_inches(document)
+        max_height = cls._document_content_height_inches(document)
+        scale = min(max_width / max(float(image.width), 1.0), max_height / max(float(image.height), 1.0))
+        run.add_picture(
+            cls._jpeg_export_buffer(image),
+            width=Inches(image.width * scale),
+            height=Inches(image.height * scale),
+        )
+
     def _build_ai_final_render_pdf_export(
         self,
         *,
@@ -7984,10 +8098,11 @@ class ContentService:
         # this exact shape.
         for asset in source_assets:
             with open_image_asset(self.storage.absolute_path(str(asset.get("storage_path") or ""))) as raw_image:
-                image = raw_image.convert("RGB")
+                image = self._optimized_export_image(raw_image)
             width, height = image.size
+            jpeg_buffer = self._jpeg_export_buffer(image, max_dimension=max(width, height))
             pdf.setPageSize((width, height))
-            pdf.drawImage(ImageReader(image), 0, 0, width=width, height=height, preserveAspectRatio=True, mask="auto")
+            pdf.drawImage(ImageReader(jpeg_buffer), 0, 0, width=width, height=height, preserveAspectRatio=True, mask="auto")
             pdf.showPage()
         pdf.save()
         stored = self.storage.save_bytes(
@@ -8016,18 +8131,13 @@ class ContentService:
         # orchestration instead of low-level shaping.
         if not source_assets:
             return None
-        document = Document()
+        document = self._prepare_export_document()
         # Builds the grouped response or persistence payload one record at a time because later steps expect
         # this exact shape.
-        for index, asset in enumerate(source_assets):
+        for asset in source_assets:
             with open_image_asset(self.storage.absolute_path(str(asset.get("storage_path") or ""))) as raw_image:
-                image = raw_image.convert("RGB")
-            image_buffer = BytesIO()
-            image.save(image_buffer, format="PNG")
-            image_buffer.seek(0)
-            document.add_picture(image_buffer, width=Inches(6.5))
-            if index < len(source_assets) - 1:
-                document.add_page_break()
+                image = self._optimized_export_image(raw_image)
+            self._append_export_image_to_document(document, image)
         buffer = BytesIO()
         document.save(buffer)
         stored = self.storage.save_bytes(
@@ -8056,17 +8166,25 @@ class ContentService:
         # Internal helper for ai final render export assets; it keeps the public service method focused on
         # orchestration instead of low-level shaping.
         if file_type == "png":
-            return [
-                self._decorate_asset_reference({**asset, "asset_role": str(AssetRole.RENDER_EXPORT)})
-                for asset in source_assets
-            ]
+            converted: list[dict] = []
+            for asset in source_assets:
+                with open_image_asset(self.storage.absolute_path(str(asset.get("storage_path") or ""))) as raw_image:
+                    image = self._optimized_export_image(raw_image)
+                png_asset = self._store_ai_final_render_image(
+                    content=content,
+                    image=image,
+                    filename_prefix="export",
+                    suffix="png",
+                )
+                converted.append(self._decorate_asset_reference(png_asset))
+            return converted
         # This branch separates the special case from the normal path so later logic can work with cleaner
         # assumptions.
         if file_type == "jpg":
             converted: list[dict] = []
             for asset in source_assets:
                 with open_image_asset(self.storage.absolute_path(str(asset.get("storage_path") or ""))) as raw_image:
-                    image = raw_image.convert("RGBA")
+                    image = self._optimized_export_image(raw_image)
                 jpg_asset = self._store_ai_final_render_image(
                     content=content,
                     image=image,
@@ -11008,6 +11126,7 @@ class ContentService:
         # instead of low-level shaping.
         preview_asset = response.get("preview_asset")
         export_assets = response.get("export_assets", [])
+        output_file_type = str((response.get("renderer_metadata") or {}).get("output_file_type") or "").strip().lower()
         # Builds the grouped response or persistence payload one record at a time because later steps expect
         # this exact shape.
         for asset in [preview_asset, *export_assets]:
@@ -11026,6 +11145,7 @@ class ContentService:
                 existing.metadata_json = {
                     **existing.metadata_json,
                     "renderer_output": True,
+                    **({"output_file_type": output_file_type} if output_file_type and asset in export_assets else {}),
                 }
                 continue
             await self.assets.add(
@@ -11039,7 +11159,10 @@ class ContentService:
                     storage_path=asset["storage_path"],
                     width=asset.get("width"),
                     height=asset.get("height"),
-                    metadata_json={"renderer_output": True},
+                    metadata_json={
+                        "renderer_output": True,
+                        **({"output_file_type": output_file_type} if output_file_type and asset in export_assets else {}),
+                    },
                 )
             )
 
@@ -12470,6 +12593,10 @@ class ContentService:
             if asset.asset_role in {AssetRole.AI_IMAGE, AssetRole.REFERENCE_CREATIVE, AssetRole.TEMPLATE_PREVIEW}
         ]
         merged_panel = self._merge_studio_panel(content.studio_panel, studio_panel)
+        requested_file_type = str(merged_panel.get("file_type") or "png").strip().lower()
+        cached_export_payload = self._cached_export_payload(assets=assets, file_type=requested_file_type)
+        if cached_export_payload:
+            return cached_export_payload
         explainability = content.explainability_metadata or {}
         visual_generation_mode = str(explainability.get("mode") or "").strip().lower() == "visual_generation"
         trace_id = str(explainability.get("generation_trace_id") or "").strip() or None
@@ -12587,6 +12714,8 @@ class ContentService:
                     "render_short_circuit": "ai_final_render",
                 },
             )
+            await self._persist_render_assets(content, selected_template_id, payload)
+            await self.session.commit()
             return payload
         filter_literal_reference_surfaces = self._should_filter_literal_reference_surfaces_for_render(
             creative_decision=creative_decision,
@@ -12704,6 +12833,8 @@ class ContentService:
                             "render_short_circuit": "selective_ai_final_render",
                         },
                     )
+                    await self._persist_render_assets(content, selected_template_id, payload)
+                    await self.session.commit()
                     return payload
         # This branch separates the special case from the normal path so later logic can work with cleaner
         # assumptions.
@@ -12753,6 +12884,8 @@ class ContentService:
                     "render_short_circuit": "ai_final_render",
                 },
             )
+            await self._persist_render_assets(content, selected_template_id, payload)
+            await self.session.commit()
             return payload
         should_render_missing_ai_assets_for_rewrite = self._should_render_missing_ai_final_assets_for_rewrite(
             content=content,
@@ -12804,6 +12937,8 @@ class ContentService:
                         "render_short_circuit": "ai_final_render_regenerated_for_rewrite",
                     },
                 )
+                await self._persist_render_assets(content, selected_template_id, payload)
+                await self.session.commit()
                 return payload
         legacy_renderer_allowed = bool(explainability.get("allow_legacy_renderer_export"))
         if (
@@ -12884,6 +13019,7 @@ class ContentService:
         payload["renderer_metadata"]["template_id"] = str(render_template.id) if render_template else None
         payload["renderer_metadata"]["logo_asset_path"] = logo_asset_path
         payload["renderer_metadata"]["scene_graph_used"] = bool(resolved_scene_graph)
+        payload["renderer_metadata"]["output_file_type"] = str(merged_panel.get("file_type") or "png").strip().lower()
         existing_manifest = payload["renderer_metadata"].get("render_manifest") or {}
         payload["renderer_metadata"]["render_manifest"] = {
             "zones_used": existing_manifest.get("zones_used", resolved_blueprint.get("zones", [])),

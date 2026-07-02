@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import {
     ArrowUp,
@@ -41,6 +41,7 @@ import {
     useChatSessions,
     useCancelChatGeneration,
     useCreateChatSession,
+    useExportContent,
     useSendChatMessage,
     useTemplateRecommendations,
     useUploadKnowledgeAsset,
@@ -168,14 +169,20 @@ function HighlightedMessageText({
     }
 
     const parts = text.split(new RegExp(`(${escapeRegExp(trimmedQuery)})`, "gi"));
-    let occurrenceIndex = -1;
+    const highlightedParts = parts.map((part, index) => ({
+        part,
+        index,
+        occurrenceIndex: parts
+            .slice(0, index + 1)
+            .filter((candidate) => candidate.toLowerCase() === trimmedQuery.toLowerCase()).length - 1,
+        isMatch: part.toLowerCase() === trimmedQuery.toLowerCase(),
+    }));
     return (
         <>
-            {parts.map((part, index) => {
-                if (part.toLowerCase() !== trimmedQuery.toLowerCase()) {
+            {highlightedParts.map(({ part, index, occurrenceIndex, isMatch }) => {
+                if (!isMatch) {
                     return <span key={`${part}-${index}`}>{part}</span>;
                 }
-                occurrenceIndex += 1;
                 const isActiveMatch = occurrenceIndex === activeOccurrenceIndex;
                 return (
                         <mark
@@ -223,6 +230,27 @@ function dedupeImageAssets(assets: AssetReference[]) {
     });
 }
 
+function assetSequenceIndex(asset: AssetReference, fallbackIndex: number) {
+    const metadata = (asset as AssetReference & { metadata?: Record<string, unknown> }).metadata || {};
+    const metadataIndex = Number(metadata.slide_index || metadata.page_index || metadata.order);
+    if (Number.isFinite(metadataIndex) && metadataIndex > 0) {
+        return metadataIndex;
+    }
+    const path = `${asset.storage_path || ""} ${asset.asset_url || ""}`;
+    const match = path.match(/(?:slide|page|p)[-_]?(\d+)/i);
+    if (match) {
+        return Number(match[1]);
+    }
+    return fallbackIndex + 1;
+}
+
+function sortAssetsBySequence(assets: AssetReference[]) {
+    return assets
+        .map((asset, index) => ({ asset, sequence: assetSequenceIndex(asset, index), index }))
+        .sort((left, right) => left.sequence - right.sequence || left.index - right.index)
+        .map((entry) => entry.asset);
+}
+
 function resolveGeneratedImageAssets(payload: ChatAssistantStructuredPayload | Record<string, unknown> | undefined) {
     if (!payload || Array.isArray(payload)) {
         return [];
@@ -232,18 +260,181 @@ function resolveGeneratedImageAssets(payload: ChatAssistantStructuredPayload | R
         (asset) => asset.mime_type.startsWith("image/") && Boolean(asset.asset_url),
     );
     if (exportImages.length) {
-        return dedupeImageAssets(exportImages);
+        return sortAssetsBySequence(dedupeImageAssets(exportImages));
     }
     if (typedPayload.preview_asset?.asset_url && typedPayload.preview_asset.mime_type.startsWith("image/")) {
         return [typedPayload.preview_asset];
     }
-    return dedupeImageAssets(
+    return sortAssetsBySequence(dedupeImageAssets(
         (typedPayload.assets || []).filter((asset) =>
             asset.mime_type.startsWith("image/") &&
             Boolean(asset.asset_url) &&
             ["render_export", "render_preview", "ai_image"].includes(asset.asset_role),
         ),
-    );
+    ));
+}
+
+function resolveGeneratedExportAssets(payload: ChatAssistantStructuredPayload | Record<string, unknown> | undefined) {
+    if (!payload || Array.isArray(payload)) {
+        return [];
+    }
+    const typedPayload = payload as ChatAssistantStructuredPayload;
+    return (typedPayload.export_assets || []).filter((asset) => Boolean(asset.asset_url));
+}
+
+function resolvePreviousUserPrompt(messages: ChatMessageResponse[], currentIndex: number) {
+    for (let index = currentIndex - 1; index >= 0; index -= 1) {
+        const message = messages[index];
+        if (message?.role === "user") {
+            return message.message_text;
+        }
+    }
+    return "";
+}
+
+const FILENAME_NOISE_WORDS = new Set([
+    "a",
+    "an",
+    "the",
+    "please",
+    "create",
+    "generate",
+    "make",
+    "design",
+    "draft",
+    "write",
+    "build",
+    "produce",
+    "linkedin",
+    "instagram",
+    "facebook",
+    "twitter",
+    "youtube",
+    "carousel",
+    "post",
+    "static",
+    "image",
+    "content",
+    "creative",
+    "infographic",
+    "story",
+    "reel",
+    "png",
+    "jpg",
+    "jpeg",
+    "pdf",
+    "doc",
+    "docx",
+]);
+
+function filenameTopicFromPrompt(prompt: string) {
+    const withoutAudience = prompt
+        .replace(/^target audience:\s*.*?(?:\n\n|\n|$)/i, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    const firstSentence = withoutAudience.split(/[.!?]/)[0] || withoutAudience;
+    const topicMatch = firstSentence.match(/\b(?:on|about|regarding|around|titled|called)\s+(.+)$/i);
+    const topic = (topicMatch?.[1] || firstSentence)
+        .replace(/^(?:please\s+)?(?:create|generate|make|design|draft|write|build|produce)\s+(?:me\s+)?(?:a|an|the)?\s*/i, "")
+        .replace(/\b(?:focus|include|highlight|cover|explain|show)\b.*$/i, "")
+        .trim();
+    const tokens = topic
+        .toLowerCase()
+        .replace(/&/g, " and ")
+        .replace(/[^a-z0-9\s-]/g, " ")
+        .split(/[\s-]+/)
+        .map((token) => token.trim())
+        .filter((token) => token && !FILENAME_NOISE_WORDS.has(token));
+    return tokens.slice(0, 12).join("-") || "generated-content";
+}
+
+function assetExtension(asset: AssetReference | undefined) {
+    const mimeType = (asset?.mime_type || "").toLowerCase();
+    if (mimeType.includes("pdf")) {
+        return "pdf";
+    }
+    if (mimeType.includes("wordprocessingml") || mimeType.includes("msword")) {
+        return "docx";
+    }
+    if (mimeType.includes("jpeg") || mimeType.includes("jpg")) {
+        return "jpg";
+    }
+    if (mimeType.includes("png")) {
+        return "png";
+    }
+    const storageExtension = (asset?.storage_path || "").split(".").pop()?.toLowerCase();
+    return storageExtension && /^[a-z0-9]+$/.test(storageExtension) ? storageExtension : "png";
+}
+
+function generatedDownloadFilename(prompt: string, asset: AssetReference | undefined) {
+    return `${filenameTopicFromPrompt(prompt)}.${assetExtension(asset)}`;
+}
+
+function generatedSlideDownloadFilename(prompt: string, asset: AssetReference | undefined, slideIndex: number, totalSlides: number) {
+    const baseName = filenameTopicFromPrompt(prompt);
+    const extension = assetExtension(asset);
+    const paddedIndex = String(slideIndex).padStart(String(totalSlides).length, "0");
+    return totalSlides > 1 ? `${baseName}-slide-${paddedIndex}.${extension}` : `${baseName}.${extension}`;
+}
+
+function assetMatchesFileType(asset: AssetReference, fileType: FileType) {
+    const mimeType = (asset.mime_type || "").toLowerCase();
+    if (fileType === "png") {
+        return mimeType.includes("png");
+    }
+    if (fileType === "jpg") {
+        return mimeType.includes("jpeg") || mimeType.includes("jpg");
+    }
+    if (fileType === "pdf") {
+        return mimeType.includes("pdf");
+    }
+    return mimeType.includes("wordprocessingml") || mimeType.includes("msword");
+}
+
+function triggerDownload(url: string, filename: string) {
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.rel = "noopener noreferrer";
+    link.style.display = "none";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+}
+
+function downloadUrlWithFilename(url: string, filename: string) {
+    try {
+        const downloadUrl = new URL(url, window.location.href);
+        downloadUrl.searchParams.set("filename", filename);
+        downloadUrl.searchParams.set("download", "true");
+        return downloadUrl.toString();
+    } catch {
+        return url;
+    }
+}
+
+function downloadAsset(asset: AssetReference, filename: string) {
+    const downloadUrl = asset.asset_url || "";
+    if (!downloadUrl) {
+        return;
+    }
+    triggerDownload(downloadUrlWithFilename(downloadUrl, filename), filename);
+}
+
+async function assetToShareFile(asset: AssetReference, filename: string) {
+    const assetUrl = asset.asset_url || "";
+    if (!assetUrl) {
+        throw new Error("Generated file is not ready to share.");
+    }
+    const shareUrl = new URL(assetUrl, window.location.href);
+    shareUrl.searchParams.set("_share_fetch", `${Date.now()}`);
+    const response = await fetch(shareUrl.toString(), { cache: "no-store" });
+    if (!response.ok) {
+        throw new Error("Could not load generated file for sharing.");
+    }
+    const blob = await response.blob();
+    const mimeType = asset.mime_type || blob.type || "image/png";
+    return new File([blob], filename, { type: mimeType });
 }
 
 function resolveGenerationDecision(payload: ChatAssistantStructuredPayload | Record<string, unknown> | undefined) {
@@ -536,27 +727,173 @@ function GenerationDecisionCard({ decision }: { decision: GenerationDecision | n
     );
 }
 
-function GeneratedImageViewer({ assets }: { assets: AssetReference[] }) {
+function GeneratedImageViewer({
+    assets,
+    existingExportAssets,
+    contentVersionId,
+    fileType,
+    onExport,
+    onExportForType,
+    sourcePrompt,
+}: {
+    assets: AssetReference[];
+    existingExportAssets: AssetReference[];
+    contentVersionId: string;
+    fileType: FileType;
+    onExport: (contentVersionId: string) => Promise<AssetReference[]>;
+    onExportForType: (contentVersionId: string, fileType: FileType) => Promise<AssetReference[]>;
+    sourcePrompt: string;
+}) {
     const [activeIndex, setActiveIndex] = useState(0);
-    const imageAssets = assets
-        .map((asset) => ({ ...asset, resolvedUrl: asset.asset_url || "" }))
-        .filter((asset) => Boolean(asset.resolvedUrl));
+    const [isSaving, setIsSaving] = useState(false);
+    const [isSharing, setIsSharing] = useState(false);
+    const [isPreparingShare, setIsPreparingShare] = useState(false);
+    const [shareError, setShareError] = useState("");
+    const preparedShareRef = useRef<{ key: string; files: File[] } | null>(null);
+    const sharePreparationRef = useRef<{ key: string; promise: Promise<File[]> } | null>(null);
+    const imageAssets = useMemo(
+        () =>
+            assets
+                .map((asset) => ({ ...asset, resolvedUrl: asset.asset_url || "" }))
+                .filter((asset) => Boolean(asset.resolvedUrl)),
+        [assets],
+    );
     const activeAsset = imageAssets[Math.min(activeIndex, Math.max(imageAssets.length - 1, 0))];
+    const sharePreparingNotice = `${fileType.toUpperCase()} file is being prepared.`;
+    const isSharePreparingNotice = shareError.startsWith(sharePreparingNotice);
+    const shareCacheKey = useMemo(
+        () =>
+            [
+                contentVersionId,
+                fileType,
+                sourcePrompt,
+                ...assets.map((asset) => `${asset.asset_url || ""}:${asset.storage_path || ""}:${asset.mime_type || ""}`),
+                ...existingExportAssets.map((asset) => `${asset.asset_url || ""}:${asset.storage_path || ""}:${asset.mime_type || ""}`),
+            ].join("|"),
+        [assets, contentVersionId, existingExportAssets, fileType, sourcePrompt],
+    );
+    const prepareShareFiles = useCallback(async () => {
+        if (preparedShareRef.current?.key === shareCacheKey) {
+            return preparedShareRef.current.files;
+        }
+        if (sharePreparationRef.current?.key === shareCacheKey) {
+            return sharePreparationRef.current.promise;
+        }
+        const promise = (async () => {
+            setIsPreparingShare(true);
+            const matchingExistingAssets = existingExportAssets.filter((asset) => assetMatchesFileType(asset, fileType) && Boolean(asset.asset_url));
+            const refreshedAssets = contentVersionId
+                ? (await onExportForType(contentVersionId, fileType)).filter((asset) => assetMatchesFileType(asset, fileType) && Boolean(asset.asset_url))
+                : [];
+            const selectedFormatAssets = refreshedAssets.length ? refreshedAssets : matchingExistingAssets;
+            const fallbackAssets = imageAssets.filter((asset) => assetMatchesFileType(asset, fileType));
+            const assetsToShare = sortAssetsBySequence(selectedFormatAssets.length ? selectedFormatAssets : fallbackAssets);
+            if (!assetsToShare.length) {
+                throw new Error(`Could not prepare a ${fileType.toUpperCase()} file for sharing.`);
+            }
+            const files = await Promise.all(
+                assetsToShare.map((asset, index) =>
+                    assetToShareFile(
+                        asset,
+                        generatedSlideDownloadFilename(sourcePrompt, asset, index + 1, assetsToShare.length),
+                    ),
+                ),
+            );
+            preparedShareRef.current = { key: shareCacheKey, files };
+            setShareError("");
+            return files;
+        })();
+        sharePreparationRef.current = { key: shareCacheKey, promise };
+        try {
+            return await promise;
+        } finally {
+            if (sharePreparationRef.current?.key === shareCacheKey) {
+                sharePreparationRef.current = null;
+            }
+            setIsPreparingShare(false);
+        }
+    }, [contentVersionId, existingExportAssets, fileType, imageAssets, onExportForType, shareCacheKey, sourcePrompt]);
+    const startSharePreparation = useCallback(() => {
+        if (!imageAssets.length) {
+            return;
+        }
+        if (preparedShareRef.current?.key === shareCacheKey || sharePreparationRef.current?.key === shareCacheKey) {
+            return;
+        }
+        void prepareShareFiles().catch((error) => {
+            setShareError(error instanceof Error ? error.message : "Could not prepare generated files for sharing.");
+        });
+    }, [imageAssets.length, prepareShareFiles, shareCacheKey]);
+
+    useEffect(() => {
+        if (preparedShareRef.current?.key !== shareCacheKey) {
+            preparedShareRef.current = null;
+        }
+        if (sharePreparationRef.current?.key !== shareCacheKey) {
+            sharePreparationRef.current = null;
+        }
+        setShareError("");
+    }, [shareCacheKey]);
 
     if (!activeAsset) {
         return null;
     }
 
-    const handleSave = () => {
-        window.open(activeAsset.resolvedUrl, "_blank", "noopener,noreferrer");
+    const handleSave = async () => {
+        setIsSaving(true);
+        try {
+            const matchingExistingAssets = existingExportAssets.filter((asset) => assetMatchesFileType(asset, fileType));
+            const exportedAssets = matchingExistingAssets.length || !contentVersionId ? matchingExistingAssets : await onExport(contentVersionId);
+            const downloadableAssets = exportedAssets.filter((asset) => Boolean(asset.asset_url));
+            if (!downloadableAssets.length) {
+                await downloadAsset(activeAsset, generatedDownloadFilename(sourcePrompt, activeAsset));
+                return;
+            }
+            await Promise.all(
+                downloadableAssets.map((asset, index) =>
+                    downloadAsset(asset, generatedSlideDownloadFilename(sourcePrompt, asset, index + 1, downloadableAssets.length)),
+                ),
+            );
+        } catch {
+            await downloadAsset(activeAsset, generatedDownloadFilename(sourcePrompt, activeAsset));
+        } finally {
+            setIsSaving(false);
+        }
     };
 
-    const handleShare = async () => {
-        if (navigator.share) {
-            await navigator.share({ title: "Generated image", url: activeAsset.resolvedUrl });
-            return;
+    const handleShare = () => {
+        setShareError("");
+        try {
+            if (!navigator.share) {
+                throw new Error("File sharing is not supported in this browser.");
+            }
+            const preparedShare = preparedShareRef.current;
+            if (!preparedShare || preparedShare.key !== shareCacheKey) {
+                startSharePreparation();
+                setShareError(`${sharePreparingNotice} Click Share again when the button is ready.`);
+                return;
+            }
+            const shareData: ShareData = {
+                title: filenameTopicFromPrompt(sourcePrompt),
+                files: preparedShare.files,
+            };
+            if (navigator.canShare && !navigator.canShare(shareData)) {
+                throw new Error(`This browser cannot share generated ${fileType.toUpperCase()} files.`);
+            }
+            setIsSharing(true);
+            void navigator.share(shareData)
+                .catch((error) => {
+                    if (error instanceof DOMException && error.name === "AbortError") {
+                        return;
+                    }
+                    setShareError(error instanceof Error ? error.message : "Could not share generated files.");
+                })
+                .finally(() => {
+                    setIsSharing(false);
+                });
+        } catch (error) {
+            setShareError(error instanceof Error ? error.message : "Could not share generated files.");
         }
-        await navigator.clipboard.writeText(activeAsset.resolvedUrl);
     };
 
     return (
@@ -566,22 +903,27 @@ function GeneratedImageViewer({ assets }: { assets: AssetReference[] }) {
                 <div className="flex items-center gap-2">
                     <button
                         type="button"
-                        onClick={handleSave}
+                        onClick={() => void handleSave()}
+                        disabled={isSaving}
                         className="inline-flex h-7 items-center gap-1.5 border border-primary bg-white px-2.5 text-[11px] font-medium text-primary"
                     >
-                        <Download className="h-3.5 w-3.5" />
-                        <span>Save</span>
+                        {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                        <span>{isSaving ? "Preparing..." : "Save"}</span>
                     </button>
                     <button
                         type="button"
-                        onClick={() => void handleShare()}
-                        className="inline-flex h-7 items-center gap-1.5 bg-primary px-2.5 text-[11px] font-medium text-white"
+                        onPointerEnter={startSharePreparation}
+                        onFocus={startSharePreparation}
+                        onClick={handleShare}
+                        disabled={isSharing}
+                        className="inline-flex h-7 items-center gap-1.5 bg-primary px-2.5 text-[11px] font-medium text-white disabled:cursor-not-allowed disabled:opacity-70"
                     >
-                        <Share2 className="h-3.5 w-3.5" />
-                        <span>Share</span>
+                        {isSharing || isPreparingShare ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Share2 className="h-3.5 w-3.5" />}
+                        <span>{isPreparingShare ? "Preparing..." : isSharing ? "Sharing..." : "Share"}</span>
                     </button>
                 </div>
             </div>
+            {shareError ? <p className={`mb-3 text-[11px] font-medium ${isSharePreparingNotice ? "text-[#57536E]" : "text-red-600"}`}>{shareError}</p> : null}
             <div className="flex items-center gap-4">
                 <div className="flex min-h-[220px] flex-1 items-center justify-center bg-[#EEF0F5] p-4">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -894,6 +1236,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
         isFetchingNextPage: isFetchingOlderMessages,
     } = useChatMessages(brandId, resolvedActiveSessionId);
     const sendMessage = useSendChatMessage(brandId);
+    const exportContent = useExportContent(brandId);
     const cancelChatGeneration = useCancelChatGeneration(brandId);
     const [workspacePrompt, setWorkspacePrompt] = useState("");
     const [composerDraft, setComposerDraft] = useState("");
@@ -919,6 +1262,8 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
     const messageElementRefs = useRef(new Map<string, HTMLDivElement>());
     const activeGenerationControllerRef = useRef<AbortController | null>(null);
     const activeGenerationSessionRef = useRef<string>("");
+    const exportAssetCacheRef = useRef(new Map<string, AssetReference[]>());
+    const exportWarmupRef = useRef(new Set<string>());
 
     const sizeOption = useMemo(
         () => sizeOptionsByPlatform[studioPlatform].find((entry) => entry.label === studioSizeLabel) || sizeOptionsByPlatform[studioPlatform][0],
@@ -932,6 +1277,30 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
             size: { width: sizeOption.width, height: sizeOption.height },
         }),
         [sizeOption.height, sizeOption.width, studioFileType, studioFormat, studioPlatform],
+    );
+    const exportGeneratedAssetsForType = useCallback(async (contentVersionId: string, fileType: FileType) => {
+        if (!contentVersionId) {
+            return [];
+        }
+        const cacheKey = `${contentVersionId}:${fileType}`;
+        const cachedAssets = exportAssetCacheRef.current.get(cacheKey);
+        if (cachedAssets?.length) {
+            return cachedAssets;
+        }
+        const response = await exportContent.mutateAsync({
+            content_version_id: contentVersionId,
+            export_format: fileType,
+            studio_panel: { file_type: fileType },
+        });
+        const assets = response.export_assets || [];
+        if (assets.length) {
+            exportAssetCacheRef.current.set(cacheKey, assets);
+        }
+        return assets;
+    }, [exportContent]);
+    const exportGeneratedAssets = useCallback(
+        (contentVersionId: string) => exportGeneratedAssetsForType(contentVersionId, studioFileType),
+        [exportGeneratedAssetsForType, studioFileType],
     );
     const brandLifecycle = brand?.lifecycle_state || "draft";
     const canGenerateInWorkspace = brandLifecycle === "active";
@@ -990,6 +1359,52 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
             }),
         [messages],
     );
+    useEffect(() => {
+        const latestGeneratedMessage = [...orderedMessages]
+            .reverse()
+            .find((message) => message.role === "assistant" && resolveGeneratedImageAssets(message.structured_payload).length);
+        if (!latestGeneratedMessage) {
+            return;
+        }
+        const contentVersionId =
+            latestGeneratedMessage.content_version_id ||
+            (latestGeneratedMessage.structured_payload as ChatAssistantStructuredPayload)?.content_version_id ||
+            "";
+        if (!contentVersionId) {
+            return;
+        }
+
+        for (const asset of resolveGeneratedExportAssets(latestGeneratedMessage.structured_payload)) {
+            for (const fileType of fileTypeOptions) {
+                if (assetMatchesFileType(asset, fileType)) {
+                    const cacheKey = `${contentVersionId}:${fileType}`;
+                    const currentAssets = exportAssetCacheRef.current.get(cacheKey) || [];
+                    if (!currentAssets.some((current) => current.asset_url === asset.asset_url || current.storage_path === asset.storage_path)) {
+                        exportAssetCacheRef.current.set(cacheKey, [...currentAssets, asset]);
+                    }
+                }
+            }
+        }
+
+        let cancelled = false;
+        void (async () => {
+            for (const fileType of fileTypeOptions) {
+                const cacheKey = `${contentVersionId}:${fileType}`;
+                if (cancelled || exportAssetCacheRef.current.get(cacheKey)?.length || exportWarmupRef.current.has(cacheKey)) {
+                    continue;
+                }
+                exportWarmupRef.current.add(cacheKey);
+                try {
+                    await exportGeneratedAssetsForType(contentVersionId, fileType);
+                } catch {
+                    exportWarmupRef.current.delete(cacheKey);
+                }
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [exportGeneratedAssetsForType, orderedMessages]);
     const normalizedChatSearchQuery = chatSearchQuery.trim().toLowerCase();
     const chatSearchMatches = useMemo(() => {
         if (!normalizedChatSearchQuery) {
@@ -1366,8 +1781,14 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                         </div>
                                     </div>
                                     <div ref={messageListRef} className="flex-1 space-y-8 overflow-y-auto px-1 py-5 thin-scrollbar">
-                                        {orderedMessages.map((message) => {
+                                        {orderedMessages.map((message, messageIndex) => {
                                             const previewAssets = message.role === "assistant" ? resolveGeneratedImageAssets(message.structured_payload) : [];
+                                            const existingExportAssets = message.role === "assistant" ? resolveGeneratedExportAssets(message.structured_payload) : [];
+                                            const sourcePrompt = message.role === "assistant" ? resolvePreviousUserPrompt(orderedMessages, messageIndex) : "";
+                                            const contentVersionId =
+                                                message.content_version_id ||
+                                                (message.structured_payload as ChatAssistantStructuredPayload)?.content_version_id ||
+                                                "";
                                             const previewUrl = previewAssets[0]?.asset_url || undefined;
                                             const generationDecision = message.role === "assistant" ? resolveGenerationDecision(message.structured_payload) : null;
                                             const imageStatus =
@@ -1405,7 +1826,17 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                                         </p>
                                                     </div>
                                                     {message.role === "assistant" ? <GenerationDecisionCard decision={generationDecision} /> : null}
-                                                    {previewAssets.length ? <GeneratedImageViewer assets={previewAssets} /> : null}
+                                                    {previewAssets.length ? (
+                                                        <GeneratedImageViewer
+                                                            assets={previewAssets}
+                                                            existingExportAssets={existingExportAssets}
+                                                            contentVersionId={contentVersionId}
+                                                            fileType={studioFileType}
+                                                            onExport={exportGeneratedAssets}
+                                                            onExportForType={exportGeneratedAssetsForType}
+                                                            sourcePrompt={sourcePrompt}
+                                                        />
+                                                    ) : null}
                                                     {imageStatus === "not_generated" ? <p className="mt-3 text-sm text-slate-500">Image generation was requested, but no generated image asset was returned for this message.</p> : null}
                                                 </div>
                                             );

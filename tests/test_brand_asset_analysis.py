@@ -7,7 +7,17 @@ from types import SimpleNamespace
 from PIL import Image
 
 from app.ai.brand_asset_analysis import BrandAssetAnalyzer
+from app.ai.rag.ocr import OCRService
 from app.ai.template_vision import TemplateVisionAnalyzer
+
+
+def test_pdf_page_images_are_scoped_per_uploaded_file(tmp_path) -> None:
+    first_pdf = tmp_path / "first-palette.pdf"
+    second_pdf = tmp_path / "second-palette.pdf"
+
+    assert OCRService._pdf_page_images_dir(str(first_pdf)) == tmp_path / "_ocr" / "first-palette" / "page_images"
+    assert OCRService._pdf_page_images_dir(str(second_pdf)) == tmp_path / "_ocr" / "second-palette" / "page_images"
+    assert OCRService._pdf_page_images_dir(str(first_pdf)) != OCRService._scratch_root(str(first_pdf)) / "page_images"
 
 
 def test_color_palette_pdf_without_page_images_uses_visual_candidate_fallback(tmp_path) -> None:

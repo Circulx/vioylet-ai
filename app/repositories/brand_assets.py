@@ -213,6 +213,13 @@ class ColorPaletteEntryRepository(ScopedRepository[ColorPaletteEntry]):
         # transaction context.
         super().__init__(session, ColorPaletteEntry)
 
+    async def list_by_asset(self, knowledge_asset_id: UUID) -> list[ColorPaletteEntry]:
+        # Returns palette rows for exactly one uploaded file so file switching never reuses another asset's colors.
+        result = await self.session.execute(
+            select(ColorPaletteEntry).where(ColorPaletteEntry.knowledge_asset_id == knowledge_asset_id)
+        )
+        return list(result.scalars().all())
+
     async def delete_by_asset(self, knowledge_asset_id: UUID) -> None:
         # Removes persisted by asset rows at the DB boundary so services do not issue raw delete statements.
         await self.session.execute(delete(ColorPaletteEntry).where(ColorPaletteEntry.knowledge_asset_id == knowledge_asset_id))

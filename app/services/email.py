@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from email.message import EmailMessage
+from html import escape
 import logging
 import smtplib
 import ssl
@@ -67,6 +69,58 @@ class EmailService:
             "<p>This link will expire automatically. If you did not expect this invitation, you can ignore this email.</p>"
         )
         return self._send_email(recipient_email, subject, text_body, html_body)
+
+    def send_user_created_notification_email(
+        self,
+        admin_email: str,
+        new_user_name: str,
+        new_user_email: str,
+        role_label: str,
+        activation_delivery: EmailDeliveryResult,
+        activation_sent_at: datetime,
+        activation_expires_at: datetime,
+        activation_attempts_done: int,
+    ) -> EmailDeliveryResult:
+        # Sends a non-sensitive creation notice to the tenant admin without exposing the user's activation link.
+        subject = f"Activation email sent to {new_user_name}"
+        escaped_user_name = escape(new_user_name)
+        escaped_user_email = escape(new_user_email)
+        escaped_role_label = escape(role_label)
+        sent_at_utc = activation_sent_at.astimezone(timezone.utc)
+        expires_at_utc = activation_expires_at.astimezone(timezone.utc)
+        sent_label = sent_at_utc.strftime("%d/%m/%Y %H:%M UTC")
+        expires_label = expires_at_utc.strftime("%d/%m/%Y %H:%M UTC")
+        delivery_status = (
+            "The activation email was sent successfully."
+            if activation_delivery.delivered
+            else f"The activation email was not sent: {activation_delivery.reason or 'Email delivery could not be completed.'}"
+        )
+        escaped_delivery_status = escape(delivery_status)
+        text_body = (
+            "Activation email notification\n\n"
+            f"The activation email for the following {role_label} was sent to the user.\n\n"
+            f"User name: {new_user_name}\n"
+            f"User email: {new_user_email}\n"
+            f"Activation email sent at: {sent_label}\n"
+            f"Activation link valid until: {expires_label}\n"
+            f"Total activation email attempts done: {activation_attempts_done}\n"
+            f"{delivery_status}\n\n"
+            "This admin notification is informational only. The activation link and activation button were sent only to the user."
+        )
+        html_body = (
+            "<p><strong>Activation email notification</strong></p>"
+            f"<p>The activation email for the following {escaped_role_label} was sent to the user.</p>"
+            "<ul>"
+            f"<li><strong>User name:</strong> {escaped_user_name}</li>"
+            f"<li><strong>User email:</strong> {escaped_user_email}</li>"
+            f"<li><strong>Activation email sent at:</strong> {escape(sent_label)}</li>"
+            f"<li><strong>Activation link valid until:</strong> {escape(expires_label)}</li>"
+            f"<li><strong>Total activation email attempts done:</strong> {activation_attempts_done}</li>"
+            f"<li>{escaped_delivery_status}</li>"
+            "</ul>"
+            "<p>This admin notification is informational only. The activation link and activation button were sent only to the user.</p>"
+        )
+        return self._send_email(admin_email, subject, text_body, html_body)
 
     def send_password_reset_email(
         self,

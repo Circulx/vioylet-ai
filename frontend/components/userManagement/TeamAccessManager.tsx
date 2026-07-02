@@ -8,6 +8,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { TableFilterPopover } from "@/components/common/TableFilterPopover";
+import { toast } from "@/components/ui/use-toast";
 import {
     MetricTile,
     PlatformPageTitle,
@@ -18,6 +19,8 @@ import { getTenantUserRequestId, useTenantUsers } from "@/hooks/useTeamAccess";
 import { useBrands } from "@/hooks/useBrands";
 import { useGetMe } from "@/hooks/useUser";
 import { useGetTenantData } from "@/hooks/tenantAdmins/useGetTenants";
+import { useResendTenantUserActivation } from "@/hooks/tenantAdmins/useUpdateTenant";
+import { getApiErrorMessage } from "@/lib/api/error-message";
 import {
     CREATED_DATE_FILTER_OPTIONS,
     USER_ACTIVITY_FILTER_OPTIONS,
@@ -43,9 +46,14 @@ function formatDate(value?: string | null) {
 
 type TableRow = {
     id: string;
+    fullName: string;
+    email: string;
     cells: string[];
     createdAt?: string | null;
     activityStatus: UserActivityStatus;
+    isPendingActivation: boolean;
+    activationLinkSentCount: number;
+    activationLinkAttemptsLeft: number;
 };
 
 function matchesSearch(row: TableRow, search: string) {
@@ -61,27 +69,35 @@ export default function TeamAccessManager() {
     const searchParams = useSearchParams();
     const { data: currentUser } = useGetMe();
     const { data: tenantSummary } = useGetTenantData(currentUser?.tenantId ?? "");
-    const { tenantUsers, brandUsers, isLoading } = useTenantUsers();
+    const { tenantId, tenantUsers, brandUsers, isLoading } = useTenantUsers();
     const { data: brands } = useBrands();
+    const resendActivation = useResendTenantUserActivation(tenantId);
     const [activeTab, setActiveTab] = useState<"tenant-users" | "brand-users">("tenant-users");
     const [search, setSearch] = useState("");
     const [createdFilter, setCreatedFilter] = useState<CreatedDateFilter>("all");
     const [activityFilter, setActivityFilter] = useState<"all" | UserActivityStatus>("all");
+    const [resendingUserId, setResendingUserId] = useState<string | null>(null);
     const activeFilterCount = Number(createdFilter !== "all") + Number(activityFilter !== "all");
     const brandNames = new Map((brands || []).map((brand) => [brand.id, brand.name]));
     const tenantLabel = tenantSummary?.name || "Tenant";
 
     const liveTenantRows: TableRow[] = tenantUsers.map((user) => {
         const activityStatus = getUserActivityStatus(user.last_login_at);
+        const accountStatus = formatUserAccountStatus(user.is_active, user.is_activated);
         return {
             id: getTenantUserRequestId(user),
+            fullName: user.full_name,
+            email: user.email,
             createdAt: user.created_at,
             activityStatus,
+            isPendingActivation: user.is_active && !user.is_activated,
+            activationLinkSentCount: user.activation_link_sent_count || 0,
+            activationLinkAttemptsLeft: user.activation_link_attempts_left || 0,
             cells: [
                 user.full_name,
                 user.email,
                 formatDate(user.created_at),
-                formatUserAccountStatus(user.is_active, user.is_activated),
+                accountStatus,
                 formatUserActivityStatus(activityStatus),
             ],
         };
@@ -91,15 +107,21 @@ export default function TeamAccessManager() {
         const brandAssignmentLabel =
             user.brand_space_ids.map((brandId) => brandNames.get(brandId) || brandId).join(", ") || "-";
         const activityStatus = getUserActivityStatus(user.last_login_at);
+        const accountStatus = formatUserAccountStatus(user.is_active, user.is_activated);
         return {
             id: getTenantUserRequestId(user),
+            fullName: user.full_name,
+            email: user.email,
             createdAt: user.created_at,
             activityStatus,
+            isPendingActivation: user.is_active && !user.is_activated,
+            activationLinkSentCount: user.activation_link_sent_count || 0,
+            activationLinkAttemptsLeft: user.activation_link_attempts_left || 0,
             cells: [
                 user.full_name,
                 user.email,
                 formatDate(user.created_at),
-                formatUserAccountStatus(user.is_active, user.is_activated),
+                accountStatus,
                 formatUserActivityStatus(activityStatus),
                 brandAssignmentLabel,
                 // user.last_login_at ? formatDate(user.last_login_at) : "Recent",
@@ -136,13 +158,36 @@ export default function TeamAccessManager() {
             description: reason ? `${email}: ${reason}` : `${email}: Email delivery could not be completed.`,
         };
     }, [searchParams]);
-    const totalAssignments = brandRows.reduce((sum, row) => {
-        const assignments = row.cells[5];
-        if (!assignments || assignments === "-") {
-            return sum;
+    const handleResendActivation = async (row: TableRow) => {
+        if (!row.id || resendActivation.isPending) {
+            return;
         }
-        return sum + assignments.split(",").filter(Boolean).length;
-    }, 0);
+
+        setResendingUserId(row.id);
+        try {
+            const delivery = await resendActivation.mutateAsync(row.id);
+            if (delivery.delivered) {
+                toast({
+                    title: "Activation link resent",
+                    description: `Activation link sent to ${delivery.recipient_email}.`,
+                });
+            } else {
+                toast({
+                    title: "Activation email was not sent",
+                    description: delivery.reason || `${delivery.recipient_email}: Email delivery could not be completed.`,
+                    variant: "destructive",
+                });
+            }
+        } catch (error) {
+            toast({
+                title: "Unable to resend activation link",
+                description: getApiErrorMessage(error, "Please try again."),
+                variant: "destructive",
+            });
+        } finally {
+            setResendingUserId(null);
+        }
+    };
 
     return (
         <div className="container">
@@ -235,6 +280,8 @@ export default function TeamAccessManager() {
                                 : ["Name", "Email ID", "Date Created", "Status", "Active Last 30 Days", "Brand Space"]
                         }
                         rows={visibleRows}
+                        resendingUserId={resendingUserId}
+                        onResendActivation={handleResendActivation}
                     />
                 </SectionCard>
             </div>
@@ -266,10 +313,14 @@ function UserTable({
     headers,
     rows,
     emptyLabel,
+    resendingUserId,
+    onResendActivation,
 }: {
     headers: string[];
     rows: TableRow[];
     emptyLabel: string;
+    resendingUserId: string | null;
+    onResendActivation: (row: TableRow) => void;
 }) {
     return (
         <div className="overflow-hidden rounded-xs">
@@ -297,6 +348,36 @@ function UserTable({
                                                 <Link href={`/user_management/${row.id}`} className="font-medium text-[#2F3342] hover:text-primary">
                                                     {cell}
                                                 </Link>
+                                            ) : index === 4 && row.isPendingActivation ? (
+                                                <div className="flex flex-col items-start gap-1">
+                                                    <Button
+                                                        type="button"
+                                                        variant="outline"
+                                                        size="xs"
+                                                        className="h-7 rounded-none border-primary/30 px-2 text-primary hover:bg-primary/10"
+                                                        disabled={resendingUserId === row.id || row.activationLinkAttemptsLeft <= 0}
+                                                        onClick={() => onResendActivation(row)}
+                                                        title="Resend Activation Link"
+                                                        aria-label={`Resend Activation Link to ${row.fullName || row.email}`}
+                                                    >
+                                                        <abbr title="Resend Activation Link" className="no-underline">
+                                                            {resendingUserId === row.id
+                                                                ? "Sending..."
+                                                                : row.activationLinkAttemptsLeft <= 0
+                                                                    ? "Limit reached"
+                                                                    : "Resend"}
+                                                        </abbr>
+                                                    </Button>
+                                                    <span className="text-xs leading-4 text-[#666666]">
+                                                        Activation links sent: {row.activationLinkSentCount}
+                                                        {row.activationLinkSentCount > 1
+                                                            ? ` (resent ${row.activationLinkSentCount - 1} ${row.activationLinkSentCount - 1 === 1 ? "time" : "times"})`
+                                                            : ""}
+                                                    </span>
+                                                    <span className="text-xs leading-4 text-[#666666]">
+                                                        Total attempts done: {row.activationLinkSentCount}
+                                                    </span>
+                                                </div>
                                             ) : (
                                                 cell
                                             )}

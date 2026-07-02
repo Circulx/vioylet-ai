@@ -1,5 +1,6 @@
 import type {
   AnalyticsResponse,
+  ActivationEmailStatus,
   BrandAttachmentListResponse,
   BrandAttachmentResponse,
   BrandOverviewResponse,
@@ -72,6 +73,7 @@ export const API = {
     USER_DETAIL: { method: "GET", url: ({ tenantId, userId }: { tenantId: string; userId: string }) => `/api/v1/tenants/${tenantId}/users/${userId}` } as ApiEndpoint<void, TenantUserResponse>,
     UPDATE_USER: { method: "PUT", url: ({ tenantId, userId }: { tenantId: string; userId: string }) => `/api/v1/tenants/${tenantId}/users/${userId}` } as ApiEndpoint<unknown, TenantUserResponse>,
     DEACTIVATE_USER: { method: "POST", url: ({ tenantId, userId }: { tenantId: string; userId: string }) => `/api/v1/tenants/${tenantId}/users/${userId}/deactivate` } as ApiEndpoint<void, { message: string }>,
+    RESEND_ACTIVATION: { method: "POST", url: ({ tenantId, userId }: { tenantId: string; userId: string }) => `/api/v1/tenants/${tenantId}/users/${userId}/resend-activation` } as ApiEndpoint<void, ActivationEmailStatus>,
     UPDATE_USAGE: { method: "PUT", url: (tenantId: string) => `/api/v1/tenants/${tenantId}/usage-limits` } as ApiEndpoint<unknown, { message: string }>,
     USAGE_SUMMARY: { method: "GET", url: (tenantId: string) => `/api/v1/tenants/${tenantId}/usage-summary` } as ApiEndpoint<void, TenantUsageSummary>,
   },

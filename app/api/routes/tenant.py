@@ -9,6 +9,7 @@ from app.core.enums import RoleCode
 from app.db.session import get_db_session
 from app.schemas.common import MessageResponse
 from app.schemas.tenant import (
+    ActivationEmailStatus,
     TenantBrandUsageTargetsResponse,
     TenantBrandUsageTargetsUpdate,
     TenantCreateRequest,
@@ -183,7 +184,11 @@ async def create_tenant_user(
     # returns the response schema.
     assert_tenant_access(principal, tenant_id)
     service = TenantService(session)
-    user, delivery = await service.create_tenant_user(tenant_id, payload)
+    user, delivery = await service.create_tenant_user(
+        tenant_id,
+        payload,
+        created_by_admin_email=principal.email,
+    )
     summary = await service.build_user_summary(user)
     return TenantUserCreateResponse.model_validate(
         {
@@ -252,6 +257,31 @@ async def deactivate_user(
     assert_tenant_access(principal, tenant_id)
     await TenantService(session).deactivate_user(tenant_id, user_id)
     return MessageResponse(message="User deactivated")
+
+
+@router.post("/{tenant_id}/users/{user_id}/resend-activation", response_model=ActivationEmailStatus)
+async def resend_activation_link(
+    tenant_id: UUID,
+    user_id: UUID,
+    _: CurrentPrincipal = Depends(require_roles(RoleCode.SUPER_ADMIN, RoleCode.TENANT_ADMIN)),
+    principal: CurrentPrincipal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db_session),
+) -> ActivationEmailStatus:
+    # Serves the resend activation endpoint; it delegates token refresh and email delivery to the tenant service.
+    assert_tenant_access(principal, tenant_id)
+    delivery = await TenantService(session).resend_activation_link(
+        tenant_id,
+        user_id,
+        triggered_by_admin_email=principal.email,
+    )
+    return ActivationEmailStatus.model_validate(
+        {
+            "attempted": delivery.attempted,
+            "delivered": delivery.delivered,
+            "recipient_email": delivery.recipient_email,
+            "reason": delivery.reason,
+        }
+    )
 
 
 @router.put("/{tenant_id}/usage-limits", response_model=MessageResponse, dependencies=[Depends(require_roles(RoleCode.SUPER_ADMIN, RoleCode.TENANT_ADMIN))])

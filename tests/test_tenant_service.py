@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import ANY, AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
-from sqlalchemy.sql.dml import Delete
+from sqlalchemy.sql.dml import Delete, Update
 
-from app.core.exceptions import DuplicateResourceError
+from app.core.exceptions import DuplicateResourceError, LifecycleError
+from app.models.tenant import ActivationToken
 from app.schemas.tenant import (
     TenantCreateRequest,
     TenantLogoUploadRequest,
@@ -16,8 +17,8 @@ from app.schemas.tenant import (
     TenantUsageLimitUpdate,
     TenantUserCreateRequest,
 )
-from app.services.email import EmailDeliveryResult
-from app.services.tenant import TenantService
+from app.services.email import EmailDeliveryResult, EmailService
+from app.services.tenant import ACTIVATION_LINK_MAX_SENDS, ACTIVATION_TOKEN_TTL, TenantService
 
 
 class DummySession:
@@ -91,6 +92,27 @@ def build_admin(**overrides):
         phone_number="+91 9000000001",
         **overrides,
     )
+
+
+def build_user(**overrides):
+    payload = {
+        "id": uuid4(),
+        "tenant_id": uuid4(),
+        "full_name": "Pending User",
+        "email": "pending@acme.com",
+        "phone_number": "+91 9000000005",
+        "is_active": True,
+        "is_activated": False,
+        "created_at": datetime.now(timezone.utc),
+        "last_login_at": None,
+    }
+    payload.update(overrides)
+    return SimpleNamespace(**payload)
+
+
+def assert_activation_token_expires_in_48_hours(token: ActivationToken) -> None:
+    remaining = token.expires_at - datetime.now(timezone.utc)
+    assert ACTIVATION_TOKEN_TTL.total_seconds() - 5 <= remaining.total_seconds() <= ACTIVATION_TOKEN_TTL.total_seconds() + 5
 
 
 async def test_update_tenant_persists_metadata_and_active_flag():
@@ -178,6 +200,15 @@ async def test_get_tenant_summary_includes_primary_admin_and_last_activity():
     admin = build_admin()
     recent_login = datetime.now(timezone.utc)
     service.get_tenant = AsyncMock(return_value=tenant)
+    service.usage_limits.get_by_tenant = AsyncMock(
+        return_value=SimpleNamespace(
+            max_users=10,
+            max_brand_spaces=5,
+            max_content_generations=20,
+            max_image_generations=10,
+            max_ocr_pages=50,
+        )
+    )
     service.get_usage_summary = AsyncMock(
         return_value={
             "limits": {"max_users": 10, "max_brand_spaces": 5, "max_content_generations": 20, "max_image_generations": 10, "max_ocr_pages": 50},
@@ -199,6 +230,7 @@ async def test_get_tenant_summary_includes_primary_admin_and_last_activity():
         }
     )
     service._get_primary_tenant_admin = AsyncMock(return_value=admin)
+    session.scalar.side_effect = [4, 2, 6, 3, 8]
     session.execute.return_value = DummyExecuteResult(recent_login)
 
     summary = await service.get_tenant_summary(tenant.id)
@@ -244,6 +276,20 @@ async def test_list_tenant_brand_space_summaries_collects_usage_metrics():
     assert summary["ocr_pages"] == 18
     assert summary["last_login_at"] == recent_login
     assert summary["last_active_at"] == recent_login
+
+
+async def test_build_user_summary_includes_activation_link_sent_count():
+    session = DummySession()
+    service = TenantService(session)
+    user = build_user()
+    service.user_roles.list_for_user = AsyncMock(return_value=[])
+    service.brand_members.list_brand_ids_for_user = AsyncMock(return_value=[])
+    session.scalar.return_value = 3
+
+    summary = await service.build_user_summary(user)
+
+    assert summary["activation_link_sent_count"] == 3
+    assert summary["activation_link_attempts_left"] == ACTIVATION_LINK_MAX_SENDS - 3
 
 
 async def test_create_tenant_rejects_duplicate_slug():
@@ -335,11 +381,109 @@ async def test_create_tenant_user_returns_email_delivery_status():
     user, delivery = await service.create_tenant_user(tenant_id, payload)
 
     assert user.email == "member@jiraaf.com"
+    added_token = service.tokens.add.await_args.args[0]
+    assert_activation_token_expires_in_48_hours(added_token)
     assert delivery.delivered is False
     assert delivery.recipient_email == "member@jiraaf.com"
     assert "SMTP authentication failed" in (delivery.reason or "")
     assert session.commits == 1
     assert session.refreshed == [user]
+
+
+async def test_create_tenant_user_notifies_admin_about_new_user():
+    session = DummySession()
+    service = TenantService(session)
+    tenant_id = uuid4()
+    role_id = uuid4()
+
+    async def add_user(user):  # noqa: ANN001
+        if user.id is None:
+            user.id = uuid4()
+
+    service.users.get_by_email = AsyncMock(return_value=None)
+    service.users.add = AsyncMock(side_effect=add_user)
+    service.roles.get_by_code = AsyncMock(return_value=SimpleNamespace(id=role_id))
+    service.user_roles.add = AsyncMock()
+    service.tokens.add = AsyncMock()
+    service.brand_members.add = AsyncMock()
+    service.usage.enforce = AsyncMock()
+    service.usage.increment = AsyncMock()
+    service.email.send_activation_email = Mock(
+        return_value=EmailDeliveryResult(
+            attempted=True,
+            delivered=True,
+            recipient_email="member@jiraaf.com",
+        )
+    )
+    service.email.send_user_created_notification_email = Mock(
+        return_value=EmailDeliveryResult(
+            attempted=True,
+            delivered=True,
+            recipient_email="tenant-admin@jiraaf.com",
+        )
+    )
+
+    payload = TenantUserCreateRequest(
+        full_name="New Member",
+        email="member@jiraaf.com",
+        phone_number="+91 9000000004",
+        role_code="brand_user",
+        brand_space_ids=[],
+    )
+
+    user, delivery = await service.create_tenant_user(
+        tenant_id,
+        payload,
+        created_by_admin_email="tenant-admin@jiraaf.com",
+    )
+
+    service.email.send_activation_email.assert_called_once()
+    service.email.send_user_created_notification_email.assert_called_once_with(
+        "tenant-admin@jiraaf.com",
+        user.full_name,
+        user.email,
+        "Brand User",
+        delivery,
+        ANY,
+        ANY,
+        1,
+    )
+    assert session.commits == 1
+
+
+def test_admin_user_created_notification_email_does_not_include_activation_link():
+    service = EmailService()
+    service._send_email = Mock(
+        return_value=EmailDeliveryResult(
+            attempted=True,
+            delivered=True,
+            recipient_email="tenant-admin@jiraaf.com",
+        )
+    )
+
+    service.send_user_created_notification_email(
+        "tenant-admin@jiraaf.com",
+        "New Member",
+        "member@jiraaf.com",
+        "Brand User",
+        EmailDeliveryResult(attempted=True, delivered=True, recipient_email="member@jiraaf.com"),
+        datetime(2026, 7, 2, 9, 30, tzinfo=timezone.utc),
+        datetime(2026, 7, 4, 9, 30, tzinfo=timezone.utc),
+        2,
+    )
+
+    recipient_email, subject, text_body, html_body = service._send_email.call_args.args
+    assert recipient_email == "tenant-admin@jiraaf.com"
+    assert subject == "Activation email sent to New Member"
+    assert "Activation email notification" in text_body
+    assert "member@jiraaf.com" in text_body
+    assert "Activation email sent at: 02/07/2026 09:30 UTC" in text_body
+    assert "Activation link valid until: 04/07/2026 09:30 UTC" in text_body
+    assert "Total activation email attempts done: 2" in text_body
+    assert "/auth/activate" not in text_body
+    assert "/auth/activate" not in html_body
+    assert "Activate Account" not in html_body
+    assert "<a " not in html_body
 
 
 async def test_create_tenant_returns_email_delivery_status():
@@ -395,8 +539,113 @@ async def test_create_tenant_returns_email_delivery_status():
     tenant, delivery = await service.create_tenant(payload)
 
     assert tenant.id == tenant_id
+    added_token = service.tokens.add.await_args.args[0]
+    assert_activation_token_expires_in_48_hours(added_token)
     assert delivery.delivered is False
     assert delivery.recipient_email == "admin@jiraaf.com"
     assert "SMTP authentication failed" in (delivery.reason or "")
     assert session.commits == 1
     assert session.refreshed == [tenant]
+
+
+async def test_resend_activation_link_refreshes_token_and_sends_email():
+    session = DummySession()
+    service = TenantService(session)
+    tenant_id = uuid4()
+    user = build_user(tenant_id=tenant_id)
+    service.users.get = AsyncMock(return_value=user)
+    service.tokens.add = AsyncMock()
+    session.scalar.return_value = 1
+    service.email.send_activation_email = Mock(
+        return_value=EmailDeliveryResult(
+            attempted=True,
+            delivered=True,
+            recipient_email=user.email,
+        )
+    )
+
+    delivery = await service.resend_activation_link(tenant_id, user.id)
+
+    update_statements = [
+        call.args[0]
+        for call in session.execute.await_args_list
+        if isinstance(call.args[0], Update)
+    ]
+    assert len(update_statements) == 1
+    added_token = service.tokens.add.await_args.args[0]
+    assert isinstance(added_token, ActivationToken)
+    assert added_token.user_id == user.id
+    assert_activation_token_expires_in_48_hours(added_token)
+    service.email.send_activation_email.assert_called_once_with(user.email, user.full_name, added_token.token)
+    assert delivery.delivered is True
+    assert session.commits == 1
+
+
+async def test_resend_activation_link_notifies_admin_with_total_attempts():
+    session = DummySession()
+    service = TenantService(session)
+    tenant_id = uuid4()
+    user = build_user(tenant_id=tenant_id)
+    service.users.get = AsyncMock(return_value=user)
+    service.tokens.add = AsyncMock()
+    session.scalar.return_value = 3
+    service.email.send_activation_email = Mock(
+        return_value=EmailDeliveryResult(
+            attempted=True,
+            delivered=True,
+            recipient_email=user.email,
+        )
+    )
+    service.email.send_user_created_notification_email = Mock(
+        return_value=EmailDeliveryResult(
+            attempted=True,
+            delivered=True,
+            recipient_email="tenant-admin@jiraaf.com",
+        )
+    )
+
+    delivery = await service.resend_activation_link(
+        tenant_id,
+        user.id,
+        triggered_by_admin_email="tenant-admin@jiraaf.com",
+    )
+
+    added_token = service.tokens.add.await_args.args[0]
+    service.email.send_activation_email.assert_called_once_with(user.email, user.full_name, added_token.token)
+    service.email.send_user_created_notification_email.assert_called_once_with(
+        "tenant-admin@jiraaf.com",
+        user.full_name,
+        user.email,
+        "User",
+        delivery,
+        ANY,
+        added_token.expires_at,
+        4,
+    )
+
+
+async def test_resend_activation_link_rejects_when_attempt_limit_reached():
+    session = DummySession()
+    service = TenantService(session)
+    tenant_id = uuid4()
+    user = build_user(tenant_id=tenant_id)
+    service.users.get = AsyncMock(return_value=user)
+    session.scalar.return_value = ACTIVATION_LINK_MAX_SENDS
+
+    with pytest.raises(LifecycleError, match="attempt limit"):
+        await service.resend_activation_link(tenant_id, user.id)
+
+    assert session.commits == 0
+
+
+async def test_resend_activation_link_rejects_already_activated_user():
+    session = DummySession()
+    service = TenantService(session)
+    tenant_id = uuid4()
+    user = build_user(tenant_id=tenant_id, is_activated=True)
+    service.users.get = AsyncMock(return_value=user)
+
+    with pytest.raises(LifecycleError, match="pending users"):
+        await service.resend_activation_link(tenant_id, user.id)
+
+    assert session.commits == 0

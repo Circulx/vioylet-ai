@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.models  # noqa: F401
 from app.core.enums import RoleCode
-from app.core.exceptions import DuplicateResourceError, NotFoundError
+from app.core.exceptions import DuplicateResourceError, LifecycleError, NotFoundError
 from app.db.base import Base
 from app.integrations.object_storage import LocalObjectStorage
 from app.models.brand import BrandSpace, BrandSpaceMember
@@ -39,6 +39,8 @@ USAGE_METRIC_IMAGES = "image_generations"
 USAGE_METRIC_OCR = "ocr_pages"
 USAGE_METRIC_USERS = "users"
 USAGE_METRIC_BRAND_SPACES = "brand_spaces"
+ACTIVATION_TOKEN_TTL = timedelta(hours=48)
+ACTIVATION_LINK_MAX_SENDS = 10
 
 
 class TenantService:
@@ -105,7 +107,7 @@ class TenantService:
             ActivationToken(
                 user_id=admin.id,
                 token=activation_token,
-                expires_at=datetime.now(timezone.utc) + timedelta(days=7),
+                expires_at=datetime.now(timezone.utc) + ACTIVATION_TOKEN_TTL,
             )
         )
         await self.usage_limits.add(
@@ -128,6 +130,8 @@ class TenantService:
         self,
         tenant_id: UUID,
         payload: TenantUserCreateRequest,
+        *,
+        created_by_admin_email: str | None = None,
     ) -> tuple[User, EmailDeliveryResult]:
         # Runs the tenant user service flow and persists the resulting state before returning it to the route or
         # worker.
@@ -158,17 +162,31 @@ class TenantService:
                 )
             )
         activation_token = str(uuid4())
+        activation_sent_at = datetime.now(timezone.utc)
+        activation_expires_at = activation_sent_at + ACTIVATION_TOKEN_TTL
         await self.tokens.add(
             ActivationToken(
                 user_id=user.id,
                 token=activation_token,
-                expires_at=datetime.now(timezone.utc) + timedelta(days=7),
+                expires_at=activation_expires_at,
             )
         )
         await self.usage.increment(tenant_id, "users")
         await self.session.commit()
         await self.session.refresh(user)
         delivery = self.email.send_activation_email(user.email, user.full_name, activation_token)
+        if created_by_admin_email:
+            role_label = "Brand User" if payload.role_code == RoleCode.BRAND_USER else "Tenant User"
+            self.email.send_user_created_notification_email(
+                created_by_admin_email,
+                user.full_name,
+                user.email,
+                role_label,
+                delivery,
+                activation_sent_at,
+                activation_expires_at,
+                1,
+            )
         return user, delivery
 
     async def _get_primary_tenant_admin(self, tenant_id: UUID) -> User | None:
@@ -568,6 +586,7 @@ class TenantService:
                 brand_space_ids.append(item.brand_space_id)
         member_brand_ids = await self.brand_members.list_brand_ids_for_user(user.id)
         brand_space_ids.extend(item for item in member_brand_ids if item not in brand_space_ids)
+        activation_link_sent_count = await self._activation_link_sent_count(user.id)
         return {
             "id": user.id,
             "tenant_id": user.tenant_id,
@@ -580,7 +599,23 @@ class TenantService:
             "brand_space_ids": brand_space_ids,
             "created_at": user.created_at,
             "last_login_at": user.last_login_at,
+            "activation_link_sent_count": activation_link_sent_count,
+            "activation_link_attempts_left": self._activation_link_attempts_left(activation_link_sent_count),
         }
+
+    async def _activation_link_sent_count(self, user_id: UUID) -> int:
+        # Counts activation links issued to a user so UI and notification emails can show resend tracking.
+        return int(
+            await self.session.scalar(
+                select(func.count(ActivationToken.id)).where(ActivationToken.user_id == user_id)
+            )
+            or 0
+        )
+
+    @staticmethod
+    def _activation_link_attempts_left(sent_count: int) -> int:
+        # Keeps the resend policy centralized for service checks, API summaries, and notification copy.
+        return max(0, ACTIVATION_LINK_MAX_SENDS - sent_count)
 
     async def get_user_summary(self, tenant_id: UUID, user_id: UUID) -> dict:
         # Runs the user summary service flow by coordinating repositories, validators, and integrations, then
@@ -599,6 +634,56 @@ class TenantService:
         user.is_active = False
         await self.session.commit()
         return user
+
+    async def resend_activation_link(
+        self,
+        tenant_id: UUID,
+        user_id: UUID,
+        *,
+        triggered_by_admin_email: str | None = None,
+    ) -> EmailDeliveryResult:
+        # Runs the activation resend flow for pending users and persists a fresh token before sending email.
+        user = await self.users.get(user_id)
+        if not user or user.tenant_id != tenant_id:
+            raise NotFoundError("User not found")
+        if not user.is_active:
+            raise LifecycleError("Cannot resend activation link to an inactive user.")
+        if user.is_activated:
+            raise LifecycleError("Activation link can only be resent to pending users.")
+        sent_count = await self._activation_link_sent_count(user.id)
+        if self._activation_link_attempts_left(sent_count) <= 0:
+            raise LifecycleError("Activation email attempt limit reached for this user.")
+
+        now = datetime.now(timezone.utc)
+        activation_token = str(uuid4())
+        activation_expires_at = now + ACTIVATION_TOKEN_TTL
+        await self.session.execute(
+            update(ActivationToken)
+            .where(ActivationToken.user_id == user.id, ActivationToken.used_at.is_(None))
+            .values(used_at=now)
+        )
+        await self.tokens.add(
+            ActivationToken(
+                user_id=user.id,
+                token=activation_token,
+                expires_at=activation_expires_at,
+            )
+        )
+        await self.session.commit()
+        delivery = self.email.send_activation_email(user.email, user.full_name, activation_token)
+        if triggered_by_admin_email:
+            new_sent_count = sent_count + 1
+            self.email.send_user_created_notification_email(
+                triggered_by_admin_email,
+                user.full_name,
+                user.email,
+                "User",
+                delivery,
+                now,
+                activation_expires_at,
+                new_sent_count,
+            )
+        return delivery
 
     async def update_tenant(self, tenant_id: UUID, payload: TenantUpdateRequest) -> Tenant:
         # Runs the tenant service flow and persists the resulting state before returning it to the route or

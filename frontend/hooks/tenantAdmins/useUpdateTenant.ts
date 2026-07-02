@@ -85,3 +85,17 @@ export const useUpdateTenantUser = (tenantId: string, userId: string) => {
     },
   });
 };
+
+export const useResendTenantUserActivation = (tenantId: string) => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (userId: string) =>
+      request(API.TENANTS.RESEND_ACTIVATION, {
+        pathParams: { tenantId, userId },
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["tenant", tenantId, "users"] });
+    },
+  });
+};

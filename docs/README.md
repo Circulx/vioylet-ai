@@ -11,6 +11,12 @@ Repo entrypoint and quick-start summary:
 - `API_CONTRACTS.md`
   Frontend-to-backend APIs, admin and tenant contracts, internal AI orchestration contracts, renderer contracts, auth rules, payload shapes, and platform/render behaviors.
 
+- `PRODUCT_REQUIREMENTS_DOCUMENT.md`
+  Product-facing PRD covering roles, scope, workflows, functional requirements, non-functional requirements, risks, and acceptance criteria.
+
+- `TOOL_DOCUMENTATION_DEVELOPMENT_TO_USER.md`
+  Tool-by-tool documentation connecting user workflows to frontend areas, backend routes, services, data, jobs, AI modules, and expected outputs.
+
 - `ARCHITECTURE.md`
   Recreated implementation architecture for the current backend, including layers, flows, tenant isolation, AI orchestration, and rendering boundaries.
 
@@ -39,12 +45,14 @@ Repo entrypoint and quick-start summary:
 
 1. Read `ARCHITECTURE.md` for the implementation-level system picture.
 2. Read the repo-root `README.md` for quick start and doc index.
-3. Read `API_CONTRACTS.md` if you are integrating frontend, backend, AI orchestration, or rendering.
-4. Read `DB_SCHEMA.md` and `DB_SETUP.md` if you are working on persistence or environment setup.
-5. Read `CODE_DOCUMENTATION.md` if you are maintaining or extending backend modules.
-6. Read `FRONTEND_SETUP.md` if you are working on the Next.js app.
-7. Read `DOCKER_SETUP.md` if you want the fastest team-wide local stack bring-up.
-8. Read `DEVELOPER_OPERATIONS.md` for local run, test, and deployment workflows.
+3. Read `PRODUCT_REQUIREMENTS_DOCUMENT.md` if you need the product/client view.
+4. Read `TOOL_DOCUMENTATION_DEVELOPMENT_TO_USER.md` if you need a feature-by-feature user-to-code map.
+5. Read `API_CONTRACTS.md` if you are integrating frontend, backend, AI orchestration, or rendering.
+6. Read `DB_SCHEMA.md` and `DB_SETUP.md` if you are working on persistence or environment setup.
+7. Read `CODE_DOCUMENTATION.md` if you are maintaining or extending backend modules.
+8. Read `FRONTEND_SETUP.md` if you are working on the Next.js app.
+9. Read `DOCKER_SETUP.md` if you want the fastest team-wide local stack bring-up.
+10. Read `DEVELOPER_OPERATIONS.md` for local run, test, and deployment workflows.
 
 ## Additional References
 

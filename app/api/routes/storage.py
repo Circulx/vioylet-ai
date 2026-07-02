@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import mimetypes
 from pathlib import Path
+import re
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -15,7 +16,11 @@ router = APIRouter()
 
 
 @router.get("/download")
-async def download_asset(token: str = Query(..., min_length=1)) -> FileResponse:
+async def download_asset(
+    token: str = Query(..., min_length=1),
+    filename: str | None = Query(default=None),
+    download: bool | None = Query(default=None),
+) -> FileResponse:
     # Serves the download asset endpoint; it uses FastAPI dependencies, delegates work to services, and returns
     # the response schema.
     delivery = AssetDeliveryService()
@@ -34,12 +39,13 @@ async def download_asset(token: str = Query(..., min_length=1)) -> FileResponse:
     if not path.exists():
         raise HTTPException(status_code=404, detail="Asset not found")
 
-    filename = str(payload.get("filename") or path.name)
-    media_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
-    disposition = "attachment" if bool(payload.get("download")) else "inline"
+    resolved_filename = str(filename or payload.get("filename") or path.name)
+    resolved_filename = re.sub(r'[<>:"/\\|?*\x00-\x1F]', "-", resolved_filename).strip(" .") or path.name
+    media_type = mimetypes.guess_type(resolved_filename)[0] or "application/octet-stream"
+    disposition = "attachment" if (bool(payload.get("download")) or bool(download)) else "inline"
     return FileResponse(
         absolute_path,
         media_type=media_type,
-        filename=filename,
+        filename=resolved_filename,
         content_disposition_type=disposition,
     )

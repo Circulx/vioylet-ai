@@ -124,6 +124,11 @@ class TenantSummaryResponse(TenantResponse):
     tenant_admin_name: str | None = None
     tenant_admin_email: EmailStr | None = None
     tenant_admin_phone_number: str | None = None
+    tenant_admin_user_id: UUID | None = None
+    tenant_admin_is_active: bool | None = None
+    tenant_admin_is_activated: bool | None = None
+    tenant_admin_activation_link_sent_count: int = 0
+    tenant_admin_activation_link_attempts_left: int = 0
     last_active_at: datetime | None = None
 
 

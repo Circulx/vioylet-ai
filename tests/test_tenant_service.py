@@ -238,6 +238,11 @@ async def test_get_tenant_summary_includes_primary_admin_and_last_activity():
     assert summary["tenant_admin_name"] == "Admin User"
     assert summary["tenant_admin_email"] == "admin@acme.com"
     assert summary["tenant_admin_phone_number"] == "+91 9000000001"
+    assert summary["tenant_admin_user_id"] == admin.id
+    assert summary["tenant_admin_is_active"] is True
+    assert summary["tenant_admin_is_activated"] is False
+    assert summary["tenant_admin_activation_link_sent_count"] == 8
+    assert summary["tenant_admin_activation_link_attempts_left"] == ACTIVATION_LINK_MAX_SENDS - 8
     assert summary["last_active_at"] == recent_login
     assert summary["brand_space_count"] == 2
     assert summary["usage_consumption"]["content_generations"] == 6

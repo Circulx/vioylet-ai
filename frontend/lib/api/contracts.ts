@@ -85,6 +85,11 @@ export interface TenantSummaryResponse {
   tenant_admin_name?: string;
   tenant_admin_email?: string;
   tenant_admin_phone_number?: string;
+  tenant_admin_user_id?: UUID | null;
+  tenant_admin_is_active?: boolean | null;
+  tenant_admin_is_activated?: boolean | null;
+  tenant_admin_activation_link_sent_count?: number;
+  tenant_admin_activation_link_attempts_left?: number;
   last_active_at?: string | null;
 }
 

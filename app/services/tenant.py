@@ -488,6 +488,9 @@ class TenantService:
         active_threshold = datetime.now(timezone.utc) - timedelta(days=30)
         last_active_at = last_login_at if last_login_at and last_login_at >= active_threshold else None
         token_usage = metrics.get("token_usage", {})
+        admin_activation_link_sent_count = (
+            await self._activation_link_sent_count(admin_user.id) if admin_user else 0
+        )
         return {
             "id": tenant.id,
             "name": tenant.name,
@@ -512,6 +515,13 @@ class TenantService:
             "tenant_admin_name": admin_user.full_name if admin_user else None,
             "tenant_admin_email": admin_user.email if admin_user else None,
             "tenant_admin_phone_number": admin_user.phone_number if admin_user else None,
+            "tenant_admin_user_id": admin_user.id if admin_user else None,
+            "tenant_admin_is_active": admin_user.is_active if admin_user else None,
+            "tenant_admin_is_activated": admin_user.is_activated if admin_user else None,
+            "tenant_admin_activation_link_sent_count": admin_activation_link_sent_count,
+            "tenant_admin_activation_link_attempts_left": self._activation_link_attempts_left(
+                admin_activation_link_sent_count
+            ),
             "last_active_at": last_active_at,
         }
 

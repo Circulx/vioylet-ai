@@ -90,12 +90,18 @@ export const useResendTenantUserActivation = (tenantId: string) => {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (userId: string) =>
-      request(API.TENANTS.RESEND_ACTIVATION, {
-        pathParams: { tenantId, userId },
-      }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["tenant", tenantId, "users"] });
+    mutationFn: (params: string | { tenantId: string; userId: string }) => {
+      const resolvedTenantId = typeof params === "string" ? tenantId : params.tenantId;
+      const userId = typeof params === "string" ? params : params.userId;
+      return request(API.TENANTS.RESEND_ACTIVATION, {
+        pathParams: { tenantId: resolvedTenantId, userId },
+      });
+    },
+    onSuccess: async (_delivery, params) => {
+      const resolvedTenantId = typeof params === "string" ? tenantId : params.tenantId;
+      await queryClient.invalidateQueries({ queryKey: ["tenant", resolvedTenantId, "users"] });
+      await queryClient.invalidateQueries({ queryKey: ["tenants"] });
+      await queryClient.invalidateQueries({ queryKey: ["tenant", resolvedTenantId] });
     },
   });
 };

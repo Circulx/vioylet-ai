@@ -326,6 +326,7 @@ const FILENAME_NOISE_WORDS = new Set([
     "doc",
     "docx",
 ]);
+const SHARE_TITLE_LOWERCASE_WORDS = new Set(["a", "an", "and", "as", "at", "by", "for", "from", "in", "of", "on", "or", "the", "to", "with"]);
 
 function filenameTopicFromPrompt(prompt: string) {
     const withoutAudience = prompt
@@ -348,6 +349,20 @@ function filenameTopicFromPrompt(prompt: string) {
     return tokens.slice(0, 12).join("-") || "generated-content";
 }
 
+function shareTitleFromPrompt(prompt: string) {
+    const words = filenameTopicFromPrompt(prompt).split("-").filter(Boolean);
+    if (!words.length) {
+        return "Generated Content";
+    }
+    return words
+        .map((word, index) =>
+            index > 0 && SHARE_TITLE_LOWERCASE_WORDS.has(word)
+                ? word
+                : word.charAt(0).toUpperCase() + word.slice(1),
+        )
+        .join(" ");
+}
+
 function assetExtension(asset: AssetReference | undefined) {
     const mimeType = (asset?.mime_type || "").toLowerCase();
     if (mimeType.includes("pdf")) {
@@ -368,6 +383,10 @@ function assetExtension(asset: AssetReference | undefined) {
 
 function generatedDownloadFilename(prompt: string, asset: AssetReference | undefined) {
     return `${filenameTopicFromPrompt(prompt)}.${assetExtension(asset)}`;
+}
+
+function generatedShareFilename(prompt: string, asset: AssetReference | undefined) {
+    return `${shareTitleFromPrompt(prompt)}.${assetExtension(asset)}`;
 }
 
 function generatedSlideDownloadFilename(prompt: string, asset: AssetReference | undefined, slideIndex: number, totalSlides: number) {
@@ -410,6 +429,23 @@ function downloadUrlWithFilename(url: string, filename: string) {
         return downloadUrl.toString();
     } catch {
         return url;
+    }
+}
+
+function shareUrlWithPrettyFilename(url: string, filename: string) {
+    try {
+        const shareUrl = new URL(url, window.location.href);
+        const token = shareUrl.searchParams.get("token");
+        if (!token) {
+            return downloadUrlWithFilename(url, filename);
+        }
+        shareUrl.pathname = `${shareUrl.pathname.replace(/\/$/, "")}/${encodeURIComponent(filename)}`;
+        shareUrl.search = "";
+        shareUrl.searchParams.set("token", token);
+        shareUrl.searchParams.set("download", "true");
+        return shareUrl.toString();
+    } catch {
+        return downloadUrlWithFilename(url, filename);
     }
 }
 
@@ -749,8 +785,8 @@ function GeneratedImageViewer({
     const [isSharing, setIsSharing] = useState(false);
     const [isPreparingShare, setIsPreparingShare] = useState(false);
     const [shareError, setShareError] = useState("");
-    const preparedShareRef = useRef<{ key: string; files: File[] } | null>(null);
-    const sharePreparationRef = useRef<{ key: string; promise: Promise<File[]> } | null>(null);
+    const preparedShareRef = useRef<{ key: string; files: File[]; assets: AssetReference[] } | null>(null);
+    const sharePreparationRef = useRef<{ key: string; promise: Promise<{ files: File[]; assets: AssetReference[] }> } | null>(null);
     const imageAssets = useMemo(
         () =>
             assets
@@ -760,7 +796,9 @@ function GeneratedImageViewer({
     );
     const activeAsset = imageAssets[Math.min(activeIndex, Math.max(imageAssets.length - 1, 0))];
     const sharePreparingNotice = `${fileType.toUpperCase()} file is being prepared.`;
+    const docShareFallbackNotice = "Word document link shared. The recipient can download the DOC file.";
     const isSharePreparingNotice = shareError.startsWith(sharePreparingNotice);
+    const isShareNotice = isSharePreparingNotice || shareError.startsWith(docShareFallbackNotice);
     const shareCacheKey = useMemo(
         () =>
             [
@@ -774,7 +812,10 @@ function GeneratedImageViewer({
     );
     const prepareShareFiles = useCallback(async () => {
         if (preparedShareRef.current?.key === shareCacheKey) {
-            return preparedShareRef.current.files;
+            return {
+                files: preparedShareRef.current.files,
+                assets: preparedShareRef.current.assets,
+            };
         }
         if (sharePreparationRef.current?.key === shareCacheKey) {
             return sharePreparationRef.current.promise;
@@ -791,17 +832,19 @@ function GeneratedImageViewer({
             if (!assetsToShare.length) {
                 throw new Error(`Could not prepare a ${fileType.toUpperCase()} file for sharing.`);
             }
-            const files = await Promise.all(
-                assetsToShare.map((asset, index) =>
-                    assetToShareFile(
-                        asset,
-                        generatedSlideDownloadFilename(sourcePrompt, asset, index + 1, assetsToShare.length),
+            const files = fileType === "doc"
+                ? []
+                : await Promise.all(
+                    assetsToShare.map((asset, index) =>
+                        assetToShareFile(
+                            asset,
+                            generatedSlideDownloadFilename(sourcePrompt, asset, index + 1, assetsToShare.length),
+                        ),
                     ),
-                ),
-            );
-            preparedShareRef.current = { key: shareCacheKey, files };
+                );
+            preparedShareRef.current = { key: shareCacheKey, files, assets: assetsToShare };
             setShareError("");
-            return files;
+            return { files, assets: assetsToShare };
         })();
         sharePreparationRef.current = { key: shareCacheKey, promise };
         try {
@@ -849,6 +892,11 @@ function GeneratedImageViewer({
                 await downloadAsset(activeAsset, generatedDownloadFilename(sourcePrompt, activeAsset));
                 return;
             }
+            if (fileType === "jpg" || fileType === "png") {
+                const selectedAsset = sortAssetsBySequence(downloadableAssets)[activeIndex] || activeAsset;
+                await downloadAsset(selectedAsset, generatedDownloadFilename(sourcePrompt, selectedAsset));
+                return;
+            }
             await Promise.all(
                 downloadableAssets.map((asset, index) =>
                     downloadAsset(asset, generatedSlideDownloadFilename(sourcePrompt, asset, index + 1, downloadableAssets.length)),
@@ -873,11 +921,42 @@ function GeneratedImageViewer({
                 setShareError(`${sharePreparingNotice} Click Share again when the button is ready.`);
                 return;
             }
+            if (fileType === "doc") {
+                const docAsset = preparedShare.assets[0];
+                if (!docAsset?.asset_url) {
+                    throw new Error("Generated Word document is not ready to share.");
+                }
+                const docTitle = shareTitleFromPrompt(sourcePrompt);
+                const docFilename = generatedShareFilename(sourcePrompt, docAsset);
+                const docShareData: ShareData = {
+                    title: docTitle,
+                    text: `${docTitle} - Word document`,
+                    url: shareUrlWithPrettyFilename(docAsset.asset_url, docFilename),
+                };
+                setIsSharing(true);
+                void navigator.share(docShareData)
+                    .then(() => {
+                        setShareError(docShareFallbackNotice);
+                    })
+                    .catch((error) => {
+                        if (error instanceof DOMException && error.name === "AbortError") {
+                            return;
+                        }
+                        downloadAsset(docAsset, docFilename);
+                        setShareError("Word document sharing was blocked. The DOC file has been downloaded instead.");
+                    })
+                    .finally(() => {
+                        setIsSharing(false);
+                    });
+                return;
+            }
             const shareData: ShareData = {
                 title: filenameTopicFromPrompt(sourcePrompt),
                 files: preparedShare.files,
             };
-            if (navigator.canShare && !navigator.canShare(shareData)) {
+            const canShareAvailable = typeof navigator.canShare === "function";
+            const canShareResult = canShareAvailable ? navigator.canShare(shareData) : null;
+            if (canShareAvailable && !canShareResult) {
                 throw new Error(`This browser cannot share generated ${fileType.toUpperCase()} files.`);
             }
             setIsSharing(true);
@@ -923,7 +1002,7 @@ function GeneratedImageViewer({
                     </button>
                 </div>
             </div>
-            {shareError ? <p className={`mb-3 text-[11px] font-medium ${isSharePreparingNotice ? "text-[#57536E]" : "text-red-600"}`}>{shareError}</p> : null}
+            {shareError ? <p className={`mb-3 text-[11px] font-medium ${isShareNotice ? "text-[#57536E]" : "text-red-600"}`}>{shareError}</p> : null}
             <div className="flex items-center gap-4">
                 <div className="flex min-h-[220px] flex-1 items-center justify-center bg-[#EEF0F5] p-4">
                     {/* eslint-disable-next-line @next/next/no-img-element */}

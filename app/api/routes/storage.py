@@ -49,15 +49,17 @@ async def download_asset_options(request: Request) -> Response:
     return Response(status_code=204, headers=_download_cors_headers(request))
 
 
-@router.get("/download")
-async def download_asset(
+@router.options("/download/{filename:path}")
+async def download_asset_with_filename_options(request: Request) -> Response:
+    return Response(status_code=204, headers=_download_cors_headers(request))
+
+
+async def _download_asset_response(
     request: Request,
-    token: str = Query(..., min_length=1),
-    filename: str | None = Query(default=None),
-    download: bool | None = Query(default=None),
+    token: str,
+    filename: str | None,
+    download: bool | None,
 ) -> FileResponse:
-    # Serves the download asset endpoint; it uses FastAPI dependencies, delegates work to services, and returns
-    # the response schema.
     delivery = AssetDeliveryService()
     storage = LocalObjectStorage()
     try:
@@ -85,3 +87,25 @@ async def download_asset(
         content_disposition_type=disposition,
         headers=_download_cors_headers(request),
     )
+
+
+@router.get("/download")
+async def download_asset(
+    request: Request,
+    token: str = Query(..., min_length=1),
+    filename: str | None = Query(default=None),
+    download: bool | None = Query(default=None),
+) -> FileResponse:
+    # Serves the download asset endpoint; it uses FastAPI dependencies, delegates work to services, and returns
+    # the response schema.
+    return await _download_asset_response(request, token, filename, download)
+
+
+@router.get("/download/{filename:path}")
+async def download_asset_with_filename(
+    request: Request,
+    filename: str,
+    token: str = Query(..., min_length=1),
+    download: bool | None = Query(default=None),
+) -> FileResponse:
+    return await _download_asset_response(request, token, filename, download)

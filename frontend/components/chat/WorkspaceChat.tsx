@@ -65,7 +65,6 @@ type Platform = "instagram" | "linkedin" | "x" | "youtube_thumbnail";
 type FormatMode = "static" | "carousel" | "infographic" | "video";
 type FileType = "doc" | "pdf" | "jpg" | "png";
 
-const ENABLE_SHARE_DIAGNOSTICS = true;
 const platformOptions: Platform[] = ["instagram", "linkedin"];
 const platformLabels: Record<Platform, string> = {
     instagram: "Instagram",
@@ -327,6 +326,7 @@ const FILENAME_NOISE_WORDS = new Set([
     "doc",
     "docx",
 ]);
+const SHARE_TITLE_LOWERCASE_WORDS = new Set(["a", "an", "and", "as", "at", "by", "for", "from", "in", "of", "on", "or", "the", "to", "with"]);
 
 function filenameTopicFromPrompt(prompt: string) {
     const withoutAudience = prompt
@@ -349,6 +349,20 @@ function filenameTopicFromPrompt(prompt: string) {
     return tokens.slice(0, 12).join("-") || "generated-content";
 }
 
+function shareTitleFromPrompt(prompt: string) {
+    const words = filenameTopicFromPrompt(prompt).split("-").filter(Boolean);
+    if (!words.length) {
+        return "Generated Content";
+    }
+    return words
+        .map((word, index) =>
+            index > 0 && SHARE_TITLE_LOWERCASE_WORDS.has(word)
+                ? word
+                : word.charAt(0).toUpperCase() + word.slice(1),
+        )
+        .join(" ");
+}
+
 function assetExtension(asset: AssetReference | undefined) {
     const mimeType = (asset?.mime_type || "").toLowerCase();
     if (mimeType.includes("pdf")) {
@@ -369,6 +383,10 @@ function assetExtension(asset: AssetReference | undefined) {
 
 function generatedDownloadFilename(prompt: string, asset: AssetReference | undefined) {
     return `${filenameTopicFromPrompt(prompt)}.${assetExtension(asset)}`;
+}
+
+function generatedShareFilename(prompt: string, asset: AssetReference | undefined) {
+    return `${shareTitleFromPrompt(prompt)}.${assetExtension(asset)}`;
 }
 
 function generatedSlideDownloadFilename(prompt: string, asset: AssetReference | undefined, slideIndex: number, totalSlides: number) {
@@ -414,46 +432,29 @@ function downloadUrlWithFilename(url: string, filename: string) {
     }
 }
 
+function shareUrlWithPrettyFilename(url: string, filename: string) {
+    try {
+        const shareUrl = new URL(url, window.location.href);
+        const token = shareUrl.searchParams.get("token");
+        if (!token) {
+            return downloadUrlWithFilename(url, filename);
+        }
+        shareUrl.pathname = `${shareUrl.pathname.replace(/\/$/, "")}/${encodeURIComponent(filename)}`;
+        shareUrl.search = "";
+        shareUrl.searchParams.set("token", token);
+        shareUrl.searchParams.set("download", "true");
+        return shareUrl.toString();
+    } catch {
+        return downloadUrlWithFilename(url, filename);
+    }
+}
+
 function downloadAsset(asset: AssetReference, filename: string) {
     const downloadUrl = asset.asset_url || "";
     if (!downloadUrl) {
         return;
     }
     triggerDownload(downloadUrlWithFilename(downloadUrl, filename), filename);
-}
-
-function shareFileDiagnostic(file: File, asset: AssetReference, blob: Blob) {
-    return {
-        name: file.name,
-        type: file.type,
-        size: file.size,
-        lastModified: file.lastModified,
-        blobType: blob.type,
-        blobSize: blob.size,
-        assetMimeType: asset.mime_type,
-        assetRole: asset.asset_role,
-        assetUrl: asset.asset_url,
-        storagePath: asset.storage_path,
-    };
-}
-
-function logShareDiagnostic(label: string, value: unknown) {
-    if (!ENABLE_SHARE_DIAGNOSTICS) {
-        return;
-    }
-    console.info(`[share diagnostics] ${label}`, value);
-}
-
-function logShareErrorDiagnostic(label: string, error: unknown) {
-    if (!ENABLE_SHARE_DIAGNOSTICS) {
-        return;
-    }
-    console.error(`[share diagnostics] ${label}`, {
-        error,
-        name: error instanceof DOMException || error instanceof Error ? error.name : undefined,
-        message: error instanceof DOMException || error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-    });
 }
 
 async function assetToShareFile(asset: AssetReference, filename: string) {
@@ -469,19 +470,7 @@ async function assetToShareFile(asset: AssetReference, filename: string) {
     }
     const blob = await response.blob();
     const mimeType = asset.mime_type || blob.type || "image/png";
-    const file = new File([blob], filename, { type: mimeType });
-    logShareDiagnostic("assetToShareFile created File", shareFileDiagnostic(file, asset, blob));
-    return file;
-}
-
-function isSharePermissionDeniedError(error: unknown) {
-    if (error instanceof DOMException) {
-        return error.name === "NotAllowedError" || error.message.toLowerCase().includes("permission");
-    }
-    if (error instanceof Error) {
-        return error.message.toLowerCase().includes("permission");
-    }
-    return false;
+    return new File([blob], filename, { type: mimeType });
 }
 
 function resolveGenerationDecision(payload: ChatAssistantStructuredPayload | Record<string, unknown> | undefined) {
@@ -807,9 +796,9 @@ function GeneratedImageViewer({
     );
     const activeAsset = imageAssets[Math.min(activeIndex, Math.max(imageAssets.length - 1, 0))];
     const sharePreparingNotice = `${fileType.toUpperCase()} file is being prepared.`;
-    const docDownloadFallbackNotice = "DOC sharing is blocked by this browser.";
+    const docShareFallbackNotice = "Word document link shared. The recipient can download the DOC file.";
     const isSharePreparingNotice = shareError.startsWith(sharePreparingNotice);
-    const isShareNotice = isSharePreparingNotice || shareError.startsWith(docDownloadFallbackNotice);
+    const isShareNotice = isSharePreparingNotice || shareError.startsWith(docShareFallbackNotice);
     const shareCacheKey = useMemo(
         () =>
             [
@@ -840,26 +829,19 @@ function GeneratedImageViewer({
             const selectedFormatAssets = refreshedAssets.length ? refreshedAssets : matchingExistingAssets;
             const fallbackAssets = imageAssets.filter((asset) => assetMatchesFileType(asset, fileType));
             const assetsToShare = sortAssetsBySequence(selectedFormatAssets.length ? selectedFormatAssets : fallbackAssets);
-            logShareDiagnostic("selected export assets", {
-                fileType,
-                contentVersionId,
-                matchingExistingAssets,
-                refreshedAssets,
-                selectedFormatAssets,
-                fallbackAssets,
-                assetsToShare,
-            });
             if (!assetsToShare.length) {
                 throw new Error(`Could not prepare a ${fileType.toUpperCase()} file for sharing.`);
             }
-            const files = await Promise.all(
-                assetsToShare.map((asset, index) =>
-                    assetToShareFile(
-                        asset,
-                        generatedSlideDownloadFilename(sourcePrompt, asset, index + 1, assetsToShare.length),
+            const files = fileType === "doc"
+                ? []
+                : await Promise.all(
+                    assetsToShare.map((asset, index) =>
+                        assetToShareFile(
+                            asset,
+                            generatedSlideDownloadFilename(sourcePrompt, asset, index + 1, assetsToShare.length),
+                        ),
                     ),
-                ),
-            );
+                );
             preparedShareRef.current = { key: shareCacheKey, files, assets: assetsToShare };
             setShareError("");
             return { files, assets: assetsToShare };
@@ -939,48 +921,48 @@ function GeneratedImageViewer({
                 setShareError(`${sharePreparingNotice} Click Share again when the button is ready.`);
                 return;
             }
+            if (fileType === "doc") {
+                const docAsset = preparedShare.assets[0];
+                if (!docAsset?.asset_url) {
+                    throw new Error("Generated Word document is not ready to share.");
+                }
+                const docTitle = shareTitleFromPrompt(sourcePrompt);
+                const docFilename = generatedShareFilename(sourcePrompt, docAsset);
+                const docShareData: ShareData = {
+                    title: docTitle,
+                    text: `${docTitle} - Word document`,
+                    url: shareUrlWithPrettyFilename(docAsset.asset_url, docFilename),
+                };
+                setIsSharing(true);
+                void navigator.share(docShareData)
+                    .then(() => {
+                        setShareError(docShareFallbackNotice);
+                    })
+                    .catch((error) => {
+                        if (error instanceof DOMException && error.name === "AbortError") {
+                            return;
+                        }
+                        downloadAsset(docAsset, docFilename);
+                        setShareError("Word document sharing was blocked. The DOC file has been downloaded instead.");
+                    })
+                    .finally(() => {
+                        setIsSharing(false);
+                    });
+                return;
+            }
             const shareData: ShareData = {
                 title: filenameTopicFromPrompt(sourcePrompt),
                 files: preparedShare.files,
             };
             const canShareAvailable = typeof navigator.canShare === "function";
             const canShareResult = canShareAvailable ? navigator.canShare(shareData) : null;
-            logShareDiagnostic("ShareData before navigator.canShare/share", {
-                fileType,
-                contentVersionId,
-                canShareAvailable,
-                canShareResult,
-                shareData,
-                files: preparedShare.files.map((file) => ({
-                    name: file.name,
-                    type: file.type,
-                    size: file.size,
-                    lastModified: file.lastModified,
-                })),
-                assets: preparedShare.assets,
-            });
             if (canShareAvailable && !canShareResult) {
-                if (fileType === "doc") {
-                    preparedShare.assets.forEach((asset, index) => {
-                        downloadAsset(asset, generatedSlideDownloadFilename(sourcePrompt, asset, index + 1, preparedShare.assets.length));
-                    });
-                    setShareError(`${docDownloadFallbackNotice} Downloaded the DOC file instead.`);
-                    return;
-                }
                 throw new Error(`This browser cannot share generated ${fileType.toUpperCase()} files.`);
             }
             setIsSharing(true);
             void navigator.share(shareData)
                 .catch((error) => {
-                    logShareErrorDiagnostic("navigator.share rejected", error);
                     if (error instanceof DOMException && error.name === "AbortError") {
-                        return;
-                    }
-                    if (fileType === "doc" && isSharePermissionDeniedError(error)) {
-                        preparedShare.assets.forEach((asset, index) => {
-                            downloadAsset(asset, generatedSlideDownloadFilename(sourcePrompt, asset, index + 1, preparedShare.assets.length));
-                        });
-                        setShareError(`${docDownloadFallbackNotice} Downloaded the DOC file instead.`);
                         return;
                     }
                     setShareError(error instanceof Error ? error.message : "Could not share generated files.");
@@ -989,7 +971,6 @@ function GeneratedImageViewer({
                     setIsSharing(false);
                 });
         } catch (error) {
-            logShareErrorDiagnostic("handleShare failed before navigator.share", error);
             setShareError(error instanceof Error ? error.message : "Could not share generated files.");
         }
     };

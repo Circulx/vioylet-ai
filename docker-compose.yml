@@ -64,7 +64,7 @@ services:
         NEXT_PUBLIC_DEMO_OWNER_PASSWORD: ${NEXT_PUBLIC_DEMO_OWNER_PASSWORD:-DemoPass123!}
         GOOGLE_FONTS_API_KEY: ${GOOGLE_FONTS_API_KEY:-}
     environment:
-      NEXT_PUBLIC_ENV: development
+      NEXT_PUBLIC_ENV: development  
       NEXT_PUBLIC_API_BASE_URI: http://localhost:8000
       NEXT_PUBLIC_ENABLE_MOCK_UI: "false"
       NEXT_PUBLIC_MOCK_ROLE: TENANT_ADMIN

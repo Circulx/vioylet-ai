@@ -597,3 +597,72 @@ export interface AnalyticsResponse {
   brand_space_id?: UUID;
   metrics: Record<string, unknown>;
 }
+
+export interface RetrievedChunkResponse {
+  chunk_id?: string;
+  source: string;
+  section: string;
+  content_summary?: string;
+  relevance_score: number;
+  influence_area: string;
+  used?: boolean;
+  used_in_output?: boolean;
+}
+
+export interface BrandContextOutputResponse {
+  brand_id: string;
+  retrieved_sections: string[];
+  high_relevance_context: RetrievedChunkResponse[];
+  medium_relevance_context: RetrievedChunkResponse[];
+  low_relevance_context: RetrievedChunkResponse[];
+  missing_context: string[];
+  brand_isolation_status: "pass" | "warning" | "fail";
+  retrieval_confidence: number;
+  retrieval_query: string;
+  total_chunks_retrieved: number;
+}
+
+export interface RankedChunkResponse {
+  chunk_id?: string;
+  source: string;
+  section: string;
+  content?: string;
+  text?: string;
+  content_summary?: string;
+  influence_area: string;
+  pinecone_score?: number;
+  campaign_score?: number;
+  audience_score?: number;
+  compliance_score?: number;
+  visual_score?: number;
+  signal_scores?: {
+    campaign: number;
+    audience: number;
+    compliance: number;
+    visual: number;
+  };
+  composite_score: number;
+  tier: "high" | "medium" | "low";
+  used?: boolean;
+  used_in_output?: boolean;
+}
+
+export interface RetrievalLogResponse {
+  brand_id: string;
+  namespace: string;
+  query: string;
+  total_chunks: number;
+  chunks: {
+    source: string;
+    section: string;
+    relevance_score: number;
+    influence_area: string;
+    used: boolean;
+  }[];
+}
+
+export interface RetrievalPreviewResponse {
+  brand_context: BrandContextOutputResponse;
+  retrieval_log: RetrievalLogResponse;
+  ranked_chunks: RankedChunkResponse[];
+}

@@ -17,6 +17,7 @@ import type {
   ReviewDetailResponse,
   ReviewLinkResponse,
   ResolvedBrandContextResponse,
+  RetrievalPreviewResponse,
   TenantLogoUploadRequest,
   TenantBrandSpaceSummaryResponse,
   TenantCreateResponse,
@@ -99,6 +100,7 @@ export const API = {
     ATTACHMENT_REPROCESS: { method: "POST", url: ({ brandId, assetId }: { brandId: string; assetId: string }) => `/api/v1/brands/${brandId}/attachments/assets/${assetId}/reprocess` } as ApiEndpoint<void, { asset: BrandAttachmentResponse; message: string }>,
     ATTACHMENT_UNSYNC: { method: "POST", url: ({ brandId, assetId }: { brandId: string; assetId: string }) => `/api/v1/brands/${brandId}/attachments/assets/${assetId}/unsync` } as ApiEndpoint<void, { asset: BrandAttachmentResponse; message: string }>,
     ATTACHMENT_DELETE: { method: "DELETE", url: ({ brandId, assetId }: { brandId: string; assetId: string }) => `/api/v1/brands/${brandId}/attachments/assets/${assetId}` } as ApiEndpoint<void, { asset: BrandAttachmentResponse; message: string }>,
+    RETRIEVAL_PREVIEW: { method: "POST", url: (brandId: string) => `/api/v1/brands/${brandId}/retrieval-preview` } as ApiEndpoint<{ user_prompt: string; platform: string; format: string }, RetrievalPreviewResponse>,
   },
   KNOWLEDGE: {
     UPLOAD: { method: "POST", url: "/api/v1/knowledge/upload" } as ApiEndpoint<unknown, KnowledgeAssetResponse>,

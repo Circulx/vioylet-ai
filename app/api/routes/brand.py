@@ -3,13 +3,16 @@ from uuid import UUID
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.dependencies import CurrentPrincipal, assert_brand_access, forbid_super_admin_brand_access, get_current_principal
 from app.db.session import get_db_session
 from app.integrations.object_storage import LocalObjectStorage
+from app.models.brand import BrandSpace
+from app.models.retrieval_log import RetrievalLog
 from app.schemas.brand import (
     BrandCreateRequest,
     BrandFinalizeRequest,
@@ -30,6 +33,7 @@ from app.schemas.common import MessageResponse
 from app.services.brand import BrandSpaceService
 from app.services.data_validation import DataValidatorService
 from app.services.vectorstore.ingestion_service import IngestionService
+from app.services.vectorstore.retrieval_service import BrandRetrievalService
 from app.workers.ingestion_worker import process_document_sync
 
 
@@ -415,3 +419,100 @@ async def search_brand_documents(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+
+
+class RetrievalPreviewRequest(BaseModel):
+    user_prompt: str
+    platform: str = ""
+    format: str = ""
+
+
+@router.post("/{brand_id}/retrieval-preview")
+async def brand_retrieval_preview(
+    brand_id: UUID,
+    payload: RetrievalPreviewRequest,
+    principal: CurrentPrincipal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db_session),
+):
+    """Layer 1 preview: run namespace-isolated retrieval + multi-signal reranking.
+
+    Returns the validated BrandContextOutput plus the full retrieval log and the
+    per-chunk signal breakdown so the pipeline's first layer can be verified.
+    """
+    forbid_super_admin_brand_access(principal)
+    assert_brand_access(principal, brand_id)
+
+    service = BrandRetrievalService()
+    try:
+        result = service.retrieve(
+            brand_id=str(brand_id),
+            user_prompt=payload.user_prompt,
+            platform=payload.platform,
+            format=payload.format,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Retrieval failed: {str(e)}")
+
+    brand = await session.get(BrandSpace, brand_id)
+    log = RetrievalLog(
+        tenant_id=brand.tenant_id if brand else principal.tenant_id,
+        brand_space_id=brand_id,
+        query=result["retrieval_log"]["query"],
+        namespace=result["retrieval_log"]["namespace"],
+        isolation_status=result["output"].brand_isolation_status,
+        confidence=result["output"].retrieval_confidence,
+        total_chunks=result["retrieval_log"]["total_chunks"],
+        chunks=result["retrieval_log"]["chunks"],
+        metadata_json={
+            "user_prompt": payload.user_prompt,
+            "platform": payload.platform,
+            "format": payload.format,
+        },
+    )
+    session.add(log)
+    await session.commit()
+
+    return {
+        "brand_context": result["output"].model_dump(),
+        "retrieval_log": result["retrieval_log"],
+        "ranked_chunks": result["ranked_chunks"],
+    }
+
+
+@router.get("/{brand_id}/retrieval-logs")
+async def get_brand_retrieval_logs(
+    brand_id: UUID,
+    limit: int = 50,
+    principal: CurrentPrincipal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db_session),
+):
+    """Query persisted retrieval logs for a brand (Layer 1 audit trail)."""
+    forbid_super_admin_brand_access(principal)
+    assert_brand_access(principal, brand_id)
+
+    stmt = (
+        select(RetrievalLog)
+        .where(RetrievalLog.brand_space_id == brand_id)
+        .order_by(desc(RetrievalLog.created_at))
+        .limit(limit)
+    )
+    result = await session.execute(stmt)
+    logs = result.scalars().all()
+    return {
+        "brand_id": str(brand_id),
+        "total": len(logs),
+        "logs": [
+            {
+                "id": str(log.id),
+                "query": log.query,
+                "namespace": log.namespace,
+                "isolation_status": log.isolation_status,
+                "confidence": log.confidence,
+                "total_chunks": log.total_chunks,
+                "chunks": log.chunks,
+                "metadata_json": log.metadata_json,
+                "created_at": log.created_at.isoformat() if log.created_at else None,
+            }
+            for log in logs
+        ],
+    }

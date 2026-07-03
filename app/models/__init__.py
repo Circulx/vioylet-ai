@@ -38,6 +38,7 @@ from app.models.collaboration import (
 from app.models.content import ChatMessage, ContentFolder, ContentSession, ContentVersion, GeneratedAsset
 from app.models.knowledge import KnowledgeAsset, Template, TemplateMetadata
 from app.models.memory import ConversationMemoryEntry
+from app.models.retrieval_log import RetrievalLog
 from app.models.tenant import ActivationToken, Permission, Role, RolePermission, Tenant, User, UserRole
 
 __all__ = [
@@ -73,6 +74,7 @@ __all__ = [
     "ReplaceableWord",
     "ReusableBrandAsset",
     "ResolvedBrandContextSnapshot",
+    "RetrievalLog",
     "ReviewComment",
     "ReviewLink",
     "Role",

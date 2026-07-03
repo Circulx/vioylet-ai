@@ -45,6 +45,7 @@ artifact_review/
 debug/
 tmp/
 tmp*/
+brand_docs/
 
 # Local smoke/debug leftovers
 tmp*.json

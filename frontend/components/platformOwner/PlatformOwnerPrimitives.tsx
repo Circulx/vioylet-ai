@@ -76,7 +76,7 @@ export function UserPlatformTabSwitcher({
                     type="button"
                     onClick={() => onChange(tab.id)}
                     className={cn(
-                        "h-12 w-28 min-w-24 px-4 rounded-none bg-white px-5 text-[15px] font-medium text-[#2F3342] transition",
+                        "h-12 min-w-24 px-4 rounded-none bg-white px-5 text-[15px] font-medium text-[#2F3342] transition",
                         active === tab.id ? "bg-[#EFEFEF70]" : "hover:bg-[#FAFAFD]",
                     )}
                 >

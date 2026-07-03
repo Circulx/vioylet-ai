@@ -350,11 +350,9 @@ function UserTable({
                                                 </Link>
                                             ) : index === 4 && row.isPendingActivation ? (
                                                 <div className="flex flex-col items-start gap-1">
-                                                    <Button
+                                                    <button
                                                         type="button"
-                                                        variant="outline"
-                                                        size="xs"
-                                                        className="h-7 rounded-none border-primary/30 px-2 text-primary hover:bg-primary/10"
+                                                        className="h-7 rounded-none border-none bg-none text-primary font-medium hover:underline cursor-pointer"
                                                         disabled={resendingUserId === row.id || row.activationLinkAttemptsLeft <= 0}
                                                         onClick={() => onResendActivation(row)}
                                                         title="Resend Activation Link"
@@ -365,10 +363,11 @@ function UserTable({
                                                                 ? "Sending..."
                                                                 : row.activationLinkAttemptsLeft <= 0
                                                                     ? "Limit reached"
-                                                                    : "Resend"}
+                                                                    : "Resend Link"}
                                                         </abbr>
-                                                    </Button>
-                                                    <span className="text-xs leading-4 text-[#666666]">
+                                                    </button>
+                                                    {/* Informational text */}
+                                                    {/* <span className="text-xs leading-4 text-[#666666]">
                                                         Activation links sent: {row.activationLinkSentCount}
                                                         {row.activationLinkSentCount > 1
                                                             ? ` (resent ${row.activationLinkSentCount - 1} ${row.activationLinkSentCount - 1 === 1 ? "time" : "times"})`
@@ -376,7 +375,7 @@ function UserTable({
                                                     </span>
                                                     <span className="text-xs leading-4 text-[#666666]">
                                                         Total attempts done: {row.activationLinkSentCount}
-                                                    </span>
+                                                    </span> */}
                                                 </div>
                                             ) : (
                                                 cell

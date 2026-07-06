@@ -64,6 +64,7 @@ from app.services.jobs import JobService
 from app.services.upload_preflight import UploadPreflightService
 from app.utils.image_assets import open_image_asset
 from app.services.usage import UsageLimitService
+from app.services.vectorstore.ingestion_service import IngestionService
 
 
 class BrandAssetService:
@@ -390,6 +391,19 @@ class BrandAssetService:
                 text=outcome.extracted_text,
                 metadata=base_metadata,
             )
+            # Also ingest into Pinecone for Layer 1 retrieval, tagged by brand-space category.
+            try:
+                ingestion = IngestionService()
+                ingestion.ingest_asset_text(
+                    brand_id=str(asset.brand_space_id),
+                    asset_id=str(asset.id),
+                    text=outcome.extracted_text,
+                    category=asset.field_key or asset.channel or asset.asset_category or "knowledge",
+                    filename=asset.original_filename,
+                )
+            except Exception:  # noqa: BLE001
+                # Pinecone ingestion is best-effort; FAISS is the primary grounding for generation.
+                pass
         structured_documents = self._structured_retrieval_documents(asset, outcome)
         # This branch separates the special case from the normal path so later logic can work with cleaner
         # assumptions.

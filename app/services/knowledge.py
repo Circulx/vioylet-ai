@@ -1,6 +1,7 @@
 # Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -13,6 +14,7 @@ from app.ai.rag.ocr import OCRService
 from app.ai.rag.retrieval import KnowledgeRetrievalService
 from app.core.enums import AssetLifecycle, JobType, UsageMetricCode
 from app.core.exceptions import NotFoundError
+from app.core.logging import get_logger
 from app.integrations.object_storage import LocalObjectStorage
 from app.models.knowledge import KnowledgeAsset
 from app.repositories.knowledge import KnowledgeAssetRepository
@@ -21,6 +23,9 @@ from app.services.jobs import JobService
 from app.services.brand_assets import BrandAssetService
 from app.services.upload_preflight import UploadPreflightService
 from app.services.usage import UsageLimitService
+from app.services.vectorstore.ingestion_service import IngestionService
+
+logger = get_logger(__name__)
 
 
 class KnowledgeService:
@@ -162,6 +167,22 @@ class KnowledgeService:
                     text=text,
                     metadata={"asset_id": str(asset.id), "filename": asset.original_filename},
                 )
+                # Also ingest into Pinecone for Layer 1 retrieval, tagged by brand-space category.
+                try:
+                    ingestion = IngestionService()
+                    ingestion.ingest_asset_text(
+                        brand_id=str(asset.brand_space_id),
+                        asset_id=str(asset.id),
+                        text=text,
+                        category=asset.channel or asset.field_key or "knowledge",
+                        filename=asset.original_filename,
+                    )
+                    logger.info(
+                        f"Ingested asset {asset.id} into Pinecone namespace brand:{asset.brand_space_id} "
+                        f"with category {asset.channel}"
+                    )
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"Pinecone ingestion failed for asset {asset.id}: {e}")
                 asset.last_indexed_at = datetime.now(timezone.utc).isoformat()
                 asset.lifecycle_state = AssetLifecycle.INDEXED
             else:

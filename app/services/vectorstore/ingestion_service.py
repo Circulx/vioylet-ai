@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 from typing import Any
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 import docx
 import pdfplumber
@@ -52,6 +53,44 @@ SECTION_TO_BRAND_TAB: dict[str, str] = {
     "visual_identity": "visual_layer",
     "review": "review_layer",
 }
+
+# Default influence area for each brand-space category. Lets the UI upload path
+# tag chunks deterministically by their tab without an extra LLM call per chunk.
+CATEGORY_TO_INFLUENCE: dict[str, str] = {
+    "identity": "strategy",
+    "foundations": "strategy",
+    "voice_tone": "copy",
+    "personas": "audience",
+    "guardrails": "compliance",
+    "knowledge": "strategy",
+    "objectives": "strategy",
+    "visual_identity": "visual",
+    "prompt_intelligence": "strategy",
+    "review": "strategy",
+}
+
+
+def normalize_category(value: str | None) -> str:
+    """Coerce an arbitrary field_key/channel/category into a controlled category."""
+    normalized = str(value or "").strip().lower()
+    if normalized in CONTROLLED_CATEGORIES:
+        return normalized
+    # Common aliases coming from brand-space tabs / asset channels.
+    aliases = {
+        "brand": "knowledge",
+        "brand_summary": "knowledge",
+        "tone": "voice_tone",
+        "voice": "voice_tone",
+        "strategy": "foundations",
+        "audience": "personas",
+        "persona": "personas",
+        "compliance": "guardrails",
+        "rules": "guardrails",
+        "visual": "visual_identity",
+        "visuals": "visual_identity",
+        "objective": "objectives",
+    }
+    return aliases.get(normalized, "knowledge")
 
 
 class IngestionService:
@@ -269,17 +308,30 @@ Return only the JSON, no other text."""
             logger.error(f"Embedding generation failed: {e}")
             raise
 
-    def upsert_to_pinecone(self, brand_id: str, chunks: list[dict[str, Any]]) -> None:
+    def upsert_to_pinecone(
+        self,
+        brand_id: str,
+        chunks: list[dict[str, Any]],
+        *,
+        doc_id: str | None = None,
+    ) -> int:
         """Upsert chunks to Pinecone under brand namespace.
 
         Args:
             brand_id: Brand ID for namespace isolation
             chunks: List of chunk dictionaries with content and metadata
+            doc_id: Stable per-document/asset id used to build unique vector ids.
+                Prevents one document's chunks from overwriting another's. When not
+                provided a random id is generated so ad-hoc ingests never collide.
+
+        Returns:
+            Number of vectors successfully upserted.
         """
         if not self.pinecone_index:
             raise ValueError("Pinecone index not initialized")
 
         namespace = f"brand:{brand_id}"
+        source_id = str(doc_id or uuid4())
         vectors = []
 
         for i, chunk in enumerate(chunks):
@@ -289,7 +341,7 @@ Return only the JSON, no other text."""
                 brand_tab = SECTION_TO_BRAND_TAB.get(category, category)
                 vectors.append(
                     {
-                        "id": f"{brand_id}_chunk_{i}",
+                        "id": f"{brand_id}:{source_id}:{i}",
                         "values": embedding,
                         "metadata": {
                             "content": chunk["content"],
@@ -298,6 +350,8 @@ Return only the JSON, no other text."""
                             "section": chunk.get("section", "Unknown"),
                             "influence_area": chunk.get("influence_area", "strategy"),
                             "content_summary": chunk.get("content_summary", ""),
+                            "asset_id": source_id,
+                            "filename": chunk.get("filename", ""),
                         },
                     }
                 )
@@ -305,13 +359,88 @@ Return only the JSON, no other text."""
                 logger.error(f"Failed to generate embedding for chunk {i}: {e}")
                 continue
 
-        if vectors:
+        upserted = 0
+        # Pinecone caps upsert batch sizes, so send in chunks of 100.
+        for start in range(0, len(vectors), 100):
+            batch = vectors[start : start + 100]
             try:
-                self.pinecone_index.upsert(vectors=vectors, namespace=namespace)
-                logger.info(f"Upserted {len(vectors)} chunks to Pinecone namespace: {namespace}")
+                self.pinecone_index.upsert(vectors=batch, namespace=namespace)
+                upserted += len(batch)
             except Exception as e:
                 logger.error(f"Pinecone upsert failed: {e}")
                 raise
+        if upserted:
+            logger.info(f"Upserted {upserted} chunks to Pinecone namespace: {namespace}")
+        return upserted
+
+    def delete_asset_vectors(self, brand_id: str, asset_id: str) -> None:
+        """Delete all Pinecone vectors previously ingested for a knowledge asset.
+
+        Called before re-ingesting so reprocessing/edits never leave stale chunks.
+        Uses a metadata filter on asset_id, which is set by ingest_asset_text.
+        """
+        if not self.pinecone_index:
+            return
+        namespace = f"brand:{brand_id}"
+        try:
+            self.pinecone_index.delete(filter={"asset_id": str(asset_id)}, namespace=namespace)
+            logger.info(f"Deleted vectors for asset {asset_id} in namespace {namespace}")
+        except Exception as e:  # noqa: BLE001
+            # Serverless indexes may not support delete-by-filter; log and continue
+            # since re-upsert uses deterministic ids that overwrite the same chunks.
+            logger.warning(f"delete_asset_vectors skipped for asset {asset_id}: {e}")
+
+    def ingest_asset_text(
+        self,
+        brand_id: str,
+        asset_id: str,
+        text: str,
+        *,
+        category: str,
+        filename: str = "",
+        section: str = "Uploaded Document",
+    ) -> dict[str, Any]:
+        """Ingest already-extracted text for a brand-space knowledge asset.
+
+        This is the single entry point used by the Brand Space UI upload pipeline:
+        the asset's brand-space tab decides the category metadata, the text is
+        chunked, embedded, and upserted to the brand's Pinecone namespace with that
+        category so Layer 1 retrieval can filter/align by tab.
+        """
+        if not self.pinecone_index or not self.openai_client:
+            logger.warning(
+                "ingest_asset_text skipped: pinecone/openai not configured "
+                f"(brand_id={brand_id}, asset_id={asset_id})"
+            )
+            return {"brand_id": brand_id, "asset_id": asset_id, "total_chunks": 0}
+
+        normalized = normalize_category(category)
+        influence_area = CATEGORY_TO_INFLUENCE.get(normalized, "strategy")
+
+        chunks = self.chunk_text(text or "")
+        classified_chunks = [
+            {
+                "content": chunk,
+                "category": normalized,
+                "section": section,
+                "influence_area": influence_area,
+                "content_summary": (chunk[:157] + "...") if len(chunk) > 160 else chunk,
+                "filename": filename,
+            }
+            for chunk in chunks
+            if chunk.strip()
+        ]
+
+        # Remove any prior vectors for this asset so edits don't leave stale chunks.
+        self.delete_asset_vectors(brand_id, asset_id)
+        upserted = self.upsert_to_pinecone(brand_id, classified_chunks, doc_id=asset_id)
+
+        return {
+            "brand_id": brand_id,
+            "asset_id": asset_id,
+            "category": normalized,
+            "total_chunks": upserted,
+        }
 
     def process_document(self, brand_id: str, file_path: str) -> dict[str, Any]:
         """Process a document end-to-end: parse, chunk, classify, embed, and upsert.
@@ -347,8 +476,10 @@ Return only the JSON, no other text."""
                 }
             )
 
-        # Step 4: Upsert to Pinecone
-        self.upsert_to_pinecone(brand_id, classified_chunks)
+        # Step 4: Upsert to Pinecone. Use the file path as a stable doc id so
+        # re-ingesting the same file overwrites its own chunks instead of others'.
+        doc_id = uuid5(NAMESPACE_URL, f"{brand_id}:{Path(file_path).name}").hex
+        self.upsert_to_pinecone(brand_id, classified_chunks, doc_id=doc_id)
 
         return {
             "brand_id": brand_id,

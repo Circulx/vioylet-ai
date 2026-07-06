@@ -9,7 +9,7 @@ from typing import Any
 
 from app.core.logging import get_logger
 from app.graph.models.layer1_models import BrandContextOutput, RetrievedChunk
-from app.services.vectorstore.ingestion_service import IngestionService
+from app.services.vectorstore.ingestion_service import IngestionService, SECTION_TO_BRAND_TAB
 from app.services.vectorstore.reranker import MultiSignalReranker, RankedChunk
 
 logger = get_logger(__name__)
@@ -22,6 +22,29 @@ MEDIUM_THRESHOLD = 0.40
 USED_IN_OUTPUT_TOP_N = 8
 
 _VALID_INFLUENCE_AREAS = {"strategy", "copy", "visual", "compliance", "audience"}
+
+
+def _normalize_categories(categories: list[str] | None) -> list[str]:
+    """Normalize incoming category filters to match ingestion metadata.
+
+    Accepts both raw tab names (e.g., "identity_layer") and controlled categories
+    (e.g., "identity"), and expands to both so retrieval matches vectors tagged
+    with either category or brand_tab.
+    """
+    if not categories:
+        return []
+    normalized = set()
+    for cat in categories:
+        cat_lower = cat.strip().lower()
+        normalized.add(cat_lower)
+        # If it's a brand_tab (e.g., "identity_layer"), add the category (e.g., "identity")
+        for section, tab in SECTION_TO_BRAND_TAB.items():
+            if cat_lower == tab.lower():
+                normalized.add(section)
+            # If it's a category, add the brand_tab
+            if cat_lower == section:
+                normalized.add(tab)
+    return list(normalized)
 
 
 class BrandRetrievalService:
@@ -106,10 +129,11 @@ class BrandRetrievalService:
 
         filter_dict = None
         if categories:
+            normalized = _normalize_categories(categories)
             filter_dict = {
                 "$or": [
-                    {"category": {"$in": categories}},
-                    {"brand_tab": {"$in": categories}}
+                    {"category": {"$in": normalized}},
+                    {"brand_tab": {"$in": normalized}}
                 ]
             }
 

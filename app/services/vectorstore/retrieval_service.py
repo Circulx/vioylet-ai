@@ -41,6 +41,7 @@ class BrandRetrievalService:
         user_prompt: str,
         platform: str = "",
         format: str = "",
+        categories: list[str] | None = None,
         k: int = 20,
     ) -> dict[str, Any]:
         """Retrieve, rerank, and classify brand context.
@@ -52,9 +53,9 @@ class BrandRetrievalService:
         """
         namespace = f"brand:{brand_id}"
         query = self.build_query(user_prompt, brand_id, platform, format)
-        logger.info(f"retrieval.start brand_id={brand_id} namespace={namespace} k={k}")
+        logger.info(f"retrieval.start brand_id={brand_id} namespace={namespace} k={k} categories={categories}")
 
-        raw_matches = self._query_namespace(brand_id, query, k)
+        raw_matches = self._query_namespace(brand_id, query, k, categories)
         total = len(raw_matches)
 
         campaign_context = {"user_prompt": user_prompt, "platform": platform, "format": format}
@@ -95,18 +96,29 @@ class BrandRetrievalService:
             "ranked_chunks": ranked_chunks,
         }
 
-    def _query_namespace(self, brand_id: str, query: str, k: int) -> list[dict[str, Any]]:
+    def _query_namespace(self, brand_id: str, query: str, k: int, categories: list[str] | None = None) -> list[dict[str, Any]]:
         index = self._ingestion.pinecone_index
         if not index:
             raise ValueError("Pinecone index not initialized")
 
         namespace = f"brand:{brand_id}"
         query_embedding = self._ingestion.generate_embedding(query)
+
+        filter_dict = None
+        if categories:
+            filter_dict = {
+                "$or": [
+                    {"category": {"$in": categories}},
+                    {"brand_tab": {"$in": categories}}
+                ]
+            }
+
         results = index.query(
             vector=query_embedding,
             namespace=namespace,  # HARD isolation — only this brand's vectors
             top_k=k,
             include_metadata=True,
+            filter=filter_dict,
         )
 
         chunks: list[dict[str, Any]] = []

@@ -1418,7 +1418,7 @@ export default function BrandSpaceEditor({
 
             <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
                 <div className="space-y-5">
-                    <TabsList className="flex h-auto flex-wrap justify-start gap-2 bg-transparent p-0">
+                    <TabsList className="flex h-auto flex-nowrap justify-start gap-1 bg-transparent p-0 overflow-x-auto w-full border-b border-slate-200 pb-2 scrollbar-thin">
                         {brandSpaceTabs.map((tab) => {
                             const completion = tabCompletion[tab.value] ?? { percent: 100, required: 0, completed: 0 };
                             const fillPercent = Math.max(0, Math.min(100, completion.percent));
@@ -1427,7 +1427,7 @@ export default function BrandSpaceEditor({
                                     key={tab.id}
                                     value={tab.value}
                                     className={cn(
-                                        "group relative overflow-visible rounded-lg border border-[#CDCDCD] bg-white px-4 py-2.5 text-[15px] shadow-none hover:bg-[#CDCDCD]/20 data-[state=active]:font-bold data-[state=active]:border-black data-[state=active]:border-2",
+                                        "group relative overflow-visible rounded-lg border border-[#CDCDCD] bg-white px-2.5 py-1.5 text-xs shadow-none hover:bg-[#CDCDCD]/20 data-[state=active]:font-bold data-[state=active]:border-black data-[state=active]:border-2 shrink-0",
                                         fillPercent === 100 ? "border-primary/40" : "",
                                     )}
                                     style={{

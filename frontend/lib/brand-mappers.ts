@@ -397,6 +397,25 @@ export function mapBrandOverviewToForm(overview: BrandOverviewResponse): BrandFo
     otherDocuments: createKnowledgeItems(knowledge.other_documents, "brand"),
   };
 
+  // Prompt intelligence section
+  const platformRulesRaw = toRecord(promptIntelligence.platform_rules);
+  const promptStarters = Array.isArray(promptIntelligence.prompt_starters)
+    ? (promptIntelligence.prompt_starters as Array<Record<string, unknown>>)
+    : [];
+  const supportedPlatforms = Array.isArray(platformRulesRaw.supported_platforms)
+    ? (platformRulesRaw.supported_platforms as unknown[]).map((p) => String(p))
+    : [];
+
+  form.promptIntelligence = {
+    preferredPlatforms: supportedPlatforms,
+    contentFormats: [],
+    instructionOverrides: String(promptIntelligence.instruction_overrides || ""),
+    contentTone: String(promptIntelligence.content_tone_override || ""),
+    contextualHints: String(promptIntelligence.contextual_hints || ""),
+    platformRules: String(promptIntelligence.platform_specific_rules || ""),
+    avoidedFormats: String(promptIntelligence.avoided_formats || ""),
+  };
+
   const defaultObjective =
     Array.isArray(objectives.objectives) && objectives.objectives.length
       ? toRecord(
@@ -427,6 +446,17 @@ export function mapBrandOverviewToForm(overview: BrandOverviewResponse): BrandFo
     instagram: primaryCompetitor.instagram,
     x: primaryCompetitor.x,
     competitorBrands: competitorBrands.length ? competitorBrands : [primaryCompetitor],
+  };
+
+  form.objectives = {
+    primaryObjective: String(defaultObjective.content_type || objectiveConfig.primary_objective || ""),
+    contentGoal: String(objectiveConfig.content_goal || ""),
+    campaignTheme: String(defaultObjective.description || objectiveConfig.campaign_theme || ""),
+    businessOutcome: String(objectiveConfig.business_problem_or_opportunity || form.additional.businessProblemOrOpportunity || ""),
+    callToAction: String(objectiveConfig.call_to_action || ""),
+    targetConversionAction: String(objectiveConfig.target_conversion_action || ""),
+    contentFrequency: String(objectiveConfig.content_frequency || ""),
+    successMetric: String(objectiveConfig.success_metric || ""),
   };
 
   return form;
@@ -695,13 +725,20 @@ export function mapBrandSections(form: BrandFormState, uploads?: UploadedBrandAs
       payload: {
         objectives: [
           {
-            name: form.additional.brandAdvantage || form.additional.brandMission || "Brand Growth",
-            description: form.additional.strategy || form.additional.marketPositioning || "",
-            content_type: "social_post",
+            name: form.objectives.campaignTheme || form.additional.brandAdvantage || form.additional.brandMission || "Brand Growth",
+            description: form.objectives.businessOutcome || form.additional.strategy || form.additional.marketPositioning || "",
+            content_type: form.objectives.primaryObjective || "social_post",
             platform_scope: "multiplatform",
             is_default: true,
             configuration: {
-              business_problem_or_opportunity: form.additional.businessProblemOrOpportunity || "",
+              primary_objective: form.objectives.primaryObjective || "",
+              content_goal: form.objectives.contentGoal || "",
+              campaign_theme: form.objectives.campaignTheme || "",
+              call_to_action: form.objectives.callToAction || "",
+              target_conversion_action: form.objectives.targetConversionAction || "",
+              content_frequency: form.objectives.contentFrequency || "",
+              success_metric: form.objectives.successMetric || "",
+              business_problem_or_opportunity: form.objectives.businessOutcome || form.additional.businessProblemOrOpportunity || "",
               perception_challenge: form.additional.perceptionChallenge || "",
               human_insight: form.additional.humanInsight || "",
               market_positioning: form.additional.marketPositioning || "",
@@ -754,9 +791,17 @@ export function mapBrandSections(form: BrandFormState, uploads?: UploadedBrandAs
           { label: "Brand voice", value: normalized.coreToneAttributes.join(", ") },
         ].filter((item) => item.value),
         platform_rules: {
-          supported_platforms: ["linkedin", "instagram", "x", "youtube_thumbnail"],
+          supported_platforms: form.promptIntelligence.preferredPlatforms.length
+            ? form.promptIntelligence.preferredPlatforms
+            : ["linkedin", "instagram", "x", "youtube_thumbnail"],
           recommended_templates: templateDescriptors(uploaded?.templateFiles || []),
         },
+        instruction_overrides: form.promptIntelligence.instructionOverrides || "",
+        content_tone_override: form.promptIntelligence.contentTone || "",
+        contextual_hints: form.promptIntelligence.contextualHints || "",
+        platform_specific_rules: form.promptIntelligence.platformRules || "",
+        avoided_formats: form.promptIntelligence.avoidedFormats || "",
+        preferred_content_formats: form.promptIntelligence.contentFormats,
       },
       completion_percent: 100,
     },

@@ -116,6 +116,27 @@ export interface BrandKnowledgeFields {
   otherDocuments: BrandUploadItem[];
 }
 
+export interface PromptIntelligenceFields {
+  preferredPlatforms: string[];
+  contentFormats: string[];
+  instructionOverrides: string;
+  contentTone: string;
+  contextualHints: string;
+  platformRules: string;
+  avoidedFormats: string;
+}
+
+export interface ObjectivesFields {
+  primaryObjective: string;
+  contentGoal: string;
+  campaignTheme: string;
+  businessOutcome: string;
+  callToAction: string;
+  targetConversionAction: string;
+  contentFrequency: string;
+  successMetric: string;
+}
+
 export interface CompetitorBrandField {
   name: string;
   websiteUrl: string;
@@ -156,6 +177,8 @@ export interface BrandFormState {
   brandRules: BrandRuleFields;
   brandKnowledge: BrandKnowledgeFields;
   additional: AdditionalDetailFields;
+  promptIntelligence: PromptIntelligenceFields;
+  objectives: ObjectivesFields;
 }
 
 export const emptyBrandFormState: BrandFormState = {
@@ -230,6 +253,25 @@ export const emptyBrandFormState: BrandFormState = {
   brandKnowledge: {
     templateFiles: [],
     otherDocuments: [],
+  },
+  promptIntelligence: {
+    preferredPlatforms: [],
+    contentFormats: [],
+    instructionOverrides: "",
+    contentTone: "",
+    contextualHints: "",
+    platformRules: "",
+    avoidedFormats: "",
+  },
+  objectives: {
+    primaryObjective: "",
+    contentGoal: "",
+    campaignTheme: "",
+    businessOutcome: "",
+    callToAction: "",
+    targetConversionAction: "",
+    contentFrequency: "",
+    successMetric: "",
   },
   additional: {
     brandMission: "",

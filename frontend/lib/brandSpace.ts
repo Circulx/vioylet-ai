@@ -1,61 +1,93 @@
 import type { ComponentType } from "react";
-import AdditionalDetails from "@/components/brandSpaces/tabs/AdditionalDetails";
+import BrandReview from "@/components/brandSpaces/tabs/BrandReview";
 import BrandKnowledge from "@/components/brandSpaces/tabs/BrandKnowledge";
 import BrandRules from "@/components/brandSpaces/tabs/BrandRules";
 import CoreBrandSignals from "@/components/brandSpaces/tabs/CoreBrandSignals";
+import Objectives from "@/components/brandSpaces/tabs/Objectives";
+import PromptIntelligence from "@/components/brandSpaces/tabs/PromptIntelligence";
 import TargetAudience from "@/components/brandSpaces/tabs/TargetAudience";
 import VisualIdentity from "@/components/brandSpaces/tabs/VisualIdentity";
 import VoiceTone from "@/components/brandSpaces/tabs/VoiceTone";
+import AdditionalDetails from "@/components/brandSpaces/tabs/AdditionalDetails";
 import type { BrandTabProps } from "@/types/brand-space.types";
 
 type BrandSpaceTab = {
     id: number;
     label: string;
     value: string;
+    layer: string;
     content: ComponentType<BrandTabProps>;
 };
 
 export const brandSpaceTabs: BrandSpaceTab[] = [
     {
         id: 1,
-        label: "Core Brand Signals",
+        label: "Brand Space Creation",
         value: "core_brand_signals",
-        content: CoreBrandSignals
+        layer: "Identity Layer",
+        content: CoreBrandSignals,
     },
     {
         id: 2,
-        label: "Voice & Tone",
-        value: "voice_tone",
-        content: VoiceTone
+        label: "Brand Foundations",
+        value: "additional_details",
+        layer: "Strategic Layer",
+        content: AdditionalDetails,
     },
     {
         id: 3,
-        label: "Target Audience",
-        value: "target_audience",
-        content: TargetAudience
+        label: "Brand Voice & Emotion",
+        value: "voice_tone",
+        layer: "Tone Layer",
+        content: VoiceTone,
     },
     {
         id: 4,
-        label: "Visual Identity",
-        value: "visual_identity",
-        content: VisualIdentity
+        label: "Audience Persona Mapping",
+        value: "target_audience",
+        layer: "Persona Intelligence Layer",
+        content: TargetAudience,
     },
     {
         id: 5,
-        label: "Brand Rules",
+        label: "Do's & Don'ts",
         value: "brand_rules",
-        content: BrandRules
+        layer: "Guardrail Layer",
+        content: BrandRules,
     },
     {
         id: 6,
-        label: "Brand Knowledge",
+        label: "Brand Knowledge Upload",
         value: "brand_knowledge",
-        content: BrandKnowledge
+        layer: "Learning Layer",
+        content: BrandKnowledge,
     },
     {
         id: 7,
-        label: "Additional Details",
-        value: "additional_details",
-        content: AdditionalDetails
+        label: "Prompt Intelligence Setup",
+        value: "prompt_intelligence",
+        layer: "Instruction Layer",
+        content: PromptIntelligence,
+    },
+    {
+        id: 8,
+        label: "Content Objectives",
+        value: "objectives",
+        layer: "Objective Layer",
+        content: Objectives,
+    },
+    {
+        id: 9,
+        label: "Visual Identity",
+        value: "visual_identity",
+        layer: "Visual Layer",
+        content: VisualIdentity,
+    },
+    {
+        id: 10,
+        label: "Review",
+        value: "review",
+        layer: "Review",
+        content: BrandReview,
     },
 ];

@@ -443,12 +443,17 @@ class TenantService:
         # Runs the usage summary service flow by coordinating repositories, validators, and integrations, then
         # returns domain data.
         usage_limit = await self.usage_limits.get_by_tenant(tenant_id)
-        if not usage_limit:
-            raise NotFoundError("Usage limit record not found")
         tenant = await self.tenants.get(tenant_id)
+        limits = self._usage_limit_values(usage_limit) if usage_limit else {
+            "max_users": 0,
+            "max_brand_spaces": 0,
+            "max_content_generations": 0,
+            "max_image_generations": 0,
+            "max_ocr_pages": 0,
+        }
         return {
             "tenant_id": tenant_id,
-            "limits": self._usage_limit_values(usage_limit),
+            "limits": limits,
             "consumption": await self._real_usage_consumption(tenant_id),
             "monthly_usage": await self._monthly_usage(tenant_id),
             "brand_usage": await self._brand_usage(tenant_id, tenant),

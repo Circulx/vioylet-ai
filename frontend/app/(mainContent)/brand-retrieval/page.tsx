@@ -536,7 +536,7 @@ export default function BrandRetrievalPage() {
                             {(chunk.relevance_score ?? 0).toFixed(3)}
                           </TableCell>
                           <TableCell>
-                            {(chunk.used ?? chunk.used_in_output) ? (
+                            {chunk.used ? (
                               <Badge className="bg-primary/70 text-[10px]">
                                 YES
                               </Badge>

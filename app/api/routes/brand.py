@@ -425,6 +425,7 @@ class RetrievalPreviewRequest(BaseModel):
     user_prompt: str
     platform: str = ""
     format: str = ""
+    categories: list[str] | None = None
 
 
 @router.post("/{brand_id}/retrieval-preview")
@@ -449,6 +450,7 @@ async def brand_retrieval_preview(
             user_prompt=payload.user_prompt,
             platform=payload.platform,
             format=payload.format,
+            categories=payload.categories,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Retrieval failed: {str(e)}")

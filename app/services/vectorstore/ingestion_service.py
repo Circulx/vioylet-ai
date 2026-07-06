@@ -38,6 +38,21 @@ CONTROLLED_INFLUENCE_AREAS = [
     "audience",
 ]
 
+# Maps backend section_code → brand space tab layer label
+# Used as metadata in Pinecone so retrieval can filter by tab/layer
+SECTION_TO_BRAND_TAB: dict[str, str] = {
+    "identity": "identity_layer",
+    "foundations": "strategic_layer",
+    "voice_tone": "tone_layer",
+    "personas": "persona_layer",
+    "guardrails": "guardrail_layer",
+    "knowledge": "learning_layer",
+    "prompt_intelligence": "instruction_layer",
+    "objectives": "objective_layer",
+    "visual_identity": "visual_layer",
+    "review": "review_layer",
+}
+
 
 class IngestionService:
     """Service for ingesting brand guideline documents into Pinecone."""
@@ -270,13 +285,16 @@ Return only the JSON, no other text."""
         for i, chunk in enumerate(chunks):
             try:
                 embedding = self.generate_embedding(chunk["content"])
+                category = chunk.get("category", "general")
+                brand_tab = SECTION_TO_BRAND_TAB.get(category, category)
                 vectors.append(
                     {
                         "id": f"{brand_id}_chunk_{i}",
                         "values": embedding,
                         "metadata": {
                             "content": chunk["content"],
-                            "category": chunk.get("category", "general"),
+                            "category": category,
+                            "brand_tab": brand_tab,
                             "section": chunk.get("section", "Unknown"),
                             "influence_area": chunk.get("influence_area", "strategy"),
                             "content_summary": chunk.get("content_summary", ""),

@@ -393,8 +393,11 @@ class BrandAssetService:
             )
             # Also ingest into Pinecone for Layer 1 retrieval, tagged by brand-space category.
             try:
+                import asyncio
                 ingestion = IngestionService()
-                ingestion.ingest_asset_text(
+                # Run synchronous ingestion in thread pool to avoid blocking event loop
+                await asyncio.to_thread(
+                    ingestion.ingest_asset_text,
                     brand_id=str(asset.brand_space_id),
                     asset_id=str(asset.id),
                     text=outcome.extracted_text,

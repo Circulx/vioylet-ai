@@ -26,8 +26,37 @@ from app.ai.rag.ocr import OCRService
 from app.core.enums import AssetLifecycle
 from app.db.session import AsyncSessionLocal
 from app.integrations.object_storage import LocalObjectStorage
+from app.models.brand_assets import AssetProcessingStatus
 from app.models.knowledge import KnowledgeAsset
 from app.services.vectorstore.ingestion_service import IngestionService
+
+
+async def _upsert_processing_status(
+    session,
+    asset: KnowledgeAsset,
+    lifecycle_state: AssetLifecycle,
+    status_message: str,
+) -> None:
+    """Update or create the AssetProcessingStatus row the UI reads."""
+    result = await session.execute(
+        select(AssetProcessingStatus).where(
+            AssetProcessingStatus.knowledge_asset_id == asset.id
+        )
+    )
+    status = result.scalar_one_or_none()
+    if status is None:
+        status = AssetProcessingStatus(
+            tenant_id=asset.tenant_id,
+            brand_space_id=asset.brand_space_id,
+            knowledge_asset_id=asset.id,
+            field_key=asset.field_key or "knowledge",
+            lifecycle_state=lifecycle_state.value,
+            status_message=status_message,
+        )
+        session.add(status)
+    else:
+        status.lifecycle_state = lifecycle_state.value
+        status.status_message = status_message
 
 
 async def main(brand_space_id: str) -> None:
@@ -79,9 +108,21 @@ async def main(brand_space_id: str) -> None:
                     filename=fname,
                 )
                 print(f"  ✓ Synced")
+                asset.lifecycle_state = AssetLifecycle.INDEXED
+                asset.last_indexed_at = datetime.now(timezone.utc).isoformat()
+                await _upsert_processing_status(
+                    session, asset, AssetLifecycle.INDEXED, "Synced to Pinecone."
+                )
+                await session.commit()
                 synced_count += 1
             except Exception as e:
                 print(f"  ✗ Sync failed: {e}")
+                asset.lifecycle_state = AssetLifecycle.FAILED
+                asset.processing_error = str(e)
+                await _upsert_processing_status(
+                    session, asset, AssetLifecycle.FAILED, f"Sync failed: {e}"
+                )
+                await session.commit()
                 sync_failed += 1
 
         # Then OCR and sync assets without text
@@ -99,13 +140,19 @@ async def main(brand_space_id: str) -> None:
                     print(f"  ⚠ No text extracted")
                     asset.lifecycle_state = AssetLifecycle.FAILED
                     asset.processing_error = "No text extracted"
+                    await _upsert_processing_status(
+                        session, asset, AssetLifecycle.FAILED, "No text extracted"
+                    )
                     ocr_failed += 1
                 else:
                     print(f"  ✓ Extracted {len(text)} characters")
                     asset.extracted_text = text
                     asset.extracted_summary = text[:1000]
                     asset.page_count = extracted.get("page_count", 1)
-                    asset.lifecycle_state = AssetLifecycle.PROCESSED
+                    asset.lifecycle_state = AssetLifecycle.PROCESSING
+                    await _upsert_processing_status(
+                        session, asset, AssetLifecycle.PROCESSING, "Extracted text, syncing to Pinecone"
+                    )
                     ocr_count += 1
 
                     print(f"  → Syncing to Pinecone...")
@@ -118,6 +165,10 @@ async def main(brand_space_id: str) -> None:
                         filename=fname,
                     )
                     print(f"  ✓ Synced to Pinecone")
+                    asset.lifecycle_state = AssetLifecycle.INDEXED
+                    await _upsert_processing_status(
+                        session, asset, AssetLifecycle.INDEXED, "Synced to Pinecone"
+                    )
                     synced_count += 1
 
                 asset.last_indexed_at = datetime.now(timezone.utc).isoformat()
@@ -129,6 +180,9 @@ async def main(brand_space_id: str) -> None:
                 traceback.print_exc()
                 asset.lifecycle_state = AssetLifecycle.FAILED
                 asset.processing_error = str(e)
+                await _upsert_processing_status(
+                    session, asset, AssetLifecycle.FAILED, f"Processing failed: {e}"
+                )
                 await session.commit()
                 ocr_failed += 1
 

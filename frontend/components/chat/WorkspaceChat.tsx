@@ -787,6 +787,7 @@ function GeneratedImageViewer({
     const [shareError, setShareError] = useState("");
     const preparedShareRef = useRef<{ key: string; files: File[]; assets: AssetReference[] } | null>(null);
     const sharePreparationRef = useRef<{ key: string; promise: Promise<{ files: File[]; assets: AssetReference[] }> } | null>(null);
+    const shareActionInFlightRef = useRef(false);
     const imageAssets = useMemo(
         () =>
             assets
@@ -856,18 +857,6 @@ function GeneratedImageViewer({
             setIsPreparingShare(false);
         }
     }, [contentVersionId, existingExportAssets, fileType, imageAssets, onExportForType, shareCacheKey, sourcePrompt]);
-    const startSharePreparation = useCallback(() => {
-        if (!imageAssets.length) {
-            return;
-        }
-        if (preparedShareRef.current?.key === shareCacheKey || sharePreparationRef.current?.key === shareCacheKey) {
-            return;
-        }
-        void prepareShareFiles().catch((error) => {
-            setShareError(error instanceof Error ? error.message : "Could not prepare generated files for sharing.");
-        });
-    }, [imageAssets.length, prepareShareFiles, shareCacheKey]);
-
     useEffect(() => {
         if (preparedShareRef.current?.key !== shareCacheKey) {
             preparedShareRef.current = null;
@@ -909,18 +898,17 @@ function GeneratedImageViewer({
         }
     };
 
-    const handleShare = () => {
+    const handleShare = async () => {
+        if (isSharing || isPreparingShare || shareActionInFlightRef.current) {
+            return;
+        }
+        shareActionInFlightRef.current = true;
         setShareError("");
         try {
             if (!navigator.share) {
                 throw new Error("File sharing is not supported in this browser.");
             }
-            const preparedShare = preparedShareRef.current;
-            if (!preparedShare || preparedShare.key !== shareCacheKey) {
-                startSharePreparation();
-                setShareError(`${sharePreparingNotice} Click Share again when the button is ready.`);
-                return;
-            }
+            const preparedShare = await prepareShareFiles();
             if (fileType === "doc") {
                 const docAsset = preparedShare.assets[0];
                 if (!docAsset?.asset_url) {
@@ -934,20 +922,18 @@ function GeneratedImageViewer({
                     url: shareUrlWithPrettyFilename(docAsset.asset_url, docFilename),
                 };
                 setIsSharing(true);
-                void navigator.share(docShareData)
-                    .then(() => {
-                        setShareError(docShareFallbackNotice);
-                    })
-                    .catch((error) => {
-                        if (error instanceof DOMException && error.name === "AbortError") {
-                            return;
-                        }
-                        downloadAsset(docAsset, docFilename);
-                        setShareError("Word document sharing was blocked. The DOC file has been downloaded instead.");
-                    })
-                    .finally(() => {
-                        setIsSharing(false);
-                    });
+                try {
+                    await navigator.share(docShareData);
+                    setShareError(docShareFallbackNotice);
+                } catch (error) {
+                    if (error instanceof DOMException && error.name === "AbortError") {
+                        return;
+                    }
+                    downloadAsset(docAsset, docFilename);
+                    setShareError("Word document sharing was blocked. The DOC file has been downloaded instead.");
+                } finally {
+                    setIsSharing(false);
+                }
                 return;
             }
             const shareData: ShareData = {
@@ -960,18 +946,20 @@ function GeneratedImageViewer({
                 throw new Error(`This browser cannot share generated ${fileType.toUpperCase()} files.`);
             }
             setIsSharing(true);
-            void navigator.share(shareData)
-                .catch((error) => {
-                    if (error instanceof DOMException && error.name === "AbortError") {
-                        return;
-                    }
-                    setShareError(error instanceof Error ? error.message : "Could not share generated files.");
-                })
-                .finally(() => {
-                    setIsSharing(false);
-                });
+            try {
+                await navigator.share(shareData);
+            } catch (error) {
+                if (error instanceof DOMException && error.name === "AbortError") {
+                    return;
+                }
+                setShareError(error instanceof Error ? error.message : "Could not share generated files.");
+            } finally {
+                setIsSharing(false);
+            }
         } catch (error) {
             setShareError(error instanceof Error ? error.message : "Could not share generated files.");
+        } finally {
+            shareActionInFlightRef.current = false;
         }
     };
 
@@ -991,10 +979,8 @@ function GeneratedImageViewer({
                     </button>
                     <button
                         type="button"
-                        onPointerEnter={startSharePreparation}
-                        onFocus={startSharePreparation}
-                        onClick={handleShare}
-                        disabled={isSharing}
+                        onClick={() => void handleShare()}
+                        disabled={isSharing || isPreparingShare}
                         className="inline-flex h-7 items-center gap-1.5 bg-primary px-2.5 text-[11px] font-medium text-white disabled:cursor-not-allowed disabled:opacity-70"
                     >
                         {isSharing || isPreparingShare ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Share2 className="h-3.5 w-3.5" />}

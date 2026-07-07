@@ -1329,6 +1329,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
     const activeGenerationSessionRef = useRef<string>("");
     const exportAssetCacheRef = useRef(new Map<string, AssetReference[]>());
     const exportWarmupRef = useRef(new Set<string>());
+    const userNearMessageBottomRef = useRef(true);
 
     const sizeOption = useMemo(
         () => sizeOptionsByPlatform[studioPlatform].find((entry) => entry.label === studioSizeLabel) || sizeOptionsByPlatform[studioPlatform][0],
@@ -1570,16 +1571,37 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
         return () => window.clearTimeout(timeoutId);
     }, [activeChatSearchMatchId, chatSearchQuery]);
 
+    const updateUserNearMessageBottom = useCallback(() => {
+        const messageList = messageListRef.current;
+        if (!messageList) {
+            userNearMessageBottomRef.current = true;
+            return true;
+        }
+        const distanceFromBottom = messageList.scrollHeight - messageList.scrollTop - messageList.clientHeight;
+        const isNearBottom = distanceFromBottom < 120;
+        userNearMessageBottomRef.current = isNearBottom;
+        return isNearBottom;
+    }, []);
+
+    useEffect(() => {
+        userNearMessageBottomRef.current = true;
+    }, [resolvedActiveSessionId]);
+
     useEffect(() => {
         if (!resolvedActiveSessionId || !orderedMessages.length || normalizedChatSearchQuery) {
+            return;
+        }
+        if (!isGeneratingMessage && !userNearMessageBottomRef.current) {
             return;
         }
         const timeoutId = window.setTimeout(() => {
             const messageList = messageListRef.current;
             if (messageList) {
                 messageList.scrollTop = messageList.scrollHeight;
+                userNearMessageBottomRef.current = true;
                 return;
             }
+            userNearMessageBottomRef.current = true;
             messageBottomRef.current?.scrollIntoView({ block: "end" });
         }, 80);
         return () => window.clearTimeout(timeoutId);
@@ -1845,7 +1867,11 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                             ) : null}
                                         </div>
                                     </div>
-                                    <div ref={messageListRef} className="flex-1 space-y-8 overflow-y-auto px-1 py-5 thin-scrollbar">
+                                    <div
+                                        ref={messageListRef}
+                                        onScroll={updateUserNearMessageBottom}
+                                        className="flex-1 space-y-8 overflow-y-auto px-1 py-5 thin-scrollbar"
+                                    >
                                         {orderedMessages.map((message, messageIndex) => {
                                             const previewAssets = message.role === "assistant" ? resolveGeneratedImageAssets(message.structured_payload) : [];
                                             const existingExportAssets = message.role === "assistant" ? resolveGeneratedExportAssets(message.structured_payload) : [];

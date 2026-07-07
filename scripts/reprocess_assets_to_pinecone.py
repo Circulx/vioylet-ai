@@ -1,12 +1,11 @@
-"""Reprocess existing KnowledgeAssets to sync them into Pinecone.
+"""Sync existing KnowledgeAssets into Pinecone using already-extracted text.
 
-This script queries all KnowledgeAssets for a given brand_space_id and
-reprocesses them through KnowledgeService.process_asset, which will:
-- Re-run OCR (or use cached text if available)
-- Chunk and embed the text
-- Upsert vectors to Pinecone with brand-space category metadata
+This script bypasses OCR entirely and uses the extracted_text stored in the
+database from prior processing. It pushes text directly to Pinecone via
+IngestionService.ingest_asset_text, which chunks, embeds, and upserts.
 
-Use this to backfill existing documents after adding Pinecone ingestion.
+Usage:
+    python scripts/reprocess_assets_to_pinecone.py <brand_space_id>
 """
 from __future__ import annotations
 
@@ -27,81 +26,85 @@ from sqlalchemy import select
 
 from app.db.session import AsyncSessionLocal
 from app.models.knowledge import KnowledgeAsset
-from app.services.knowledge import KnowledgeService
+from app.services.vectorstore.ingestion_service import IngestionService
 
 
-async def main(brand_space_id: str | None = None) -> None:
-    """Reprocess all assets for a given brand_space_id."""
+async def main(brand_space_id: str) -> None:
+    """Sync all assets for a brand_space_id into Pinecone using stored extracted_text."""
     async with AsyncSessionLocal() as session:
-        knowledge_service = KnowledgeService(session)
-
-        # Build query
-        query = select(KnowledgeAsset)
-        if brand_space_id:
-            query = query.where(KnowledgeAsset.brand_space_id == brand_space_id)
-        
+        query = select(KnowledgeAsset).where(KnowledgeAsset.brand_space_id == brand_space_id)
         result = await session.execute(query)
         assets = result.scalars().all()
-        
+
         if not assets:
-            print("No assets found.")
-            if brand_space_id:
-                print(f"  Brand space ID: {brand_space_id}")
+            print(f"No assets found for brand {brand_space_id}")
             return
 
-        print(f"Found {len(assets)} asset(s) to reprocess:")
-        for asset in assets:
-            print(f"  {asset.id} | {asset.original_filename} | {asset.field_key} | {asset.lifecycle_state}")
+        has_text = [a for a in assets if a.extracted_text]
+        no_text = [a for a in assets if not a.extracted_text]
 
-        # Confirm before proceeding (skip if --yes flag)
-        import os
-        if os.environ.get("AUTO_CONFIRM") != "1":
-            if brand_space_id:
-                confirm = input(f"\nReprocess all {len(assets)} assets for brand {brand_space_id}? (y/n): ")
-            else:
-                confirm = input(f"\nReprocess all {len(assets)} assets across all brands? (y/n): ")
-            
-            if confirm.lower() != "y":
-                print("Aborted.")
-                return
-        else:
-            print(f"\nAuto-confirm enabled. Reprocessing {len(assets)} assets...")
+        print(f"Found {len(assets)} assets:")
+        print(f"  With extracted_text: {len(has_text)}")
+        print(f"  Without extracted_text: {len(no_text)} (will skip)")
 
-        # Reprocess each asset
+        if not has_text:
+            print("\nNo assets have extracted text. Run OCR first via the UI worker.")
+            return
+
+        print(f"\nSyncing {len(has_text)} assets to Pinecone...")
+
+        ingestion = IngestionService()
+        if not ingestion.pinecone_index:
+            print("ERROR: Pinecone index not initialized. Check PINECONE_API_KEY.")
+            return
+        if not ingestion.openai_client:
+            print("ERROR: OpenAI client not initialized. Check OPENAI_API_KEY.")
+            return
+
         success_count = 0
         error_count = 0
-        
-        for i, asset in enumerate(assets, 1):
-            print(f"\n[{i}/{len(assets)}] Processing {asset.original_filename}...")
+        skipped_count = 0
+
+        for i, asset in enumerate(has_text, 1):
+            fname = asset.original_filename or "unknown"
+            category = asset.field_key or asset.channel or asset.asset_category or "knowledge"
+            text_len = len(asset.extracted_text or "")
+            print(f"\n[{i}/{len(has_text)}] {fname}")
+            print(f"  category={category}  text_length={text_len}")
+
             try:
-                print(f"  → Starting process_asset...")
-                await knowledge_service.process_asset(asset.id)
-                print(f"  ✓ Processed successfully")
+                print(f"  → Calling ingest_asset_text...")
+                result = await asyncio.to_thread(
+                    ingestion.ingest_asset_text,
+                    brand_id=str(asset.brand_space_id),
+                    asset_id=str(asset.id),
+                    text=asset.extracted_text,
+                    category=category,
+                    filename=fname,
+                )
+                upserted = result.get("total_chunks", 0)
+                print(f"  ✓ Upserted {upserted} chunks to Pinecone")
                 success_count += 1
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 import traceback
-                print(f"  ✗ Failed: {e}")
+                print(f"  ✗ FAILED: {e}")
                 traceback.print_exc()
                 error_count += 1
 
         print(f"\n{'='*60}")
-        print(f"Reprocessing complete:")
+        print(f"Sync complete:")
         print(f"  Success: {success_count}")
         print(f"  Errors:  {error_count}")
+        print(f"  Skipped (no text): {len(no_text)}")
         print(f"  Total:   {len(assets)}")
         print(f"{'='*60}")
 
 
 if __name__ == "__main__":
-    import sys
-    
-    brand_id = None
-    if len(sys.argv) > 1:
-        brand_id = sys.argv[1]
-        print(f"Reprocessing assets for brand_space_id: {brand_id}")
-    else:
-        print("Reprocessing assets for ALL brand spaces.")
-        print("To target a specific brand, pass brand_space_id as argument:")
-        print("  python scripts/reprocess_assets_to_pinecone.py <brand_space_id>")
-    
+    if len(sys.argv) < 2:
+        print("Usage: python scripts/reprocess_assets_to_pinecone.py <brand_space_id>")
+        sys.exit(1)
+
+    brand_id = sys.argv[1]
+    print(f"Syncing assets to Pinecone for brand_space_id: {brand_id}")
     asyncio.run(main(brand_id))

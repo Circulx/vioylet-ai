@@ -154,10 +154,19 @@ class OCRService:
     def extract_visual_candidates(self, file_path: str) -> list[str]:
         # Extracts visual candidates from file path for asset ingestion.
         # It calls _resolve_office_suffix and _scratch_root to turn raw evidence into the structured signal the caller needs.
+        import os as _os
         suffix = self._resolve_office_suffix(file_path)
         scratch_root = self._scratch_root(file_path)
         scratch_root.mkdir(parents=True, exist_ok=True)
         if suffix == ".pdf":
+            # Skip Google Vision image extraction when credentials are not available;
+            # text content from pdfplumber is sufficient for RAG indexing.
+            if not bool(_os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")):
+                logger.warning(
+                    "ocr.extract_visual_candidates.skipped reason=GOOGLE_APPLICATION_CREDENTIALS_not_set file=%s",
+                    file_path,
+                )
+                return []
             output_dir = scratch_root / "page_images"
             output_dir.mkdir(parents=True, exist_ok=True)
             return [
@@ -183,13 +192,26 @@ class OCRService:
             # PDFs produce both extracted text and page images so later analysis can read layout as well as words.
             with pdfplumber.open(file_path) as pdf:
                 page_count = len(pdf.pages)
-            text = self._with_retry(
-                "extract_text_from_pdf",
-                self.processor.extract_text_from_pdf,
-                file_path,
-                output_dir=str(scratch_root),
-                progress_callback=progress_callback,
-            )
+            # Use Google Vision OCR if credentials are available; otherwise fall back to pdfplumber text extraction.
+            import os as _os
+            _has_google_creds = bool(_os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"))
+            if _has_google_creds:
+                text = self._with_retry(
+                    "extract_text_from_pdf",
+                    self.processor.extract_text_from_pdf,
+                    file_path,
+                    output_dir=str(scratch_root),
+                    progress_callback=progress_callback,
+                )
+            else:
+                logger.warning(
+                    "ocr.extract_text_from_pdf.fallback reason=GOOGLE_APPLICATION_CREDENTIALS_not_set "
+                    "using=pdfplumber file=%s",
+                    file_path,
+                )
+                with pdfplumber.open(file_path) as pdf:
+                    text_parts = [page.extract_text() or "" for page in pdf.pages]
+                text = "\n\n".join(part for part in text_parts if part.strip())
             page_images_dir = scratch_root / "page_images"
             page_images = (
                 [str(path) for path in sorted(page_images_dir.glob("*.png"))]

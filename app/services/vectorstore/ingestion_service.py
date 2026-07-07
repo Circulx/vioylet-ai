@@ -414,10 +414,15 @@ Return only the JSON, no other text."""
             )
             return {"brand_id": brand_id, "asset_id": asset_id, "total_chunks": 0}
 
+        logger.info(f"ingest_asset_text.start brand_id={brand_id} asset_id={asset_id} category={category} text_length={len(text)}")
+
         normalized = normalize_category(category)
         influence_area = CATEGORY_TO_INFLUENCE.get(normalized, "strategy")
 
+        logger.info(f"ingest_asset_text.chunking brand_id={brand_id} asset_id={asset_id}")
         chunks = self.chunk_text(text or "")
+        logger.info(f"ingest_asset_text.chunked brand_id={brand_id} asset_id={asset_id} chunks={len(chunks)}")
+
         classified_chunks = [
             {
                 "content": chunk,
@@ -430,10 +435,14 @@ Return only the JSON, no other text."""
             for chunk in chunks
             if chunk.strip()
         ]
+        logger.info(f"ingest_asset_text.classified brand_id={brand_id} asset_id={asset_id} classified={len(classified_chunks)}")
 
         # Remove any prior vectors for this asset so edits don't leave stale chunks.
+        logger.info(f"ingest_asset_text.deleting_old brand_id={brand_id} asset_id={asset_id}")
         self.delete_asset_vectors(brand_id, asset_id)
+        logger.info(f"ingest_asset_text.upserting brand_id={brand_id} asset_id={asset_id}")
         upserted = self.upsert_to_pinecone(brand_id, classified_chunks, doc_id=asset_id)
+        logger.info(f"ingest_asset_text.upserted brand_id={brand_id} asset_id={asset_id} upserted={upserted}")
 
         return {
             "brand_id": brand_id,

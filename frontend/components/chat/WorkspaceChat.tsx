@@ -886,6 +886,7 @@ function GeneratedImageViewer({
     const applyImageEdit = useApplyImageEdit(brandId);
     const preparedShareRef = useRef<{ key: string; files: File[]; assets: AssetReference[] } | null>(null);
     const sharePreparationRef = useRef<{ key: string; promise: Promise<{ files: File[]; assets: AssetReference[] }> } | null>(null);
+    const shareActionInFlightRef = useRef(false);
     const imageAssets = useMemo(
         () =>
             assets
@@ -1151,6 +1152,8 @@ function GeneratedImageViewer({
             }
         } catch (error) {
             setShareError(error instanceof Error ? error.message : "Could not share generated files.");
+        } finally {
+            shareActionInFlightRef.current = false;
         }
     };
 
@@ -1710,6 +1713,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
     const activeGenerationSessionRef = useRef<string>("");
     const exportAssetCacheRef = useRef(new Map<string, AssetReference[]>());
     const exportWarmupRef = useRef(new Set<string>());
+    const userNearMessageBottomRef = useRef(true);
 
     const sizeOption = useMemo(
         () => sizeOptionsByPlatform[studioPlatform].find((entry) => entry.label === studioSizeLabel) || sizeOptionsByPlatform[studioPlatform][0],
@@ -1954,6 +1958,22 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
         return () => window.clearTimeout(timeoutId);
     }, [activeChatSearchMatchId, chatSearchQuery]);
 
+    const updateUserNearMessageBottom = useCallback(() => {
+        const messageList = messageListRef.current;
+        if (!messageList) {
+            userNearMessageBottomRef.current = true;
+            return true;
+        }
+        const distanceFromBottom = messageList.scrollHeight - messageList.scrollTop - messageList.clientHeight;
+        const isNearBottom = distanceFromBottom < 120;
+        userNearMessageBottomRef.current = isNearBottom;
+        return isNearBottom;
+    }, []);
+
+    useEffect(() => {
+        userNearMessageBottomRef.current = true;
+    }, [resolvedActiveSessionId]);
+
     useEffect(() => {
         if (!resolvedActiveSessionId || !orderedMessages.length || normalizedChatSearchQuery) {
             return;
@@ -1980,6 +2000,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                 autoFollowChatRef.current = true;
                 return;
             }
+            userNearMessageBottomRef.current = true;
             messageBottomRef.current?.scrollIntoView({ block: "end" });
         }, 80);
         return () => window.clearTimeout(timeoutId);

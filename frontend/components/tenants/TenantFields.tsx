@@ -1,8 +1,16 @@
 "use client";
 
-import { ChevronDown } from "lucide-react";
+import { useMemo } from "react";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
+import { getCountryOptions, getStateOptions, type SelectOption } from "@/lib/geo-options";
 import type { TenantFormData } from "@/types/tenant.types";
 import type { FormErrors } from "@/zod/tenantManagement";
 import TenantLogoUpload from "./LogoUpload";
@@ -15,6 +23,9 @@ interface TenantFieldsProps {
 }
 
 export default function TenantFields({ form, setForm, errors, clearError }: TenantFieldsProps) {
+    const countryOptions = useMemo(() => getCountryOptions(form.country), [form.country]);
+    const stateOptions = useMemo(() => getStateOptions(form.country, form.state), [form.country, form.state]);
+
     return (
         <div className="w-full max-w-[1110px]">
             <div className="space-y-7">
@@ -95,21 +106,35 @@ export default function TenantFields({ form, setForm, errors, clearError }: Tena
                                     clearError("city");
                                 }}
                             />
-                            <Field
-                                id="state"
-                                label="State"
-                                value={form.state}
-                                placeholder="Enter state"
-                                error={errors?.state}
-                                trailingIcon
+                            <SelectField
+                                id="country"
+                                label="Country"
+                                value={form.country}
+                                placeholder="Select country"
+                                options={countryOptions}
+                                error={errors?.country}
                                 onChange={(value) => {
-                                    setForm({ ...form, state: value });
+                                    setForm({ ...form, country: value, state: "" });
+                                    clearError("country");
                                     clearError("state");
                                 }}
                             />
                         </div>
 
                         <div className="grid gap-6 sm:grid-cols-[217px_209px]">
+                            <SelectField
+                                id="state"
+                                label="State"
+                                value={form.state}
+                                placeholder={form.country ? "Select state" : "Select country first"}
+                                options={stateOptions}
+                                error={errors?.state}
+                                disabled={!form.country}
+                                onChange={(value) => {
+                                    setForm({ ...form, state: value });
+                                    clearError("state");
+                                }}
+                            />
                             <Field
                                 id="zip"
                                 label="ZIP"
@@ -119,18 +144,6 @@ export default function TenantFields({ form, setForm, errors, clearError }: Tena
                                 onChange={(value) => {
                                     setForm({ ...form, zip: value });
                                     clearError("zip");
-                                }}
-                            />
-                            <Field
-                                id="country"
-                                label="Country"
-                                value={form.country}
-                                placeholder="Enter country"
-                                error={errors?.country}
-                                trailingIcon
-                                onChange={(value) => {
-                                    setForm({ ...form, country: value });
-                                    clearError("country");
                                 }}
                             />
                         </div>
@@ -148,7 +161,6 @@ function Field({
     value,
     placeholder,
     error,
-    trailingIcon = false,
     onChange,
 }: {
     id: string;
@@ -156,7 +168,6 @@ function Field({
     value: string;
     placeholder: string;
     error?: string;
-    trailingIcon?: boolean;
     onChange: (value: string) => void;
 }) {
     return (
@@ -172,8 +183,51 @@ function Field({
                     className="h-12 rounded-[10px] border-none bg-input-field px-4 text-sm text-[#2F3342] placeholder:text-[#A7A7A7] focus-visible:ring-2 focus-visible:ring-primary/20"
                     onChange={(event) => onChange(event.target.value)}
                 />
-                {trailingIcon ? <ChevronDown className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#9CA3AF]" /> : null}
             </div>
+            {error ? <p className="text-sm text-red-500">{error}</p> : null}
+        </div>
+    );
+}
+
+function SelectField({
+    id,
+    label,
+    value,
+    placeholder,
+    options,
+    error,
+    disabled = false,
+    onChange,
+}: {
+    id: string;
+    label: string;
+    value: string;
+    placeholder: string;
+    options: SelectOption[];
+    error?: string;
+    disabled?: boolean;
+    onChange: (value: string) => void;
+}) {
+    return (
+        <div className="space-y-2.5">
+            <Label htmlFor={id} className="text-base font-medium leading-6 text-[#2F3342]">
+                {label}
+            </Label>
+            <Select value={value} onValueChange={onChange} disabled={disabled}>
+                <SelectTrigger
+                    id={id}
+                    className="h-12 w-full rounded-[10px] border-none bg-input-field px-4 text-sm text-[#2F3342] shadow-none focus-visible:ring-2 focus-visible:ring-primary/20 disabled:opacity-60"
+                >
+                    <SelectValue placeholder={placeholder} />
+                </SelectTrigger>
+                <SelectContent className="z-[80] max-h-72">
+                    {options.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                        </SelectItem>
+                    ))}
+                </SelectContent>
+            </Select>
             {error ? <p className="text-sm text-red-500">{error}</p> : null}
         </div>
     );

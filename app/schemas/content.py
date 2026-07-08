@@ -1,6 +1,7 @@
 # Pydantic schemas define the API contracts used by routes, services, and frontend callers.
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -77,6 +78,37 @@ class ContentExportRequest(APIModel):
     blueprint_payload: dict[str, Any] | None = None
     template_id: UUID | None = None
 
+
+
+class ContentImageEditStateRequest(APIModel):
+    # Request contract for loading image edit state without invoking image generation.
+    content_version_id: UUID
+    source_asset: AssetReference
+
+
+class ContentImageEditApplyRequest(ContentImageEditStateRequest):
+    # Request contract for creating a lightweight edited image variant from an existing generated image.
+    target: str = Field(min_length=1)
+    instructions: str = Field(min_length=1)
+
+
+class ContentImageEditVariant(APIModel):
+    # Response contract for a generated image edit variant shown in the editor tabs.
+    id: str
+    label: str
+    target: str
+    instructions: str
+    asset: AssetReference
+    preview_style: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    is_original: bool = False
+
+
+class ContentImageEditStateResponse(APIModel):
+    # Response contract for edit modal state. Kept separate from generation payload contracts.
+    content_version_id: UUID
+    source_asset_id: UUID
+    variants: list[ContentImageEditVariant] = Field(default_factory=list)
 
 class ContentCopyRequest(APIModel):
     # Request contract for content copy; FastAPI validates incoming JSON against these fields before service

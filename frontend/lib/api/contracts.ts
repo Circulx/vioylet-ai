@@ -542,6 +542,14 @@ export interface ChatSendResponse {
   assistant_message: ChatMessageResponse;
 }
 
+export interface ChatEnhancePromptRequest {
+  prompt: string;
+  studio_panel?: StudioPanelSelection;
+}
+
+export interface ChatEnhancePromptResponse {
+  enhanced_prompt: string;
+}
 export interface ChatSessionCreateRequest {
   title?: string;
   studio_panel: StudioPanelSelection;
@@ -595,6 +603,33 @@ export interface RenderResponse {
   renderer_metadata: Record<string, unknown>;
 }
 
+
+export interface ImageEditVariant {
+  id: string;
+  label: string;
+  target: string;
+  instructions: string;
+  asset: AssetReference;
+  preview_style: Record<string, string>;
+  created_at: string;
+  is_original: boolean;
+}
+
+export interface ImageEditStateResponse {
+  content_version_id: UUID;
+  source_asset_id: UUID;
+  variants: ImageEditVariant[];
+}
+
+export interface ImageEditStateRequest {
+  content_version_id: UUID;
+  source_asset: AssetReference;
+}
+
+export interface ImageEditApplyRequest extends ImageEditStateRequest {
+  target: string;
+  instructions: string;
+}
 export interface AnalyticsResponse {
   scope: string;
   tenant_id?: UUID;

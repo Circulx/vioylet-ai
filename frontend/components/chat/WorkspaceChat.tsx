@@ -10,15 +10,17 @@ import {
     Download,
     Loader2,
     Paperclip,
+    PencilLine,
     Plus,
     Search,
-    Share2,
     Square,
     X,
     ChevronDown,
     ChevronUp,
     PanelLeftOpen,
     PanelLeftClose,
+    Upload,
+    Wand2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -31,6 +33,7 @@ import type {
     ChatMessageResponse,
     ChatSessionResponse,
     GenerationDecision,
+    ImageEditStateResponse,
     KnowledgeAssetResponse,
     StudioPanelSelection,
     TemplateRecommendationResponse,
@@ -43,6 +46,9 @@ import {
     useCancelChatGeneration,
     useCreateChatSession,
     useExportContent,
+    useEnhancePrompt,
+    useApplyImageEdit,
+    useImageEditState,
     useSendChatMessage,
     useTemplateRecommendations,
     useUploadKnowledgeAsset,
@@ -60,6 +66,8 @@ import {
 import { FormField } from "../brandSpaces/tabs/FormFields";
 import Image from "next/image";
 import { AUDIENCE_OPTIONS } from "@/lib/brand-space-options";
+import { Label } from "../ui/label";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 
 type WorkspaceChatProps = { brandKey: string };
 type Platform = "instagram" | "linkedin" | "x" | "youtube_thumbnail";
@@ -74,6 +82,13 @@ const platformLabels: Record<Platform, string> = {
     youtube_thumbnail: "YouTube",
 };
 const fileTypeOptions: FileType[] = ["doc", "pdf", "jpg", "png"];
+const imageEditTargetOptions = [
+    "Background",
+    "Text",
+    "Color",
+    "Logo placement",
+    "Layout",
+];
 const campaignGoalOptions = [
     "Brand Awareness",
     "Authority Building",
@@ -91,6 +106,68 @@ const sizeOptionsByPlatform: Record<Platform, Array<{ label: string; width: numb
 
 const MAX_COMPOSER_HEIGHT = 220;
 const CHAT_BOTTOM_THRESHOLD_PX = 140;
+type EnhanceComposerTarget = "new" | "existing";
+
+function canEnhancePromptText(value: string) {
+    const words = value.trim().split(/\s+/).filter(Boolean);
+    return words.length >= 4;
+}
+
+const ENHANCE_PROMPT_FALLBACK = "Create a LinkedIn thought leadership post explaining why investors should consider bonds as part of a diversified portfolio.";
+
+type EnhancePromptMode = "workspace" | "composer";
+
+function hasEnhanceableSentence(value: string) {
+    const words = value.trim().split(/\s+/).filter(Boolean);
+    return words.length >= 4 || /[.!?]/.test(value.trim());
+}
+
+function PromptEnhancePopover({
+    enhancedPrompt,
+    isLoading,
+    error,
+    onInsert,
+    onCopy,
+}: {
+    enhancedPrompt: string;
+    isLoading: boolean;
+    error: string;
+    onInsert: () => void;
+    onCopy: () => void;
+}) {
+    return (
+        <div className="absolute bottom-[calc(100%+12px)] right-5 z-30 w-[min(420px,calc(100vw-48px))] border border-[#ECECF4] bg-white px-5 py-4 text-left shadow-[0_16px_36px_-18px_rgba(15,23,42,0.38)]">
+            <div className="mb-3 flex items-start justify-between gap-4">
+                <div className="flex min-w-0 items-center gap-2 text-primary">
+                    <Wand2 className="h-4 w-4 shrink-0" />
+                    <p className="text-[18px] font-semibold leading-none">Enhance Prompt</p>
+                </div>
+                <button
+                    type="button"
+                    aria-label="Copy enhanced prompt"
+                    title="Copy enhanced prompt"
+                    onClick={onCopy}
+                    disabled={!enhancedPrompt || isLoading}
+                    className="flex h-6 w-6 shrink-0 items-center justify-center text-[#2B2B35] disabled:opacity-40"
+                >
+                    <Copy className="h-4 w-4" />
+                </button>
+            </div>
+            <p className="min-h-[54px] text-[17px] leading-6 text-[#4D4D57]">
+                {isLoading ? "Enhancing your prompt..." : enhancedPrompt || "Create a LinkedIn thought leadership post explaining why investors should consider bonds as part of a diversified portfolio."}
+            </p>
+            {error ? <p className="mt-2 text-xs font-medium text-red-600">{error}</p> : null}
+            <Button
+                type="button"
+                onClick={onInsert}
+                disabled={isLoading || !enhancedPrompt}
+                className="mt-3 h-10 rounded-none bg-primary px-7 text-sm font-semibold text-white hover:bg-primary/90 disabled:opacity-50"
+            >
+                Insert
+            </Button>
+        </div>
+    );
+}
 const GENERATION_PROGRESS_MESSAGES = [
     {
         eyebrow: "Now",
@@ -187,12 +264,12 @@ function HighlightedMessageText({
                 }
                 const isActiveMatch = occurrenceIndex === activeOccurrenceIndex;
                 return (
-                        <mark
-                            key={`${part}-${index}`}
-                            className={isActiveMatch ? "bg-yellow-300 px-0.5 text-inherit" : "bg-yellow-100 px-0.5 text-inherit"}
-                        >
-                            {part}
-                        </mark>
+                    <mark
+                        key={`${part}-${index}`}
+                        className={isActiveMatch ? "bg-yellow-300 px-0.5 text-inherit" : "bg-yellow-100 px-0.5 text-inherit"}
+                    >
+                        {part}
+                    </mark>
                 );
             })}
         </>
@@ -480,21 +557,6 @@ function downloadAsset(asset: AssetReference, filename: string) {
         return;
     }
     triggerDownload(downloadUrlWithFilename(downloadUrl, filename), filename);
-}
-
-async function assetToShareFile(asset: AssetReference, filename: string) {
-    const assetUrl = asset.asset_url || "";
-    if (!assetUrl) {
-        throw new Error("Generated file is not ready to share.");
-    }
-    const shareUrl = new URL(assetUrl, window.location.href);
-    const response = await fetch(shareUrl.toString());
-    if (!response.ok) {
-        throw new Error("Could not load generated file for sharing.");
-    }
-    const blob = await response.blob();
-    const mimeType = asset.mime_type || blob.type || "image/png";
-    return new File([blob], filename, { type: mimeType });
 }
 
 function resolveGenerationDecision(payload: ChatAssistantStructuredPayload | Record<string, unknown> | undefined) {
@@ -788,6 +850,7 @@ function GenerationDecisionCard({ decision }: { decision: GenerationDecision | n
 }
 
 function GeneratedImageViewer({
+    brandId,
     assets,
     existingExportAssets,
     contentVersionId,
@@ -797,6 +860,7 @@ function GeneratedImageViewer({
     onExportForType,
     sourcePrompt,
 }: {
+    brandId: string;
     assets: AssetReference[];
     existingExportAssets: AssetReference[];
     contentVersionId: string;
@@ -812,6 +876,14 @@ function GeneratedImageViewer({
     const [isCopyingLink, setIsCopyingLink] = useState(false);
     const [isPreparingShare, setIsPreparingShare] = useState(false);
     const [shareError, setShareError] = useState("");
+    const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+    const [editTarget, setEditTarget] = useState(imageEditTargetOptions[0]);
+    const [editInstruction, setEditInstruction] = useState("");
+    const [imageEditState, setImageEditState] = useState<ImageEditStateResponse | null>(null);
+    const [selectedEditVariantId, setSelectedEditVariantId] = useState("original");
+    const [editError, setEditError] = useState("");
+    const loadImageEditState = useImageEditState(brandId);
+    const applyImageEdit = useApplyImageEdit(brandId);
     const preparedShareRef = useRef<{ key: string; files: File[]; assets: AssetReference[] } | null>(null);
     const sharePreparationRef = useRef<{ key: string; promise: Promise<{ files: File[]; assets: AssetReference[] }> } | null>(null);
     const imageAssets = useMemo(
@@ -822,6 +894,16 @@ function GeneratedImageViewer({
         [assets],
     );
     const activeAsset = imageAssets[Math.min(activeIndex, Math.max(imageAssets.length - 1, 0))];
+    const sourceAssetForEdit = useMemo<AssetReference | null>(() => activeAsset ? {
+        asset_id: activeAsset.asset_id,
+        mime_type: activeAsset.mime_type,
+        storage_path: activeAsset.storage_path,
+        asset_url: activeAsset.asset_url || activeAsset.resolvedUrl,
+        width: activeAsset.width,
+        height: activeAsset.height,
+        asset_role: activeAsset.asset_role,
+    } : null, [activeAsset]);
+    const title = shareTitleFromPrompt(sourcePrompt) || "Generated image";
     const sharePreparingNotice = `${fileType.toUpperCase()} file is being prepared.`;
     const docShareFallbackNotice = "Word document shared as a link. The recipient can download the DOC file.";
     const shareLinkCopiedNotice = "Share link copied.";
@@ -832,16 +914,16 @@ function GeneratedImageViewer({
         shareError.startsWith(shareLinkCopiedNotice);
     const platformShareHint = useMemo(() => {
         if (typeof navigator === "undefined" || !navigator.share) {
-            return "Native sharing is not available in this browser. Use Save or Copy Link instead.";
+            return "Native sharing is not available in this browser. Use Download or Copy Link instead.";
         }
         if (typeof window !== "undefined" && !window.isSecureContext) {
-            return "Native sharing requires a secure browser context. Use Save or Copy Link instead.";
+            return "Native sharing requires a secure browser context. Use Download or Copy Link instead.";
         }
         if (platform === "instagram" && (fileType === "doc" || fileType === "pdf")) {
             return "Instagram usually accepts image formats through native sharing. Use JPG or PNG for direct Instagram sharing.";
         }
         if (platform === "linkedin" && (fileType === "doc" || fileType === "pdf")) {
-            return "LinkedIn availability depends on the installed app and browser. Save or Copy Link is available if it does not appear.";
+            return "LinkedIn availability depends on the installed app and browser. Download or Copy Link is available if it does not appear.";
         }
         return "";
     }, [fileType, platform]);
@@ -878,14 +960,7 @@ function GeneratedImageViewer({
             if (!assetsToShare.length) {
                 throw new Error(`Could not prepare a ${fileType.toUpperCase()} file for sharing.`);
             }
-            const files = await Promise.all(
-                assetsToShare.map((asset, index) =>
-                    assetToShareFile(
-                        asset,
-                        generatedSlideDownloadFilename(sourcePrompt, asset, index + 1, assetsToShare.length),
-                    ),
-                ),
-            );
+            const files: File[] = [];
             preparedShareRef.current = { key: shareCacheKey, files, assets: assetsToShare };
             setShareError("");
             return { files, assets: assetsToShare };
@@ -979,7 +1054,7 @@ function GeneratedImageViewer({
         setShareError("");
         try {
             if (!navigator.share) {
-                throw new Error("File sharing is not supported in this browser. Use Save or Copy Link instead.");
+                throw new Error("File sharing is not supported in this browser. Use Download or Copy Link instead.");
             }
             const preparedShare = preparedShareRef.current?.key === shareCacheKey
                 ? preparedShareRef.current
@@ -1003,9 +1078,9 @@ function GeneratedImageViewer({
                 };
                 setIsSharing(true);
                 try {
-                    const canShareFiles = typeof navigator.canShare === "function"
+                    const canShareFiles = preparedShare.files.length > 0 && (typeof navigator.canShare === "function"
                         ? navigator.canShare(docFileShareData)
-                        : preparedShare.files.length > 0;
+                        : true);
                     if (canShareFiles) {
                         await navigator.share(docFileShareData);
                     } else {
@@ -1017,7 +1092,7 @@ function GeneratedImageViewer({
                         return;
                     }
                     if (error instanceof DOMException && error.name === "NotAllowedError" && preparedShareRef.current?.key === shareCacheKey) {
-                        setShareError("File is ready. Click Share again to open the share dialog, or use Save/Copy Link.");
+                        setShareError("File is ready. Click Share again to open the share dialog, or use Download/Copy Link.");
                         return;
                     }
                     downloadAsset(docAsset, docFilename);
@@ -1031,10 +1106,33 @@ function GeneratedImageViewer({
                 title: shareTitle,
                 files: preparedShare.files,
             };
+            const linkShareAsset = fileType === "jpg" || fileType === "png"
+                ? preparedShare.assets[activeIndex] || preparedShare.assets[0]
+                : preparedShare.assets[0];
+            const linkShareData: ShareData | null = linkShareAsset?.asset_url
+                ? {
+                    title: shareTitle,
+                    url: downloadUrlWithFilename(linkShareAsset.asset_url, generatedShareFilename(sourcePrompt, linkShareAsset)),
+                }
+                : null;
             const canShareAvailable = typeof navigator.canShare === "function";
-            const canShareResult = canShareAvailable ? navigator.canShare(shareData) : null;
-            if (canShareAvailable && !canShareResult) {
-                throw new Error(`This browser cannot share generated ${fileType.toUpperCase()} files. Use Save or Copy Link instead.`);
+            const canShareResult = preparedShare.files.length > 0 && canShareAvailable ? navigator.canShare(shareData) : null;
+            if (!preparedShare.files.length || (canShareAvailable && !canShareResult)) {
+                if (!linkShareData) {
+                    throw new Error(`This browser cannot share generated ${fileType.toUpperCase()} files. Use Download or Copy Link instead.`);
+                }
+                setIsSharing(true);
+                try {
+                    await navigator.share(linkShareData);
+                } catch (error) {
+                    if (error instanceof DOMException && error.name === "AbortError") {
+                        return;
+                    }
+                    setShareError(error instanceof Error ? error.message : "Could not share generated file link.");
+                } finally {
+                    setIsSharing(false);
+                }
+                return;
             }
             setIsSharing(true);
             try {
@@ -1044,7 +1142,7 @@ function GeneratedImageViewer({
                     return;
                 }
                 if (error instanceof DOMException && error.name === "NotAllowedError" && preparedShareRef.current?.key === shareCacheKey) {
-                    setShareError("File is ready. Click Share again to open the share dialog, or use Save/Copy Link.");
+                    setShareError("File is ready. Click Share again to open the share dialog, or use Download/Copy Link.");
                     return;
                 }
                 setShareError(error instanceof Error ? error.message : "Could not share generated files.");
@@ -1056,55 +1154,74 @@ function GeneratedImageViewer({
         }
     };
 
+
+    const editVariants = imageEditState?.variants || [];
+    const selectedEditVariant = editVariants.find((variant) => variant.id === selectedEditVariantId) || editVariants[0] || null;
+
+    const handleOpenEditDialog = async () => {
+        setIsEditDialogOpen(true);
+        setEditError("");
+        if (!contentVersionId || !sourceAssetForEdit) {
+            setEditError("Generated image is not ready for editing.");
+            return;
+        }
+        try {
+            const state = await loadImageEditState.mutateAsync({
+                content_version_id: contentVersionId,
+                source_asset: sourceAssetForEdit,
+            });
+            setImageEditState(state);
+            setSelectedEditVariantId(state.variants[state.variants.length - 1]?.id || "original");
+        } catch (error) {
+            setEditError(error instanceof Error ? error.message : "Could not load image edits.");
+        }
+    };
+
+    const handleApplyImageEdit = async () => {
+        const instructions = editInstruction.trim();
+        setEditError("");
+        if (!instructions) {
+            setEditError("Add edit instructions before applying.");
+            return;
+        }
+        if (!contentVersionId || !sourceAssetForEdit) {
+            setEditError("Generated image is not ready for editing.");
+            return;
+        }
+        try {
+            const state = await applyImageEdit.mutateAsync({
+                content_version_id: contentVersionId,
+                source_asset: sourceAssetForEdit,
+                target: editTarget,
+                instructions,
+            });
+            setImageEditState(state);
+            setSelectedEditVariantId(state.variants[state.variants.length - 1]?.id || "original");
+            setEditInstruction("");
+        } catch (error) {
+            setEditError(error instanceof Error ? error.message : "Could not apply image edit.");
+        }
+    };
+    const actionButtonClass =
+        "flex h-9 w-9 items-center justify-center rounded-full bg-white text-[#121212] shadow-sm ring-1 ring-[#E5E7EF] transition hover:bg-[#F9FAFC] disabled:cursor-not-allowed disabled:opacity-60";
+
     return (
-        <div className="mt-3 w-full max-w-[520px] bg-[#F4F5F8] px-3 py-3">
+        <div className="mt-3 w-full max-w-130 bg-[#F4F5F8] px-4 py-4">
             <div className="mb-3 flex items-center justify-between gap-3">
-                <span className="text-[12px] font-medium text-[#333333]">Generated image</span>
-                <div className="flex items-center gap-2">
-                    <button
-                        type="button"
-                        onClick={() => void handleSave()}
-                        disabled={isSaving}
-                        className="inline-flex h-7 items-center gap-1.5 border border-primary bg-white px-2.5 text-[11px] font-medium text-primary"
-                    >
-                        {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-                        <span>{isSaving ? "Preparing..." : "Save"}</span>
-                    </button>
-                    <button
-                        type="button"
-                        onClick={handleShare}
-                        disabled={isSharing || isPreparingShare}
-                        className="inline-flex h-7 items-center gap-1.5 bg-primary px-2.5 text-[11px] font-medium text-white disabled:cursor-not-allowed disabled:opacity-70"
-                    >
-                        {isSharing || isPreparingShare ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Share2 className="h-3.5 w-3.5" />}
-                        <span>{isPreparingShare ? "Preparing..." : isSharing ? "Sharing..." : "Share"}</span>
-                    </button>
-                </div>
+                <span className="min-w-0 truncate text-[15px] font-medium text-[#333333]">{title || "Generated Image"}</span>
+                <button
+                    type="button"
+                    aria-label="Comments"
+                    title="Comments"
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-white transition cursor-pointer"
+                    onClick={() => undefined}
+                >
+
+                    <Image src={"/actions_icons/chat/comment.svg"} alt="comment" height={24} width={24} />
+                </button>
             </div>
             {platformShareHint ? <p className="mb-3 text-[11px] font-medium text-[#57536E]">{platformShareHint}</p> : null}
             {shareError ? <p className={`mb-3 text-[11px] font-medium ${isShareNotice ? "text-[#57536E]" : "text-red-600"}`}>{shareError}</p> : null}
-            {shareError ? (
-                <div className="mb-3 flex flex-wrap items-center gap-2">
-                    <button
-                        type="button"
-                        onClick={() => void handleDownloadFallback()}
-                        disabled={isSaving}
-                        className="inline-flex h-7 items-center gap-1.5 border border-[#D7DAE6] bg-white px-2.5 text-[11px] font-medium text-[#403B78] disabled:cursor-not-allowed disabled:opacity-70"
-                    >
-                        {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-                        <span>{isSaving ? "Preparing..." : "Download"}</span>
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => void handleCopyShareLink()}
-                        disabled={isCopyingLink || isPreparingShare}
-                        className="inline-flex h-7 items-center gap-1.5 border border-[#D7DAE6] bg-white px-2.5 text-[11px] font-medium text-[#403B78] disabled:cursor-not-allowed disabled:opacity-70"
-                    >
-                        {isCopyingLink ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Copy className="h-3.5 w-3.5" />}
-                        <span>{isCopyingLink ? "Copying..." : "Copy Link"}</span>
-                    </button>
-                </div>
-            ) : null}
             <div className="flex items-center gap-4">
                 <div className="flex min-h-[220px] flex-1 items-center justify-center bg-[#EEF0F5] p-4">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1121,13 +1238,153 @@ function GeneratedImageViewer({
                                     }`}
                             >
                                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img src={asset.resolvedUrl} alt={`Generated image ${index + 1}`} className="h-14 w-full object-cover" />
+                                <Image src={asset.resolvedUrl} alt={`Generated image ${index + 1}`} width={60} height={56} className="h-14 w-full object-cover" />
                             </button>
                         ))}
                     </div>
                 ) : null}
             </div>
-        </div>
+            <div className="mt-4 flex items-center gap-3">
+                <Button
+                    type="button"
+                    aria-label={isCopyingLink ? "Copying link" : "Copy link"}
+                    title={isCopyingLink ? "Copying link" : "Copy link"}
+                    onClick={() => void handleCopyShareLink()}
+                    disabled={isCopyingLink || isPreparingShare}
+                    className={actionButtonClass}
+                >
+                    {isCopyingLink ? <Loader2 className="h-4 w-4 animate-spin" /> : <Image src={"/actions_icons/copy.svg"} alt="copy" width={16} height={16} />}
+                </Button>
+                <Button
+                    type="button"
+                    aria-label={isSaving ? "Preparing download" : "Download"}
+                    title={isSaving ? "Preparing download" : "Download"}
+                    onClick={() => void handleDownloadFallback()}
+                    disabled={isSaving}
+                    className={actionButtonClass}
+                >
+                    {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Image src={"/actions_icons/download.svg"} alt="download" width={16} height={16} />}
+                </Button>
+                <Button
+                    type="button"
+                    aria-label="Edit"
+                    title="Edit"
+                    onClick={() => void handleOpenEditDialog()}
+                    className={actionButtonClass}
+                >
+                    <Image src={"/actions_icons/edit_black.svg"} alt="edit" width={16} height={16} />
+                </Button>
+                <Button
+                    type="button"
+                    aria-label={isSharing || isPreparingShare ? "Preparing share" : "Share"}
+                    title={isSharing || isPreparingShare ? "Preparing share" : "Share"}
+                    onClick={() => void handleShare()}
+                    disabled={isSharing || isPreparingShare}
+                    className={actionButtonClass}
+                >
+                    {isSharing || isPreparingShare ? <Loader2 className="h-4 w-4 animate-spin" /> : <Image src={"/actions_icons/share_black.svg"} alt="share" width={16} height={16} />}
+                </Button>
+            </div>
+            <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+                <DialogContent className="max-h-[92vh] max-w-4xl overflow-y-auto rounded-[10px] border border-[#E4E6F0] bg-white p-0 shadow-2xl">
+                    <DialogHeader className="border-b border-[#EEF0F5] px-5 py-4">
+                        <DialogTitle className="flex items-start gap-3 text-left">
+                            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[6px] bg-[#F1EFFF] text-primary">
+                                <Image src={"/actions_icons/edit_image.svg"} alt="edit" width={16} height={16} />
+                            </span>
+                            <span className="min-w-0">
+                                <span className="block text-base font-bold text-[#202033]">Edit image</span>
+                                <span className="block text-base font-medium text-[#474552]">Modify specific elements with edit instructions</span>
+                            </span>
+                        </DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-4 px-5 ">
+                        <div className="space-y-2">
+                        <Label className="block text-sm font-semibold text-[#303245]">
+                            Target
+                        </Label>
+                            <Select value={editTarget} onValueChange={setEditTarget}>
+                                <SelectTrigger className="w-full">
+                                    <SelectValue placeholder="Select target" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectGroup>
+                                        {imageEditTargetOptions.map((option) => (
+                                            <SelectItem key={option} value={option} className="text-sm">{option}</SelectItem>
+                                        ))}
+                                    </SelectGroup>
+                                </SelectContent>
+                            </Select>
+
+                        </div>
+
+
+                        <div>
+                            <p className="mb-2 text-sm font-semibold text-[#303245]">Selected Section</p>
+                            <div className="mb-3 flex flex-wrap items-center gap-2">
+                                {editVariants.length ? editVariants.map((variant) => (
+                                    <Button
+                                        key={variant.id}
+                                        type="button"
+                                        onClick={() => setSelectedEditVariantId(variant.id)}
+                                        className={`h-7 rounded-[3px] px-3 text-xs font-semibold transition ${selectedEditVariant?.id === variant.id ? "bg-primary/72 text-white" : "bg-[#F1F2F6] text-[#3D4050] hover:bg-[#E8EAF2]"}`}
+                                    >
+                                        {variant.label}
+                                    </Button>
+                                )) : (
+                                    <span className="text-[11px] text-[#6F7282]">Open image edit state to see variants.</span>
+                                )}
+                            </div>
+                            <div className="flex min-h-[280px] items-center justify-center border border-primary bg-[#F7F8FB] p-4">
+                                {selectedEditVariant?.asset.asset_url ? (
+                                    // eslint-disable-next-line @next/next/no-img-element
+                                    <img
+                                        src={selectedEditVariant.asset.asset_url}
+                                        alt={selectedEditVariant.label || "Preview"}
+                                        className="max-h-[470px] w-auto max-w-full object-contain transition duration-300"
+                                        style={{ filter: selectedEditVariant.preview_style?.filter || undefined }}
+                                    />
+                                ) : loadImageEditState.isPending ? (
+                                    <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                                ) : (
+                                    <span className="text-[12px] text-[#6F7282]">No image variant loaded.</span>
+                                )}
+                            </div>
+                        </div>
+
+                        <Label className="block text-sm font-semibold text-[#303245]">
+                            Edit Instruction
+                            <Textarea
+                                value={editInstruction}
+                                onChange={(event) => setEditInstruction(event.target.value)}
+                                placeholder="Describe what should change in this image"
+                                className="mt-1 min-h-[82px] resize-none rounded-[4px] border-[#E2E5EE] bg-[#F3F4F7] text-[12px]"
+                            />
+                        </Label>
+                        {editError ? <p className="text-[11px] font-medium text-red-600">{editError}</p> : null}
+                    </div>
+                    <div className="flex items-center justify-end gap-3 border-t border-[#EEF0F5] px-5 py-4">
+                        <Button
+                            type="button"
+                            variant="outline"
+                            className="h-9 rounded-[3px] border-[#E2E5EE] px-5 text-[11px] font-semibold"
+                            onClick={() => setIsEditDialogOpen(false)}
+                        >
+                            Cancel
+                        </Button>
+                        <Button
+                            type="button"
+                            className="h-9 rounded-[3px] bg-primary/72 px-5 text-[11px] font-semibold text-white hover:bg-primary/90"
+                            onClick={() => void handleApplyImageEdit()}
+                            disabled={applyImageEdit.isPending || !editInstruction.trim()}
+                        >
+                            <Image src={"/actions_icons/shine.svg"} alt="edit" width={16} height={16} />
+                            {applyImageEdit.isPending ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
+                            Apply edit
+                        </Button>
+                    </div>
+                </DialogContent>
+            </Dialog>        </div>
     );
 }
 
@@ -1419,6 +1676,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
     const sendMessage = useSendChatMessage(brandId);
     const exportContent = useExportContent(brandId);
     const cancelChatGeneration = useCancelChatGeneration(brandId);
+    const enhancePrompt = useEnhancePrompt(brandId);
     const [workspacePrompt, setWorkspacePrompt] = useState("");
     const [composerDraft, setComposerDraft] = useState("");
     const [studioPlatform, setStudioPlatform] = useState<Platform>("instagram");
@@ -1432,6 +1690,9 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
     const [selectedTemplateName, setSelectedTemplateName] = useState("");
     const [attachmentError, setAttachmentError] = useState("");
     const [workspaceError, setWorkspaceError] = useState("");
+    const [enhancePromptMode, setEnhancePromptMode] = useState<EnhancePromptMode | null>(null);
+    const [enhancedPrompt, setEnhancedPrompt] = useState("");
+    const [enhancePromptError, setEnhancePromptError] = useState("");
     const [isStudioOpen, setIsStudioOpen] = useState(true);
     const [chatSearchQuery, setChatSearchQuery] = useState("");
     const [activeChatSearchMatchIndex, setActiveChatSearchMatchIndex] = useState(0);
@@ -1782,6 +2043,48 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
         }
     };
 
+    const openEnhancePrompt = async (mode: EnhancePromptMode) => {
+        const prompt = mode === "composer" ? composerDraft : workspacePrompt;
+        if (!hasEnhanceableSentence(prompt)) {
+            setEnhancePromptError("Enter at least a sentence to enhance.");
+            setEnhancedPrompt("");
+            setEnhancePromptMode(mode);
+            return;
+        }
+        setEnhancePromptMode(mode);
+        setEnhancePromptError("");
+        setEnhancedPrompt("");
+        try {
+            const response = await enhancePrompt.mutateAsync({
+                prompt,
+                studio_panel: studioPanel,
+            });
+            setEnhancedPrompt(response.enhanced_prompt);
+        } catch (error) {
+            setEnhancePromptError(extractApiError(error, "Could not enhance the prompt."));
+        }
+    };
+
+    const insertEnhancedPrompt = () => {
+        if (!enhancedPrompt.trim() || !enhancePromptMode) {
+            return;
+        }
+        if (enhancePromptMode === "composer") {
+            setComposerDraft(enhancedPrompt);
+            window.setTimeout(() => resizeComposer(composerTextareaRef.current), 0);
+        } else {
+            setWorkspacePrompt(enhancedPrompt);
+            window.setTimeout(() => resizeComposer(promptTextareaRef.current), 0);
+        }
+        setEnhancePromptMode(null);
+    };
+
+    const copyEnhancedPrompt = () => {
+        if (!enhancedPrompt.trim()) {
+            return;
+        }
+        void copyTextToClipboard(enhancedPrompt);
+    };
     const dispatchGeneration = async (message: string) => {
         if (isGeneratingMessage) {
             return;
@@ -2042,6 +2345,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                                     {message.role === "assistant" ? <GenerationDecisionCard decision={generationDecision} /> : null}
                                                     {previewAssets.length ? (
                                                         <GeneratedImageViewer
+                                                            brandId={brandId}
                                                             assets={previewAssets}
                                                             existingExportAssets={existingExportAssets}
                                                             contentVersionId={contentVersionId}
@@ -2114,7 +2418,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                             </p>
                                         ) : null}
                                         {attachmentError ? <p className="mb-2 text-sm text-red-500">{attachmentError}</p> : null}
-                                        <SurfaceCard className={`flex items-end gap-3 rounded-xl border border-[#E1E4ED] bg-white px-3 pb-2 shadow-[0_14px_28px_-24px_rgba(15,23,42,0.45)]`}>
+                                        <SurfaceCard className={`relative flex items-end gap-3 rounded-xl border border-[#E1E4ED] bg-white px-3 pb-2 shadow-[0_14px_28px_-24px_rgba(15,23,42,0.45)]`}>
                                             <button
                                                 type="button"
                                                 onClick={() => attachmentInputRef.current?.click()}
@@ -2131,7 +2435,28 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                                 placeholder="What do you want to create today?"
                                                 className="min-h-9 max-h-55 flex-1 resize-none overflow-y-hidden border-none bg-transparent px-0 pt-3.5 text-base leading-6 text-[#6A6E8B] shadow-none outline-none focus-visible:ring-0"
                                             />
-                                            <button
+                                            {enhancePromptMode === "composer" ? (
+                                                <PromptEnhancePopover
+                                                    enhancedPrompt={enhancedPrompt}
+                                                    isLoading={enhancePrompt.isPending}
+                                                    error={enhancePromptError}
+                                                    onInsert={insertEnhancedPrompt}
+                                                    onCopy={copyEnhancedPrompt}
+                                                />
+                                            ) : null}
+                                            {hasEnhanceableSentence(composerDraft) ? (
+                                                <Button
+                                                    type="button"
+                                                    aria-label="Enhance prompt"
+                                                    title="Enhance prompt"
+                                                    onClick={() => void openEnhancePrompt("composer")}
+                                                    disabled={!canGenerateInWorkspace || isGeneratingMessage || enhancePrompt.isPending}
+                                                    className="flex h-8 min-w-8 shrink-0 items-center justify-center bg-[#F4F4F5] px-2 text-primary disabled:cursor-not-allowed disabled:text-slate-300"
+                                                >
+                                                    {enhancePrompt.isPending && enhancePromptMode === "composer" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Image src="/actions_icons/enhance_prompt.svg" alt="enhance prompt" width={16} height={16} className="h-4 w-4" />}
+                                                </Button>
+                                            ) : null}
+                                            <Button
                                                 type="button"
                                                 onClick={sendMessage.isPending ? cancelActiveGeneration : () => void dispatchGeneration(composerDraft)}
                                                 disabled={!canGenerateInWorkspace || createSession.isPending || (!sendMessage.isPending && !composerDraft.trim())}
@@ -2145,7 +2470,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                                 ) : (
                                                     <ArrowUp className="h-4 w-4" />
                                                 )}
-                                            </button>
+                                            </Button>
                                         </SurfaceCard>
                                     </div>
                                     <p className="pt-4 text-center text-sm text-[#A0A0A7]">Violyt suggestions may need review. Verify accuracy before use.</p>
@@ -2176,124 +2501,147 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                         <div className="flex h-[calc(100vh-32px)] flex-col">
                             <div className={`grid min-h-0 flex-1 ${isStudioOpen ? "xl:grid-cols-[minmax(0,1fr)_296px]" : "xl:grid-cols-1"}`}>
                                 <div className="min-h-0 overflow-y-auto bg-white">
-                            {/* Header */}
-                            <div className="flex h-[61px] py-10 items-center justify-between border-b border-[#E5E5EA] bg-white">
-                                <div className="w-full flex items-center justify-between gap-3 px-4">
-                                    <div className="flex gap-2 relative">
-                                        <h1 className="font-dmSans text-3xl font-bold text-primary">{brand.name}</h1>
-                                        <Link
-                                            href={`/brand_space/${brandId}/edit`}
-                                            className="absolute -right-7 -top-1 text-sm text-[#121212] hover:underline"
-                                        >
-                                            <Image src="/actions_icons/chat/redirect_link.svg" alt="Edit icon" width={19} height={19} className="inline-block mr-1" />
-                                        </Link>
-                                    </div>
-                                    <UsageRing
-                                        value={usageRemainingPercent}
-                                        label={usagePendingLabel}
-                                    />
-                                </div>
-
-                                <div className="flex items-center gap-4">
-                                    {hasConversation ? (
-                                        <div className="relative hidden md:block">
-                                            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#77759A]" />
-                                            <Input
-                                                placeholder="Search"
-                                                className="h-9 w-[214px] rounded-none border-[#E1E3EC] bg-blue pl-10 text-sm text-[#77759A] shadow-none focus-visible:ring-0"
+                                    {/* Header */}
+                                    <div className="flex h-[61px] py-10 items-center justify-between border-b border-[#E5E5EA] bg-white">
+                                        <div className="w-full flex items-center justify-between gap-3 px-4">
+                                            <div className="flex gap-2 relative">
+                                                <h1 className="font-dmSans text-3xl font-bold text-primary">{brand.name}</h1>
+                                                <Link
+                                                    href={`/brand_space/${brandId}/edit`}
+                                                    className="absolute -right-7 -top-1 text-sm text-[#121212] hover:underline"
+                                                >
+                                                    <Image src="/actions_icons/chat/redirect_link.svg" alt="Edit icon" width={19} height={19} className="inline-block mr-1" />
+                                                </Link>
+                                            </div>
+                                            <UsageRing
+                                                value={usageRemainingPercent}
+                                                label={usagePendingLabel}
                                             />
                                         </div>
-                                    ) : null}
-                                    {!isStudioOpen ? (
-                                        <Button
-                                            type="button"
-                                            variant={"ghost"}
-                                            onClick={() => setIsStudioOpen((current) => !current)}
-                                            className={`flex h-10 w-10 items-center justify-center text-[#121212] ${isStudioOpen && 'hidden'}`}
-                                            aria-label={isStudioOpen ? "Hide Studio" : "Show Studio"}
-                                        >
-                                            {!isStudioOpen && <Image src="/toggleSidebar.svg" alt="Open panel" width={16} height={16} className="h-4 w-4" />}
-                                        </Button>
-                                    ) : null}
-                                </div>
-                            </div>
-                            {!canGenerateInWorkspace ? (
-                                <div className="mx-auto max-w-4xl rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                                    This Brand Space is currently <span className="font-medium capitalize">{brandLifecycle}</span>. Finish activation before generating content or images in the workspace.
-                                </div>
-                            ) : null}
-                            <div className="max-w-5xl mx-auto flex flex-col items-center px-4 my-[22vh]">
-                                <div className="flex items-center gap-5">
-                                    <Image src="/logo.svg" alt="Violyt Icon" width={40} height={40} className="" />
-                                    <h2 className="font-dmSans text-2xl md:text-3xl xl:text-4xl font-medium tracking-normal text-[#121212]">Greeting message</h2>
-                                </div>
 
-                                <SurfaceCard className="mt-9 w-full rounded-xl border border-[#DDE1EA] bg-white px-4 py-3 shadow-[0_16px_30px_-25px_rgba(15,23,42,0.45)]">
-                                    <Textarea
-                                        ref={promptTextareaRef}
-                                        placeholder="What do you want to create today?"
-                                        className="min-h-20 max-h-55 resize-none overflow-y-hidden border-none bg-transparent p-0 text-sm leading-6 text-[#74789A] shadow-none focus-visible:ring-0"
-                                        value={workspacePrompt}
-                                        onChange={(event) => setWorkspacePrompt(event.target.value)}
-                                        onKeyDown={handlePromptKeyDown}
-                                    />
-                                    <div className="mt-3 flex items-center justify-between">
-                                        <button
-                                            type="button"
-                                            onClick={() => attachmentInputRef.current?.click()}
-                                            disabled={!canGenerateInWorkspace || isGeneratingMessage}
-                                            className="flex h-8 w-8 items-center justify-center border border-[#D9DDE8] bg-[#F4F4F5] text-[#A1A1AA] disabled:cursor-not-allowed"
-                                        >
-                                            <Plus className="h-4 w-4" />
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={sendMessage.isPending ? cancelActiveGeneration : () => void dispatchGeneration(workspacePrompt)}
-                                            disabled={!canGenerateInWorkspace || createSession.isPending || (!sendMessage.isPending && !workspacePrompt.trim())}
-                                            aria-label={sendMessage.isPending ? "Stop generation" : "Send message"}
-                                            className="flex h-8 min-w-8 items-center justify-center bg-primary px-2 text-white disabled:cursor-not-allowed disabled:bg-slate-200"
-                                        >
-                                            {sendMessage.isPending ? (
-                                                <Square className="h-4 w-4" />
-                                            ) : createSession.isPending ? (
-                                                <Loader2 className="h-4 w-4 animate-spin" />
-                                            ) : (
-                                                <ArrowUp className="h-4 w-4" />
-                                            )}
-                                        </button>
+                                        <div className="flex items-center gap-4">
+                                            {hasConversation ? (
+                                                <div className="relative hidden md:block">
+                                                    <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#77759A]" />
+                                                    <Input
+                                                        placeholder="Search"
+                                                        className="h-9 w-[214px] rounded-none border-[#E1E3EC] bg-blue pl-10 text-sm text-[#77759A] shadow-none focus-visible:ring-0"
+                                                    />
+                                                </div>
+                                            ) : null}
+                                            {!isStudioOpen ? (
+                                                <Button
+                                                    type="button"
+                                                    variant={"ghost"}
+                                                    onClick={() => setIsStudioOpen((current) => !current)}
+                                                    className={`flex h-10 w-10 items-center justify-center text-[#121212] ${isStudioOpen && 'hidden'}`}
+                                                    aria-label={isStudioOpen ? "Hide Studio" : "Show Studio"}
+                                                >
+                                                    {!isStudioOpen && <Image src="/toggleSidebar.svg" alt="Open panel" width={16} height={16} className="h-4 w-4" />}
+                                                </Button>
+                                            ) : null}
+                                        </div>
                                     </div>
-                                </SurfaceCard>
-                                {attachedAssets.length ? (
-                                    <div className="flex w-full flex-wrap justify-center gap-2">
-                                        {attachedAssets.map((asset) => (
-                                            <button
-                                                key={asset.id}
-                                                type="button"
-                                                onClick={() => toggleReferenceAsset(asset)}
-                                                className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/5 px-3 py-1 text-xs text-primary"
-                                            >
-                                                <Paperclip className="h-3 w-3" />
-                                                <span>{assetPreviewLabel(asset)}</span>
-                                                <X className="h-3 w-3" />
-                                            </button>
-                                        ))}
-                                    </div>
-                                ) : null}
-                                <div className="w-full">
-                                    <TemplateRecommendationRail
-                                        recommendations={templateRecommendations}
-                                        isLoading={isFetchingTemplateRecommendations}
-                                        selectedTemplateId={selectedTemplateId}
-                                        onSelect={handleTemplateSelection}
-                                    />
-                                </div>
-                                {selectedTemplateLabel ? (
-                                    <p className="text-sm text-slate-500">
-                                        Pinned template: <span className="font-medium text-slate-700">{selectedTemplateLabel}</span>. Clear it any time to go back to auto selection.
-                                    </p>
-                                ) : null}
+                                    {!canGenerateInWorkspace ? (
+                                        <div className="mx-auto max-w-4xl rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                                            This Brand Space is currently <span className="font-medium capitalize">{brandLifecycle}</span>. Finish activation before generating content or images in the workspace.
+                                        </div>
+                                    ) : null}
+                                    <div className="max-w-5xl mx-auto flex flex-col items-center px-4 my-[22vh]">
+                                        <div className="flex items-center gap-5">
+                                            <Image src="/logo.svg" alt="Violyt Icon" width={40} height={40} className="" />
+                                            <h2 className="font-dmSans text-2xl md:text-3xl xl:text-4xl font-medium tracking-normal text-[#121212]">Greeting message</h2>
+                                        </div>
 
-                                </div>
+                                        <SurfaceCard className="relative mt-9 w-full rounded-xl border border-[#DDE1EA] bg-white px-4 py-3 shadow-[0_16px_30px_-25px_rgba(15,23,42,0.45)]">
+                                            <Textarea
+                                                ref={promptTextareaRef}
+                                                placeholder="What do you want to create today?"
+                                                className="min-h-20 max-h-55 resize-none overflow-y-hidden border-none bg-transparent p-0 text-sm leading-6 text-[#74789A] shadow-none focus-visible:ring-0"
+                                                value={workspacePrompt}
+                                                onChange={(event) => setWorkspacePrompt(event.target.value)}
+                                                onKeyDown={handlePromptKeyDown}
+                                            />
+                                            {enhancePromptMode === "workspace" ? (
+                                                <PromptEnhancePopover
+                                                    enhancedPrompt={enhancedPrompt}
+                                                    isLoading={enhancePrompt.isPending}
+                                                    error={enhancePromptError}
+                                                    onInsert={insertEnhancedPrompt}
+                                                    onCopy={copyEnhancedPrompt}
+                                                />
+                                            ) : null}
+                                            <div className="mt-3 flex items-center justify-between">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => attachmentInputRef.current?.click()}
+                                                    disabled={!canGenerateInWorkspace || isGeneratingMessage}
+                                                    className="flex h-8 w-8 items-center justify-center border border-[#D9DDE8] bg-[#F4F4F5] text-[#A1A1AA] disabled:cursor-not-allowed"
+                                                >
+                                                    <Plus className="h-4 w-4" />
+                                                </button>
+                                                <div className="flex items-center gap-2">
+                                                    {hasEnhanceableSentence(workspacePrompt) ? (
+                                                        <button
+                                                            type="button"
+                                                            aria-label="Enhance prompt"
+                                                            title="Enhance prompt"
+                                                            onClick={() => void openEnhancePrompt("workspace")}
+                                                            disabled={!canGenerateInWorkspace || isGeneratingMessage || enhancePrompt.isPending}
+                                                            className="flex h-8 min-w-8 items-center justify-center bg-[#F4F4F5] px-2 text-primary disabled:cursor-not-allowed disabled:text-slate-300"
+                                                        >
+                                                            {enhancePrompt.isPending && enhancePromptMode === "workspace" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
+                                                        </button>
+                                                    ) : null}
+                                                    <button
+                                                        type="button"
+                                                        onClick={sendMessage.isPending ? cancelActiveGeneration : () => void dispatchGeneration(workspacePrompt)}
+                                                        disabled={!canGenerateInWorkspace || createSession.isPending || (!sendMessage.isPending && !workspacePrompt.trim())}
+                                                        aria-label={sendMessage.isPending ? "Stop generation" : "Send message"}
+                                                        className="flex h-8 min-w-8 items-center justify-center bg-primary px-2 text-white disabled:cursor-not-allowed disabled:bg-slate-200"
+                                                    >
+                                                        {sendMessage.isPending ? (
+                                                            <Square className="h-4 w-4" />
+                                                        ) : createSession.isPending ? (
+                                                            <Loader2 className="h-4 w-4 animate-spin" />
+                                                        ) : (
+                                                            <ArrowUp className="h-4 w-4" />
+                                                        )}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </SurfaceCard>
+                                        {attachedAssets.length ? (
+                                            <div className="flex w-full flex-wrap justify-center gap-2">
+                                                {attachedAssets.map((asset) => (
+                                                    <button
+                                                        key={asset.id}
+                                                        type="button"
+                                                        onClick={() => toggleReferenceAsset(asset)}
+                                                        className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/5 px-3 py-1 text-xs text-primary"
+                                                    >
+                                                        <Paperclip className="h-3 w-3" />
+                                                        <span>{assetPreviewLabel(asset)}</span>
+                                                        <X className="h-3 w-3" />
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        ) : null}
+                                        <div className="w-full">
+                                            <TemplateRecommendationRail
+                                                recommendations={templateRecommendations}
+                                                isLoading={isFetchingTemplateRecommendations}
+                                                selectedTemplateId={selectedTemplateId}
+                                                onSelect={handleTemplateSelection}
+                                            />
+                                        </div>
+                                        {selectedTemplateLabel ? (
+                                            <p className="text-sm text-slate-500">
+                                                Pinned template: <span className="font-medium text-slate-700">{selectedTemplateLabel}</span>. Clear it any time to go back to auto selection.
+                                            </p>
+                                        ) : null}
+
+                                    </div>
                                 </div>
                                 {isStudioOpen ? (
                                     <StudioPanel

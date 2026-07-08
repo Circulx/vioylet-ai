@@ -1,7 +1,7 @@
 import { InfiniteData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { API } from "@/lib/api/endpoints";
 import { request } from "@/lib/api/request";
-import type { ChatMessageResponse, ChatSessionResponse, ChatSessionUpdateRequest, StudioPanelSelection } from "@/lib/api/contracts";
+import type { ChatEnhancePromptRequest, ChatMessageResponse, ChatSessionResponse, ChatSessionUpdateRequest, ImageEditApplyRequest, ImageEditStateRequest, StudioPanelSelection } from "@/lib/api/contracts";
 
 const CHAT_MESSAGES_PAGE_SIZE = 10;
 
@@ -49,6 +49,33 @@ export const useExportContent = (brandId: string) =>
       }),
   });
 
+export const useEnhancePrompt = (brandId: string) =>
+  useMutation({
+    mutationFn: (data: ChatEnhancePromptRequest) =>
+      request(API.CHAT.ENHANCE_PROMPT, {
+        data,
+        headers: brandHeaders(brandId),
+      }),
+  });
+
+
+export const useImageEditState = (brandId: string) =>
+  useMutation({
+    mutationFn: (data: ImageEditStateRequest) =>
+      request(API.CONTENT.IMAGE_EDIT_STATE, {
+        data,
+        headers: brandHeaders(brandId),
+      }),
+  });
+
+export const useApplyImageEdit = (brandId: string) =>
+  useMutation({
+    mutationFn: (data: ImageEditApplyRequest) =>
+      request(API.CONTENT.IMAGE_EDIT_APPLY, {
+        data,
+        headers: brandHeaders(brandId),
+      }),
+  });
 export const useTemplateRecommendations = (
   brandId: string,
   prompt: string,

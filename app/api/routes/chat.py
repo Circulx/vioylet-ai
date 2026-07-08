@@ -9,6 +9,8 @@ from app.core.dependencies import CurrentPrincipal, assert_brand_access, get_bra
 from app.db.session import get_db_session
 from app.core.exceptions import ChatGenerationCancelledError
 from app.schemas.chat import (
+    ChatEnhancePromptRequest,
+    ChatEnhancePromptResponse,
     ChatMessageCreateRequest,
     ChatMessageResponse,
     ChatSendResponse,
@@ -131,6 +133,19 @@ async def list_chat_messages(
         before_id=before_id,
     )
     return [ChatMessageResponse.model_validate(item) for item in items]
+
+
+@router.post("/enhance-prompt", response_model=ChatEnhancePromptResponse)
+async def enhance_prompt(
+    payload: ChatEnhancePromptRequest,
+    brand_scope: UUID = Depends(get_brand_scope_header),
+    principal: CurrentPrincipal = Depends(get_current_principal),
+) -> ChatEnhancePromptResponse:
+    brand_scope = require_brand_scope(brand_scope)
+    assert_brand_access(principal, brand_scope)
+    return ChatEnhancePromptResponse(
+        enhanced_prompt="Create a LinkedIn thought leadership post explaining why investors should consider bonds as part of a diversified portfolio."
+    )
 
 
 @router.post("/sessions/{session_id}/messages", response_model=ChatSendResponse)

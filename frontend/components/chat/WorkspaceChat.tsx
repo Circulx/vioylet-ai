@@ -6,6 +6,7 @@ import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState }
 import axios from "axios";
 import {
     ArrowUp,
+    Copy,
     Download,
     Loader2,
     Paperclip,
@@ -89,6 +90,7 @@ const sizeOptionsByPlatform: Record<Platform, Array<{ label: string; width: numb
 };
 
 const MAX_COMPOSER_HEIGHT = 220;
+const CHAT_BOTTOM_THRESHOLD_PX = 140;
 const GENERATION_PROGRESS_MESSAGES = [
     {
         eyebrow: "Now",
@@ -216,6 +218,13 @@ function resizeComposer(node: HTMLTextAreaElement | null) {
     const nextHeight = Math.min(node.scrollHeight, MAX_COMPOSER_HEIGHT);
     node.style.height = `${Math.max(nextHeight, 44)}px`;
     node.style.overflowY = node.scrollHeight > MAX_COMPOSER_HEIGHT ? "auto" : "hidden";
+}
+
+function isScrolledNearBottom(node: HTMLDivElement | null) {
+    if (!node) {
+        return true;
+    }
+    return node.scrollHeight - node.scrollTop - node.clientHeight <= CHAT_BOTTOM_THRESHOLD_PX;
 }
 
 function dedupeImageAssets(assets: AssetReference[]) {
@@ -449,6 +458,22 @@ function shareUrlWithPrettyFilename(url: string, filename: string) {
     }
 }
 
+async function copyTextToClipboard(text: string) {
+    if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return;
+    }
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "true");
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand("copy");
+    textarea.remove();
+}
+
 function downloadAsset(asset: AssetReference, filename: string) {
     const downloadUrl = asset.asset_url || "";
     if (!downloadUrl) {
@@ -463,8 +488,7 @@ async function assetToShareFile(asset: AssetReference, filename: string) {
         throw new Error("Generated file is not ready to share.");
     }
     const shareUrl = new URL(assetUrl, window.location.href);
-    shareUrl.searchParams.set("_share_fetch", `${Date.now()}`);
-    const response = await fetch(shareUrl.toString(), { cache: "no-store" });
+    const response = await fetch(shareUrl.toString());
     if (!response.ok) {
         throw new Error("Could not load generated file for sharing.");
     }
@@ -767,6 +791,7 @@ function GeneratedImageViewer({
     assets,
     existingExportAssets,
     contentVersionId,
+    platform,
     fileType,
     onExport,
     onExportForType,
@@ -775,6 +800,7 @@ function GeneratedImageViewer({
     assets: AssetReference[];
     existingExportAssets: AssetReference[];
     contentVersionId: string;
+    platform: Platform;
     fileType: FileType;
     onExport: (contentVersionId: string) => Promise<AssetReference[]>;
     onExportForType: (contentVersionId: string, fileType: FileType) => Promise<AssetReference[]>;
@@ -783,6 +809,7 @@ function GeneratedImageViewer({
     const [activeIndex, setActiveIndex] = useState(0);
     const [isSaving, setIsSaving] = useState(false);
     const [isSharing, setIsSharing] = useState(false);
+    const [isCopyingLink, setIsCopyingLink] = useState(false);
     const [isPreparingShare, setIsPreparingShare] = useState(false);
     const [shareError, setShareError] = useState("");
     const preparedShareRef = useRef<{ key: string; files: File[]; assets: AssetReference[] } | null>(null);
@@ -797,9 +824,28 @@ function GeneratedImageViewer({
     );
     const activeAsset = imageAssets[Math.min(activeIndex, Math.max(imageAssets.length - 1, 0))];
     const sharePreparingNotice = `${fileType.toUpperCase()} file is being prepared.`;
-    const docShareFallbackNotice = "Word document link shared. The recipient can download the DOC file.";
+    const docShareFallbackNotice = "Word document shared as a link. The recipient can download the DOC file.";
+    const shareLinkCopiedNotice = "Share link copied.";
     const isSharePreparingNotice = shareError.startsWith(sharePreparingNotice);
-    const isShareNotice = isSharePreparingNotice || shareError.startsWith(docShareFallbackNotice);
+    const isShareNotice =
+        isSharePreparingNotice ||
+        shareError.startsWith(docShareFallbackNotice) ||
+        shareError.startsWith(shareLinkCopiedNotice);
+    const platformShareHint = useMemo(() => {
+        if (typeof navigator === "undefined" || !navigator.share) {
+            return "Native sharing is not available in this browser. Use Save or Copy Link instead.";
+        }
+        if (typeof window !== "undefined" && !window.isSecureContext) {
+            return "Native sharing requires a secure browser context. Use Save or Copy Link instead.";
+        }
+        if (platform === "instagram" && (fileType === "doc" || fileType === "pdf")) {
+            return "Instagram usually accepts image formats through native sharing. Use JPG or PNG for direct Instagram sharing.";
+        }
+        if (platform === "linkedin" && (fileType === "doc" || fileType === "pdf")) {
+            return "LinkedIn availability depends on the installed app and browser. Save or Copy Link is available if it does not appear.";
+        }
+        return "";
+    }, [fileType, platform]);
     const shareCacheKey = useMemo(
         () =>
             [
@@ -824,25 +870,23 @@ function GeneratedImageViewer({
         const promise = (async () => {
             setIsPreparingShare(true);
             const matchingExistingAssets = existingExportAssets.filter((asset) => assetMatchesFileType(asset, fileType) && Boolean(asset.asset_url));
-            const refreshedAssets = contentVersionId
-                ? (await onExportForType(contentVersionId, fileType)).filter((asset) => assetMatchesFileType(asset, fileType) && Boolean(asset.asset_url))
-                : [];
-            const selectedFormatAssets = refreshedAssets.length ? refreshedAssets : matchingExistingAssets;
+            const refreshedAssets = matchingExistingAssets.length || !contentVersionId
+                ? []
+                : (await onExportForType(contentVersionId, fileType)).filter((asset) => assetMatchesFileType(asset, fileType) && Boolean(asset.asset_url));
+            const selectedFormatAssets = matchingExistingAssets.length ? matchingExistingAssets : refreshedAssets;
             const fallbackAssets = imageAssets.filter((asset) => assetMatchesFileType(asset, fileType));
             const assetsToShare = sortAssetsBySequence(selectedFormatAssets.length ? selectedFormatAssets : fallbackAssets);
             if (!assetsToShare.length) {
                 throw new Error(`Could not prepare a ${fileType.toUpperCase()} file for sharing.`);
             }
-            const files = fileType === "doc"
-                ? []
-                : await Promise.all(
-                    assetsToShare.map((asset, index) =>
-                        assetToShareFile(
-                            asset,
-                            generatedSlideDownloadFilename(sourcePrompt, asset, index + 1, assetsToShare.length),
-                        ),
+            const files = await Promise.all(
+                assetsToShare.map((asset, index) =>
+                    assetToShareFile(
+                        asset,
+                        generatedSlideDownloadFilename(sourcePrompt, asset, index + 1, assetsToShare.length),
                     ),
-                );
+                ),
+            );
             preparedShareRef.current = { key: shareCacheKey, files, assets: assetsToShare };
             setShareError("");
             return { files, assets: assetsToShare };
@@ -898,17 +942,50 @@ function GeneratedImageViewer({
         }
     };
 
-    const handleShare = async () => {
-        if (isSharing || isPreparingShare || shareActionInFlightRef.current) {
-            return;
+    const getPreparedShareLink = async () => {
+        const preparedShare = preparedShareRef.current?.key === shareCacheKey
+            ? preparedShareRef.current
+            : await prepareShareFiles();
+        const shareAsset = fileType === "jpg" || fileType === "png"
+            ? preparedShare.assets[activeIndex] || preparedShare.assets[0]
+            : preparedShare.assets[0];
+        if (!shareAsset?.asset_url) {
+            throw new Error("Generated file is not ready to share.");
         }
-        shareActionInFlightRef.current = true;
+        const filename = generatedShareFilename(sourcePrompt, shareAsset);
+        return fileType === "doc"
+            ? shareUrlWithPrettyFilename(shareAsset.asset_url, filename)
+            : downloadUrlWithFilename(shareAsset.asset_url, filename);
+    };
+
+    const handleCopyShareLink = async () => {
+        setShareError("");
+        setIsCopyingLink(true);
+        try {
+            await copyTextToClipboard(await getPreparedShareLink());
+            setShareError(shareLinkCopiedNotice);
+        } catch (error) {
+            setShareError(error instanceof Error ? error.message : "Could not copy share link.");
+        } finally {
+            setIsCopyingLink(false);
+        }
+    };
+
+    const handleDownloadFallback = async () => {
+        setShareError("");
+        await handleSave();
+    };
+
+    const handleShare = async () => {
         setShareError("");
         try {
             if (!navigator.share) {
-                throw new Error("File sharing is not supported in this browser.");
+                throw new Error("File sharing is not supported in this browser. Use Save or Copy Link instead.");
             }
-            const preparedShare = await prepareShareFiles();
+            const preparedShare = preparedShareRef.current?.key === shareCacheKey
+                ? preparedShareRef.current
+                : await prepareShareFiles();
+            const shareTitle = filenameTopicFromPrompt(sourcePrompt);
             if (fileType === "doc") {
                 const docAsset = preparedShare.assets[0];
                 if (!docAsset?.asset_url) {
@@ -916,17 +993,32 @@ function GeneratedImageViewer({
                 }
                 const docTitle = shareTitleFromPrompt(sourcePrompt);
                 const docFilename = generatedShareFilename(sourcePrompt, docAsset);
-                const docShareData: ShareData = {
+                const docFileShareData: ShareData = {
+                    title: docTitle,
+                    files: preparedShare.files,
+                };
+                const docLinkShareData: ShareData = {
                     title: docTitle,
                     text: `${docTitle} - Word document`,
                     url: shareUrlWithPrettyFilename(docAsset.asset_url, docFilename),
                 };
                 setIsSharing(true);
                 try {
-                    await navigator.share(docShareData);
-                    setShareError(docShareFallbackNotice);
+                    const canShareFiles = typeof navigator.canShare === "function"
+                        ? navigator.canShare(docFileShareData)
+                        : preparedShare.files.length > 0;
+                    if (canShareFiles) {
+                        await navigator.share(docFileShareData);
+                    } else {
+                        await navigator.share(docLinkShareData);
+                        setShareError(docShareFallbackNotice);
+                    }
                 } catch (error) {
                     if (error instanceof DOMException && error.name === "AbortError") {
+                        return;
+                    }
+                    if (error instanceof DOMException && error.name === "NotAllowedError" && preparedShareRef.current?.key === shareCacheKey) {
+                        setShareError("File is ready. Click Share again to open the share dialog, or use Save/Copy Link.");
                         return;
                     }
                     downloadAsset(docAsset, docFilename);
@@ -937,19 +1029,23 @@ function GeneratedImageViewer({
                 return;
             }
             const shareData: ShareData = {
-                title: filenameTopicFromPrompt(sourcePrompt),
+                title: shareTitle,
                 files: preparedShare.files,
             };
             const canShareAvailable = typeof navigator.canShare === "function";
             const canShareResult = canShareAvailable ? navigator.canShare(shareData) : null;
             if (canShareAvailable && !canShareResult) {
-                throw new Error(`This browser cannot share generated ${fileType.toUpperCase()} files.`);
+                throw new Error(`This browser cannot share generated ${fileType.toUpperCase()} files. Use Save or Copy Link instead.`);
             }
             setIsSharing(true);
             try {
                 await navigator.share(shareData);
             } catch (error) {
                 if (error instanceof DOMException && error.name === "AbortError") {
+                    return;
+                }
+                if (error instanceof DOMException && error.name === "NotAllowedError" && preparedShareRef.current?.key === shareCacheKey) {
+                    setShareError("File is ready. Click Share again to open the share dialog, or use Save/Copy Link.");
                     return;
                 }
                 setShareError(error instanceof Error ? error.message : "Could not share generated files.");
@@ -979,7 +1075,7 @@ function GeneratedImageViewer({
                     </button>
                     <button
                         type="button"
-                        onClick={() => void handleShare()}
+                        onClick={handleShare}
                         disabled={isSharing || isPreparingShare}
                         className="inline-flex h-7 items-center gap-1.5 bg-primary px-2.5 text-[11px] font-medium text-white disabled:cursor-not-allowed disabled:opacity-70"
                     >
@@ -988,7 +1084,30 @@ function GeneratedImageViewer({
                     </button>
                 </div>
             </div>
+            {platformShareHint ? <p className="mb-3 text-[11px] font-medium text-[#57536E]">{platformShareHint}</p> : null}
             {shareError ? <p className={`mb-3 text-[11px] font-medium ${isShareNotice ? "text-[#57536E]" : "text-red-600"}`}>{shareError}</p> : null}
+            {shareError ? (
+                <div className="mb-3 flex flex-wrap items-center gap-2">
+                    <button
+                        type="button"
+                        onClick={() => void handleDownloadFallback()}
+                        disabled={isSaving}
+                        className="inline-flex h-7 items-center gap-1.5 border border-[#D7DAE6] bg-white px-2.5 text-[11px] font-medium text-[#403B78] disabled:cursor-not-allowed disabled:opacity-70"
+                    >
+                        {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                        <span>{isSaving ? "Preparing..." : "Download"}</span>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => void handleCopyShareLink()}
+                        disabled={isCopyingLink || isPreparingShare}
+                        className="inline-flex h-7 items-center gap-1.5 border border-[#D7DAE6] bg-white px-2.5 text-[11px] font-medium text-[#403B78] disabled:cursor-not-allowed disabled:opacity-70"
+                    >
+                        {isCopyingLink ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Copy className="h-3.5 w-3.5" />}
+                        <span>{isCopyingLink ? "Copying..." : "Copy Link"}</span>
+                    </button>
+                </div>
+            ) : null}
             <div className="flex items-center gap-4">
                 <div className="flex min-h-[220px] flex-1 items-center justify-center bg-[#EEF0F5] p-4">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1325,6 +1444,10 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
     const messageListRef = useRef<HTMLDivElement | null>(null);
     const messageBottomRef = useRef<HTMLDivElement | null>(null);
     const messageElementRefs = useRef(new Map<string, HTMLDivElement>());
+    const autoFollowChatRef = useRef(true);
+    const forceScrollToBottomRef = useRef(false);
+    const previousSessionIdRef = useRef("");
+    const previousLatestMessageScrollKeyRef = useRef("");
     const activeGenerationControllerRef = useRef<AbortController | null>(null);
     const activeGenerationSessionRef = useRef<string>("");
     const exportAssetCacheRef = useRef(new Map<string, AssetReference[]>());
@@ -1485,7 +1608,10 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
     }, [normalizedChatSearchQuery, orderedMessages]);
     const activeChatSearchMatch = chatSearchMatches[activeChatSearchMatchIndex] || null;
     const activeChatSearchMatchId = activeChatSearchMatch?.messageId || "";
-    const latestMessageId = orderedMessages[orderedMessages.length - 1]?.id || "";
+    const latestMessage = orderedMessages[orderedMessages.length - 1] || null;
+    const latestMessageScrollKey = latestMessage
+        ? `${latestMessage.id}:${latestMessage.message_text.length}:${latestMessage.content_version_id || ""}`
+        : "";
     const [generationProgressIndex, setGenerationProgressIndex] = useState(0);
     const activeGenerationMessage = isGeneratingMessage
         ? GENERATION_PROGRESS_MESSAGES[generationProgressIndex] || GENERATION_PROGRESS_MESSAGES[0]
@@ -1591,21 +1717,37 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
         if (!resolvedActiveSessionId || !orderedMessages.length || normalizedChatSearchQuery) {
             return;
         }
-        if (!isGeneratingMessage && !userNearMessageBottomRef.current) {
+        const sessionChanged = previousSessionIdRef.current !== resolvedActiveSessionId;
+        const latestMessageChanged = previousLatestMessageScrollKeyRef.current !== latestMessageScrollKey;
+        const shouldScrollToBottom =
+            sessionChanged ||
+            forceScrollToBottomRef.current ||
+            (latestMessageChanged && autoFollowChatRef.current);
+
+        previousSessionIdRef.current = resolvedActiveSessionId;
+        previousLatestMessageScrollKeyRef.current = latestMessageScrollKey;
+
+        if (!shouldScrollToBottom) {
             return;
         }
+
+        forceScrollToBottomRef.current = false;
         const timeoutId = window.setTimeout(() => {
-            const messageList = messageListRef.current;
-            if (messageList) {
-                messageList.scrollTop = messageList.scrollHeight;
-                userNearMessageBottomRef.current = true;
+            const currentMessageList = messageListRef.current;
+            if (currentMessageList) {
+                currentMessageList.scrollTop = currentMessageList.scrollHeight;
+                autoFollowChatRef.current = true;
                 return;
             }
             userNearMessageBottomRef.current = true;
             messageBottomRef.current?.scrollIntoView({ block: "end" });
         }, 80);
         return () => window.clearTimeout(timeoutId);
-    }, [isGeneratingMessage, latestMessageId, normalizedChatSearchQuery, orderedMessages.length, resolvedActiveSessionId]);
+    }, [latestMessageScrollKey, normalizedChatSearchQuery, orderedMessages.length, resolvedActiveSessionId]);
+
+    const handleMessageListScroll = useCallback(() => {
+        autoFollowChatRef.current = isScrolledNearBottom(messageListRef.current);
+    }, []);
 
     useEffect(() => {
         resizeComposer(composerTextareaRef.current);
@@ -1672,6 +1814,8 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
         try {
             setWorkspaceError("");
             setGenerationProgressIndex(0);
+            autoFollowChatRef.current = true;
+            forceScrollToBottomRef.current = true;
             const sessionId = await ensureSession();
             const selectedAudiences = studioTargetAudience.split(",").map((item) => item.trim()).filter(Boolean);
             const outgoingMessage = selectedAudiences.length
@@ -1869,7 +2013,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                     </div>
                                     <div
                                         ref={messageListRef}
-                                        onScroll={updateUserNearMessageBottom}
+                                        onScroll={handleMessageListScroll}
                                         className="flex-1 space-y-8 overflow-y-auto px-1 py-5 thin-scrollbar"
                                     >
                                         {orderedMessages.map((message, messageIndex) => {
@@ -1922,6 +2066,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                                             assets={previewAssets}
                                                             existingExportAssets={existingExportAssets}
                                                             contentVersionId={contentVersionId}
+                                                            platform={studioPlatform}
                                                             fileType={studioFileType}
                                                             onExport={exportGeneratedAssets}
                                                             onExportForType={exportGeneratedAssetsForType}

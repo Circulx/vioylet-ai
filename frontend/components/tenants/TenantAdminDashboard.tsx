@@ -365,23 +365,11 @@ export default function TenantAdminDashboard() {
         lastUsed: formatDateLabel(brand.updated_at),
     }));
 
-    const usageRows = useMemo(() => {
-        if (usageSummary && monthlyUsage?.length) {
-            return monthlyUsage.map((row) => ({
-                month: row.month,
-                content: `${row.content_generations || 0}/${usageSummary.limits.max_content_generations || 0}`,
-                visuals: `${row.image_generations || 0}/${usageSummary.limits.max_image_generations || 0}`,
-                ocr: `${row.ocr_pages || 0}/${usageSummary.limits.max_ocr_pages || 0}`,
-                brandSpaces: `${usageSummary.consumption.brand_spaces || 0}/${usageSummary.limits.max_brand_spaces || 0}`,
-                users: `${usageSummary.consumption.users || 0}/${usageSummary.limits.max_users || 0}`,
-            }));
-        }
-        return buildUsageWindowRows(usageSummary, tenant?.metadata_json);
-    }, [monthlyUsage, tenant?.metadata_json, usageSummary]);
     const usageWindow = useMemo(
         () => (tenant?.metadata_json?.usage_window as Record<string, unknown> | undefined) ?? {},
         [tenant?.metadata_json?.usage_window],
     );
+    const hasUsageWindow = typeof usageWindow.start_month === "string" && typeof usageWindow.end_month === "string";
     const liveUsageRows = useMemo(
         () =>
             (brandUsage || []).map((brand) => ({
@@ -395,19 +383,50 @@ export default function TenantAdminDashboard() {
 
     const usageMonthOptions = useMemo(
         () => {
+            if (hasUsageWindow) {
+                return buildMonthYearOptions(
+                    typeof usageWindow.start_month === "string" ? usageWindow.start_month : undefined,
+                    typeof usageWindow.end_month === "string" ? usageWindow.end_month : undefined,
+                );
+            }
+
             if (monthlyUsage?.length) {
                 return monthlyUsage.map((row) => ({
                     value: row.month,
                     label: formatCompactMonthLabel(row.month),
                 }));
             }
+
             return buildMonthYearOptions(
                 typeof usageWindow.start_month === "string" ? usageWindow.start_month : undefined,
                 typeof usageWindow.end_month === "string" ? usageWindow.end_month : undefined,
             );
         },
-        [monthlyUsage, usageWindow.end_month, usageWindow.start_month],
+        [hasUsageWindow, monthlyUsage, usageWindow.end_month, usageWindow.start_month],
     );
+
+    const usageRows = useMemo(() => {
+        if (!usageSummary) {
+            return [];
+        }
+
+        const usageByMonth = new Map((monthlyUsage || []).map((row) => [row.month, row]));
+        if (!usageMonthOptions.length) {
+            return buildUsageWindowRows(usageSummary, tenant?.metadata_json);
+        }
+
+        return usageMonthOptions.map((option) => {
+            const row = usageByMonth.get(option.value);
+            return {
+                month: option.value,
+                content: `${row?.content_generations || 0}/${usageSummary.limits.max_content_generations || 0}`,
+                visuals: `${row?.image_generations || 0}/${usageSummary.limits.max_image_generations || 0}`,
+                ocr: `${row?.ocr_pages || 0}/${usageSummary.limits.max_ocr_pages || 0}`,
+                brandSpaces: `${usageSummary.consumption.brand_spaces || 0}/${usageSummary.limits.max_brand_spaces || 0}`,
+                users: `${usageSummary.consumption.users || 0}/${usageSummary.limits.max_users || 0}`,
+            };
+        });
+    }, [monthlyUsage, tenant?.metadata_json, usageMonthOptions, usageSummary]);
 
      const resolvedUsageMonth = usageMonthOptions.some((option) => option.value === selectedUsageMonth)
         ? selectedUsageMonth

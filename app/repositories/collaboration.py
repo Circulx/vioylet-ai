@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.collaboration import (
@@ -32,6 +32,28 @@ class ReviewLinkRepository(Repository[ReviewLink]):
         result = await self.session.execute(select(ReviewLink).where(ReviewLink.token == token))
         return result.scalar_one_or_none()
 
+    async def get_latest_for_content(
+        self,
+        tenant_id: UUID,
+        brand_space_id: UUID,
+        content_version_id: UUID,
+    ) -> ReviewLink | None:
+        # Reuses the review thread for the same generated content so comments remain attached across opens.
+        # If older duplicate links already exist, prefer the one that has comments instead of an empty token.
+        result = await self.session.execute(
+            select(ReviewLink)
+            .outerjoin(ReviewComment, ReviewComment.review_link_id == ReviewLink.id)
+            .where(
+                ReviewLink.tenant_id == tenant_id,
+                ReviewLink.brand_space_id == brand_space_id,
+                ReviewLink.content_version_id == content_version_id,
+            )
+            .group_by(ReviewLink.id)
+            .order_by(func.count(ReviewComment.id).desc(), ReviewLink.created_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
 
 class ReviewCommentRepository(Repository[ReviewComment]):
     # Data-access helper for review comment; services call this class instead of repeating SQLAlchemy filters
@@ -44,7 +66,11 @@ class ReviewCommentRepository(Repository[ReviewComment]):
     async def list_for_link(self, review_link_id: UUID) -> list[ReviewComment]:
         # Returns matching for link records with repository scope applied; services assemble responses from
         # these rows.
-        result = await self.session.execute(select(ReviewComment).where(ReviewComment.review_link_id == review_link_id))
+        result = await self.session.execute(
+            select(ReviewComment)
+            .where(ReviewComment.review_link_id == review_link_id)
+            .order_by(ReviewComment.created_at.asc())
+        )
         return list(result.scalars().all())
 
 

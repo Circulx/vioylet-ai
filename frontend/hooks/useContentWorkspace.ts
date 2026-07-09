@@ -314,6 +314,20 @@ export const useAddReviewComment = (token: string) => {
   });
 };
 
+export const useUpdateReviewStatus = (token: string) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { status: string }) =>
+      request(API.REVIEW.UPDATE_STATUS, {
+        pathParams: token,
+        data,
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["review", token] });
+    },
+  });
+};
+
 export const useTenantAnalytics = (enabled = true) =>
   useQuery({
     queryKey: ["analytics", "tenant"],

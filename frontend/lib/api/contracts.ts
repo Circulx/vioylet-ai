@@ -576,6 +576,7 @@ export interface ReviewLinkResponse {
   token: string;
   status: string;
   allow_external_comments: boolean;
+  created_by_name?: string | null;
 }
 
 export interface ReviewDetailResponse {
@@ -583,14 +584,17 @@ export interface ReviewDetailResponse {
   content?: {
     id: UUID;
     title?: string;
+    brand_name?: string | null;
     generated_payload: StructuredTextPayload;
     blueprint_payload: Record<string, unknown>;
     generation_decision?: GenerationDecision;
     assets: AssetReference[];
+    display_assets?: AssetReference[];
   };
   comments: Array<{
     id: UUID;
     body: string;
+    parent_comment_id?: UUID | null;
     external_author_name?: string;
     author_user_id?: UUID;
   }>;

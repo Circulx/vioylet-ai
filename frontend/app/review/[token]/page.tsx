@@ -1,9 +1,12 @@
 import ShareReviewScreen from "@/components/sharing/ShareReviewScreen";
 
-export default function PublicReviewPage({
+type PublicReviewPageProps = {
+  params: Promise<{ token: string }> | { token: string };
+};
+
+export default async function PublicReviewPage({
   params,
-}: {
-  params: { token: string };
-}) {
-  return <ShareReviewScreen reviewToken={params.token} externalMode />;
+}: PublicReviewPageProps) {
+  const resolvedParams = await params;
+  return <ShareReviewScreen reviewToken={resolvedParams.token} externalMode />;
 }

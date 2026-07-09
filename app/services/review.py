@@ -29,6 +29,12 @@ class ReviewService:
         content = await self.contents.get_scoped(content_version_id, tenant_id, brand_space_id)
         if not content:
             raise NotFoundError("Content version not found")
+        existing_link = await self.links.get_latest_for_content(tenant_id, brand_space_id, content_version_id)
+        if existing_link:
+            existing_link.title = title or existing_link.title
+            existing_link.allow_external_comments = allow_external_comments
+            await self.session.commit()
+            return existing_link
         review_link = ReviewLink(
             tenant_id=tenant_id,
             brand_space_id=brand_space_id,
@@ -52,7 +58,16 @@ class ReviewService:
         comments = await self.comments.list_for_link(link.id)
         return link, comments
 
-    async def add_comment(self, review_link_id: UUID, tenant_id: UUID, brand_space_id: UUID, body: str, author_user_id: UUID | None = None, external_author_name: str | None = None) -> ReviewComment:
+    async def add_comment(
+        self,
+        review_link_id: UUID,
+        tenant_id: UUID,
+        brand_space_id: UUID,
+        body: str,
+        author_user_id: UUID | None = None,
+        external_author_name: str | None = None,
+        parent_comment_id: UUID | None = None,
+    ) -> ReviewComment:
         # Runs the comment service flow and persists the resulting state before returning it to the route or
         # worker.
         link = await self.links.get(review_link_id)
@@ -60,10 +75,15 @@ class ReviewService:
             raise NotFoundError("Review link not found")
         if author_user_id is None and not link.allow_external_comments:
             raise LifecycleError("External comments are disabled for this review link")
+        if parent_comment_id:
+            parent = await self.comments.get(parent_comment_id)
+            if not parent or parent.review_link_id != review_link_id:
+                raise LifecycleError("Reply target comment is invalid")
         comment = ReviewComment(
             tenant_id=tenant_id,
             brand_space_id=brand_space_id,
             review_link_id=review_link_id,
+            parent_comment_id=parent_comment_id,
             author_user_id=author_user_id,
             external_author_name=external_author_name,
             body=body,

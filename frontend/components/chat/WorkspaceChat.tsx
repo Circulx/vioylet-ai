@@ -886,7 +886,6 @@ function GeneratedImageViewer({
     const applyImageEdit = useApplyImageEdit(brandId);
     const preparedShareRef = useRef<{ key: string; files: File[]; assets: AssetReference[] } | null>(null);
     const sharePreparationRef = useRef<{ key: string; promise: Promise<{ files: File[]; assets: AssetReference[] }> } | null>(null);
-    const shareActionInFlightRef = useRef(false);
     const imageAssets = useMemo(
         () =>
             assets
@@ -1152,8 +1151,6 @@ function GeneratedImageViewer({
             }
         } catch (error) {
             setShareError(error instanceof Error ? error.message : "Could not share generated files.");
-        } finally {
-            shareActionInFlightRef.current = false;
         }
     };
 
@@ -1700,6 +1697,8 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
     const [chatSearchQuery, setChatSearchQuery] = useState("");
     const [activeChatSearchMatchIndex, setActiveChatSearchMatchIndex] = useState(0);
     const attachmentInputRef = useRef<HTMLInputElement | null>(null);
+    const composerEnhanceContainerRef = useRef<HTMLDivElement | null>(null);
+    const workspaceEnhanceContainerRef = useRef<HTMLDivElement | null>(null);
     const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
     const promptTextareaRef = useRef<HTMLTextAreaElement | null>(null);
     const messageListRef = useRef<HTMLDivElement | null>(null);
@@ -1713,7 +1712,6 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
     const activeGenerationSessionRef = useRef<string>("");
     const exportAssetCacheRef = useRef(new Map<string, AssetReference[]>());
     const exportWarmupRef = useRef(new Set<string>());
-    const userNearMessageBottomRef = useRef(true);
 
     const sizeOption = useMemo(
         () => sizeOptionsByPlatform[studioPlatform].find((entry) => entry.label === studioSizeLabel) || sizeOptionsByPlatform[studioPlatform][0],
@@ -1958,22 +1956,6 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
         return () => window.clearTimeout(timeoutId);
     }, [activeChatSearchMatchId, chatSearchQuery]);
 
-    const updateUserNearMessageBottom = useCallback(() => {
-        const messageList = messageListRef.current;
-        if (!messageList) {
-            userNearMessageBottomRef.current = true;
-            return true;
-        }
-        const distanceFromBottom = messageList.scrollHeight - messageList.scrollTop - messageList.clientHeight;
-        const isNearBottom = distanceFromBottom < 120;
-        userNearMessageBottomRef.current = isNearBottom;
-        return isNearBottom;
-    }, []);
-
-    useEffect(() => {
-        userNearMessageBottomRef.current = true;
-    }, [resolvedActiveSessionId]);
-
     useEffect(() => {
         if (!resolvedActiveSessionId || !orderedMessages.length || normalizedChatSearchQuery) {
             return;
@@ -2000,7 +1982,6 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                 autoFollowChatRef.current = true;
                 return;
             }
-            userNearMessageBottomRef.current = true;
             messageBottomRef.current?.scrollIntoView({ block: "end" });
         }, 80);
         return () => window.clearTimeout(timeoutId);
@@ -2017,6 +1998,34 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
     useEffect(() => {
         resizeComposer(promptTextareaRef.current);
     }, [workspacePrompt]);
+
+    useEffect(() => {
+        if (!enhancePromptMode) {
+            return;
+        }
+
+        const handleOutsidePointer = (event: PointerEvent | MouseEvent) => {
+            const target = event.target;
+            if (!(target instanceof Node)) {
+                return;
+            }
+            const activeContainer = enhancePromptMode === "composer"
+                ? composerEnhanceContainerRef.current
+                : workspaceEnhanceContainerRef.current;
+            if (activeContainer?.contains(target)) {
+                return;
+            }
+            setEnhancePromptMode(null);
+        };
+
+        document.addEventListener("pointerdown", handleOutsidePointer, true);
+        document.addEventListener("mousedown", handleOutsidePointer, true);
+        return () => {
+            document.removeEventListener("pointerdown", handleOutsidePointer, true);
+            document.removeEventListener("mousedown", handleOutsidePointer, true);
+        };
+    }, [enhancePromptMode]);
+
 
     if (isBrandsLoading) {
         return <div className="p-5 text-sm text-slate-500">Loading workspace...</div>;
@@ -2065,6 +2074,10 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
     };
 
     const openEnhancePrompt = async (mode: EnhancePromptMode) => {
+        if (enhancePromptMode === mode) {
+            setEnhancePromptMode(null);
+            return;
+        }
         const prompt = mode === "composer" ? composerDraft : workspacePrompt;
         if (!hasEnhanceableSentence(prompt)) {
             setEnhancePromptError("Enter at least a sentence to enhance.");
@@ -2106,6 +2119,8 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
         }
         void copyTextToClipboard(enhancedPrompt);
     };
+
+
     const dispatchGeneration = async (message: string) => {
         if (isGeneratingMessage) {
             return;
@@ -2439,7 +2454,8 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                             </p>
                                         ) : null}
                                         {attachmentError ? <p className="mb-2 text-sm text-red-500">{attachmentError}</p> : null}
-                                        <SurfaceCard className={`relative flex items-end gap-3 rounded-xl border border-[#E1E4ED] bg-white px-3 pb-2 shadow-[0_14px_28px_-24px_rgba(15,23,42,0.45)]`}>
+                                        <div ref={composerEnhanceContainerRef} className="relative">
+                                            <SurfaceCard className={`relative flex items-end gap-3 rounded-xl border border-[#E1E4ED] bg-white px-3 pb-2 shadow-[0_14px_28px_-24px_rgba(15,23,42,0.45)]`}>
                                             <button
                                                 type="button"
                                                 onClick={() => attachmentInputRef.current?.click()}
@@ -2493,6 +2509,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                                 )}
                                             </Button>
                                         </SurfaceCard>
+                                        </div>
                                     </div>
                                     <p className="pt-4 text-center text-sm text-[#A0A0A7]">Violyt suggestions may need review. Verify accuracy before use.</p>
                                 </div>
@@ -2574,7 +2591,8 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                             <h2 className="font-dmSans text-2xl md:text-3xl xl:text-4xl font-medium tracking-normal text-[#121212]">Greeting message</h2>
                                         </div>
 
-                                        <SurfaceCard className="relative mt-9 w-full rounded-xl border border-[#DDE1EA] bg-white px-4 py-3 shadow-[0_16px_30px_-25px_rgba(15,23,42,0.45)]">
+                                        <div ref={workspaceEnhanceContainerRef} className="relative mt-9 w-full">
+                                            <SurfaceCard className="relative w-full rounded-xl border border-[#DDE1EA] bg-white px-4 py-3 shadow-[0_16px_30px_-25px_rgba(15,23,42,0.45)]">
                                             <Textarea
                                                 ref={promptTextareaRef}
                                                 placeholder="What do you want to create today?"
@@ -2632,6 +2650,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                                 </div>
                                             </div>
                                         </SurfaceCard>
+                                        </div>
                                         {attachedAssets.length ? (
                                             <div className="flex w-full flex-wrap justify-center gap-2">
                                                 {attachedAssets.map((asset) => (

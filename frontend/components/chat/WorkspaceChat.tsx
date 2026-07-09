@@ -886,6 +886,7 @@ function GeneratedImageViewer({
     const loadImageEditState = useImageEditState(brandId);
     const applyImageEdit = useApplyImageEdit(brandId);
     const createReviewLink = useCreateShareLink(brandId);
+    const reviewShareRef = useRef<{ contentVersionId: string; url: string } | null>(null);
     const preparedShareRef = useRef<{ key: string; files: File[]; assets: AssetReference[] } | null>(null);
     const sharePreparationRef = useRef<{ key: string; promise: Promise<{ files: File[]; assets: AssetReference[] }> } | null>(null);
     const imageAssets = useMemo(
@@ -1018,27 +1019,28 @@ function GeneratedImageViewer({
         }
     };
 
-    const getPreparedShareLink = async () => {
-        const preparedShare = preparedShareRef.current?.key === shareCacheKey
-            ? preparedShareRef.current
-            : await prepareShareFiles();
-        const shareAsset = fileType === "jpg" || fileType === "png"
-            ? preparedShare.assets[activeIndex] || preparedShare.assets[0]
-            : preparedShare.assets[0];
-        if (!shareAsset?.asset_url) {
-            throw new Error("Generated file is not ready to share.");
+    const getReviewShareLink = async () => {
+        if (!contentVersionId) {
+            throw new Error("Generated content is not ready to share yet.");
         }
-        const filename = generatedShareFilename(sourcePrompt, shareAsset);
-        return fileType === "doc"
-            ? shareUrlWithPrettyFilename(shareAsset.asset_url, filename)
-            : downloadUrlWithFilename(shareAsset.asset_url, filename);
+        if (reviewShareRef.current?.contentVersionId === contentVersionId) {
+            return reviewShareRef.current.url;
+        }
+        const response = await createReviewLink.mutateAsync({
+            content_version_id: contentVersionId,
+            title: `${title} Review`,
+            allow_external_comments: true,
+        });
+        const reviewUrl = `${window.location.origin}/review/${response.token}`;
+        reviewShareRef.current = { contentVersionId, url: reviewUrl };
+        return reviewUrl;
     };
 
     const handleCopyShareLink = async () => {
         setShareError("");
         setIsCopyingLink(true);
         try {
-            await copyTextToClipboard(await getPreparedShareLink());
+            await copyTextToClipboard(await getReviewShareLink());
             setShareError(shareLinkCopiedNotice);
         } catch (error) {
             setShareError(error instanceof Error ? error.message : "Could not copy share link.");
@@ -1099,103 +1101,22 @@ function GeneratedImageViewer({
         setShareError("");
         try {
             if (!navigator.share) {
-                throw new Error("File sharing is not supported in this browser. Use Download or Copy Link instead.");
-            }
-            const preparedShare = preparedShareRef.current?.key === shareCacheKey
-                ? preparedShareRef.current
-                : await prepareShareFiles();
-            const shareTitle = filenameTopicFromPrompt(sourcePrompt);
-            if (fileType === "doc") {
-                const docAsset = preparedShare.assets[0];
-                if (!docAsset?.asset_url) {
-                    throw new Error("Generated Word document is not ready to share.");
-                }
-                const docTitle = shareTitleFromPrompt(sourcePrompt);
-                const docFilename = generatedShareFilename(sourcePrompt, docAsset);
-                const docFileShareData: ShareData = {
-                    title: docTitle,
-                    files: preparedShare.files,
-                };
-                const docLinkShareData: ShareData = {
-                    title: docTitle,
-                    text: `${docTitle} - Word document`,
-                    url: shareUrlWithPrettyFilename(docAsset.asset_url, docFilename),
-                };
-                setIsSharing(true);
-                try {
-                    const canShareFiles = preparedShare.files.length > 0 && (typeof navigator.canShare === "function"
-                        ? navigator.canShare(docFileShareData)
-                        : true);
-                    if (canShareFiles) {
-                        await navigator.share(docFileShareData);
-                    } else {
-                        await navigator.share(docLinkShareData);
-                        setShareError(docShareFallbackNotice);
-                    }
-                } catch (error) {
-                    if (error instanceof DOMException && error.name === "AbortError") {
-                        return;
-                    }
-                    if (error instanceof DOMException && error.name === "NotAllowedError" && preparedShareRef.current?.key === shareCacheKey) {
-                        setShareError("File is ready. Click Share again to open the share dialog, or use Download/Copy Link.");
-                        return;
-                    }
-                    downloadAsset(docAsset, docFilename);
-                    setShareError("Word document sharing was blocked. The DOC file has been downloaded instead.");
-                } finally {
-                    setIsSharing(false);
-                }
-                return;
-            }
-            const shareData: ShareData = {
-                title: shareTitle,
-                files: preparedShare.files,
-            };
-            const linkShareAsset = fileType === "jpg" || fileType === "png"
-                ? preparedShare.assets[activeIndex] || preparedShare.assets[0]
-                : preparedShare.assets[0];
-            const linkShareData: ShareData | null = linkShareAsset?.asset_url
-                ? {
-                    title: shareTitle,
-                    url: downloadUrlWithFilename(linkShareAsset.asset_url, generatedShareFilename(sourcePrompt, linkShareAsset)),
-                }
-                : null;
-            const canShareAvailable = typeof navigator.canShare === "function";
-            const canShareResult = preparedShare.files.length > 0 && canShareAvailable ? navigator.canShare(shareData) : null;
-            if (!preparedShare.files.length || (canShareAvailable && !canShareResult)) {
-                if (!linkShareData) {
-                    throw new Error(`This browser cannot share generated ${fileType.toUpperCase()} files. Use Download or Copy Link instead.`);
-                }
-                setIsSharing(true);
-                try {
-                    await navigator.share(linkShareData);
-                } catch (error) {
-                    if (error instanceof DOMException && error.name === "AbortError") {
-                        return;
-                    }
-                    setShareError(error instanceof Error ? error.message : "Could not share generated file link.");
-                } finally {
-                    setIsSharing(false);
-                }
-                return;
+                throw new Error("Native sharing is not available in this browser. Use Copy Link instead.");
             }
             setIsSharing(true);
-            try {
-                await navigator.share(shareData);
-            } catch (error) {
-                if (error instanceof DOMException && error.name === "AbortError") {
-                    return;
-                }
-                if (error instanceof DOMException && error.name === "NotAllowedError" && preparedShareRef.current?.key === shareCacheKey) {
-                    setShareError("File is ready. Click Share again to open the share dialog, or use Download/Copy Link.");
-                    return;
-                }
-                setShareError(error instanceof Error ? error.message : "Could not share generated files.");
-            } finally {
-                setIsSharing(false);
-            }
+            const reviewUrl = await getReviewShareLink();
+            await navigator.share({
+                title,
+                text: `Review and comment on ${title}`,
+                url: reviewUrl,
+            });
         } catch (error) {
-            setShareError(error instanceof Error ? error.message : "Could not share generated files.");
+            if (error instanceof DOMException && error.name === "AbortError") {
+                return;
+            }
+            setShareError(error instanceof Error ? error.message : "Could not share review link.");
+        } finally {
+            setIsSharing(false);
         }
     };
 

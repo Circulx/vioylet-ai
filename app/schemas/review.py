@@ -1,6 +1,7 @@
 # Pydantic schemas define the API contracts used by routes, services, and frontend callers.
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
 from pydantic import Field
@@ -48,6 +49,7 @@ class ReviewCommentResponse(APIModel):
     parent_comment_id: UUID | None = None
     external_author_name: str | None = None
     author_user_id: UUID | None = None
+    created_at: datetime
 
 
 class ReviewDetailContent(APIModel):

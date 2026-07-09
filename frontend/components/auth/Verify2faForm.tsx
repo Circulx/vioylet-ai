@@ -9,6 +9,8 @@ import { REGEXP_ONLY_DIGITS } from "input-otp";
 import { getTwoFactorEmail, getTwoFactorTicket } from "@/lib/api/session";
 import { useVerifyTwoFactor } from "@/hooks/useAuthProfile";
 
+const LOGIN_REDIRECT_KEY = "violyt.login_redirect";
+
 const Verify2faForm = () => {
   const router = useRouter();
   const verifyTwoFactor = useVerifyTwoFactor();
@@ -30,7 +32,9 @@ const Verify2faForm = () => {
       { ticket, code },
       {
         onSuccess: () => {
-          router.replace("/dashboard");
+          const redirectTo = window.sessionStorage.getItem(LOGIN_REDIRECT_KEY) || "/dashboard";
+          window.sessionStorage.removeItem(LOGIN_REDIRECT_KEY);
+          router.replace(redirectTo.startsWith("/") && !redirectTo.startsWith("//") ? redirectTo : "/dashboard");
         },
         onError: () => {
           setError("Invalid verification code. Please try again.");

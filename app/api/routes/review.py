@@ -1,11 +1,12 @@
 # FastAPI route handlers live here; they validate request inputs, call services, and return response schemas.
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import CurrentPrincipal, assert_brand_access, assert_tenant_access, get_current_principal, get_brand_scope_header, require_brand_scope, require_roles
 from app.core.enums import RoleCode
+from app.core.security import decode_token
 from app.db.session import get_db_session
 from app.models.brand import BrandSpace
 from app.models.tenant import User
@@ -25,6 +26,26 @@ from app.services.review import ReviewService
 
 
 router = APIRouter()
+
+
+async def _optional_principal_from_authorization(
+    authorization: str | None,
+    session: AsyncSession,
+) -> CurrentPrincipal | None:
+    if not authorization or not authorization.lower().startswith("bearer "):
+        return None
+    token = authorization.split(" ", 1)[1].strip()
+    if not token:
+        return None
+    try:
+        payload = decode_token(token)
+        user_id = UUID(payload["sub"])
+    except Exception:  # noqa: BLE001
+        return None
+    user = await session.get(User, user_id)
+    if not user or not user.is_active:
+        return None
+    return CurrentPrincipal(user_id=user.id, tenant_id=user.tenant_id, email=user.email)
 
 
 def _asset_reference_from_payload(asset: object, delivery: AssetDeliveryService) -> AssetReference | None:
@@ -161,6 +182,7 @@ async def get_review(token: str, session: AsyncSession = Depends(get_db_session)
                 parent_comment_id=item.parent_comment_id,
                 external_author_name=item.external_author_name,
                 author_user_id=item.author_user_id,
+                created_at=item.created_at,
             )
             for item in comments
         ],
@@ -168,17 +190,23 @@ async def get_review(token: str, session: AsyncSession = Depends(get_db_session)
 
 
 @router.post("/{token}/comment", response_model=ReviewCommentResponse)
-async def add_comment(token: str, payload: ReviewCommentCreateRequest, session: AsyncSession = Depends(get_db_session)) -> dict:
+async def add_comment(
+    token: str,
+    payload: ReviewCommentCreateRequest,
+    authorization: str | None = Header(default=None),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
     # Serves the add comment endpoint; it uses FastAPI dependencies, delegates work to services, and returns the
     # response schema.
     service = ReviewService(session)
     link, _ = await service.get_by_token(token)
+    principal = await _optional_principal_from_authorization(authorization, session)
     comment = await service.add_comment(
         link.id,
         link.tenant_id,
         link.brand_space_id,
         payload.body,
-        None,
+        principal.user_id if principal else None,
         payload.external_author_name,
         payload.parent_comment_id,
     )
@@ -188,6 +216,7 @@ async def add_comment(token: str, payload: ReviewCommentCreateRequest, session: 
         parent_comment_id=comment.parent_comment_id,
         external_author_name=comment.external_author_name,
         author_user_id=comment.author_user_id,
+        created_at=comment.created_at,
     )
 
 

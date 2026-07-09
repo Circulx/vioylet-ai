@@ -10,6 +10,19 @@ import { Eye, EyeOff } from 'lucide-react';
 import { useLogin } from '@/hooks/useLogin';
 import { getApiErrorMessage } from '@/lib/api/error-message';
 
+const LOGIN_REDIRECT_KEY = 'violyt.login_redirect';
+
+function safeRedirectFromLocation() {
+  if (typeof window === 'undefined') {
+    return '/dashboard';
+  }
+  const redirect = new URLSearchParams(window.location.search).get('redirect') || '';
+  if (!redirect.startsWith('/') || redirect.startsWith('//')) {
+    return '/dashboard';
+  }
+  return redirect;
+}
+
 export function LoginForm() {
   const router = useRouter();
   const { mutate: login, isPending, error } = useLogin();
@@ -30,11 +43,13 @@ export function LoginForm() {
       },
       {
         onSuccess: (response) => {
+          const redirectTo = safeRedirectFromLocation();
           if ('requires_two_factor' in response && response.requires_two_factor) {
+            window.sessionStorage.setItem(LOGIN_REDIRECT_KEY, redirectTo);
             router.replace('/auth/verify-2fa');
             return;
           }
-          router.replace('/dashboard');
+          router.replace(redirectTo);
         },
       },
     );

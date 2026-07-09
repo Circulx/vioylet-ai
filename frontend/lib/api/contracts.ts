@@ -597,6 +597,7 @@ export interface ReviewDetailResponse {
     parent_comment_id?: UUID | null;
     external_author_name?: string;
     author_user_id?: UUID;
+    created_at: string;
   }>;
 }
 

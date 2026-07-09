@@ -4,9 +4,10 @@ import type { TwoFactorSetupResponse } from "@/lib/api/contracts";
 import { request } from "@/lib/api/request";
 import { clearTwoFactorTicket, setAuthTokens } from "@/lib/api/session";
 
-export const useProfile = () =>
+export const useProfile = (enabled = true) =>
   useQuery({
     queryKey: ["auth", "profile"],
+    enabled,
     queryFn: () => request(API.AUTH.PROFILE),
   });
 

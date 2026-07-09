@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type KeyboardEvent, type MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import {
     ArrowUp,
@@ -48,6 +48,7 @@ import {
     useExportContent,
     useEnhancePrompt,
     useApplyImageEdit,
+    useCreateShareLink,
     useImageEditState,
     useSendChatMessage,
     useTemplateRecommendations,
@@ -884,6 +885,7 @@ function GeneratedImageViewer({
     const [editError, setEditError] = useState("");
     const loadImageEditState = useImageEditState(brandId);
     const applyImageEdit = useApplyImageEdit(brandId);
+    const createReviewLink = useCreateShareLink(brandId);
     const preparedShareRef = useRef<{ key: string; files: File[]; assets: AssetReference[] } | null>(null);
     const sharePreparationRef = useRef<{ key: string; promise: Promise<{ files: File[]; assets: AssetReference[] }> } | null>(null);
     const shareActionInFlightRef = useRef(false);
@@ -1051,6 +1053,49 @@ function GeneratedImageViewer({
         await handleSave();
     };
 
+    const handleOpenComments = (event?: ReactMouseEvent<HTMLButtonElement>) => {
+        event?.preventDefault();
+        event?.stopPropagation();
+        setShareError("");
+        if (!contentVersionId) {
+            setShareError("Generated content is not ready for comments yet.");
+            return;
+        }
+        const reviewTab = typeof window !== "undefined" ? window.open("about:blank", "_blank") : null;
+        if (reviewTab) {
+            reviewTab.opener = null;
+            reviewTab.document.title = "Opening Violyt comments";
+            reviewTab.document.body.innerHTML = "<p style=\"font-family: sans-serif; padding: 24px; color: #3f3192;\">Opening comments...</p>";
+        }
+        createReviewLink.mutate(
+            {
+                content_version_id: contentVersionId,
+                title: `${title} Review`,
+                allow_external_comments: true,
+            },
+            {
+                onSuccess: (response) => {
+                    const reviewUrl = `${window.location.origin}/review/${response.token}`;
+                    if (reviewTab && !reviewTab.closed) {
+                        reviewTab.location.href = reviewUrl;
+                        return;
+                    }
+                    const opened = window.open(reviewUrl, "_blank", "noopener,noreferrer");
+                    if (!opened) {
+                        setShareError("Comments are ready, but the browser blocked the new tab. Allow pop-ups and try again.");
+                    }
+                },
+                onError: (error) => {
+                    if (reviewTab && !reviewTab.closed) {
+                        reviewTab.document.title = "Could not open Violyt comments";
+                        reviewTab.document.body.innerHTML = "<p style=\"font-family: sans-serif; padding: 24px; color: #b42318;\">Could not open comments. Please return to Violyt and try again.</p>";
+                    }
+                    setShareError(error instanceof Error ? error.message : "Could not open comments.");
+                },
+            },
+        );
+    };
+
     const handleShare = async () => {
         setShareError("");
         try {
@@ -1214,13 +1259,14 @@ function GeneratedImageViewer({
                 <span className="min-w-0 truncate text-[15px] font-medium text-[#333333]">{title || "Generated Image"}</span>
                 <button
                     type="button"
-                    aria-label="Comments"
-                    title="Comments"
-                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-white transition cursor-pointer"
-                    onClick={() => undefined}
+                    aria-label={createReviewLink.isPending ? "Opening comments" : "Comments"}
+                    title={createReviewLink.isPending ? "Opening comments" : "Comments"}
+                    className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-full text-white transition disabled:cursor-not-allowed disabled:opacity-70"
+                    onClick={handleOpenComments}
+                    disabled={createReviewLink.isPending}
                 >
 
-                    <Image src={"/actions_icons/chat/comment.svg"} alt="comment" height={24} width={24} />
+                    {createReviewLink.isPending ? <Loader2 className="h-5 w-5 animate-spin text-primary" /> : <Image src={"/actions_icons/chat/comment.svg"} alt="comment" height={24} width={24} />}
                 </button>
             </div>
             {platformShareHint ? <p className="mb-3 text-[11px] font-medium text-[#57536E]">{platformShareHint}</p> : null}
@@ -1241,7 +1287,7 @@ function GeneratedImageViewer({
                                     }`}
                             >
                                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <Image src={asset.resolvedUrl} alt={`Generated image ${index + 1}`} width={60} height={56} className="h-14 w-full object-cover" />
+                                <img src={asset.resolvedUrl} alt={`Generated image ${index + 1}`} className="h-14 w-full object-cover" />
                             </button>
                         ))}
                     </div>

@@ -36,6 +36,11 @@ class ReviewComment(UUIDPrimaryKeyMixin, TenantScopedMixin, BrandScopedMixin, Ti
     __tablename__ = "review_comments"
 
     review_link_id: Mapped[UUID] = mapped_column(ForeignKey("review_links.id", ondelete="CASCADE"), index=True)
+    parent_comment_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("review_comments.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     author_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     external_author_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     body: Mapped[str] = mapped_column(Text, nullable=False)

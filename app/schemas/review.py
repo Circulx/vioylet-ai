@@ -21,6 +21,7 @@ class ReviewCommentCreateRequest(APIModel):
     # service code runs.
     body: str = Field(min_length=1)
     external_author_name: str | None = None
+    parent_comment_id: UUID | None = None
 
 
 class ReviewStatusUpdateRequest(APIModel):
@@ -36,6 +37,7 @@ class ReviewLinkResponse(APIModel):
     token: str
     status: str
     allow_external_comments: bool
+    created_by_name: str | None = None
 
 
 class ReviewCommentResponse(APIModel):
@@ -43,6 +45,7 @@ class ReviewCommentResponse(APIModel):
     # shape.
     id: UUID
     body: str
+    parent_comment_id: UUID | None = None
     external_author_name: str | None = None
     author_user_id: UUID | None = None
 
@@ -52,10 +55,12 @@ class ReviewDetailContent(APIModel):
     # aligned.
     id: UUID
     title: str | None = None
+    brand_name: str | None = None
     generated_payload: dict
     blueprint_payload: dict
     generation_decision: dict = Field(default_factory=dict)
     assets: list[AssetReference] = Field(default_factory=list)
+    display_assets: list[AssetReference] = Field(default_factory=list)
 
 
 class ReviewDetailResponse(APIModel):

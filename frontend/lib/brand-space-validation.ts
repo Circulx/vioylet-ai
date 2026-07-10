@@ -56,11 +56,6 @@ function getRequiredBrandFieldChecks(form: BrandFormState) {
     complete: hasText(form.visualIdentity.primaryColor) && hasText(form.visualIdentity.secondaryColor),
   });
   requireText("visual_identity", "Typography", form.visualIdentity.typography);
-  checks.push({
-    tab: "visual_identity",
-    label: "Upload Font Style Guide",
-    complete: hasUpload(form.visualIdentity.fontStyleGuide),
-  });
 
   requireList("brand_rules", "Set The Rules. Violyt Will Follow Them.", form.brandRules.selectedRules);
   requireText("brand_rules", "Positive Word Bank", form.brandRules.positiveWordBank);

@@ -30,6 +30,7 @@ export async function GET() {
   const searchParams = new URLSearchParams({
     key: apiKey,
     sort: "popularity",
+    fields: "items(family,category,variants,version,lastModified)",
   });
 
   try {

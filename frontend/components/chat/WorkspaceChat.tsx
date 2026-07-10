@@ -468,6 +468,19 @@ function assetExtension(asset: AssetReference | undefined) {
     return storageExtension && /^[a-z0-9]+$/.test(storageExtension) ? storageExtension : "png";
 }
 
+function assetPathHasExtension(asset: AssetReference, extensions: string[]) {
+    const pathValue = `${asset.storage_path || ""} ${asset.asset_url || ""}`.toLowerCase();
+    return extensions.some((extension) => {
+        const suffix = `.${extension.toLowerCase()}`;
+        return (
+            pathValue.endsWith(suffix) ||
+            pathValue.includes(`${suffix}?`) ||
+            pathValue.includes(`${suffix}#`) ||
+            pathValue.includes(`${suffix}/`)
+        );
+    });
+}
+
 function generatedDownloadFilename(prompt: string, asset: AssetReference | undefined) {
     return `${filenameTopicFromPrompt(prompt)}.${assetExtension(asset)}`;
 }
@@ -486,15 +499,15 @@ function generatedSlideDownloadFilename(prompt: string, asset: AssetReference | 
 function assetMatchesFileType(asset: AssetReference, fileType: FileType) {
     const mimeType = (asset.mime_type || "").toLowerCase();
     if (fileType === "png") {
-        return mimeType.includes("png");
+        return mimeType.includes("png") || assetPathHasExtension(asset, ["png"]);
     }
     if (fileType === "jpg") {
-        return mimeType.includes("jpeg") || mimeType.includes("jpg");
+        return mimeType.includes("jpeg") || mimeType.includes("jpg") || assetPathHasExtension(asset, ["jpg", "jpeg"]);
     }
     if (fileType === "pdf") {
-        return mimeType.includes("pdf");
+        return mimeType.includes("pdf") || assetPathHasExtension(asset, ["pdf"]);
     }
-    return mimeType.includes("wordprocessingml") || mimeType.includes("msword");
+    return mimeType.includes("wordprocessingml") || mimeType.includes("msword") || assetPathHasExtension(asset, ["doc", "docx"]);
 }
 
 function triggerDownload(url: string, filename: string) {
@@ -558,6 +571,49 @@ function downloadAsset(asset: AssetReference, filename: string) {
         return;
     }
     triggerDownload(downloadUrlWithFilename(downloadUrl, filename), filename);
+}
+
+
+function proxiedShareAssetUrl(assetUrl: string) {
+    try {
+        const parsedUrl = new URL(assetUrl, window.location.href);
+        if (parsedUrl.origin === window.location.origin) {
+            return parsedUrl.toString();
+        }
+    } catch {
+        return assetUrl;
+    }
+    return `/api/chat-share-asset?url=${encodeURIComponent(assetUrl)}`;
+}
+
+function mimeTypeForFilename(filename: string) {
+    const extension = filename.split(".").pop()?.toLowerCase();
+    if (extension === "pdf") {
+        return "application/pdf";
+    }
+    if (extension === "doc" || extension === "docx") {
+        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    }
+    if (extension === "jpg" || extension === "jpeg") {
+        return "image/jpeg";
+    }
+    if (extension === "png") {
+        return "image/png";
+    }
+    return "application/octet-stream";
+}
+
+async function assetToShareFile(asset: AssetReference, filename: string) {
+    if (!asset.asset_url) {
+        throw new Error("Selected asset is not ready to share.");
+    }
+    const response = await fetch(proxiedShareAssetUrl(asset.asset_url), { credentials: "same-origin" });
+    if (!response.ok) {
+        throw new Error("Selected asset could not be loaded for sharing.");
+    }
+    const blob = await response.blob();
+    const mimeType = blob.type && blob.type !== "application/octet-stream" ? blob.type : asset.mime_type || mimeTypeForFilename(filename);
+    return new File([blob], filename, { type: mimeType });
 }
 
 function resolveGenerationDecision(payload: ChatAssistantStructuredPayload | Record<string, unknown> | undefined) {
@@ -935,11 +991,12 @@ function GeneratedImageViewer({
             [
                 contentVersionId,
                 fileType,
+                activeIndex,
                 sourcePrompt,
                 ...assets.map((asset) => `${asset.asset_url || ""}:${asset.storage_path || ""}:${asset.mime_type || ""}`),
                 ...existingExportAssets.map((asset) => `${asset.asset_url || ""}:${asset.storage_path || ""}:${asset.mime_type || ""}`),
             ].join("|"),
-        [assets, contentVersionId, existingExportAssets, fileType, sourcePrompt],
+        [activeIndex, assets, contentVersionId, existingExportAssets, fileType, sourcePrompt],
     );
     const prepareShareFiles = useCallback(async () => {
         if (preparedShareRef.current?.key === shareCacheKey) {
@@ -953,17 +1010,31 @@ function GeneratedImageViewer({
         }
         const promise = (async () => {
             setIsPreparingShare(true);
+            if (!contentVersionId) {
+                throw new Error("Generated content is not ready to share yet.");
+            }
             const matchingExistingAssets = existingExportAssets.filter((asset) => assetMatchesFileType(asset, fileType) && Boolean(asset.asset_url));
-            const refreshedAssets = matchingExistingAssets.length || !contentVersionId
+            const refreshedAssets = matchingExistingAssets.length
                 ? []
                 : (await onExportForType(contentVersionId, fileType)).filter((asset) => assetMatchesFileType(asset, fileType) && Boolean(asset.asset_url));
-            const selectedFormatAssets = matchingExistingAssets.length ? matchingExistingAssets : refreshedAssets;
-            const fallbackAssets = imageAssets.filter((asset) => assetMatchesFileType(asset, fileType));
-            const assetsToShare = sortAssetsBySequence(selectedFormatAssets.length ? selectedFormatAssets : fallbackAssets);
-            if (!assetsToShare.length) {
-                throw new Error(`Could not prepare a ${fileType.toUpperCase()} file for sharing.`);
+            const selectedFormatAssets = sortAssetsBySequence(matchingExistingAssets.length ? matchingExistingAssets : refreshedAssets);
+            if (!selectedFormatAssets.length) {
+                throw new Error(`No ${fileType.toUpperCase()} asset is available to share. Please export or regenerate this format first.`);
             }
-            const files: File[] = [];
+            const assetsToShare = fileType === "jpg" || fileType === "png"
+                ? (selectedFormatAssets[activeIndex] ? [selectedFormatAssets[activeIndex]] : [])
+                : selectedFormatAssets;
+            if (!assetsToShare.length || assetsToShare.some((asset) => !assetMatchesFileType(asset, fileType) || !asset.asset_url)) {
+                throw new Error(`Selected ${fileType.toUpperCase()} asset is not available for sharing.`);
+            }
+            const files = await Promise.all(
+                assetsToShare.map((asset, index) => assetToShareFile(
+                    asset,
+                    assetsToShare.length > 1
+                        ? generatedSlideDownloadFilename(sourcePrompt, asset, index + 1, assetsToShare.length)
+                        : generatedShareFilename(sourcePrompt, asset),
+                )),
+            );
             preparedShareRef.current = { key: shareCacheKey, files, assets: assetsToShare };
             setShareError("");
             return { files, assets: assetsToShare };
@@ -977,7 +1048,7 @@ function GeneratedImageViewer({
             }
             setIsPreparingShare(false);
         }
-    }, [contentVersionId, existingExportAssets, fileType, imageAssets, onExportForType, shareCacheKey, sourcePrompt]);
+    }, [activeIndex, contentVersionId, existingExportAssets, fileType, onExportForType, shareCacheKey, sourcePrompt]);
     useEffect(() => {
         if (preparedShareRef.current?.key !== shareCacheKey) {
             preparedShareRef.current = null;
@@ -1101,20 +1172,51 @@ function GeneratedImageViewer({
         setShareError("");
         try {
             if (!navigator.share) {
-                throw new Error("Native sharing is not available in this browser. Use Copy Link instead.");
+                throw new Error("Native sharing is not available in this browser. Use Download instead.");
             }
             setIsSharing(true);
+            const preparedShare = await prepareShareFiles();
+            if (!preparedShare.files.length) {
+                throw new Error(`Selected ${fileType.toUpperCase()} asset is not available for sharing.`);
+            }
             const reviewUrl = await getReviewShareLink();
-            await navigator.share({
+            const shareDataWithLink: ShareData = {
                 title,
                 text: `Review and comment on ${title}`,
                 url: reviewUrl,
-            });
+                files: preparedShare.files,
+            };
+            const fileOnlyShareData: ShareData = {
+                title,
+                files: preparedShare.files,
+            };
+            const canShareWithLink = typeof navigator.canShare !== "function" || navigator.canShare(shareDataWithLink);
+            const shareData = canShareWithLink ? shareDataWithLink : fileOnlyShareData;
+            if (typeof navigator.canShare === "function" && !navigator.canShare(shareData)) {
+                throw new Error(`This browser cannot share the selected ${fileType.toUpperCase()} file. Use Download instead.`);
+            }
+            if (!canShareWithLink) {
+                try {
+                    await copyTextToClipboard(reviewUrl);
+                    setShareError("Preview link copied. Choose an app to share the file.");
+                } catch {
+                    // File sharing should still work even if clipboard access is blocked.
+                }
+            }
+            await navigator.share(shareData);
+            if (!canShareWithLink) {
+                try {
+                    await copyTextToClipboard(reviewUrl);
+                    setShareError("Preview link copied.");
+                } catch {
+                    // Ignore clipboard failures after native sharing completes.
+                }
+            }
         } catch (error) {
             if (error instanceof DOMException && error.name === "AbortError") {
                 return;
             }
-            setShareError(error instanceof Error ? error.message : "Could not share review link.");
+            setShareError(error instanceof Error ? error.message : `Could not share selected ${fileType.toUpperCase()} file.`);
         } finally {
             setIsSharing(false);
         }
@@ -1253,7 +1355,7 @@ function GeneratedImageViewer({
                 </Button>
             </div>
             <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-                <DialogContent className="max-h-[92vh] max-w-4xl overflow-y-auto rounded-[10px] border border-[#E4E6F0] bg-white p-0 shadow-2xl">
+                <DialogContent className="max-h-[92vh] min-w-2xl max-w-4xl overflow-y-auto rounded-[10px] border border-[#E4E6F0] bg-white p-0 shadow-2xl">
                     <DialogHeader className="border-b border-[#EEF0F5] px-5 py-4">
                         <DialogTitle className="flex items-start gap-3 text-left">
                             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[6px] bg-[#F1EFFF] text-primary">
@@ -1267,9 +1369,9 @@ function GeneratedImageViewer({
                     </DialogHeader>
                     <div className="space-y-4 px-5 ">
                         <div className="space-y-2">
-                        <Label className="block text-sm font-semibold text-[#303245]">
-                            Target
-                        </Label>
+                            <Label className="block text-sm font-semibold text-[#303245]">
+                                Target
+                            </Label>
                             <Select value={editTarget} onValueChange={setEditTarget}>
                                 <SelectTrigger className="w-full">
                                     <SelectValue placeholder="Select target" />
@@ -1288,13 +1390,13 @@ function GeneratedImageViewer({
 
                         <div>
                             <p className="mb-2 text-sm font-semibold text-[#303245]">Selected Section</p>
-                            <div className="mb-3 flex flex-wrap items-center gap-2">
+                            <div className="mb-3 flex flex-wrap items-center gap-2 bg-[#EDEEF0] w-fit p-2">
                                 {editVariants.length ? editVariants.map((variant) => (
                                     <Button
                                         key={variant.id}
                                         type="button"
                                         onClick={() => setSelectedEditVariantId(variant.id)}
-                                        className={`h-7 rounded-[3px] px-3 text-xs font-semibold transition ${selectedEditVariant?.id === variant.id ? "bg-primary/72 text-white" : "bg-[#F1F2F6] text-[#3D4050] hover:bg-[#E8EAF2]"}`}
+                                        className={`h-7 rounded-[3px] px-3 text-xs font-semibold transition ${selectedEditVariant?.id === variant.id ? "bg-[#34258B] text-white" : "bg-[#EDEEF0] text-[#3D4050] hover:bg-[#E8EAF2]"}`}
                                     >
                                         {variant.label}
                                     </Button>
@@ -1302,13 +1404,13 @@ function GeneratedImageViewer({
                                     <span className="text-[11px] text-[#6F7282]">Open image edit state to see variants.</span>
                                 )}
                             </div>
-                            <div className="flex min-h-[280px] items-center justify-center border border-primary bg-[#F7F8FB] p-4">
+                            <div className="w-full flex min-h-[280px] items-center justify-center border border-primary bg-[#F7F8FB] p-4">
                                 {selectedEditVariant?.asset.asset_url ? (
                                     // eslint-disable-next-line @next/next/no-img-element
                                     <img
                                         src={selectedEditVariant.asset.asset_url}
                                         alt={selectedEditVariant.label || "Preview"}
-                                        className="max-h-[470px] w-auto max-w-full object-contain transition duration-300"
+                                        className="max-h-[460px] w-auto max-w-full object-contain transition duration-300"
                                         style={{ filter: selectedEditVariant.preview_style?.filter || undefined }}
                                     />
                                 ) : loadImageEditState.isPending ? (
@@ -1334,14 +1436,14 @@ function GeneratedImageViewer({
                         <Button
                             type="button"
                             variant="outline"
-                            className="h-9 rounded-[3px] border-[#E2E5EE] px-5 text-[11px] font-semibold"
+                            className="h-10 rounded-[3px] border-[#E2E5EE] px-5 text-sm font-semibold"
                             onClick={() => setIsEditDialogOpen(false)}
                         >
                             Cancel
                         </Button>
                         <Button
                             type="button"
-                            className="h-9 rounded-[3px] bg-primary/72 px-5 text-[11px] font-semibold text-white hover:bg-primary/90"
+                            className="h-10 rounded-[3px] bg-primary/72 px-5 text-sm font-semibold text-white hover:bg-primary/90"
                             onClick={() => void handleApplyImageEdit()}
                             disabled={applyImageEdit.isPending || !editInstruction.trim()}
                         >
@@ -1351,7 +1453,8 @@ function GeneratedImageViewer({
                         </Button>
                     </div>
                 </DialogContent>
-            </Dialog>        </div>
+            </Dialog>
+        </div>
     );
 }
 
@@ -1698,16 +1801,18 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
             return [];
         }
         const cacheKey = `${contentVersionId}:${fileType}`;
-        const cachedAssets = exportAssetCacheRef.current.get(cacheKey);
-        if (cachedAssets?.length) {
+        const cachedAssets = (exportAssetCacheRef.current.get(cacheKey) || []).filter((asset) => assetMatchesFileType(asset, fileType) && Boolean(asset.asset_url));
+        if (cachedAssets.length) {
+            exportAssetCacheRef.current.set(cacheKey, cachedAssets);
             return cachedAssets;
         }
+        exportAssetCacheRef.current.delete(cacheKey);
         const response = await exportContent.mutateAsync({
             content_version_id: contentVersionId,
             export_format: fileType,
             studio_panel: { file_type: fileType },
         });
-        const assets = response.export_assets || [];
+        const assets = (response.export_assets || []).filter((asset) => assetMatchesFileType(asset, fileType) && Boolean(asset.asset_url));
         if (assets.length) {
             exportAssetCacheRef.current.set(cacheKey, assets);
         }
@@ -2423,59 +2528,59 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                         {attachmentError ? <p className="mb-2 text-sm text-red-500">{attachmentError}</p> : null}
                                         <div ref={composerEnhanceContainerRef} className="relative">
                                             <SurfaceCard className={`relative flex items-end gap-3 rounded-xl border border-[#E1E4ED] bg-white px-3 pb-2 shadow-[0_14px_28px_-24px_rgba(15,23,42,0.45)]`}>
-                                            <button
-                                                type="button"
-                                                onClick={() => attachmentInputRef.current?.click()}
-                                                disabled={!canGenerateInWorkspace || isGeneratingMessage}
-                                                className="flex h-8 w-8 shrink-0 items-center justify-center border border-[#D9DDE8] bg-[#F4F4F5] text-[#A1A1AA] disabled:cursor-not-allowed"
-                                            >
-                                                <Plus className="h-4 w-4" />
-                                            </button>
-                                            <Textarea
-                                                ref={composerTextareaRef}
-                                                value={composerDraft}
-                                                onChange={(event) => setComposerDraft(event.target.value)}
-                                                onKeyDown={handleComposerKeyDown}
-                                                placeholder="What do you want to create today?"
-                                                className="min-h-9 max-h-55 flex-1 resize-none overflow-y-hidden border-none bg-transparent px-0 pt-3.5 text-base leading-6 text-[#6A6E8B] shadow-none outline-none focus-visible:ring-0"
-                                            />
-                                            {enhancePromptMode === "composer" ? (
-                                                <PromptEnhancePopover
-                                                    enhancedPrompt={enhancedPrompt}
-                                                    isLoading={enhancePrompt.isPending}
-                                                    error={enhancePromptError}
-                                                    onInsert={insertEnhancedPrompt}
-                                                    onCopy={copyEnhancedPrompt}
+                                                <button
+                                                    type="button"
+                                                    onClick={() => attachmentInputRef.current?.click()}
+                                                    disabled={!canGenerateInWorkspace || isGeneratingMessage}
+                                                    className="flex h-8 w-8 shrink-0 items-center justify-center border border-[#D9DDE8] bg-[#F4F4F5] text-[#A1A1AA] disabled:cursor-not-allowed"
+                                                >
+                                                    <Plus className="h-4 w-4" />
+                                                </button>
+                                                <Textarea
+                                                    ref={composerTextareaRef}
+                                                    value={composerDraft}
+                                                    onChange={(event) => setComposerDraft(event.target.value)}
+                                                    onKeyDown={handleComposerKeyDown}
+                                                    placeholder="What do you want to create today?"
+                                                    className="min-h-9 max-h-55 flex-1 resize-none overflow-y-hidden border-none bg-transparent px-0 pt-3.5 text-base leading-6 text-[#6A6E8B] shadow-none outline-none focus-visible:ring-0"
                                                 />
-                                            ) : null}
-                                            {hasEnhanceableSentence(composerDraft) ? (
+                                                {enhancePromptMode === "composer" ? (
+                                                    <PromptEnhancePopover
+                                                        enhancedPrompt={enhancedPrompt}
+                                                        isLoading={enhancePrompt.isPending}
+                                                        error={enhancePromptError}
+                                                        onInsert={insertEnhancedPrompt}
+                                                        onCopy={copyEnhancedPrompt}
+                                                    />
+                                                ) : null}
+                                                {hasEnhanceableSentence(composerDraft) ? (
+                                                    <Button
+                                                        type="button"
+                                                        aria-label="Enhance prompt"
+                                                        title="Enhance prompt"
+                                                        onClick={() => void openEnhancePrompt("composer")}
+                                                        disabled={!canGenerateInWorkspace || isGeneratingMessage || enhancePrompt.isPending}
+                                                        className="flex h-8 min-w-8 shrink-0 items-center justify-center bg-[#F4F4F5] px-2 text-primary disabled:cursor-not-allowed disabled:text-slate-300"
+                                                    >
+                                                        {enhancePrompt.isPending && enhancePromptMode === "composer" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Image src="/actions_icons/enhance_prompt.svg" alt="enhance prompt" width={16} height={16} className="h-4 w-4" />}
+                                                    </Button>
+                                                ) : null}
                                                 <Button
                                                     type="button"
-                                                    aria-label="Enhance prompt"
-                                                    title="Enhance prompt"
-                                                    onClick={() => void openEnhancePrompt("composer")}
-                                                    disabled={!canGenerateInWorkspace || isGeneratingMessage || enhancePrompt.isPending}
+                                                    onClick={sendMessage.isPending ? cancelActiveGeneration : () => void dispatchGeneration(composerDraft)}
+                                                    disabled={!canGenerateInWorkspace || createSession.isPending || (!sendMessage.isPending && !composerDraft.trim())}
+                                                    aria-label={sendMessage.isPending ? "Stop generation" : "Send message"}
                                                     className="flex h-8 min-w-8 shrink-0 items-center justify-center bg-[#F4F4F5] px-2 text-primary disabled:cursor-not-allowed disabled:text-slate-300"
                                                 >
-                                                    {enhancePrompt.isPending && enhancePromptMode === "composer" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Image src="/actions_icons/enhance_prompt.svg" alt="enhance prompt" width={16} height={16} className="h-4 w-4" />}
+                                                    {sendMessage.isPending ? (
+                                                        <Square className="h-4 w-4" />
+                                                    ) : createSession.isPending ? (
+                                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                                    ) : (
+                                                        <ArrowUp className="h-4 w-4" />
+                                                    )}
                                                 </Button>
-                                            ) : null}
-                                            <Button
-                                                type="button"
-                                                onClick={sendMessage.isPending ? cancelActiveGeneration : () => void dispatchGeneration(composerDraft)}
-                                                disabled={!canGenerateInWorkspace || createSession.isPending || (!sendMessage.isPending && !composerDraft.trim())}
-                                                aria-label={sendMessage.isPending ? "Stop generation" : "Send message"}
-                                                className="flex h-8 min-w-8 shrink-0 items-center justify-center bg-[#F4F4F5] px-2 text-primary disabled:cursor-not-allowed disabled:text-slate-300"
-                                            >
-                                                {sendMessage.isPending ? (
-                                                    <Square className="h-4 w-4" />
-                                                ) : createSession.isPending ? (
-                                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                                ) : (
-                                                    <ArrowUp className="h-4 w-4" />
-                                                )}
-                                            </Button>
-                                        </SurfaceCard>
+                                            </SurfaceCard>
                                         </div>
                                     </div>
                                     <p className="pt-4 text-center text-sm text-[#A0A0A7]">Violyt suggestions may need review. Verify accuracy before use.</p>
@@ -2560,63 +2665,63 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
 
                                         <div ref={workspaceEnhanceContainerRef} className="relative mt-9 w-full">
                                             <SurfaceCard className="relative w-full rounded-xl border border-[#DDE1EA] bg-white px-4 py-3 shadow-[0_16px_30px_-25px_rgba(15,23,42,0.45)]">
-                                            <Textarea
-                                                ref={promptTextareaRef}
-                                                placeholder="What do you want to create today?"
-                                                className="min-h-20 max-h-55 resize-none overflow-y-hidden border-none bg-transparent p-0 text-sm leading-6 text-[#74789A] shadow-none focus-visible:ring-0"
-                                                value={workspacePrompt}
-                                                onChange={(event) => setWorkspacePrompt(event.target.value)}
-                                                onKeyDown={handlePromptKeyDown}
-                                            />
-                                            {enhancePromptMode === "workspace" ? (
-                                                <PromptEnhancePopover
-                                                    enhancedPrompt={enhancedPrompt}
-                                                    isLoading={enhancePrompt.isPending}
-                                                    error={enhancePromptError}
-                                                    onInsert={insertEnhancedPrompt}
-                                                    onCopy={copyEnhancedPrompt}
+                                                <Textarea
+                                                    ref={promptTextareaRef}
+                                                    placeholder="What do you want to create today?"
+                                                    className="min-h-20 max-h-55 resize-none overflow-y-hidden border-none bg-transparent p-0 text-sm leading-6 text-[#74789A] shadow-none focus-visible:ring-0"
+                                                    value={workspacePrompt}
+                                                    onChange={(event) => setWorkspacePrompt(event.target.value)}
+                                                    onKeyDown={handlePromptKeyDown}
                                                 />
-                                            ) : null}
-                                            <div className="mt-3 flex items-center justify-between">
-                                                <button
-                                                    type="button"
-                                                    onClick={() => attachmentInputRef.current?.click()}
-                                                    disabled={!canGenerateInWorkspace || isGeneratingMessage}
-                                                    className="flex h-8 w-8 items-center justify-center border border-[#D9DDE8] bg-[#F4F4F5] text-[#A1A1AA] disabled:cursor-not-allowed"
-                                                >
-                                                    <Plus className="h-4 w-4" />
-                                                </button>
-                                                <div className="flex items-center gap-2">
-                                                    {hasEnhanceableSentence(workspacePrompt) ? (
-                                                        <button
-                                                            type="button"
-                                                            aria-label="Enhance prompt"
-                                                            title="Enhance prompt"
-                                                            onClick={() => void openEnhancePrompt("workspace")}
-                                                            disabled={!canGenerateInWorkspace || isGeneratingMessage || enhancePrompt.isPending}
-                                                            className="flex h-8 min-w-8 items-center justify-center bg-[#F4F4F5] px-2 text-primary disabled:cursor-not-allowed disabled:text-slate-300"
-                                                        >
-                                                            {enhancePrompt.isPending && enhancePromptMode === "workspace" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
-                                                        </button>
-                                                    ) : null}
+                                                {enhancePromptMode === "workspace" ? (
+                                                    <PromptEnhancePopover
+                                                        enhancedPrompt={enhancedPrompt}
+                                                        isLoading={enhancePrompt.isPending}
+                                                        error={enhancePromptError}
+                                                        onInsert={insertEnhancedPrompt}
+                                                        onCopy={copyEnhancedPrompt}
+                                                    />
+                                                ) : null}
+                                                <div className="mt-3 flex items-center justify-between">
                                                     <button
                                                         type="button"
-                                                        onClick={sendMessage.isPending ? cancelActiveGeneration : () => void dispatchGeneration(workspacePrompt)}
-                                                        disabled={!canGenerateInWorkspace || createSession.isPending || (!sendMessage.isPending && !workspacePrompt.trim())}
-                                                        aria-label={sendMessage.isPending ? "Stop generation" : "Send message"}
-                                                        className="flex h-8 min-w-8 items-center justify-center bg-primary px-2 text-white disabled:cursor-not-allowed disabled:bg-slate-200"
+                                                        onClick={() => attachmentInputRef.current?.click()}
+                                                        disabled={!canGenerateInWorkspace || isGeneratingMessage}
+                                                        className="flex h-8 w-8 items-center justify-center border border-[#D9DDE8] bg-[#F4F4F5] text-[#A1A1AA] disabled:cursor-not-allowed"
                                                     >
-                                                        {sendMessage.isPending ? (
-                                                            <Square className="h-4 w-4" />
-                                                        ) : createSession.isPending ? (
-                                                            <Loader2 className="h-4 w-4 animate-spin" />
-                                                        ) : (
-                                                            <ArrowUp className="h-4 w-4" />
-                                                        )}
+                                                        <Plus className="h-4 w-4" />
                                                     </button>
+                                                    <div className="flex items-center gap-2">
+                                                        {hasEnhanceableSentence(workspacePrompt) ? (
+                                                            <button
+                                                                type="button"
+                                                                aria-label="Enhance prompt"
+                                                                title="Enhance prompt"
+                                                                onClick={() => void openEnhancePrompt("workspace")}
+                                                                disabled={!canGenerateInWorkspace || isGeneratingMessage || enhancePrompt.isPending}
+                                                                className="flex h-8 min-w-8 items-center justify-center bg-[#F4F4F5] px-2 text-primary disabled:cursor-not-allowed disabled:text-slate-300"
+                                                            >
+                                                                {enhancePrompt.isPending && enhancePromptMode === "workspace" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
+                                                            </button>
+                                                        ) : null}
+                                                        <button
+                                                            type="button"
+                                                            onClick={sendMessage.isPending ? cancelActiveGeneration : () => void dispatchGeneration(workspacePrompt)}
+                                                            disabled={!canGenerateInWorkspace || createSession.isPending || (!sendMessage.isPending && !workspacePrompt.trim())}
+                                                            aria-label={sendMessage.isPending ? "Stop generation" : "Send message"}
+                                                            className="flex h-8 min-w-8 items-center justify-center bg-primary px-2 text-white disabled:cursor-not-allowed disabled:bg-slate-200"
+                                                        >
+                                                            {sendMessage.isPending ? (
+                                                                <Square className="h-4 w-4" />
+                                                            ) : createSession.isPending ? (
+                                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                                            ) : (
+                                                                <ArrowUp className="h-4 w-4" />
+                                                            )}
+                                                        </button>
+                                                    </div>
                                                 </div>
-                                            </div>
-                                        </SurfaceCard>
+                                            </SurfaceCard>
                                         </div>
                                         {attachedAssets.length ? (
                                             <div className="flex w-full flex-wrap justify-center gap-2">

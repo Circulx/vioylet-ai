@@ -1,6 +1,6 @@
 "use client";
 
-import { Copy, Download, Facebook, FileText, Image as ImageIcon, Instagram, Linkedin, SendHorizontal, X } from "lucide-react";
+import { ArrowUp, Copy, Download, Facebook, FileText, Image as ImageIcon, Instagram, Linkedin, SendHorizontal, X } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Input } from "@/components/ui/input";
@@ -508,15 +508,15 @@ export default function ShareReviewScreen({
                             <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[15px] font-semibold text-white" style={{ backgroundColor: item.color }}>
                                 {item.initials}
                             </span>
-                            <span className="truncate text-[18px] font-medium text-[#252837]">{item.author}</span>
+                            <span className="truncate text-base font-medium text-[#252837]">{item.author}</span>
                         </div>
-                        <span className="shrink-0 text-[14px] text-[#252837]">{item.timestamp}</span>
+                        <span className="shrink-0 text-xs text-[#252837]">{item.timestamp}</span>
                     </div>
-                    <p className={options?.paragraphClassName || "text-[18px] leading-[25px] text-[#252837]"}>{item.content}</p>
+                    <p className={options?.paragraphClassName || "text-base leading-[25px] text-[#252837]"}>{item.content}</p>
                 </div>
 
                 {replies.length ? (
-                    <div className="ml-8 space-y-2 border-l border-[#DADAE0] pl-3">
+                    <div className="space-y-2">
                         {replies.map((reply) => (
                             <div key={reply.id} className="space-y-1">
                                 <div className="flex items-center justify-between gap-3">
@@ -524,11 +524,11 @@ export default function ShareReviewScreen({
                                         <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[15px] font-semibold text-white" style={{ backgroundColor: reply.color }}>
                                             {reply.initials}
                                         </span>
-                                        <span className="truncate text-[18px] font-medium text-[#252837]">{reply.author}</span>
+                                        <span className="truncate text-base font-medium text-[#252837]">{reply.author}</span>
                                     </div>
-                                    <span className="shrink-0 text-[14px] text-[#252837]">{reply.timestamp}</span>
+                                    <span className="shrink-0 text-xs text-[#252837]">{reply.timestamp}</span>
                                 </div>
-                                <p className={options?.paragraphClassName || "text-[18px] leading-[25px] text-[#252837]"}>{reply.content}</p>
+                                <p className={options?.paragraphClassName || "text-base leading-[25px] text-[#252837]"}>{reply.content}</p>
                             </div>
                         ))}
                     </div>
@@ -539,7 +539,7 @@ export default function ShareReviewScreen({
                         value={replyValue}
                         onChange={(event) => setReplyDrafts((current) => ({ ...current, [item.id]: event.target.value }))}
                         placeholder="Reply"
-                        className="h-full flex-1 rounded-none border-none bg-transparent px-5 text-[20px] shadow-none placeholder:text-[#252837] focus-visible:ring-0"
+                        className="h-full flex-1 rounded-md border-none bg-transparent px-5 text-[20px] shadow-none placeholder:text-[#252837] focus-visible:ring-0"
                     />
                     <Button
                         onClick={() => handleReply(item.id)}
@@ -547,7 +547,7 @@ export default function ShareReviewScreen({
                         className="mr-2 h-8 w-9 rounded-none bg-[#EFEFF2] p-0 text-primary hover:bg-[#E8E7EF]"
                         aria-label="Submit reply"
                     >
-                        <SendHorizontal className="h-5 w-5 rotate-[-45deg]" />
+                        <ArrowUp className="h-5 w-5 rotate" />
                     </Button>
                 </div>
             </div>
@@ -556,19 +556,19 @@ export default function ShareReviewScreen({
 
     const renderCommentColumn = () => (
         <div className="relative w-[320px] shrink-0">
-            <CommentBubbleIcon className="absolute -left-[31px] top-[-38px] h-8 w-8 shadow-sm" />
+            <Image src={"/actions_icons/chat/comment.svg"} alt="comment" width={30} height={30} className="absolute -left-[31px] top-[-38px] h-7 w-7" />
             <div className="max-h-[calc(100vh-230px)] space-y-5 overflow-y-auto pr-1">
                 {topLevelComments.length ? topLevelComments.map((item) => (
-                    <div key={item.id} className="bg-[#F7F7F8] px-3 pb-6 pt-3">
+                    <div key={item.id} className="bg-[#F3F3F385] px-3 pb-6 pt-3">
                         <div className="mb-3 border-b border-[#CFCFD5] pb-3 pl-1">
-                            <h2 className="text-[20px] font-medium text-[#252837]">Comment</h2>
+                            <h2 className="text-lg font-medium text-[#252837]">Comment</h2>
                         </div>
                         {renderCommentThread(item)}
                     </div>
                 )) : (
-                    <div className="bg-[#F7F7F8] px-3 pb-8 pt-3">
+                    <div className="bg-[#F3F3F385] px-3 pb-8 pt-3">
                         <div className="mb-3 border-b border-[#CFCFD5] pb-3 pl-1">
-                            <h2 className="text-[20px] font-medium text-[#252837]">Comment</h2>
+                            <h2 className="text-lg font-medium text-[#252837]">Comment</h2>
                         </div>
                         <p className="py-8 text-center text-sm text-[#777777]">No comments yet.</p>
                     </div>
@@ -586,17 +586,17 @@ export default function ShareReviewScreen({
                 </div>
             </header>
 
-            <main className="mx-auto min-h-[calc(100vh-74px)] w-full max-w-[1180px] px-4 pb-36 pt-10">
-                <div className="mb-9 flex items-center justify-between gap-5 pr-[10px]">
+            <main className="mx-auto  w-full max-w-[1180px] px-4 pb-36 pt-6">
+                <div className="mb-5 flex items-center justify-between gap-5 pr-[10px]">
                     <h1 className="text-[32px] font-extrabold leading-none text-primary">{displayBrandName}</h1>
                     {showApprove ? (
                         <Button
                             type="button"
                             onClick={handleApprove}
                             disabled={isApproved || updateReviewStatus.isPending || !reviewToken}
-                            className={`h-[45px] rounded-[4px] px-5 text-[18px] font-medium text-white ${
+                            className={`h-[45px] rounded-[4px] px-5 text-base font-medium text-white ${
                                 isApproved
-                                    ? "bg-[#8E8E8E] hover:bg-[#8E8E8E] disabled:cursor-default disabled:opacity-100"
+                                    ? "bg-[#3C2F8F] hover:bg-[#8E8E8E] disabled:cursor-default disabled:opacity-100"
                                     : "bg-primary hover:bg-primary/90 disabled:opacity-70"
                             }`}
                         >
@@ -606,8 +606,8 @@ export default function ShareReviewScreen({
                 </div>
 
                 <section className="flex items-start justify-center gap-[30px]">
-                    <div className="flex min-h-[352px] w-[690px] flex-col items-center justify-center bg-[#F1F2F6] p-[23px]">
-                        <div className="flex h-[302px] w-full max-w-[600px] items-center justify-center overflow-hidden bg-white">
+                    <div className="flex min-h-[352px] w-[527px] flex-col items-center justify-center bg-[#F0F1F6]">
+                        <div className="flex h-[302px] w-full max-w-[470px] items-center justify-center overflow-hidden bg-white">
                             {activePreviewUrl ? (
                                 // eslint-disable-next-line @next/next/no-img-element
                                 <img src={activePreviewUrl} alt="Review creative" className="h-full w-full object-contain" />

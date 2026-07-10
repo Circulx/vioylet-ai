@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUp, Copy, Download, Facebook, FileText, Image as ImageIcon, Instagram, Linkedin, SendHorizontal, X } from "lucide-react";
+import { ArrowUp, Copy, Download, Facebook, FileText, Image as ImageIcon, Instagram, Linkedin, SendHorizontal, Share2, X } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Input } from "@/components/ui/input";
@@ -15,6 +15,7 @@ import type { AssetReference } from "@/lib/api/contracts";
 import { getAccessToken } from "@/lib/api/session";
 import { coerceGenerationDecision, formatGenerationMode, getGenerationDecisionReasons, getGenerationDecisionTemplate } from "@/lib/generation-decision";
 import Image from "next/image";
+import { Label } from "../ui/label";
 
 type ShareReviewScreenProps = {
     brandKey?: string;
@@ -466,6 +467,29 @@ export default function ShareReviewScreen({
         window.setTimeout(() => setCopied(false), 1500);
     };
 
+    const handleShareReviewPage = async () => {
+        if (!shareUrl) {
+            return;
+        }
+        const shareData: ShareData = {
+            title: `${displayBrandName} Review`,
+            text: `Review ${displayBrandName} preview and comments`,
+            url: shareUrl,
+        };
+        try {
+            if (navigator.share) {
+                await navigator.share(shareData);
+                return;
+            }
+            await handleCopyLink();
+        } catch (error) {
+            if (error instanceof DOMException && error.name === "AbortError") {
+                return;
+            }
+            await handleCopyLink();
+        }
+    };
+
     const exportCandidates = [
         { label: "PDF Standard", icon: FileText, url: resolveAssetUrl(candidateAssets.find((asset) => resolveAssetByExtension(asset.storage_path, ".pdf"))?.storage_path) || previewUrl },
         { label: "JPG", icon: ImageIcon, url: resolveAssetUrl(candidateAssets.find((asset) => resolveAssetByExtension(asset.storage_path, ".jpg") || resolveAssetByExtension(asset.storage_path, ".jpeg"))?.storage_path) || previewUrl },
@@ -557,7 +581,7 @@ export default function ShareReviewScreen({
     const renderCommentColumn = () => (
         <div className="relative w-[320px] shrink-0">
             <Image src={"/actions_icons/chat/comment.svg"} alt="comment" width={30} height={30} className="absolute -left-[31px] top-[-38px] h-7 w-7" />
-            <div className="max-h-[calc(100vh-230px)] space-y-5 overflow-y-auto pr-1">
+            <div className="max-h-[calc(100vh-310px)] space-y-5 overflow-y-auto pr-1 thin-scrollbar">
                 {topLevelComments.length ? topLevelComments.map((item) => (
                     <div key={item.id} className="bg-[#F3F3F385] px-3 pb-6 pt-3">
                         <div className="mb-3 border-b border-[#CFCFD5] pb-3 pl-1">
@@ -579,30 +603,42 @@ export default function ShareReviewScreen({
 
     const renderExternalReviewPage = (showApprove: boolean) => (
         <div className="min-h-screen bg-white text-[#1D2130]">
-            <header className="flex h-[74px] items-center border-b border-[#D9D9DF] px-9">
+            <header className="flex h-20 items-center border-b border-[#D9D9DF] px-9">
                 <div className="flex items-center gap-2.5">
-                    <span className="flex h-7 w-7 items-center justify-center rounded-[3px] bg-primary text-lg font-bold leading-none text-white">V</span>
-                    <span className="text-[28px] font-extrabold leading-none text-primary">Violyt</span>
+                    <Image src="/logo.svg" alt="Violyt logo" width={28} height={28} />
+                    <Image src="/VIOLYT-LOGO-PurpleTM.svg" alt="Violyt logo" width={82} height={32} />
+                    {/* <span className="text-[28px] font-extrabold leading-none text-primary">Violyt</span> */}
                 </div>
             </header>
 
-            <main className="mx-auto  w-full max-w-[1180px] px-4 pb-36 pt-6">
+            <main className="mx-auto h-[calc(100vh-80px)] w-full max-w-[1180px] px-4 pb-36 pt-6">
                 <div className="mb-5 flex items-center justify-between gap-5 pr-[10px]">
                     <h1 className="text-[32px] font-extrabold leading-none text-primary">{displayBrandName}</h1>
-                    {showApprove ? (
+                    <div className="flex items-center gap-3">
                         <Button
                             type="button"
-                            onClick={handleApprove}
-                            disabled={isApproved || updateReviewStatus.isPending || !reviewToken}
-                            className={`h-[45px] rounded-[4px] px-5 text-base font-medium text-white ${
-                                isApproved
-                                    ? "bg-[#3C2F8F] hover:bg-[#8E8E8E] disabled:cursor-default disabled:opacity-100"
-                                    : "bg-primary hover:bg-primary/90 disabled:opacity-70"
-                            }`}
+                            onClick={() => void handleShareReviewPage()}
+                            disabled={!shareUrl}
+                            className="h-[45px] rounded-[4px] bg-primary px-5 text-base font-medium text-white hover:bg-primary/90 disabled:opacity-70"
                         >
-                            {isApproved ? "Approved" : updateReviewStatus.isPending ? "Approving..." : "Approve"}
+                            <Share2 className="mr-2 h-4 w-4" />
+                            {copied ? "Copied" : "Share"}
                         </Button>
-                    ) : null}
+                        {showApprove ? (
+                            <Button
+                                type="button"
+                                onClick={handleApprove}
+                                disabled={isApproved || updateReviewStatus.isPending || !reviewToken}
+                                className={`h-[45px] rounded-[4px] px-5 text-base font-medium text-white ${
+                                    isApproved
+                                        ? "bg-[#3C2F8F] hover:bg-[#8E8E8E] disabled:cursor-default disabled:opacity-100"
+                                        : "bg-primary hover:bg-primary/90 disabled:opacity-70"
+                                }`}
+                            >
+                                {isApproved ? "Approved" : updateReviewStatus.isPending ? "Approving..." : "Approve"}
+                            </Button>
+                        ) : null}
+                    </div>
                 </div>
 
                 <section className="flex items-start justify-center gap-[30px]">
@@ -645,8 +681,8 @@ export default function ShareReviewScreen({
                     {renderCommentColumn()}
                 </section>
 
-                <div className="fixed bottom-[58px] left-1/2 w-[790px] max-w-[calc(100vw-48px)] -translate-x-1/2 bg-white shadow-[0_18px_36px_-24px_rgba(60,47,143,0.5)]">
-                    <div className="flex h-[67px] items-center border border-[#E0E3ED] px-5">
+                <div className="fixed bottom-[58px] left-1/2 w-[790px] max-w-[calc(100vw-48px)] -translate-x-1/2 bg-white shadow-[0_14px_26px_-24px_rgba(60,47,143,0.5)]">
+                    <div className="flex h-16 items-center border border-[#E0E3ED] px-5">
                         <Input
                             value={comment}
                             onChange={(event) => setComment(event.target.value)}
@@ -663,7 +699,7 @@ export default function ShareReviewScreen({
                         </Button>
                     </div>
                 </div>
-                <p className="fixed bottom-5 left-1/2 -translate-x-1/2 text-center text-base text-[#A0A0A7]">
+                <p className="fixed bottom-5 left-1/2 -translate-x-1/2 text-center text-sm text-[#A0A0A7]">
                     Violyt suggestions may need review. Verify accuracy before use.
                 </p>
             </main>
@@ -703,22 +739,29 @@ export default function ShareReviewScreen({
     if (externalMode && !hasAuthToken && !reviewerName) {
         return (
             <div className="relative min-h-screen bg-white px-6">
-                <div className="absolute left-9 top-9 flex items-center gap-2.5">
-                    <span className="flex h-7 w-7 items-center justify-center rounded-[3px] bg-primary text-lg font-bold leading-none text-white">V</span>
-                    <span className="text-[28px] font-extrabold leading-none text-primary">Violyt</span>
+                <header className="flex h-25 items-center px-6">
+                <div className="flex items-center gap-2.5">
+                    <Image src="/logo.svg" alt="Violyt logo" width={32} height={32} />
+                    <Image src="/VIOLYT-LOGO-PurpleTM.svg" alt="Violyt logo" width={82} height={32} />
+                    {/* <span className="text-[28px] font-extrabold leading-none text-primary">Violyt</span> */}
                 </div>
-                <div className="mx-auto flex min-h-screen w-full max-w-[430px] flex-col items-center justify-center pt-4 text-center">
-                    <div className="mb-10 flex h-[66px] w-[66px] items-center justify-center rounded-[6px] bg-primary text-[46px] font-extrabold leading-none text-white shadow-[0_16px_34px_-24px_rgba(63,49,146,0.9)]">V</div>
-                    <h1 className="text-[48px] font-extrabold leading-tight tracking-[0] text-[#121212]">Welcome to Violyt</h1>
-                    <p className="mt-3 text-base font-medium text-[#4B4B4B]">{accessGrantorName} has given you access!</p>
-                    <div className="mt-12 w-full space-y-3 text-left">
-                        <label className="text-base font-semibold text-[#121212]">Your Name</label>
+            </header>
+                <div className=" mx-auto flex h-(calc[100vh-80px]) w-full max-w-[430px] flex-col items-center justify-center pt-4 text-center ">
+                    {/* <div className="mb-10 flex h-[66px] w-[66px] items-center justify-center rounded-[6px] bg-primary text-[46px] font-extrabold leading-none text-white shadow-[0_16px_34px_-24px_rgba(63,49,146,0.9)]">V</div> */}
+                    <div className="w-full space-y-4 flex flex-colspace-y-4 max-w-[430px] flex-col items-center justify-center pt-4 text-center">
+                    <Image src={"/logo.svg"} alt="logo" width={66} height={66}  />
+                    <h1 className="text-[48px] font-extrabold leading-tight tracking-[0] text-[#121212] font-dmSans">Welcome to Violyt</h1>
+                    <p className="text-base font-medium text-[#4B4B4B]">{accessGrantorName} has given you access!</p>
+                    <div className="mt-8 w-full text-left">
+                        <Label className="text-base mb-4 font-semibold text-[#121212]">Your Name</Label>
                         <Input
                             value={welcomeName}
                             onChange={(event) => setWelcomeName(event.target.value)}
                             placeholder="Enter your name"
                             className="h-12 rounded-[10px] border-none bg-[#F3F4F8] px-4 text-sm shadow-none placeholder:text-[#777777] focus-visible:ring-1 focus-visible:ring-primary"
                         />
+                    </div>
+
                     </div>
                     <Button
                         onClick={() => setReviewerName(welcomeName.trim())}

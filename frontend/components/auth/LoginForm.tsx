@@ -87,14 +87,14 @@ export function LoginForm() {
               disabled={isPending}
               className="h-12 rounded-none border-none bg-[#F5F7FA] px-4 pr-11 text-sm text-[#121212] placeholder:text-[#8C8C8C] focus-visible:ring-2 focus-visible:ring-primary/20"
             />
-            <button
+            {/* <button
               type="button"
               onClick={() => setShowPassword(!showPassword)}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-[#7A7A7A] transition hover:text-[#4B5563]"
               tabIndex={-1}
             >
               {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-            </button>
+            </button> */}
           </div>
         </div>
 

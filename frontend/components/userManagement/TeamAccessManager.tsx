@@ -204,7 +204,7 @@ export default function TeamAccessManager() {
                     }
                 >
                     <div className="grid gap-4 md:grid-cols-2">
-                        <MetricTile label="Tenant Users" value={String(tenantRows.length)} />
+                        <MetricTile label="Super Users" value={String(tenantRows.length)} />
                         <MetricTile label="Brand Users" value={String(brandRows.length)} />
                         {/* <MetricTile label="Brand Assignments" value={String(totalAssignments)} /> */}
                     </div>
@@ -214,7 +214,8 @@ export default function TeamAccessManager() {
                     <UserPlatformTabSwitcher
                     className="border-none"
                         tabs={[
-                            { id: "tenant-users", label: `${tenantLabel} Users` },
+                            // { id: "tenant-users", label: `${tenantLabel} Users` },
+                            { id: "tenant-users", label: `Super Users` },
                             { id: "brand-users", label: "Brand Users" },
                         ]}
                         active={activeTab}

@@ -66,6 +66,7 @@ services:
     environment:
       NEXT_PUBLIC_ENV: development  
       NEXT_PUBLIC_API_BASE_URI: http://localhost:8000
+      SERVER_API_BASE_URI: http://api:8000
       NEXT_PUBLIC_ENABLE_MOCK_UI: "false"
       NEXT_PUBLIC_MOCK_ROLE: TENANT_ADMIN
       NEXT_PUBLIC_DEMO_OWNER_EMAIL: ${NEXT_PUBLIC_DEMO_OWNER_EMAIL:-owner@violyt.ai}

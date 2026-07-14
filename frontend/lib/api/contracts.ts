@@ -632,7 +632,7 @@ export interface ImageEditStateRequest {
 }
 
 export interface ImageEditApplyRequest extends ImageEditStateRequest {
-  target: string;
+  target?: string;
   instructions: string;
 }
 export interface AnalyticsResponse {

@@ -22,6 +22,7 @@ from app.services.content import ContentService
 
 router = APIRouter()
 _IMAGE_EDIT_STATES: dict[str, ContentImageEditStateResponse] = {}
+_MAX_IMAGE_EDITS_PER_IMAGE = 3
 _IMAGE_EDIT_TARGET_STYLES: dict[str, dict[str, str]] = {
     "background": {"filter": "brightness(1.04) saturate(0.92) hue-rotate(8deg)"},
     "text": {"filter": "contrast(1.14) brightness(0.98)"},
@@ -137,15 +138,19 @@ async def apply_image_edit(
     assert_brand_access(principal, brand_scope)
     resolved_payload = await _resolve_image_edit_payload(payload, principal, brand_scope, session)
     state = _image_edit_state(resolved_payload)
-    edited_count = len([item for item in state.variants if not item.is_original]) + 1
+    existing_edit_count = len([item for item in state.variants if not item.is_original])
+    if existing_edit_count >= _MAX_IMAGE_EDITS_PER_IMAGE:
+        raise HTTPException(status_code=400, detail="Edit limit reached. This image already has 3 edits.")
+    edited_count = existing_edit_count + 1
+    edit_target = (payload.target or "Background").strip() or "Background"
     state.variants.append(
         ContentImageEditVariant(
             id=str(uuid4()),
             label=f"Edited {edited_count}",
-            target=payload.target.strip(),
+            target=edit_target,
             instructions=payload.instructions.strip(),
             asset=resolved_payload.source_asset,
-            preview_style=_image_edit_style(payload.target, edited_count),
+            preview_style=_image_edit_style(edit_target, edited_count),
             created_at=datetime.now(timezone.utc),
             is_original=False,
         )

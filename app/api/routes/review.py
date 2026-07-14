@@ -1,13 +1,13 @@
 # FastAPI route handlers live here; they validate request inputs, call services, and return response schemas.
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, BackgroundTasks, Depends, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import CurrentPrincipal, assert_brand_access, assert_tenant_access, get_current_principal, get_brand_scope_header, require_brand_scope, require_roles
 from app.core.enums import RoleCode
 from app.core.security import decode_token
-from app.db.session import get_db_session
+from app.db.session import AsyncSessionLocal, get_db_session
 from app.models.brand import BrandSpace
 from app.models.tenant import User
 from app.repositories.content import AssetRepository, ChatMessageRepository, ContentRepository
@@ -26,6 +26,14 @@ from app.services.review import ReviewService
 
 
 router = APIRouter()
+
+
+async def _send_comment_notifications_background(review_link_id: UUID, comment_id: UUID) -> None:
+    async with AsyncSessionLocal() as session:
+        await ReviewService(session).send_comment_notifications_for_comment(
+            review_link_id,
+            comment_id,
+        )
 
 
 async def _optional_principal_from_authorization(
@@ -193,6 +201,7 @@ async def get_review(token: str, session: AsyncSession = Depends(get_db_session)
 async def add_comment(
     token: str,
     payload: ReviewCommentCreateRequest,
+    background_tasks: BackgroundTasks,
     authorization: str | None = Header(default=None),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
@@ -209,7 +218,9 @@ async def add_comment(
         principal.user_id if principal else None,
         payload.external_author_name,
         payload.parent_comment_id,
+        send_notifications=False,
     )
+    background_tasks.add_task(_send_comment_notifications_background, link.id, comment.id)
     return ReviewCommentResponse(
         id=comment.id,
         body=comment.body,

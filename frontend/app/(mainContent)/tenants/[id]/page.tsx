@@ -576,7 +576,7 @@ export default function TenantDetailsPage() {
                         </div>
                     </SectionCard>
 
-                    <SectionCard title="Tenant Users"
+                    <SectionCard title="Super Users"
                         className="border-none p-0 py-2"
                     >
                         <div className="overflow-x-auto">

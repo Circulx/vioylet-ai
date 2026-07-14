@@ -101,12 +101,12 @@ export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
         resolvedForm.roleCode === "tenant_admin"
             ? "Tenant Admin"
             : resolvedForm.roleCode === "tenant_user"
-                ? "Tenant User"
+                ? "Super User"
                 : "Brand User";
     const title =
         mode === "create"
             ? "Create User"
-            : `Edit ${resolvedForm.fullName || (resolvedForm.roleCode === "brand_user" ? "{Brand user name}" : "{Tenant User name}")}`;
+            : `Edit ${resolvedForm.fullName || (resolvedForm.roleCode === "brand_user" ? "{Brand user name}" : "{Super User name}")}`;
 
     const showBrandAssignment = resolvedForm.roleCode === "brand_user";
     const liveUserId = getTenantUserRequestId(liveUser);
@@ -290,7 +290,7 @@ export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
                                             {mode === "edit" && resolvedForm.roleCode === "tenant_admin" ? (
                                                 <SelectItem value="tenant_admin">Tenant Admin</SelectItem>
                                             ) : null}
-                                            <SelectItem value="tenant_user">Tenant User</SelectItem>
+                                            <SelectItem value="tenant_user">Super User</SelectItem>
                                             <SelectItem value="brand_user">Brand User</SelectItem>
                                         </SelectGroup>
                                     </SelectContent>

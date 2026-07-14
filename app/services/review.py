@@ -1,17 +1,26 @@
 # Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
+import asyncio
+import logging
 import secrets
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.enums import ReviewStatus
+from app.core.enums import ReviewStatus, RoleCode
 from app.core.exceptions import LifecycleError
 from app.core.exceptions import NotFoundError
+from app.models.brand import BrandSpaceMember
 from app.repositories.content import ContentRepository
 from app.models.collaboration import ReviewComment, ReviewLink
+from app.models.tenant import Role, User, UserRole
 from app.repositories.collaboration import ReviewCommentRepository, ReviewLinkRepository
+from app.services.email import EmailService
+
+
+logger = logging.getLogger(__name__)
 
 
 class ReviewService:
@@ -22,6 +31,7 @@ class ReviewService:
         self.links = ReviewLinkRepository(session)
         self.comments = ReviewCommentRepository(session)
         self.contents = ContentRepository(session)
+        self.email = EmailService()
 
     async def create_link(self, tenant_id: UUID, brand_space_id: UUID, content_version_id: UUID, created_by: UUID, title: str | None, allow_external_comments: bool) -> ReviewLink:
         # Runs the link service flow and persists the resulting state before returning it to the route or
@@ -31,6 +41,7 @@ class ReviewService:
             raise NotFoundError("Content version not found")
         existing_link = await self.links.get_latest_for_content(tenant_id, brand_space_id, content_version_id)
         if existing_link:
+            existing_link.created_by = created_by
             existing_link.title = title or existing_link.title
             existing_link.allow_external_comments = allow_external_comments
             await self.session.commit()
@@ -67,6 +78,7 @@ class ReviewService:
         author_user_id: UUID | None = None,
         external_author_name: str | None = None,
         parent_comment_id: UUID | None = None,
+        send_notifications: bool = True,
     ) -> ReviewComment:
         # Runs the comment service flow and persists the resulting state before returning it to the route or
         # worker.
@@ -90,7 +102,174 @@ class ReviewService:
         )
         await self.comments.add(comment)
         await self.session.commit()
+        if send_notifications:
+            await self.send_comment_notifications_for_comment(link.id, comment.id)
         return comment
+
+    async def send_comment_notifications_for_comment(
+        self,
+        review_link_id: UUID,
+        comment_id: UUID,
+    ) -> None:
+        link = await self.links.get(review_link_id)
+        comment = await self.comments.get(comment_id)
+        if not link or not comment:
+            return
+        try:
+            await self._send_comment_notifications(link, comment)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Review comment notification failed for review_link_id=%s: %s",
+                review_link_id,
+                exc,
+            )
+
+    async def _send_comment_notifications(self, link: ReviewLink, comment: ReviewComment) -> None:
+        recipients = await self._comment_notification_recipients(link)
+        if not recipients:
+            return
+        commenter_name = await self._commenter_name(comment)
+        content = await self.contents.get_scoped(
+            link.content_version_id,
+            link.tenant_id,
+            link.brand_space_id,
+        )
+        post_title = link.title or (content.title if content else None)
+        review_url = self.email.build_review_link(link.token)
+        for recipient in recipients:
+            await asyncio.to_thread(
+                self.email.send_review_comment_notification_email,
+                recipient.email,
+                commenter_name,
+                comment.body,
+                review_url,
+                post_title,
+            )
+
+    async def _comment_notification_recipients(self, link: ReviewLink) -> list[User]:
+        sharer = await self._get_active_user(link.created_by)
+        if not sharer:
+            return []
+        role_codes = await self._get_notification_role_codes(sharer.id, link.brand_space_id)
+        if RoleCode.TENANT_ADMIN in role_codes or RoleCode.TENANT_USER in role_codes:
+            return self._dedupe_email_recipients([sharer])
+        if RoleCode.BRAND_USER in role_codes:
+            return self._dedupe_email_recipients([sharer])
+        return self._dedupe_email_recipients([sharer])
+
+    async def _commenter_name(self, comment: ReviewComment) -> str:
+        if comment.author_user_id:
+            author = await self._get_active_user(comment.author_user_id)
+            if author:
+                return author.full_name or author.email
+        return (comment.external_author_name or "").strip() or "Reviewer"
+
+    async def _get_active_user(self, user_id: UUID) -> User | None:
+        user = await self.session.get(User, user_id)
+        if not user or not user.is_active:
+            return None
+        return user
+
+    async def _get_user_role_codes(self, user_id: UUID) -> set[str]:
+        result = await self.session.execute(
+            select(Role.code)
+            .join(UserRole, UserRole.role_id == Role.id)
+            .where(UserRole.user_id == user_id)
+        )
+        return set(result.scalars().all())
+
+    async def _get_notification_role_codes(self, user_id: UUID, brand_space_id: UUID) -> set[str]:
+        role_codes = await self._get_user_role_codes(user_id)
+        if role_codes:
+            return role_codes
+        return await self._infer_user_role_codes_from_brand_membership(user_id, brand_space_id)
+
+    async def _infer_user_role_codes_from_brand_membership(
+        self,
+        user_id: UUID,
+        brand_space_id: UUID,
+    ) -> set[str]:
+        result = await self.session.execute(
+            select(BrandSpaceMember)
+            .where(
+                BrandSpaceMember.user_id == user_id,
+                BrandSpaceMember.brand_space_id == brand_space_id,
+            )
+            .limit(1)
+        )
+        membership = result.scalar_one_or_none()
+        if not membership:
+            return set()
+        if membership.can_manage:
+            return {RoleCode.TENANT_USER}
+        return {RoleCode.BRAND_USER}
+
+    async def _list_active_users_by_role(self, tenant_id: UUID, role_code: str) -> list[User]:
+        result = await self.session.execute(
+            select(User)
+            .join(UserRole, UserRole.user_id == User.id)
+            .join(Role, Role.id == UserRole.role_id)
+            .where(
+                User.tenant_id == tenant_id,
+                User.is_active.is_(True),
+                Role.code == role_code,
+            )
+            .distinct()
+        )
+        return list(result.scalars().all())
+
+    async def _list_active_super_users_for_brand(
+        self,
+        tenant_id: UUID,
+        brand_space_id: UUID,
+    ) -> list[User]:
+        managed_brand_result = await self.session.execute(
+            select(User)
+            .join(UserRole, UserRole.user_id == User.id)
+            .join(Role, Role.id == UserRole.role_id)
+            .join(BrandSpaceMember, BrandSpaceMember.user_id == User.id)
+            .where(
+                User.tenant_id == tenant_id,
+                User.is_active.is_(True),
+                Role.code == RoleCode.TENANT_USER,
+                BrandSpaceMember.brand_space_id == brand_space_id,
+                BrandSpaceMember.can_manage.is_(True),
+            )
+            .distinct()
+        )
+        managed_brand_super_users = list(managed_brand_result.scalars().all())
+        if managed_brand_super_users:
+            return managed_brand_super_users
+
+        brand_result = await self.session.execute(
+            select(User)
+            .join(UserRole, UserRole.user_id == User.id)
+            .join(Role, Role.id == UserRole.role_id)
+            .join(BrandSpaceMember, BrandSpaceMember.user_id == User.id)
+            .where(
+                User.tenant_id == tenant_id,
+                User.is_active.is_(True),
+                Role.code == RoleCode.TENANT_USER,
+                BrandSpaceMember.brand_space_id == brand_space_id,
+            )
+            .distinct()
+        )
+        brand_super_users = list(brand_result.scalars().all())
+        if brand_super_users:
+            return brand_super_users
+        return await self._list_active_users_by_role(tenant_id, RoleCode.TENANT_USER)
+
+    @staticmethod
+    def _dedupe_email_recipients(users: list[User]) -> list[User]:
+        recipients: list[User] = []
+        seen_emails: set[str] = set()
+        for user in users:
+            email_key = (user.email or "").strip().lower()
+            if not email_key or email_key in seen_emails:
+                continue
+            seen_emails.add(email_key)
+            recipients.append(user)
+        return recipients
 
     async def update_status(self, review_link_id: UUID, status: str) -> ReviewLink:
         # Runs the status service flow and persists the resulting state before returning it to the route or

@@ -3,6 +3,7 @@
 import { ArrowUp, Copy, Download, Facebook, FileText, Image as ImageIcon, Instagram, Linkedin, SendHorizontal, Share2, X } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import type { KeyboardEvent } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { SurfaceCard } from "@/components/common/DesignPrimitives";
@@ -368,6 +369,7 @@ export default function ShareReviewScreen({
     const updateReviewStatus = useUpdateReviewStatus(reviewToken);
 
     const reviewContent = review.data?.content;
+    const isAuthenticatedReviewer = Boolean(profile.data);
     const isTenantAdminViewer = Boolean(profile.data?.role_codes?.includes("tenant_admin"));
     const isApproved = review.data?.link.status === "approved";
     const displayBrandName = brand?.name || reviewContent?.brand_name || "Brand Name";
@@ -383,7 +385,7 @@ export default function ShareReviewScreen({
     const shareUrl = reviewToken ? `${appOrigin}/review/${reviewToken}` : "";
     const accessGrantorName = review.data?.link.created_by_name?.trim() || "Violyt";
 
-    const commentAuthorName = hasAuthToken
+    const commentAuthorName = isAuthenticatedReviewer
         ? profile.data?.full_name || profile.data?.email || "Reviewer"
         : externalMode
             ? reviewerName || "Reviewer"
@@ -426,7 +428,7 @@ export default function ShareReviewScreen({
     };
 
     const submitComment = (body: string, parentCommentId?: string | null, onSuccess?: () => void) => {
-        if (!body.trim() || !reviewToken) {
+        if (!body.trim() || !reviewToken || addComment.isPending) {
             return;
         }
         addComment.mutate(
@@ -449,6 +451,26 @@ export default function ShareReviewScreen({
         submitComment(replyDrafts[parentCommentId] || "", parentCommentId, () => {
             setReplyDrafts((current) => ({ ...current, [parentCommentId]: "" }));
         });
+    };
+
+    const shouldSubmitOnEnter = (event: KeyboardEvent<HTMLInputElement>) => {
+        if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) {
+            return false;
+        }
+        event.preventDefault();
+        return true;
+    };
+
+    const handleCommentKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+        if (shouldSubmitOnEnter(event)) {
+            handleComment();
+        }
+    };
+
+    const handleReplyKeyDown = (event: KeyboardEvent<HTMLInputElement>, parentCommentId: string) => {
+        if (shouldSubmitOnEnter(event)) {
+            handleReply(parentCommentId);
+        }
     };
 
     const handleApprove = () => {
@@ -562,6 +584,7 @@ export default function ShareReviewScreen({
                     <Input
                         value={replyValue}
                         onChange={(event) => setReplyDrafts((current) => ({ ...current, [item.id]: event.target.value }))}
+                        onKeyDown={(event) => handleReplyKeyDown(event, item.id)}
                         placeholder="Reply"
                         className="h-full flex-1 rounded-md border-none bg-transparent px-5 text-[20px] shadow-none placeholder:text-[#252837] focus-visible:ring-0"
                     />
@@ -615,15 +638,17 @@ export default function ShareReviewScreen({
                 <div className="mb-5 flex items-center justify-between gap-5 pr-[10px]">
                     <h1 className="text-[32px] font-extrabold leading-none text-primary">{displayBrandName}</h1>
                     <div className="flex items-center gap-3">
-                        <Button
-                            type="button"
-                            onClick={() => void handleShareReviewPage()}
-                            disabled={!shareUrl}
-                            className="h-[45px] rounded-[4px] bg-primary px-5 text-base font-medium text-white hover:bg-primary/90 disabled:opacity-70"
-                        >
-                            <Share2 className="mr-2 h-4 w-4" />
-                            {copied ? "Copied" : "Share"}
-                        </Button>
+                        {isAuthenticatedReviewer ? (
+                            <Button
+                                type="button"
+                                onClick={() => void handleShareReviewPage()}
+                                disabled={!shareUrl}
+                                className="h-[45px] rounded-[4px] bg-primary px-5 text-base font-medium text-white hover:bg-primary/90 disabled:opacity-70"
+                            >
+                                <Share2 className="mr-2 h-4 w-4" />
+                                {copied ? "Copied" : "Share"}
+                            </Button>
+                        ) : null}
                         {showApprove ? (
                             <Button
                                 type="button"
@@ -686,6 +711,7 @@ export default function ShareReviewScreen({
                         <Input
                             value={comment}
                             onChange={(event) => setComment(event.target.value)}
+                            onKeyDown={handleCommentKeyDown}
                             placeholder="Add your comment"
                             className="h-full flex-1 border-none bg-transparent text-[20px] shadow-none placeholder:text-[#787792] focus-visible:ring-0"
                         />
@@ -831,6 +857,7 @@ export default function ShareReviewScreen({
                         className="h-10 border-none bg-transparent text-sm shadow-none focus-visible:ring-0"
                         value={comment}
                         onChange={(event) => setComment(event.target.value)}
+                        onKeyDown={handleCommentKeyDown}
                     />
                     <Button
                         className="h-10 w-10 rounded-none bg-primary p-0 hover:bg-primary/90"

@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy.sql.dml import Delete, Update
 
 from app.core.exceptions import DuplicateResourceError, LifecycleError
+from app.core.enums import RoleCode
 from app.models.tenant import ActivationToken
 from app.schemas.tenant import (
     TenantCreateRequest,
@@ -393,6 +394,48 @@ async def test_create_tenant_user_returns_email_delivery_status():
     assert "SMTP authentication failed" in (delivery.reason or "")
     assert session.commits == 1
     assert session.refreshed == [user]
+
+
+async def test_create_tenant_user_assigns_super_user_role():
+    session = DummySession()
+    service = TenantService(session)
+    tenant_id = uuid4()
+    role_id = uuid4()
+
+    async def add_user(user):  # noqa: ANN001
+        if user.id is None:
+            user.id = uuid4()
+
+    service.users.get_by_email = AsyncMock(return_value=None)
+    service.users.add = AsyncMock(side_effect=add_user)
+    service.roles.get_by_code = AsyncMock(return_value=SimpleNamespace(id=role_id))
+    service.user_roles.add = AsyncMock()
+    service.tokens.add = AsyncMock()
+    service.brand_members.add = AsyncMock()
+    service.usage.enforce = AsyncMock()
+    service.usage.increment = AsyncMock()
+    service.email.send_activation_email = Mock(
+        return_value=EmailDeliveryResult(
+            attempted=True,
+            delivered=True,
+            recipient_email="super-user@jiraaf.com",
+        )
+    )
+
+    payload = TenantUserCreateRequest(
+        full_name="New Super User",
+        email="super-user@jiraaf.com",
+        phone_number="+91 9000000005",
+        role_code=RoleCode.TENANT_USER,
+        brand_space_ids=[],
+    )
+
+    user, _delivery = await service.create_tenant_user(tenant_id, payload)
+
+    service.roles.get_by_code.assert_awaited_once_with(RoleCode.TENANT_USER)
+    assigned_role = service.user_roles.add.await_args.args[0]
+    assert assigned_role.user_id == user.id
+    assert assigned_role.role_id == role_id
 
 
 async def test_create_tenant_user_notifies_admin_about_new_user():

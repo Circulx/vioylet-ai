@@ -17,8 +17,6 @@ import {
 } from "@/components/platformOwner/PlatformOwnerPrimitives";
 import { getTenantUserRequestId, useTenantUsers } from "@/hooks/useTeamAccess";
 import { useBrands } from "@/hooks/useBrands";
-import { useGetMe } from "@/hooks/useUser";
-import { useGetTenantData } from "@/hooks/tenantAdmins/useGetTenants";
 import { useResendTenantUserActivation } from "@/hooks/tenantAdmins/useUpdateTenant";
 import { getApiErrorMessage } from "@/lib/api/error-message";
 import {
@@ -67,8 +65,6 @@ function matchesSearch(row: TableRow, search: string) {
 export default function TeamAccessManager() {
     const router = useRouter();
     const searchParams = useSearchParams();
-    const { data: currentUser } = useGetMe();
-    const { data: tenantSummary } = useGetTenantData(currentUser?.tenantId ?? "");
     const { tenantId, tenantUsers, brandUsers, isLoading } = useTenantUsers();
     const { data: brands } = useBrands();
     const resendActivation = useResendTenantUserActivation(tenantId);
@@ -79,7 +75,6 @@ export default function TeamAccessManager() {
     const [resendingUserId, setResendingUserId] = useState<string | null>(null);
     const activeFilterCount = Number(createdFilter !== "all") + Number(activityFilter !== "all");
     const brandNames = new Map((brands || []).map((brand) => [brand.id, brand.name]));
-    const tenantLabel = tenantSummary?.name || "Tenant";
 
     const liveTenantRows: TableRow[] = tenantUsers.map((user) => {
         const activityStatus = getUserActivityStatus(user.last_login_at);
@@ -204,7 +199,7 @@ export default function TeamAccessManager() {
                     }
                 >
                     <div className="grid gap-4 md:grid-cols-2">
-                        <MetricTile label="Tenant Users" value={String(tenantRows.length)} />
+                        <MetricTile label="Super Users" value={String(tenantRows.length)} />
                         <MetricTile label="Brand Users" value={String(brandRows.length)} />
                         {/* <MetricTile label="Brand Assignments" value={String(totalAssignments)} /> */}
                     </div>
@@ -214,7 +209,7 @@ export default function TeamAccessManager() {
                     <UserPlatformTabSwitcher
                     className="border-none"
                         tabs={[
-                            { id: "tenant-users", label: `${tenantLabel} Users` },
+                            { id: "tenant-users", label: "Super Users" },
                             { id: "brand-users", label: "Brand Users" },
                         ]}
                         active={activeTab}

@@ -53,7 +53,7 @@ import { cn } from "@/lib/utils";
 import { useBrands, useCreateBrand } from "@/hooks/useBrands";
 import { useGetMe } from "@/hooks/useUser";
 import { useGetTenantData } from "@/hooks/tenantAdmins/useGetTenants";
-import { useUpdateTenantAdmin } from "@/hooks/tenantAdmins/useUpdateTenant";
+import { useUpdateBrandUsageTargets } from "@/hooks/tenantAdmins/useUpdateTenant";
 import { toast } from "@/components/ui/use-toast";
 import {
     emptyBrandFormState,
@@ -685,7 +685,7 @@ export default function BrandSpaceEditor({
 
     const queryClient = useQueryClient();
     const createBrand = useCreateBrand();
-    const updateTenant = useUpdateTenantAdmin();
+    const updateBrandUsageTargets = useUpdateBrandUsageTargets();
     const { data: currentUser } = useGetMe();
     const tenantId = currentUser?.tenantId ?? "";
     const { data: tenant } = useGetTenantData(tenantId);
@@ -986,16 +986,11 @@ export default function BrandSpaceEditor({
             return;
         }
 
-        await updateTenant.mutateAsync({
+        await updateBrandUsageTargets.mutateAsync({
             id: tenantId,
-            data: {
-                metadata_json: {
-                    ...(tenant.metadata_json || {}),
-                    brand_usage_targets: Object.fromEntries(
-                        rows.map((row) => [row.isNewBrand ? brand.id : row.id, row.value]),
-                    ),
-                },
-            },
+            brandUsageTargets: Object.fromEntries(
+                rows.map((row) => [row.isNewBrand ? brand.id : row.id, row.value]),
+            ),
         });
         await queryClient.invalidateQueries({ queryKey: ["brand", brand.id, "usage"] });
     };
@@ -1707,10 +1702,10 @@ export default function BrandSpaceEditor({
                             <Button
                                 type="button"
                                 onClick={handleConfirmCapacityUsage}
-                                disabled={isSubmitting || updateTenant.isPending}
+                                disabled={isSubmitting || updateBrandUsageTargets.isPending}
                                 className="rounded-none bg-primary/72 p-5 hover:bg-primary/90"
                             >
-                                {isSubmitting || updateTenant.isPending ? "Creating..." : "Create Brand Space"}
+                                {isSubmitting || updateBrandUsageTargets.isPending ? "Creating..." : "Create Brand Space"}
                             </Button>
                         </div>
                     </div>

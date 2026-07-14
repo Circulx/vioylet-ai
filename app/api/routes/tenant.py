@@ -66,7 +66,7 @@ async def list_tenants(session: AsyncSession = Depends(get_db_session)) -> list[
 @router.get("/{tenant_id}", response_model=TenantSummaryResponse)
 async def get_tenant(
     tenant_id: UUID,
-    _: CurrentPrincipal = Depends(require_roles(RoleCode.SUPER_ADMIN, RoleCode.TENANT_ADMIN)),
+    _: CurrentPrincipal = Depends(require_roles(RoleCode.SUPER_ADMIN, RoleCode.TENANT_ADMIN, RoleCode.TENANT_USER)),
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> TenantSummaryResponse:
@@ -115,7 +115,7 @@ async def update_tenant(
 async def update_brand_usage_targets(
     tenant_id: UUID,
     payload: TenantBrandUsageTargetsUpdate,
-    _: CurrentPrincipal = Depends(require_roles(RoleCode.SUPER_ADMIN, RoleCode.TENANT_ADMIN)),
+    _: CurrentPrincipal = Depends(require_roles(RoleCode.SUPER_ADMIN, RoleCode.TENANT_ADMIN, RoleCode.TENANT_USER)),
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> TenantBrandUsageTargetsResponse:

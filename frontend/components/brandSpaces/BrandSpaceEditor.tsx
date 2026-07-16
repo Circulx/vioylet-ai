@@ -249,9 +249,6 @@ function selectColorPaletteUpload(form: BrandFormState, itemId: string): BrandFo
             visualIdentity: {
                 ...form.visualIdentity,
                 activeColorPaletteUploadId: itemId,
-                primaryColor: "",
-                secondaryColor: "",
-                additionalColors: [{ name: "", hex: "" }],
             },
         };
     }
@@ -297,9 +294,6 @@ function syncActiveColorPaletteFields(form: BrandFormState): BrandFormState {
             ...form,
             visualIdentity: {
                 ...form.visualIdentity,
-                primaryColor: "",
-                secondaryColor: "",
-                additionalColors: [{ name: "", hex: "" }],
                 activeColorPaletteUploadId: "",
             },
         };

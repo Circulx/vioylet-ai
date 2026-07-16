@@ -11,7 +11,7 @@ import app.models  # noqa: F401
 from app.core.enums import RoleCode
 from app.core.exceptions import DuplicateResourceError, LifecycleError, NotFoundError
 from app.db.base import Base
-from app.integrations.object_storage import LocalObjectStorage
+from app.integrations.object_storage import get_object_storage
 from app.models.brand import BrandSpace, BrandSpaceMember
 from app.models.collaboration import UsageLimit
 from app.models.content import ContentVersion, GeneratedAsset
@@ -58,7 +58,7 @@ class TenantService:
         self.brand_spaces = BrandSpaceRepository(session)
         self.usage = UsageLimitService(session)
         self.analytics = AnalyticsService(session)
-        self.storage = LocalObjectStorage()
+        self.storage = get_object_storage()
         self.email = EmailService()
 
     async def _ensure_unique_tenant_slug(self, slug: str, *, current_tenant_id: UUID | None = None) -> None:

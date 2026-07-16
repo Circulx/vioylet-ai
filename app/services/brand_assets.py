@@ -17,7 +17,7 @@ from app.ai.rag.retrieval import KnowledgeRetrievalService
 from app.core.enums import AssetLifecycle, AssetValidationState, JobType, UsageMetricCode
 from app.core.exceptions import NotFoundError
 from app.db.session import AsyncSessionLocal
-from app.integrations.object_storage import LocalObjectStorage
+from app.integrations.object_storage import get_object_storage
 from app.models.brand_assets import (
     AssetCategoryRouting,
     AssetProcessingStatus,
@@ -74,7 +74,7 @@ class BrandAssetService:
         # Wires the repositories and helper services this workflow reuses across its public methods.
         self.session = session
         self.assets = KnowledgeAssetRepository(session)
-        self.storage = LocalObjectStorage()
+        self.storage = get_object_storage()
         self.jobs = JobService(session)
         self.usage = UsageLimitService(session)
         self.retrieval = KnowledgeRetrievalService()

@@ -169,7 +169,7 @@ class VisualIdentityPayload(APIModel):
     brand_mood: str | None = None
     visual_style: str | None = None
     logo_placement: LogoPlacementPayload = Field(default_factory=LogoPlacementPayload)
-    brand_color_palette: dict[str, str] = Field(default_factory=dict)
+    brand_color_palette: dict[str, Any] = Field(default_factory=dict)
     typography: dict[str, Any] = Field(default_factory=dict)
     reference_creative_asset_ids: list[UUID] = Field(default_factory=list)
     mood_board_asset_ids: list[UUID] = Field(default_factory=list)

@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response
 
 from app.core.config import get_settings
-from app.integrations.object_storage import LocalObjectStorage
+from app.integrations.object_storage import get_object_storage
 from app.services.asset_delivery import AssetDeliveryService
 
 
@@ -61,7 +61,7 @@ async def _download_asset_response(
     download: bool | None,
 ) -> FileResponse:
     delivery = AssetDeliveryService()
-    storage = LocalObjectStorage()
+    storage = get_object_storage()
     try:
         payload = delivery.verify_token(token)
     except ValueError as exc:
@@ -71,6 +71,8 @@ async def _download_asset_response(
         absolute_path = storage.absolute_path(str(payload["storage_path"]))
     except ValueError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - storage providers surface backend-specific errors
+        raise HTTPException(status_code=404, detail="Asset not found") from exc
 
     path = Path(absolute_path)
     if not path.exists():

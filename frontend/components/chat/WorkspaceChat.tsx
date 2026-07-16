@@ -1039,11 +1039,13 @@ function GeneratedImageViewer({
     const sharePreparingNotice = `${fileType.toUpperCase()} file is being prepared.`;
     const docShareFallbackNotice = "Word document shared as a link. The recipient can download the DOC file.";
     const shareLinkCopiedNotice = "Share link copied.";
+    const shareDownloadFallbackNotice = `${fileType.toUpperCase()} file downloaded.`;
     const isSharePreparingNotice = shareError.startsWith(sharePreparingNotice);
     const isShareNotice =
         isSharePreparingNotice ||
         shareError.startsWith(docShareFallbackNotice) ||
-        shareError.startsWith(shareLinkCopiedNotice);
+        shareError.startsWith(shareLinkCopiedNotice) ||
+        shareError.startsWith(shareDownloadFallbackNotice);
     const platformShareHint = useMemo(() => {
         if (typeof navigator === "undefined" || !navigator.share) {
             return "Native sharing is not available in this browser. Use Download or Copy Link instead.";
@@ -1064,12 +1066,11 @@ function GeneratedImageViewer({
             [
                 contentVersionId,
                 fileType,
-                activeIndex,
                 sourcePrompt,
                 ...assets.map((asset) => `${asset.asset_url || ""}:${asset.storage_path || ""}:${asset.mime_type || ""}`),
                 ...existingExportAssets.map((asset) => `${asset.asset_url || ""}:${asset.storage_path || ""}:${asset.mime_type || ""}`),
             ].join("|"),
-        [activeIndex, assets, contentVersionId, existingExportAssets, fileType, sourcePrompt],
+        [assets, contentVersionId, existingExportAssets, fileType, sourcePrompt],
     );
     const prepareShareFiles = useCallback(async () => {
         if (preparedShareRef.current?.key === shareCacheKey) {
@@ -1083,22 +1084,19 @@ function GeneratedImageViewer({
         }
         const promise = (async () => {
             setIsPreparingShare(true);
-            if (!contentVersionId) {
-                throw new Error("Generated content is not ready to share yet.");
-            }
             const matchingExistingAssets = existingExportAssets.filter((asset) => assetMatchesFileType(asset, fileType) && Boolean(asset.asset_url));
-            const refreshedAssets = matchingExistingAssets.length
-                ? []
-                : (await onExportForType(contentVersionId, fileType)).filter((asset) => assetMatchesFileType(asset, fileType) && Boolean(asset.asset_url));
-            const selectedFormatAssets = sortAssetsBySequence(matchingExistingAssets.length ? matchingExistingAssets : refreshedAssets);
-            if (!selectedFormatAssets.length) {
-                throw new Error(`No ${fileType.toUpperCase()} asset is available to share. Please export or regenerate this format first.`);
+            let refreshedAssets: AssetReference[] = [];
+            if (!matchingExistingAssets.length && contentVersionId) {
+                refreshedAssets = (await onExportForType(contentVersionId, fileType)).filter((asset) => assetMatchesFileType(asset, fileType) && Boolean(asset.asset_url));
             }
-            const assetsToShare = fileType === "jpg" || fileType === "png"
-                ? (selectedFormatAssets[activeIndex] ? [selectedFormatAssets[activeIndex]] : [])
-                : selectedFormatAssets;
-            if (!assetsToShare.length || assetsToShare.some((asset) => !assetMatchesFileType(asset, fileType) || !asset.asset_url)) {
-                throw new Error(`Selected ${fileType.toUpperCase()} asset is not available for sharing.`);
+            const fallbackImageAssets = assets.filter((asset) => asset.mime_type.startsWith("image/") && Boolean(asset.asset_url));
+            const selectedFormatAssets = sortAssetsBySequence(matchingExistingAssets.length ? matchingExistingAssets : refreshedAssets);
+            const assetsToShare = selectedFormatAssets.length ? selectedFormatAssets : sortAssetsBySequence(dedupeImageAssets(fallbackImageAssets));
+            if (!assetsToShare.length) {
+                throw new Error("No generated image is available to share yet.");
+            }
+            if (assetsToShare.some((asset) => !asset.asset_url)) {
+                throw new Error("Selected generated image is not available for sharing.");
             }
             const files = await Promise.all(
                 assetsToShare.map((asset, index) => assetToShareFile(
@@ -1121,7 +1119,7 @@ function GeneratedImageViewer({
             }
             setIsPreparingShare(false);
         }
-    }, [activeIndex, contentVersionId, existingExportAssets, fileType, onExportForType, shareCacheKey, sourcePrompt]);
+    }, [assets, contentVersionId, existingExportAssets, fileType, onExportForType, shareCacheKey, sourcePrompt]);
     useEffect(() => {
         if (preparedShareRef.current?.key !== shareCacheKey) {
             preparedShareRef.current = null;
@@ -1209,6 +1207,18 @@ function GeneratedImageViewer({
         await handleSave();
     };
 
+    const downloadPreparedShareAssets = (preparedShare: { files: File[] }) => {
+        preparedShare.files.forEach((file) => {
+            const downloadUrl = URL.createObjectURL(file);
+            try {
+                triggerDownload(downloadUrl, file.name);
+            } finally {
+                window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+            }
+        });
+        setShareError(shareDownloadFallbackNotice);
+    };
+
     const handleOpenComments = (event?: ReactMouseEvent<HTMLButtonElement>) => {
         event?.preventDefault();
         event?.stopPropagation();
@@ -1256,48 +1266,55 @@ function GeneratedImageViewer({
         setShareError("");
         try {
             if (!navigator.share) {
-                throw new Error("Native sharing is not available in this browser. Use Download instead.");
+                const preparedShare = await prepareShareFiles();
+                if (!preparedShare.files.length) {
+                    throw new Error(`Selected ${fileType.toUpperCase()} asset is not available for sharing.`);
+                }
+                downloadPreparedShareAssets(preparedShare);
+                setShareError(shareDownloadFallbackNotice);
+                return;
             }
             setIsSharing(true);
             const preparedShare = await prepareShareFiles();
             if (!preparedShare.files.length) {
                 throw new Error(`Selected ${fileType.toUpperCase()} asset is not available for sharing.`);
             }
-            const reviewUrl = await getReviewShareLink();
-            const shareDataWithLink: ShareData = {
-                title,
-                text: `Review and comment on ${title}`,
-                url: reviewUrl,
-                files: preparedShare.files,
-            };
-            const fileOnlyShareData: ShareData = {
+            const shareData: ShareData = {
                 title,
                 files: preparedShare.files,
             };
-            const canShareWithLink = typeof navigator.canShare !== "function" || navigator.canShare(shareDataWithLink);
-            const shareData = canShareWithLink ? shareDataWithLink : fileOnlyShareData;
             if (typeof navigator.canShare === "function" && !navigator.canShare(shareData)) {
                 throw new Error(`This browser cannot share the selected ${fileType.toUpperCase()} file. Use Download instead.`);
             }
-            if (!canShareWithLink) {
-                try {
-                    await copyTextToClipboard(reviewUrl);
-                    setShareError("Preview link copied. Choose an app to share the file.");
-                } catch {
-                    // File sharing should still work even if clipboard access is blocked.
-                }
-            }
             await navigator.share(shareData);
-            if (!canShareWithLink) {
-                try {
-                    await copyTextToClipboard(reviewUrl);
-                    setShareError("Preview link copied.");
-                } catch {
-                    // Ignore clipboard failures after native sharing completes.
-                }
-            }
         } catch (error) {
             if (error instanceof DOMException && error.name === "AbortError") {
+                return;
+            }
+            if (error instanceof DOMException && error.name === "NotAllowedError") {
+                const preparedShare = preparedShareRef.current?.key === shareCacheKey
+                    ? {
+                        files: preparedShareRef.current.files,
+                        assets: preparedShareRef.current.assets,
+                    }
+                    : null;
+                if (preparedShare) {
+                    const shareData: ShareData = {
+                        title,
+                        files: preparedShare.files,
+                    };
+                    if (typeof navigator.canShare !== "function" || navigator.canShare(shareData)) {
+                        try {
+                            await navigator.share(shareData);
+                            return;
+                        } catch (retryError) {
+                            if (retryError instanceof DOMException && retryError.name === "AbortError") {
+                                return;
+                            }
+                        }
+                    }
+                }
+                setShareError(`${fileType.toUpperCase()} file is ready, but the browser blocked native sharing. Please click Share again.`);
                 return;
             }
             setShareError(error instanceof Error ? error.message : `Could not share selected ${fileType.toUpperCase()} file.`);
@@ -1503,7 +1520,7 @@ function GeneratedImageViewer({
                     aria-label={isSharing || isPreparingShare ? "Preparing share" : "Share"}
                     title={isSharing || isPreparingShare ? "Preparing share" : "Share"}
                     onClick={() => void handleShare()}
-                    disabled={isSharing || isPreparingShare}
+                    disabled={isSharing}
                     className={actionButtonClass}
                 >
                     {isSharing || isPreparingShare ? <Loader2 className="h-4 w-4 animate-spin" /> : <Image src={"/actions_icons/share_black.svg"} alt="share" width={16} height={16} />}
@@ -1931,7 +1948,6 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
     const activeGenerationControllerRef = useRef<AbortController | null>(null);
     const activeGenerationSessionRef = useRef<string>("");
     const exportAssetCacheRef = useRef(new Map<string, AssetReference[]>());
-    const exportWarmupRef = useRef(new Set<string>());
 
     const sizeOption = useMemo(
         () => sizeOptionsByPlatform[studioPlatform].find((entry) => entry.label === studioSizeLabel) || sizeOptionsByPlatform[studioPlatform][0],
@@ -2056,25 +2072,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
             }
         }
 
-        let cancelled = false;
-        void (async () => {
-            for (const fileType of fileTypeOptions) {
-                const cacheKey = `${contentVersionId}:${fileType}`;
-                if (cancelled || exportAssetCacheRef.current.get(cacheKey)?.length || exportWarmupRef.current.has(cacheKey)) {
-                    continue;
-                }
-                exportWarmupRef.current.add(cacheKey);
-                try {
-                    await exportGeneratedAssetsForType(contentVersionId, fileType);
-                } catch {
-                    exportWarmupRef.current.delete(cacheKey);
-                }
-            }
-        })();
-        return () => {
-            cancelled = true;
-        };
-    }, [exportGeneratedAssetsForType, orderedMessages]);
+    }, [orderedMessages]);
     const normalizedChatSearchQuery = chatSearchQuery.trim().toLowerCase();
     const chatSearchMatches = useMemo(() => {
         if (!normalizedChatSearchQuery) {

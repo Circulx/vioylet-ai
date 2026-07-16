@@ -1,4 +1,5 @@
 # FastAPI route handlers live here; they validate request inputs, call services, and return response schemas.
+import re
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header
@@ -9,6 +10,7 @@ from app.core.enums import RoleCode
 from app.core.security import decode_token
 from app.db.session import AsyncSessionLocal, get_db_session
 from app.models.brand import BrandSpace
+from app.models.content import ContentVersion, GeneratedAsset
 from app.models.tenant import User
 from app.repositories.content import AssetRepository, ChatMessageRepository, ContentRepository
 from app.schemas.common import AssetReference
@@ -118,6 +120,123 @@ def _display_assets_from_payload(payload: object, delivery: AssetDeliveryService
     return payload_assets
 
 
+def _expected_carousel_slide_count(
+    content: ContentVersion | None,
+    assets: list[GeneratedAsset],
+) -> int:
+    payload = (
+        content.generated_payload
+        if content and isinstance(content.generated_payload, dict)
+        else {}
+    )
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    carousel_specs = (
+        metadata.get("carousel_slide_specs")
+        if isinstance(metadata.get("carousel_slide_specs"), list)
+        else []
+    )
+    expected_count = len(carousel_specs)
+    for asset in assets:
+        asset_metadata = asset.metadata_json if isinstance(asset.metadata_json, dict) else {}
+        try:
+            expected_count = max(expected_count, int(asset_metadata.get("slide_count") or 0))
+        except (TypeError, ValueError):
+            continue
+    return expected_count
+
+
+def _asset_sequence_index(asset: GeneratedAsset, fallback_index: int) -> int:
+    metadata = asset.metadata_json if isinstance(asset.metadata_json, dict) else {}
+    for key in ("slide_index", "page_index", "order", "reference_slide_index"):
+        try:
+            value = int(metadata.get(key) or 0)
+        except (TypeError, ValueError):
+            value = 0
+        if value > 0:
+            return value
+    match = re.search(
+        r"(?:slide|page|p)[-_]?(\d+)",
+        str(asset.storage_path or ""),
+        re.IGNORECASE,
+    )
+    return int(match.group(1)) if match else fallback_index + 1
+
+
+def _asset_reference_from_model(
+    asset: GeneratedAsset,
+    delivery: AssetDeliveryService,
+) -> AssetReference:
+    return AssetReference(
+        asset_id=asset.id,
+        mime_type=asset.mime_type,
+        storage_path=asset.storage_path,
+        asset_url=delivery.build_signed_url(
+            storage_path=asset.storage_path,
+            filename=asset.storage_path.rsplit("/", 1)[-1],
+        ),
+        width=asset.width,
+        height=asset.height,
+        asset_role=asset.asset_role,
+    )
+
+
+def _complete_carousel_display_assets(
+    content: ContentVersion | None,
+    assets: list[GeneratedAsset],
+    delivery: AssetDeliveryService,
+) -> list[AssetReference]:
+    expected_count = _expected_carousel_slide_count(content, assets)
+    if expected_count <= 1:
+        return []
+
+    image_assets = [
+        asset
+        for asset in assets
+        if str(asset.mime_type or "").startswith("image/")
+        and str(asset.asset_role or "") in {"render_preview", "render_export", "ai_image"}
+    ]
+    if len(image_assets) <= 1:
+        return []
+
+    ai_final_assets = [
+        asset
+        for asset in image_assets
+        if (asset.metadata_json or {}).get("render_source") == "ai"
+        and (asset.metadata_json or {}).get("generation_stage") == "final_render"
+    ]
+    candidates = ai_final_assets if len(ai_final_assets) >= expected_count else image_assets
+    ordered = sorted(
+        candidates,
+        key=lambda item: (
+            _asset_sequence_index(item, image_assets.index(item)),
+            str(item.asset_role or ""),
+            str(item.storage_path or ""),
+        ),
+    )
+    deduped_by_slide: dict[int, GeneratedAsset] = {}
+    for index, asset in enumerate(ordered):
+        slide_index = _asset_sequence_index(asset, index)
+        current = deduped_by_slide.get(slide_index)
+        if current is None or current.asset_role != "render_preview":
+            deduped_by_slide[slide_index] = asset
+    selected = [deduped_by_slide[key] for key in sorted(deduped_by_slide)]
+    if len(selected) <= 1:
+        return []
+    return [_asset_reference_from_model(asset, delivery) for asset in selected]
+
+
+def _review_display_assets(
+    content: ContentVersion | None,
+    assets: list[GeneratedAsset],
+    payload_display_assets: list[AssetReference],
+    delivery: AssetDeliveryService,
+) -> list[AssetReference]:
+    carousel_assets = _complete_carousel_display_assets(content, assets, delivery)
+    if carousel_assets and len(carousel_assets) > len(payload_display_assets):
+        return carousel_assets
+    return payload_display_assets
+
+
 @router.post("/share-link", response_model=ReviewLinkResponse)
 async def create_share_link(
     payload: ShareLinkCreateRequest,
@@ -151,10 +270,11 @@ async def get_review(token: str, session: AsyncSession = Depends(get_db_session)
         link.tenant_id,
         link.brand_space_id,
     )
-    display_assets = _display_assets_from_payload(
+    payload_display_assets = _display_assets_from_payload(
         assistant_message.structured_payload if assistant_message else {},
         delivery,
     )
+    display_assets = _review_display_assets(content, assets, payload_display_assets, delivery)
     return ReviewDetailResponse(
         link=ReviewLinkResponse.model_validate(link).model_copy(
             update={"created_by_name": creator.full_name if creator else None}

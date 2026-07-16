@@ -17,6 +17,7 @@ from app.repositories.content import AssetRepository, ContentRepository
 from app.schemas.content import ContentCopyRequest, ContentExportRequest, ContentGenerateRequest, ContentImageEditApplyRequest, ContentImageEditStateRequest, ContentImageEditStateResponse, ContentImageEditVariant, ContentRewriteRequest, ContentVersionResponse, ToneCheckRequest, ToneEvaluationResponse
 from app.schemas.common import AssetReference
 from app.schemas.render import RenderResponse
+from app.services.asset_delivery import AssetDeliveryService
 from app.services.content import ContentService
 
 
@@ -49,15 +50,45 @@ def _image_edit_original_variant(source_asset: AssetReference) -> ContentImageEd
     )
 
 
+def _refresh_asset_reference_url(asset: AssetReference) -> AssetReference:
+    if not asset.storage_path:
+        return asset
+    return asset.model_copy(
+        update={
+            "asset_url": AssetDeliveryService().build_signed_url(
+                storage_path=asset.storage_path,
+                filename=asset.storage_path.rsplit("/", 1)[-1],
+            )
+        }
+    )
+
+
+def _refresh_image_edit_state_asset_urls(
+    state: ContentImageEditStateResponse,
+    source_asset: AssetReference,
+) -> ContentImageEditStateResponse:
+    refreshed_source_asset = _refresh_asset_reference_url(source_asset)
+    refreshed_variants = []
+    for variant in state.variants:
+        if variant.asset.asset_id == source_asset.asset_id:
+            replacement_asset = refreshed_source_asset
+        else:
+            replacement_asset = _refresh_asset_reference_url(variant.asset)
+        refreshed_variants.append(variant.model_copy(update={"asset": replacement_asset}))
+    return state.model_copy(update={"variants": refreshed_variants})
+
+
 def _image_edit_state(payload: ContentImageEditStateRequest) -> ContentImageEditStateResponse:
     key = _image_edit_key(payload.content_version_id, payload.source_asset)
     state = _IMAGE_EDIT_STATES.get(key)
     if state:
+        state = _refresh_image_edit_state_asset_urls(state, payload.source_asset)
+        _IMAGE_EDIT_STATES[key] = state
         return state
     state = ContentImageEditStateResponse(
         content_version_id=payload.content_version_id,
         source_asset_id=payload.source_asset.asset_id,
-        variants=[_image_edit_original_variant(payload.source_asset)],
+        variants=[_image_edit_original_variant(_refresh_asset_reference_url(payload.source_asset))],
     )
     _IMAGE_EDIT_STATES[key] = state
     return state
@@ -77,11 +108,26 @@ async def _resolve_image_edit_payload(
     session: AsyncSession,
 ) -> ContentImageEditStateRequest:
     content_repo = ContentRepository(session)
+    asset_repo = AssetRepository(session)
+    source_asset = payload.source_asset
+    stored_asset = await asset_repo.get_scoped(source_asset.asset_id, principal.tenant_id, brand_scope)
+    if stored_asset:
+        source_asset = source_asset.model_copy(
+            update={
+                "mime_type": stored_asset.mime_type,
+                "storage_path": stored_asset.storage_path,
+                "width": stored_asset.width,
+                "height": stored_asset.height,
+                "asset_role": stored_asset.asset_role,
+            }
+        )
+        payload = payload.model_copy(update={"source_asset": _refresh_asset_reference_url(source_asset)})
+
     content = await content_repo.get_scoped(payload.content_version_id, principal.tenant_id, brand_scope)
     if content:
         return payload
 
-    asset = await AssetRepository(session).get_scoped(payload.source_asset.asset_id, principal.tenant_id, brand_scope)
+    asset = stored_asset
     if asset and asset.content_version_id:
         content = await content_repo.get_scoped(asset.content_version_id, principal.tenant_id, brand_scope)
         if content:

@@ -1452,7 +1452,7 @@ export default function BrandSpaceEditor({
                         const TabComponent = tab.content;
                         return (
                             <TabsContent key={tab.id} value={tab.value} className="w-full">
-                                <TabComponent form={form} setForm={setForm} onRemoveUpload={handleRemoveUpload} />
+                                <TabComponent brandId={effectiveBrandId || ""} form={form} setForm={setForm} onRemoveUpload={handleRemoveUpload} />
                             </TabsContent>
                         );
                     })}

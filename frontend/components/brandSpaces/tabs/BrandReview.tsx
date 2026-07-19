@@ -72,7 +72,7 @@ function ReviewCard({ section }: { section: ReviewSection }) {
     );
 }
 
-const BrandReview = ({ form }: BrandTabProps) => {
+const BrandReview = ({ brandId, form }: BrandTabProps) => {
     const f = form;
 
     const sections: ReviewSection[] = [

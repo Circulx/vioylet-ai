@@ -935,7 +935,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
         [sizeOption.height, sizeOption.width, studioFileType, studioFormat, studioPlatform],
     );
     const brandLifecycle = brand?.lifecycle_state || "draft";
-    const canGenerateInWorkspace = brandLifecycle === "active";
+    const canGenerateInWorkspace = true;
     const isGeneratingMessage = createSession.isPending || sendMessage.isPending;
     const recommendationPrompt = useMemo(() => {
         if (selectedAction === "idea") {

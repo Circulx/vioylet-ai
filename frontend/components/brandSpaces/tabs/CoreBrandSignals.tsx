@@ -14,7 +14,7 @@ import {
     type BrandTabProps,
 } from "@/types/brand-space.types";
 
-const CoreBrandSignals = ({ form, setForm, onRemoveUpload }: BrandTabProps) => {
+const CoreBrandSignals = ({ brandId, form, setForm, onRemoveUpload }: BrandTabProps) => {
     const updateField = <TKey extends keyof typeof form.core>(key: TKey, value: (typeof form.core)[TKey]) =>
         updateBrandFormSection(setForm, "core", key, value);
 

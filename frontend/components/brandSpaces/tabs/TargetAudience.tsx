@@ -26,7 +26,7 @@ import {
     type BrandTabProps,
 } from "@/types/brand-space.types";
 
-const TargetAudience = ({ form, setForm, onRemoveUpload }: BrandTabProps) => {
+const TargetAudience = ({ brandId, form, setForm, onRemoveUpload }: BrandTabProps) => {
     const updateField = <TKey extends keyof typeof form.targetAudience>(
         key: TKey,
         value: (typeof form.targetAudience)[TKey],

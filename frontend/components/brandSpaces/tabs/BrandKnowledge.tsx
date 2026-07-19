@@ -30,7 +30,7 @@ type KnowledgeUploadFieldProps = {
   onRemove: (itemId: string) => void;
 };
 
-const BrandKnowledge = ({ form, setForm, onRemoveUpload }: BrandTabProps) => {
+const BrandKnowledge = ({ brandId, form, setForm, onRemoveUpload }: BrandTabProps) => {
   const updateField = <TKey extends keyof typeof form.brandKnowledge>(
     key: TKey,
     value: (typeof form.brandKnowledge)[TKey],

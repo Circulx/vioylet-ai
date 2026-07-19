@@ -150,8 +150,6 @@ class ChatService:
         brand = await self.brands.get_scoped(tenant_id, brand_space_id)
         if not brand:
             raise NotFoundError("Brand Space not found")
-        if brand.lifecycle_state != BrandSpaceLifecycle.ACTIVE:
-            raise LifecycleError("Brand Space must be Active for chat")
 
         # Truncate title to fit database column (VARCHAR(255))
         title = payload.title or "Chat Session"

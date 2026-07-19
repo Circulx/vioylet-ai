@@ -1,44 +1,156 @@
+from __future__ import annotations
+
+import re
+from app.core.logging import get_logger
+from app.graph.models.layer7_models import CopyOutput
 from app.graph.state import ViolytState
-from app.graph.models.layer7_models import CopyOutput, CopySlide
+from app.prompts.layer7_copy_engine import CopyEnginePromptBuilder
+from app.services.live_research import LiveResearchService
+from app.services.llm.llm_router import LLMRouter
+
+logger = get_logger(__name__)
+
+_router = LLMRouter()
+_prompt_builder = CopyEnginePromptBuilder()
+_live_research = LiveResearchService()
+
+# Common generic AI tropes to check for in Brand Uniqueness validation
+AI_TROPES = [
+    r"\bunlock\b",
+    r"\belevate\b",
+    r"\brevolutionize\b",
+    r"\btransform\b",
+    r"\bdelve\b",
+    r"\btestament\b",
+    r"\bbeacon\b",
+    r"in today's",
+    r"look no further",
+    r"\bgame changer\b",
+    r"\bgame-changer\b",
+]
+
+MAX_VALIDATION_RETRIES = 2
+
+
+def contains_ai_tropes(text: str) -> list[str]:
+    """Check text for generic AI words and return matches."""
+    matches = []
+    for trope in AI_TROPES:
+        if re.search(trope, text, re.IGNORECASE):
+            matches.append(trope.replace(r"\b", ""))
+    return matches
 
 
 async def layer7_copy_engine(state: ViolytState) -> dict:
-    fmt = state.get("format", "static")
+    brand_intelligence = state.get("brand_intelligence")
     format_plan = state.get("format_plan")
-    slide_plan = format_plan.slide_plan if format_plan else []
+    creative_concepts = state.get("creative_concepts")
+    brand_context = state.get("brand_context")
+    user_prompt = state.get("user_prompt", "")
+    platform = state.get("platform", "linkedin")
+    fmt = str(state.get("format", "static") or "static").strip().lower()
 
-    if fmt == "static":
-        headline = "Predictability is a power, not a limitation."
-        body = "Bonds can bring calm to a portfolio built for the long term."
-        cta = "Explore fixed income strategies."
-    else:
-        headline = "What if boring was your edge?"
-        body = "A closer look at why predictable income matters more than ever."
-        cta = "Learn more"
+    if not brand_intelligence or not format_plan or not creative_concepts:
+        logger.error("copy_engine.missing_inputs")
+        raise ValueError("Layer 2 brand_intelligence, Layer 5 creative_concepts, and Layer 6 format_plan are required for Layer 7")
 
-    slide_copy = [
-        CopySlide(
-            slide_number=s.slide_number,
-            headline=f"Slide {s.slide_number}: {s.role}",
-            supporting_line=s.focus,
-            body=f"Copy intent: {s.copy_intent}",
-            cta="Next" if s.role != "cta" else cta,
+    recommended = creative_concepts.recommended_concept
+
+    # Convert Concept Pydantic model to dict
+    concept_dict = {
+        "concept_name": recommended.concept_name,
+        "core_idea": recommended.core_idea,
+        "hook": recommended.hook,
+        "narrative_angle": recommended.narrative_angle,
+        "visual_angle": recommended.visual_angle,
+    }
+
+    # For data-rich formats, fetch the latest verified facts via live web search so
+    # infographic/carousel content reflects current, specific numbers instead of generic filler.
+    live_research: dict = {}
+    if fmt in ("infographic", "carousel"):
+        try:
+            knowledge_brief = [
+                {"content": chunk.content_summary, "source": chunk.source}
+                for chunk in (brand_context.high_relevance_context if brand_context else [])
+            ]
+            research_query = f"{user_prompt} {recommended.core_idea} {brand_intelligence.brand_core.brand_name}".strip()
+            live_research = _live_research.gather_sync(
+                prompt=research_query,
+                studio_panel={"format": fmt, "platform_preset": platform},
+                compiled_context={"knowledge_brief": knowledge_brief},
+            ) or {}
+            logger.info(
+                "copy_engine.live_research",
+                status=live_research.get("status"),
+                fact_count=len(live_research.get("verified_facts", [])),
+            )
+        except Exception as e:
+            logger.warning(f"copy_engine.live_research_failed: {e}")
+            live_research = {}
+
+    system = _prompt_builder.build_system(format_name=fmt)
+    user = _prompt_builder.build_user(
+        brand_intelligence=brand_intelligence,
+        format_plan=format_plan,
+        concept=concept_dict,
+        format_name=fmt,
+        live_research=live_research,
+    )
+
+    service = _router.get_service("l7_copy_engine")
+
+    output: CopyOutput | None = None
+    metadata: dict | None = None
+
+    for attempt in range(MAX_VALIDATION_RETRIES + 1):
+        current_user = user
+        if attempt > 0:
+            current_user = (
+                user
+                + f"\n\nIMPORTANT: The previous output contained generic AI phrasing or lacked brand specificity. "
+                "Do NOT use typical AI tropes or corporate fluff (e.g., 'unlock', 'elevate', 'transform'). "
+                "Keep the language authentic, direct, and completely aligned with this brand's positioning."
+            )
+            logger.warning("copy_engine.uniqueness_retry", attempt=attempt)
+
+        output, metadata = await service.complete_structured(
+            system=system,
+            user=current_user,
+            output_model=CopyOutput,
+            layer="l7_copy_engine",
+            max_tokens=8192,
         )
-        for s in slide_plan
-    ]
-    if not slide_copy:
-        slide_copy = [
-            CopySlide(slide_number=1, headline=headline, body=body, cta=cta),
-        ]
+
+        # Brand Uniqueness validation check
+        full_text_to_validate = " ".join([
+            output.headline,
+            output.supporting_line or "",
+            output.body,
+            output.cta,
+            " ".join([slide.headline + " " + slide.body for slide in output.slide_copy])
+        ])
+
+        found_tropes = contains_ai_tropes(full_text_to_validate)
+        if not found_tropes:
+            logger.info("copy_engine.brand_uniqueness_passed", attempt=attempt)
+            break
+        
+        logger.warning(
+            "copy_engine.brand_uniqueness_failed",
+            found_tropes=found_tropes,
+            attempt=attempt,
+        )
+
+    assert output is not None and metadata is not None
 
     return {
-        "copy": CopyOutput(
-            headline=headline,
-            supporting_line="Calm, credible, and built for the long term.",
-            body=body,
-            cta=cta,
-            hashtags=["#FixedIncome", "#Bonds", "#Investing"],
-            slide_copy=slide_copy,
-            claim_safety_notes=["Verify yield claims before publishing."],
-        )
+        "copy": output,
+        "layer_latencies": {"l7_copy_engine": metadata["latency_ms"]},
+        "token_usage": {
+            "l7_copy_engine": {
+                "input_tokens": metadata["input_tokens"],
+                "output_tokens": metadata["output_tokens"],
+            }
+        },
     }

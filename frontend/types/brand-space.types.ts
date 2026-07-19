@@ -310,6 +310,7 @@ export type BrandFormSetter = Dispatch<SetStateAction<BrandFormState>>;
 export type BrandFormSectionKey = keyof BrandFormState;
 
 export interface BrandTabProps {
+  brandId: string;
   form: BrandFormState;
   setForm: BrandFormSetter;
   onRemoveUpload?: (itemId: string) => void | Promise<void>;

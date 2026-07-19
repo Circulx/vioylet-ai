@@ -98,8 +98,8 @@ class BlueprintPayload(BaseModel):
     logo_rules: dict[str, Any]
     cta_placement: dict[str, Any]
     platform_preset: str
-    export_format: str
-    overflow_strategy: dict[str, Any]
+    export_format: str = "png"
+    overflow_strategy: dict[str, Any] = Field(default_factory=lambda: {"mode": "shrink_then_wrap", "deterministic": True})
     source_mode: str = "synthesized_layout"
     source_template_id: str | None = None
     layout_archetype: str | None = None

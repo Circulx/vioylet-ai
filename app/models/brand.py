@@ -19,6 +19,7 @@ from app.models.mixins import (
 class BrandSpace(UUIDPrimaryKeyMixin, TenantScopedMixin, TimestampMixin, SoftDeleteMixin, Base):
     __tablename__ = "brand_spaces"
 
+    data_version: Mapped[int] = mapped_column(Integer, default=1, server_default="1", nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     slug: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     description: Mapped[str] = mapped_column(Text, nullable=False)

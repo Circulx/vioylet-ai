@@ -9,7 +9,7 @@ import {
 import { BRAND_RULE_OPTIONS } from "@/lib/brand-space-options";
 import { createBrandUploadItem, updateBrandFormSection, type BrandTabProps } from "@/types/brand-space.types";
 
-const BrandRules = ({ form, setForm, onRemoveUpload }: BrandTabProps) => {
+const BrandRules = ({ brandId, form, setForm, onRemoveUpload }: BrandTabProps) => {
     const updateField = <TKey extends keyof typeof form.brandRules>(
         key: TKey,
         value: (typeof form.brandRules)[TKey],

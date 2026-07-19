@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     generated_assets_base_url: str = "http://localhost:8000/storage"
     asset_download_base_url: str = "http://localhost:8000/api/v1/storage/download"
     signed_asset_url_ttl_seconds: int = 60 * 30
-    expose_public_storage: bool = False
+    expose_public_storage: bool = True
     frontend_base_url: str = "http://localhost:3000"
 
     vector_store_provider: str = "faiss"
@@ -53,7 +53,8 @@ class Settings(BaseSettings):
     tone_model: str = "gpt-4.1-mini"
     vision_model: str = "gpt-4.1-mini"
     image_model: str = "gpt-image-1-mini"
-    anthropic_model: str = "claude-sonnet-4-20250514"
+    anthropic_model: str = "claude-sonnet-4-6"
+    anthropic_fallback_model: str = "claude-opus-4-5"
     content_format_guide_path: str | None = None
     brave_search_api_key: str | None = None
     brave_search_api_base: str = "https://api.search.brave.com/res/v1/web/search"

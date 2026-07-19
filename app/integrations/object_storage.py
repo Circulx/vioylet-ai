@@ -106,6 +106,13 @@ class LocalObjectStorage(ObjectStoragePathMixin):
         try:
             resolved.relative_to(self.base_path)
         except ValueError:
+            # Debug logging
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Storage path validation failed:")
+            logger.error(f"  Base path: {self.base_path}")
+            logger.error(f"  Storage path: {storage_path}")
+            logger.error(f"  Resolved path: {resolved}")
             raise ValueError("Resolved storage path is outside the configured storage root")
         return resolved
 

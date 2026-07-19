@@ -39,7 +39,7 @@ type VisualMetadataUpload = {
     tagDraft: string;
 };
 
-const VisualIdentity = ({ form, setForm, onRemoveUpload }: BrandTabProps) => {
+const VisualIdentity = ({ brandId, form, setForm, onRemoveUpload }: BrandTabProps) => {
     const googleFontsQuery = useGoogleFonts();
 
     const updateField = <TKey extends keyof typeof form.visualIdentity>(

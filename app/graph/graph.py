@@ -9,6 +9,7 @@ from app.graph.nodes import (
     layer5_concept_engine,
     layer6_format_engine,
     layer7_copy_engine,
+    layer7b_content_validator,
     layer8_visual_reasoning,
     layer9_scene_graph,
     layer10_evaluation,
@@ -30,6 +31,7 @@ def build_violyt_graph() -> StateGraph:
     g.add_node("l5_concept_engine", layer5_concept_engine)
     g.add_node("l6_format_engine", layer6_format_engine)
     g.add_node("l7_copy_engine", layer7_copy_engine)
+    g.add_node("l7b_content_validator", layer7b_content_validator)
     g.add_node("l8_visual_reasoning", layer8_visual_reasoning)
     g.add_node("l9_scene_graph", layer9_scene_graph)
     g.add_node("l10_evaluation", layer10_evaluation)
@@ -42,18 +44,19 @@ def build_violyt_graph() -> StateGraph:
     g.add_edge("l2_brand_intelligence", "l3_brief_interpreter")
     g.add_edge("l3_brief_interpreter", "l4_strategic_reasoning")
 
-    # L5 and L6 are parallel children of L4; L7 and L8 are children of L5.
-    # To make L9 a clean join node in LangGraph, L6 is wired after L5 so that
-    # L6, L7, and L8 complete in the same superstep before L9 runs.
+    # L4 fans out to L5 AND L6 in parallel (same LangGraph superstep).
+    # L7 waits for BOTH L5 (creative_concepts) and L6 (format_plan) to complete.
+    # Then L8 waits for L7 (copy), and L9 waits for L8 (visual_reasoning).
+    # This serial chain after the L5∥L6 parallel avoids join timing issues.
     g.add_edge("l4_strategic_reasoning", "l5_concept_engine")
-    g.add_edge("l5_concept_engine", "l6_format_engine")
+    g.add_edge("l4_strategic_reasoning", "l6_format_engine")
     g.add_edge("l5_concept_engine", "l7_copy_engine")
-    g.add_edge("l5_concept_engine", "l8_visual_reasoning")
+    g.add_edge("l6_format_engine", "l7_copy_engine")
 
-    # L6 + L7 + L8 join at L9
-    g.add_edge("l7_copy_engine", "l9_scene_graph")
+    # L7 → L7.5 → L8 → L9 (serial, each waits for the previous)
+    g.add_edge("l7_copy_engine", "l7b_content_validator")
+    g.add_edge("l7b_content_validator", "l8_visual_reasoning")
     g.add_edge("l8_visual_reasoning", "l9_scene_graph")
-    g.add_edge("l6_format_engine", "l9_scene_graph")
 
     # L9 -> L10 -> conditional routing
     g.add_edge("l9_scene_graph", "l10_evaluation")

@@ -81,7 +81,7 @@ const SUCCESS_METRIC_LABELS: Record<string, string> = {
     revenue: "Revenue Impact",
 };
 
-const Objectives = ({ form, setForm }: BrandTabProps) => {
+const Objectives = ({ brandId, form, setForm }: BrandTabProps) => {
     const updateField = <TKey extends keyof typeof form.objectives>(
         key: TKey,
         value: (typeof form.objectives)[TKey],

@@ -1,48 +1,84 @@
+from __future__ import annotations
+
+from app.core.logging import get_logger
+from app.graph.models.layer5_models import CreativeConceptsOutput
 from app.graph.state import ViolytState
-from app.graph.models.layer5_models import CreativeConceptsOutput, Concept
+from app.prompts.layer5_concept_engine import ConceptEnginePromptBuilder
+from app.services.llm.llm_router import LLMRouter
+
+logger = get_logger(__name__)
+
+_router = LLMRouter()
+_prompt_builder = ConceptEnginePromptBuilder()
+
+MAX_DIVERSITY_RETRIES = 2
+DIVERSITY_THRESHOLD = 0.5
 
 
 async def layer5_concept_engine(state: ViolytState) -> dict:
-    concepts = [
-        Concept(
-            concept_id="c1",
-            concept_name="The Discipline Dividend",
-            core_idea="Predictability is the reward of discipline.",
-            hook="What if boring was your edge?",
-            narrative_angle="Discipline creates compounding calm.",
-            visual_angle="Clean chart rising quietly.",
-            brand_fit_reason="Directly expresses the brand's calm-credible positioning.",
-            risk_level="low",
-        ),
-        Concept(
-            concept_id="c2",
-            concept_name="Numbers That Don't Lie",
-            core_idea="Bonds offer measurable predictability.",
-            hook="Three numbers that change how you see income.",
-            narrative_angle="Evidence over emotion.",
-            visual_angle="Data visualization on neutral background.",
-            brand_fit_reason="Matches data-forward visual behavior.",
-            risk_level="medium",
-        ),
-        Concept(
-            concept_id="c3",
-            concept_name="Quiet Confidence",
-            core_idea="Maturity beats noise in wealth building.",
-            hook="The quietest portfolios often sleep the best.",
-            narrative_angle="Emotional reassurance through restraint.",
-            visual_angle="Soft negative space with a single focal point.",
-            brand_fit_reason="Owns the emotional territory of trust.",
-            risk_level="low",
-        ),
-    ]
-    recommended = concepts[0]
+    strategic_reasoning = state.get("strategic_reasoning")
+    brand_intelligence = state.get("brand_intelligence")
+
+    if not strategic_reasoning or not brand_intelligence:
+        logger.error("concept_engine.missing_inputs")
+        raise ValueError("Layer 4 strategic_reasoning and Layer 2 brand_intelligence are required for Layer 5")
+
+    system = _prompt_builder.build_system()
+    user = _prompt_builder.build_user(
+        strategic_reasoning=strategic_reasoning,
+        brand_intelligence=brand_intelligence,
+    )
+
+    service = _router.get_service("l5_concept_engine")
+
+    output: CreativeConceptsOutput | None = None
+    metadata: dict | None = None
+
+    for attempt in range(MAX_DIVERSITY_RETRIES + 1):
+        current_user = user
+        if attempt > 0:
+            current_user = (
+                user
+                + "\n\nIMPORTANT: The previous concepts were too similar (diversity_score < 0.5). "
+                "Generate genuinely DIFFERENT concepts with distinct strategic angles, "
+                "narrative behaviors, and visual treatments. Do not repeat or slightly vary "
+                "previous concepts."
+            )
+            logger.warning("concept_engine.diversity_retry", attempt=attempt)
+
+        output, metadata = await service.complete_structured(
+            system=system,
+            user=current_user,
+            output_model=CreativeConceptsOutput,
+            layer="l5_concept_engine",
+            max_tokens=16000,
+        )
+
+        if output.diversity_score >= DIVERSITY_THRESHOLD:
+            break
+
+        logger.warning(
+            "concept_engine.low_diversity",
+            diversity_score=output.diversity_score,
+            attempt=attempt,
+        )
+
+    assert output is not None and metadata is not None
+
+    logger.info(
+        "concept_engine.complete",
+        concepts_count=len(output.all_concepts),
+        recommended=output.recommended_concept.concept_name,
+        diversity_score=output.diversity_score,
+    )
 
     return {
-        "creative_concepts": CreativeConceptsOutput(
-            all_concepts=concepts,
-            recommended_concept=recommended,
-            selection_reason="Strongest brand-fit and lowest risk while still distinctive.",
-            rejected_concepts=[],
-            diversity_score=0.82,
-        )
+        "creative_concepts": output,
+        "layer_latencies": {"l5_concept_engine": metadata["latency_ms"]},
+        "token_usage": {
+            "l5_concept_engine": {
+                "input_tokens": metadata["input_tokens"],
+                "output_tokens": metadata["output_tokens"],
+            }
+        },
     }

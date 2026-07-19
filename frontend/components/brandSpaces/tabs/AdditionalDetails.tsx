@@ -17,7 +17,7 @@ const emptyCompetitorBrand = (): CompetitorBrandField => ({
     x: "",
 });
 
-const AdditionalDetails = ({ form, setForm }: BrandTabProps) => {
+const AdditionalDetails = ({ brandId, form, setForm }: BrandTabProps) => {
     const updateField = <TKey extends keyof typeof form.additional>(
         key: TKey,
         value: (typeof form.additional)[TKey],

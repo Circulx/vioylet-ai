@@ -142,4 +142,7 @@ export const API = {
     BRAND: { method: "GET", url: (brandId: string) => `/api/v1/analytics/brand/${brandId}` } as ApiEndpoint<void, AnalyticsResponse>,
     USAGE_SUMMARY: { method: "GET", url: "/api/v1/analytics/usage-summary" } as ApiEndpoint<void, AnalyticsResponse>,
   },
+  PIPELINE: {
+    RUN: { method: "POST", url: "/api/v1/pipeline/run" } as ApiEndpoint<import("./contracts").PipelineRunRequest, import("./contracts").PipelineRunResponse>,
+  },
 } as const;

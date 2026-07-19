@@ -46,7 +46,7 @@ function PillToggle({ label, active, onToggle }: Toggle) {
     );
 }
 
-const PromptIntelligence = ({ form, setForm }: BrandTabProps) => {
+const PromptIntelligence = ({ brandId, form, setForm }: BrandTabProps) => {
     const updateField = <TKey extends keyof typeof form.promptIntelligence>(
         key: TKey,
         value: (typeof form.promptIntelligence)[TKey],

@@ -24,6 +24,7 @@ from app.repositories.brand import (
 )
 from app.schemas.brand import BrandCreateRequest, BrandSectionUpsertRequest, BrandSectionsUpsertRequest, BrandUpdateRequest, GuardrailPayload
 from app.services.brand_summary_memory import BrandSummaryMemoryService
+from app.services.vectorstore.brand_profile_embedder import BrandProfileEmbedder
 from app.services.data_validation import DataValidatorService
 from app.services.usage import UsageLimitService
 from app.utils.text import slugify
@@ -45,6 +46,7 @@ class BrandSpaceService:
         self.intelligence = BrandIntelligenceService()
         self.validator = DataValidatorService(session)
         self.brand_summary_memory = BrandSummaryMemoryService()
+        self.profile_embedder = BrandProfileEmbedder()
 
     @staticmethod
     def _clamp_percent(value: object) -> int:
@@ -189,6 +191,32 @@ class BrandSpaceService:
         except AttributeError:
             sections = []
         self.brand_summary_memory.upsert_brand_summary(brand, sections=sections)
+
+        # Embed structured brand-space fields into Pinecone so Layer 1 retrieval
+        # can surface both document chunks and structured profile data.
+        # Run in a thread because IngestionService (OpenAI + Pinecone) is synchronous.
+        try:
+            persona_rows = await self.personas.list_by_brand(brand_space_id, brand.tenant_id)
+            guardrail_rows = await self.guardrails.list_by_brand(brand_space_id, brand.tenant_id)
+            objective_rows = await self.objectives.list_by_brand(brand_space_id, brand.tenant_id)
+            import asyncio
+            await asyncio.to_thread(
+                self.profile_embedder.embed_brand_profile,
+                brand_space_id,
+                brand_name=brand.name,
+                description=brand.description,
+                industry_category=brand.industry_category,
+                overview_snapshot=brand.overview_snapshot,
+                sections=[{"section_code": s.section_code, "payload": s.payload} for s in sections],
+                personas=[{k: v for k, v in p.__dict__.items() if not k.startswith("_") and k not in ("tenant_id", "brand_space_id")} for p in persona_rows],
+                guardrails=[{k: v for k, v in g.__dict__.items() if not k.startswith("_") and k not in ("tenant_id", "brand_space_id")} for g in guardrail_rows],
+                objectives=[{k: v for k, v in o.__dict__.items() if not k.startswith("_") and k not in ("tenant_id", "brand_space_id")} for o in objective_rows],
+            )
+        except Exception as exc:
+            # Profile embedding is best-effort — don't block brand save on Pinecone issues
+            import logging
+            logging.getLogger(__name__).warning(f"brand_profile_embedder.failed brand_id={brand_space_id} error={exc}")
+
         return brand
 
     async def _apply_section_upsert(

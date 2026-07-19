@@ -7,7 +7,7 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 
 import docx
 import pdfplumber
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from openai import OpenAI
 from pinecone import Pinecone, ServerlessSpec
 

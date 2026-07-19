@@ -17,7 +17,7 @@ import { Label } from "@/components/ui/label";
 
 const clampToneWeight = (value: number) => Math.max(0, Math.min(100, value));
 
-const VoiceTone = ({ form, setForm }: BrandTabProps) => {
+const VoiceTone = ({ brandId, form, setForm }: BrandTabProps) => {
     const toneWeights = form.voiceTone.coreToneAttributeWeights || {};
     const updateField = <TKey extends keyof typeof form.voiceTone>(
         key: TKey,

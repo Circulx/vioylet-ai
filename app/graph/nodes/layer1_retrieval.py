@@ -52,6 +52,7 @@ async def layer1_retrieval(state: ViolytState) -> dict:
         "retrieval_log": log,
     }
 
+    data_version = 1  # default; overwritten from DB below
     try:
         async with AsyncSessionLocal() as session:
             brand = await session.get(BrandSpace, brand_id)
@@ -60,6 +61,7 @@ async def layer1_retrieval(state: ViolytState) -> dict:
                     f"layer1_retrieval skipping log persistence: brand {brand_id} not found"
                 )
             else:
+                data_version = getattr(brand, "data_version", 1) or 1
                 session.add(
                     RetrievalLog(
                         tenant_id=brand.tenant_id,
@@ -80,6 +82,8 @@ async def layer1_retrieval(state: ViolytState) -> dict:
                 await session.commit()
     except Exception as e:  # noqa: BLE001
         logger.warning(f"layer1_retrieval failed to persist retrieval log: {e}")
+
+    update["data_version"] = data_version
 
     # Hard abort downstream layers if brand isolation could not be guaranteed.
     if output.brand_isolation_status == "fail":

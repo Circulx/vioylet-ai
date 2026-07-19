@@ -622,6 +622,215 @@ export interface BrandContextOutputResponse {
   total_chunks_retrieved: number;
 }
 
+export interface BrandCoreResponse {
+  brand_name: string;
+  value_proposition: string;
+  market_tension: string;
+  stands_for: string[];
+  stands_against: string[];
+  competitive_position: string;
+}
+
+export interface CommunicationBehaviorResponse {
+  tone_spectrum: string;
+  emotional_territory: string;
+  boldness_level: "low" | "medium" | "high";
+  authority_level: "low" | "medium" | "high";
+  simplicity_level: "low" | "medium" | "high";
+  preferred_language_behavior: string;
+  prohibited_phrases: string[];
+}
+
+export interface VisualBehaviorResponse {
+  visual_mood: string;
+  design_sophistication: "minimal" | "moderate" | "elaborate";
+  color_behavior: string;
+  image_behavior: string;
+  logo_zone_instruction: string;
+  typography_behavior: string;
+}
+
+export interface AudienceModelResponse {
+  primary_persona: string;
+  secondary_persona?: string | null;
+  core_motivations: string[];
+  core_objections: string[];
+  emotional_needs: string[];
+}
+
+export interface BrandIntelligenceOutputResponse {
+  brand_core: BrandCoreResponse;
+  communication_behavior: CommunicationBehaviorResponse;
+  visual_behavior: VisualBehaviorResponse;
+  creative_territory: Record<string, unknown>;
+  audience_model: AudienceModelResponse;
+  guardrails: string[];
+  weak_signals: string[];
+  confidence: number;
+}
+
+export interface CampaignBriefOutputResponse {
+  campaign_objective: string;
+  funnel_stage: "awareness" | "consideration" | "conversion" | "retention" | "education";
+  audience_intent: string;
+  content_role: "educate" | "persuade" | "announce" | "compare" | "inspire" | "convert";
+  platform_behavior_constraints: string;
+  information_density: "low" | "medium" | "high";
+  creative_risk_level: "low" | "medium" | "high";
+  persuasion_model: string;
+  missing_critical_inputs: string[];
+}
+
+export interface RejectedApproachResponse {
+  approach_name: string;
+  rejection_reason: string;
+}
+
+export interface StrategicReasoningOutputResponse {
+  strategic_problem: string;
+  brand_truth: string;
+  recommended_approach: string;
+  rejected_approaches: RejectedApproachResponse[];
+  attention_strategy: string;
+  emotional_strategy: string;
+  visual_strategy: string;
+  content_pacing_strategy: string;
+}
+
+export interface ConceptResponse {
+  concept_id: string;
+  concept_name: string;
+  core_idea: string;
+  hook: string;
+  narrative_angle: string;
+  visual_angle: string;
+  brand_fit_reason: string;
+  risk_level: "low" | "medium" | "high";
+}
+
+export interface RejectedConceptResponse {
+  concept_id: string;
+  rejection_reason: string;
+}
+
+export interface CreativeConceptsOutputResponse {
+  all_concepts: ConceptResponse[];
+  recommended_concept: ConceptResponse;
+  selection_reason: string;
+  rejected_concepts: RejectedConceptResponse[];
+  diversity_score: number;
+}
+
+export interface SlidePlanResponse {
+  slide_number: number;
+  role: string;
+  focus: string;
+  copy_intent: string;
+  visual_intent: string;
+}
+
+export interface FormatPlanOutputResponse {
+  format_strategy: string;
+  content_structure: string;
+  copy_density: "low" | "medium" | "high";
+  visual_density: "low" | "medium" | "high";
+  layout_archetype: string;
+  slide_plan: SlidePlanResponse[];
+  notes?: string | null;
+}
+
+export interface CopySlideResponse {
+  slide_number: number;
+  headline: string;
+  supporting_line?: string | null;
+  body: string;
+  cta?: string | null;
+}
+
+export interface CopyOutputResponse {
+  headline: string;
+  supporting_line?: string | null;
+  body: string;
+  cta: string;
+  hashtags: string[];
+  slide_copy: CopySlideResponse[];
+  claim_safety_notes: string[];
+}
+
+export interface VisualReasoningOutputResponse {
+  dominant_visual_system: "generated_image" | "type_led" | "illustration" | "infographic" | "data_visual" | "product_visual";
+  visual_style: string;
+  composition_logic: string;
+  focal_point: string;
+  negative_space_plan: string;
+  color_behavior: string;
+  logo_zone_instruction: string;
+  typography_behavior?: string | null;
+  image_prompt_direction: string;
+  generated_image_url: string;
+  generated_image_urls?: string[];
+}
+
+export interface SceneElementResponse {
+  element_id: string;
+  element_type: "background" | "visual" | "copy" | "logo" | "cta" | "decorative";
+  content: string;
+  position: { x: number; y: number; width: number; height: number };
+  style: Record<string, unknown>;
+  asset_url?: string | null;
+}
+
+export interface SceneGraphOutputResponse {
+  platform: string;
+  platform_ratio: string;
+  canvas_width: number;
+  canvas_height: number;
+  layers: string[];
+  elements: SceneElementResponse[];
+  styles: Record<string, unknown>;
+  assets: string[];
+}
+
+export interface PipelineRunRequest {
+  brand_id: string;
+  user_prompt: string;
+  platform?: "linkedin" | "instagram" | "x";
+  format?: "static" | "carousel" | "infographic";
+}
+
+export interface FinalOutputResponse {
+  platform: string;
+  format: string;
+  canvas_ratio: string;
+  asset_url: string;
+  asset_urls: string[];
+  slide_count: number;
+  render_status: string;
+  message: string;
+}
+
+export interface PipelineRunResponse {
+  run_id?: string;
+  status: string;
+  brand_id: string;
+  user_prompt: string;
+  platform: string;
+  format: string;
+  brand_context?: BrandContextOutputResponse;
+  brand_intelligence?: BrandIntelligenceOutputResponse;
+  campaign_brief?: CampaignBriefOutputResponse;
+  strategic_reasoning?: StrategicReasoningOutputResponse;
+  creative_concepts?: CreativeConceptsOutputResponse;
+  format_plan?: FormatPlanOutputResponse;
+  copy?: CopyOutputResponse;
+  visual_reasoning?: VisualReasoningOutputResponse;
+  scene_graph?: SceneGraphOutputResponse;
+  final_output?: FinalOutputResponse;
+  layer_latencies?: Record<string, number>;
+  token_usage?: Record<string, { input_tokens: number; output_tokens: number }>;
+  error?: string | null;
+}
+
 export interface RankedChunkResponse {
   chunk_id?: string;
   source: string;

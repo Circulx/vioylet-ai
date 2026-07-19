@@ -27557,6 +27557,29 @@ class AIOrchestratorService:
             f"Optional upstream semantic hints: headline={AIOrchestratorService._normalize_metadata_text(text_payload.headline, limit=160)}; body={AIOrchestratorService._normalize_metadata_text(text_payload.body, limit=260)}; cta={AIOrchestratorService._normalize_metadata_text(text_payload.cta, limit=120)}.",
             f"Optional approved proof/list hints: {proof_points}.",
         ]
+        if format_name == "infographic":
+            _infographic_problem = AIOrchestratorService._normalize_metadata_text(metadata.get("problem_statement"), limit=300)
+            _infographic_solution = AIOrchestratorService._normalize_metadata_text(metadata.get("solution_statement"), limit=300)
+            _infographic_quote = AIOrchestratorService._normalize_metadata_text(metadata.get("customer_quote"), limit=300)
+            _infographic_quote_name = AIOrchestratorService._normalize_metadata_text(metadata.get("customer_name"), limit=80)
+            _infographic_process_steps = AIOrchestratorService._normalize_metadata_list(metadata.get("process_steps"), limit=6)
+            _infographic_stat_highlights = AIOrchestratorService._normalize_metadata_list(metadata.get("stat_highlights"), limit=6)
+            _infographic_extra_content: list[str] = []
+            if _infographic_problem:
+                _infographic_extra_content.append(f"Problem statement to render: {_infographic_problem}.")
+            if _infographic_solution:
+                _infographic_extra_content.append(f"Solution statement to render: {_infographic_solution}.")
+            if _infographic_quote:
+                _infographic_extra_content.append(f"Customer testimonial to render: \"{_infographic_quote}\" — {_infographic_quote_name}.")
+            if _infographic_process_steps:
+                _infographic_extra_content.append(f"Process steps to render as numbered timeline: {'; '.join(_infographic_process_steps)}.")
+            if _infographic_stat_highlights:
+                _infographic_extra_content.append(f"Stat highlights to render as metric cards: {'; '.join(_infographic_stat_highlights)}.")
+            if _infographic_sections:
+                _infographic_extra_content.append(f"Infographic section plan to render: {_infographic_sections}.")
+            if _infographic_extra_content:
+                _infographic_extra_content.insert(0, "Infographic content authority: render ALL the following content sections directly in the image with perfect spelling, crisp legibility, and proper visual hierarchy. Every word must appear exactly as written:")
+                llm_led_text_contract.extend(_infographic_extra_content)
         text_overlay_contract = (
             AIOrchestratorService._text_overlay_substrate_contract(
                 headline=text_payload.headline,
@@ -27632,9 +27655,10 @@ class AIOrchestratorService:
             sequence_alignment_sections = []
             geometry_contract = ""
             layout_dna_contract = ""
-            infographic_sections = ""
             static_panel_spec = ""
             visual_plan_guidance = ""
+            if format_name != "infographic":
+                infographic_sections = ""
         brand_design_system_guidance_sections = [
             f"Brand design-system layout guidance: {design_system_guidance.get('layout')}." if design_system_guidance.get("layout") else "",
             f"Preferred zone roles from the brand system: {design_system_guidance.get('zones')}." if design_system_guidance.get("zones") else "",

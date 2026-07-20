@@ -6,8 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import CurrentPrincipal, assert_brand_access, get_brand_scope_header, get_current_principal, require_brand_scope
-from app.db.session import get_db_session
+from app.core.enums import RoleCode
 from app.core.exceptions import ChatGenerationCancelledError
+from app.db.session import get_db_session
 from app.schemas.chat import (
     ChatEnhancePromptRequest,
     ChatEnhancePromptResponse,
@@ -24,6 +25,16 @@ from app.services.chat import ChatService
 router = APIRouter()
 
 
+def assert_chat_brand_access(principal: CurrentPrincipal, brand_scope: UUID) -> None:
+    if principal.has_any_role(RoleCode.SUPER_ADMIN):
+        assert_brand_access(principal, brand_scope)
+    if principal.has_any_role(RoleCode.TENANT_USER):
+        if principal.tenant_id is None:
+            raise HTTPException(status_code=403, detail="Forbidden")
+        return
+    assert_brand_access(principal, brand_scope)
+
+
 @router.post("/sessions", response_model=ChatSessionResponse)
 async def create_chat_session(
     payload: ChatSessionCreateRequest,
@@ -34,7 +45,7 @@ async def create_chat_session(
     # Serves the chat session creation endpoint; it checks brand scope, delegates work to services, and returns
     # the response schema.
     brand_scope = require_brand_scope(brand_scope)
-    assert_brand_access(principal, brand_scope)
+    assert_chat_brand_access(principal, brand_scope)
     chat_session = await ChatService(session).create_session(principal.tenant_id, brand_scope, principal.user_id, payload)
     return ChatSessionResponse.model_validate(chat_session)
 
@@ -48,7 +59,7 @@ async def list_chat_sessions(
     # Serves the chat sessions listing endpoint; it checks brand scope, delegates work to services, and returns
     # the response schema.
     brand_scope = require_brand_scope(brand_scope)
-    assert_brand_access(principal, brand_scope)
+    assert_chat_brand_access(principal, brand_scope)
     items = await ChatService(session).list_sessions(principal.tenant_id, brand_scope)
     return [ChatSessionResponse.model_validate(item) for item in items]
 
@@ -64,7 +75,7 @@ async def update_chat_session(
     # Serves the chat session update endpoint; it checks brand scope, delegates work to services, and returns
     # the response schema.
     brand_scope = require_brand_scope(brand_scope)
-    assert_brand_access(principal, brand_scope)
+    assert_chat_brand_access(principal, brand_scope)
     chat_session = await ChatService(session).update_session(
         session_id=session_id,
         tenant_id=principal.tenant_id,
@@ -84,7 +95,7 @@ async def delete_chat_session(
     # Serves the chat session deletion endpoint; it checks brand scope, delegates work to services, and returns
     # the response schema.
     brand_scope = require_brand_scope(brand_scope)
-    assert_brand_access(principal, brand_scope)
+    assert_chat_brand_access(principal, brand_scope)
     return await ChatService(session).delete_session(
         session_id=session_id,
         tenant_id=principal.tenant_id,
@@ -102,7 +113,7 @@ async def cancel_chat_generation(
     # Serves the cancel chat generation endpoint; it checks brand scope, delegates work to services, and returns
     # the response schema.
     brand_scope = require_brand_scope(brand_scope)
-    assert_brand_access(principal, brand_scope)
+    assert_chat_brand_access(principal, brand_scope)
     return await ChatService(session).cancel_generation(
         session_id=session_id,
         tenant_id=principal.tenant_id,
@@ -123,7 +134,7 @@ async def list_chat_messages(
     # Serves the chat messages listing endpoint; it checks brand scope, delegates work to services, and returns
     # the response schema.
     brand_scope = require_brand_scope(brand_scope)
-    assert_brand_access(principal, brand_scope)
+    assert_chat_brand_access(principal, brand_scope)
     chat_service = ChatService(session)
     await chat_service.get_session(session_id, tenant_id=principal.tenant_id, brand_space_id=brand_scope)
     items = await chat_service.list_messages(
@@ -142,7 +153,7 @@ async def enhance_prompt(
     principal: CurrentPrincipal = Depends(get_current_principal),
 ) -> ChatEnhancePromptResponse:
     brand_scope = require_brand_scope(brand_scope)
-    assert_brand_access(principal, brand_scope)
+    assert_chat_brand_access(principal, brand_scope)
     return ChatEnhancePromptResponse(
         enhanced_prompt="Create a LinkedIn thought leadership post explaining why investors should consider bonds as part of a diversified portfolio."
     )
@@ -159,7 +170,7 @@ async def send_chat_message(
     # Serves the send chat message endpoint; it checks brand scope, delegates work to services, and returns the
     # response schema.
     brand_scope = require_brand_scope(brand_scope)
-    assert_brand_access(principal, brand_scope)
+    assert_chat_brand_access(principal, brand_scope)
     try:
         user_message, assistant_message = await ChatService(session).send_message(
             tenant_id=principal.tenant_id,
@@ -187,7 +198,7 @@ async def delete_chat_message(
     # Serves the chat message deletion endpoint; it checks brand scope, delegates work to services, and returns
     # the response schema.
     brand_scope = require_brand_scope(brand_scope)
-    assert_brand_access(principal, brand_scope)
+    assert_chat_brand_access(principal, brand_scope)
     return await ChatService(session).delete_message(
         message_id=message_id,
         tenant_id=principal.tenant_id,

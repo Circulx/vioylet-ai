@@ -1575,6 +1575,7 @@ export default function BrandSpaceEditor({
                         {brandSpaceTabs.map((tab) => {
                             const completion = tabCompletion[tab.value] ?? { percent: 100, required: 0, completed: 0 };
                             const fillPercent = Math.max(0, Math.min(100, completion.percent));
+                            const showCompletionLabel = !["brand_knowledge", "additional_details"].includes(tab.value);
                             return (
                                 <TabsTrigger
                                     key={tab.id}
@@ -1584,9 +1585,11 @@ export default function BrandSpaceEditor({
                                         fillPercent === 100 ? "border-primary/40" : "",
                                     )}
                                 >
-                                    <span className="pointer-events-none absolute -top-6 left-1/2 z-20 hidden -translate-x-1/2 whitespace-nowrap rounded-sm bg-primary px-1.5 py-0.5 text-[10px] font-medium text-white group-hover:inline-flex">
-                                        {fillPercent}% Completed
-                                    </span>
+                                    {showCompletionLabel ? (
+                                        <span className="pointer-events-none absolute -top-6 left-1/2 z-20 hidden -translate-x-1/2 whitespace-nowrap rounded-sm bg-primary px-1.5 py-0.5 text-[10px] font-medium text-white group-hover:inline-flex">
+                                            {fillPercent}% Completed
+                                        </span>
+                                    ) : null}
                                     <span
                                         className="rounded-md px-3 py-2"
                                         style={{

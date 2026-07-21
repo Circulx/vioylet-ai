@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { PencilLine } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -29,6 +30,7 @@ import Image from "next/image";
 import { Progress } from "../ui/progress";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
+import { toast } from "@/components/ui/use-toast";
 
 type EditableField = "full_name" | "email" | "phone_number" | null;
 
@@ -52,6 +54,7 @@ const ZERO_USAGE_SUMMARY: TenantUsageSummary = {
 
 export default function TenantAdminProfile() {
     const router = useRouter();
+    const queryClient = useQueryClient();
     const { user } = useRBAC();
     const logout = useLogout();
     const { data: profile } = useProfile();
@@ -144,6 +147,15 @@ export default function TenantAdminProfile() {
             },
             {
                 onSuccess: () => {
+                    if (user?.role === "TENANT_ADMIN" || user?.role === "TENANT_USER" || user?.role === "BRAND_USER") {
+                        toast({
+                            title: "Password Changed",
+                            description:
+                                "Your password has been changed successfully. If you did not perform this action, please contact your administrator immediately.",
+                            variant: "success",
+                        });
+                        void queryClient.invalidateQueries({ queryKey: ["notifications", user.id] });
+                    }
                     setFeedback("Password updated successfully.");
                     setError(null);
                     setPasswordDialogOpen(false);

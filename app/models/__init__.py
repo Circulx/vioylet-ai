@@ -28,6 +28,7 @@ from app.models.brand import (
 )
 from app.models.collaboration import (
     AnalyticsSnapshot,
+    InAppNotification,
     JobRecord,
     ReviewComment,
     ReviewLink,
@@ -62,6 +63,7 @@ __all__ = [
     "DataConflict",
     "GeneratedAsset",
     "Guardrail",
+    "InAppNotification",
     "JobRecord",
     "KnowledgeAsset",
     "MoodBoardAsset",

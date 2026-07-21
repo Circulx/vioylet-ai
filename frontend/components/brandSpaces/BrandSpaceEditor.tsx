@@ -53,7 +53,7 @@ import { cn } from "@/lib/utils";
 import { useBrands, useCreateBrand } from "@/hooks/useBrands";
 import { useGetMe } from "@/hooks/useUser";
 import { useGetTenantData } from "@/hooks/tenantAdmins/useGetTenants";
-import { useUpdateTenantAdmin } from "@/hooks/tenantAdmins/useUpdateTenant";
+import { useUpdateBrandUsageTargets } from "@/hooks/tenantAdmins/useUpdateTenant";
 import { toast } from "@/components/ui/use-toast";
 import {
     emptyBrandFormState,
@@ -249,9 +249,6 @@ function selectColorPaletteUpload(form: BrandFormState, itemId: string): BrandFo
             visualIdentity: {
                 ...form.visualIdentity,
                 activeColorPaletteUploadId: itemId,
-                primaryColor: "",
-                secondaryColor: "",
-                additionalColors: [{ name: "", hex: "" }],
             },
         };
     }
@@ -297,9 +294,6 @@ function syncActiveColorPaletteFields(form: BrandFormState): BrandFormState {
             ...form,
             visualIdentity: {
                 ...form.visualIdentity,
-                primaryColor: "",
-                secondaryColor: "",
-                additionalColors: [{ name: "", hex: "" }],
                 activeColorPaletteUploadId: "",
             },
         };
@@ -685,7 +679,7 @@ export default function BrandSpaceEditor({
 
     const queryClient = useQueryClient();
     const createBrand = useCreateBrand();
-    const updateTenant = useUpdateTenantAdmin();
+    const updateBrandUsageTargets = useUpdateBrandUsageTargets();
     const { data: currentUser } = useGetMe();
     const tenantId = currentUser?.tenantId ?? "";
     const { data: tenant } = useGetTenantData(tenantId);
@@ -986,16 +980,11 @@ export default function BrandSpaceEditor({
             return;
         }
 
-        await updateTenant.mutateAsync({
+        await updateBrandUsageTargets.mutateAsync({
             id: tenantId,
-            data: {
-                metadata_json: {
-                    ...(tenant.metadata_json || {}),
-                    brand_usage_targets: Object.fromEntries(
-                        rows.map((row) => [row.isNewBrand ? brand.id : row.id, row.value]),
-                    ),
-                },
-            },
+            brandUsageTargets: Object.fromEntries(
+                rows.map((row) => [row.isNewBrand ? brand.id : row.id, row.value]),
+            ),
         });
         await queryClient.invalidateQueries({ queryKey: ["brand", brand.id, "usage"] });
     };
@@ -1586,6 +1575,7 @@ export default function BrandSpaceEditor({
                         {brandSpaceTabs.map((tab) => {
                             const completion = tabCompletion[tab.value] ?? { percent: 100, required: 0, completed: 0 };
                             const fillPercent = Math.max(0, Math.min(100, completion.percent));
+                            const showCompletionLabel = !["brand_knowledge", "additional_details"].includes(tab.value);
                             return (
                                 <TabsTrigger
                                     key={tab.id}
@@ -1595,9 +1585,11 @@ export default function BrandSpaceEditor({
                                         fillPercent === 100 ? "border-primary/40" : "",
                                     )}
                                 >
-                                    <span className="pointer-events-none absolute -top-6 left-1/2 z-20 hidden -translate-x-1/2 whitespace-nowrap rounded-sm bg-primary px-1.5 py-0.5 text-[10px] font-medium text-white group-hover:inline-flex">
-                                        {fillPercent}% Completed
-                                    </span>
+                                    {showCompletionLabel ? (
+                                        <span className="pointer-events-none absolute -top-6 left-1/2 z-20 hidden -translate-x-1/2 whitespace-nowrap rounded-sm bg-primary px-1.5 py-0.5 text-[10px] font-medium text-white group-hover:inline-flex">
+                                            {fillPercent}% Completed
+                                        </span>
+                                    ) : null}
                                     <span
                                         className="rounded-md px-3 py-2"
                                         style={{
@@ -1707,10 +1699,10 @@ export default function BrandSpaceEditor({
                             <Button
                                 type="button"
                                 onClick={handleConfirmCapacityUsage}
-                                disabled={isSubmitting || updateTenant.isPending}
+                                disabled={isSubmitting || updateBrandUsageTargets.isPending}
                                 className="rounded-none bg-primary/72 p-5 hover:bg-primary/90"
                             >
-                                {isSubmitting || updateTenant.isPending ? "Creating..." : "Create Brand Space"}
+                                {isSubmitting || updateBrandUsageTargets.isPending ? "Creating..." : "Create Brand Space"}
                             </Button>
                         </div>
                     </div>

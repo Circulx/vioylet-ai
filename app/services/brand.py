@@ -25,6 +25,7 @@ from app.repositories.brand import (
 from app.schemas.brand import BrandCreateRequest, BrandSectionUpsertRequest, BrandSectionsUpsertRequest, BrandUpdateRequest, GuardrailPayload
 from app.services.brand_summary_memory import BrandSummaryMemoryService
 from app.services.data_validation import DataValidatorService
+from app.services.notification import InAppNotificationService
 from app.services.usage import UsageLimitService
 from app.utils.text import slugify
 
@@ -83,7 +84,13 @@ class BrandSpaceService:
             }
         )
 
-    async def create_brand(self, tenant_id: UUID, created_by: UUID, payload: BrandCreateRequest) -> BrandSpace:
+    async def create_brand(
+        self,
+        tenant_id: UUID,
+        created_by: UUID,
+        payload: BrandCreateRequest,
+        actor_role_codes: set[str] | None = None,
+    ) -> BrandSpace:
         # Runs the brand service flow and persists the resulting state before returning it to the route or
         # worker.
         await self.usage.enforce(tenant_id, UsageMetricCode.BRAND_SPACES)
@@ -177,6 +184,13 @@ class BrandSpaceService:
                 )
             )
         await self.usage.increment(tenant_id, UsageMetricCode.BRAND_SPACES)
+        if actor_role_codes:
+            await InAppNotificationService(self.session).create_brand_space_created_notification(
+                recipient_user_id=created_by,
+                tenant_id=tenant_id,
+                brand_space_name=brand.name,
+                actor_role_codes=actor_role_codes,
+            )
         await self.session.commit()
         return await self.refresh_context(brand.id)
 
@@ -408,17 +422,30 @@ class BrandSpaceService:
             "metrics": metrics,
         }
 
-    async def finalize_brand(self, tenant_id: UUID, brand_space_id: UUID) -> BrandSpace:
+    async def finalize_brand(
+        self,
+        tenant_id: UUID,
+        brand_space_id: UUID,
+        actor_user_id: UUID | None = None,
+        actor_role_codes: set[str] | None = None,
+    ) -> BrandSpace:
         # Runs the brand service flow by coordinating repositories, validators, and integrations, then returns
         # domain data.
-        return await self.publish_brand(tenant_id, brand_space_id)
+        return await self.publish_brand(tenant_id, brand_space_id, actor_user_id, actor_role_codes)
 
-    async def publish_brand(self, tenant_id: UUID, brand_space_id: UUID) -> BrandSpace:
+    async def publish_brand(
+        self,
+        tenant_id: UUID,
+        brand_space_id: UUID,
+        actor_user_id: UUID | None = None,
+        actor_role_codes: set[str] | None = None,
+    ) -> BrandSpace:
         # Runs the brand service flow by coordinating repositories, validators, and integrations, then returns
         # domain data.
         brand = await self.brands.get_scoped(tenant_id, brand_space_id)
         if not brand:
             raise NotFoundError("Brand Space not found")
+        should_notify_publish = brand.lifecycle_state != BrandSpaceLifecycle.ACTIVE
         sections = await self.sections.list_current_sections(brand_space_id, tenant_id)
         identity_section = next((section for section in sections if section.section_code == "identity"), None)
         if not identity_section or not identity_section.payload.get("brand_name"):
@@ -426,6 +453,13 @@ class BrandSpaceService:
         brand = await self.refresh_context(brand_space_id)
         brand.lifecycle_state = BrandSpaceLifecycle.ACTIVE
         brand.is_finalized = True
+        if actor_user_id and actor_role_codes and should_notify_publish:
+            await InAppNotificationService(self.session).create_brand_space_published_notification(
+                recipient_user_id=actor_user_id,
+                tenant_id=tenant_id,
+                brand_space_name=brand.name,
+                actor_role_codes=actor_role_codes,
+            )
         return await self._commit_and_refresh_brand(brand)
 
     async def unpublish_brand(self, tenant_id: UUID, brand_space_id: UUID) -> BrandSpace:
@@ -437,31 +471,70 @@ class BrandSpaceService:
         brand.lifecycle_state = BrandSpaceLifecycle.DRAFT
         return await self._commit_and_refresh_brand(brand)
 
-    async def archive_brand(self, tenant_id: UUID, brand_space_id: UUID) -> BrandSpace:
+    async def archive_brand(
+        self,
+        tenant_id: UUID,
+        brand_space_id: UUID,
+        actor_user_id: UUID | None = None,
+        actor_role_codes: set[str] | None = None,
+    ) -> BrandSpace:
         # Runs the brand service flow by coordinating repositories, validators, and integrations, then returns
         # domain data.
         brand = await self.brands.get_scoped(tenant_id, brand_space_id)
         if not brand:
             raise NotFoundError("Brand Space not found")
         brand.lifecycle_state = BrandSpaceLifecycle.ARCHIVED
+        if actor_user_id and actor_role_codes:
+            await InAppNotificationService(self.session).create_brand_space_archived_notification(
+                recipient_user_id=actor_user_id,
+                tenant_id=tenant_id,
+                brand_space_name=brand.name,
+                actor_role_codes=actor_role_codes,
+            )
         return await self._commit_and_refresh_brand(brand)
 
-    async def restore_brand(self, tenant_id: UUID, brand_space_id: UUID) -> BrandSpace:
+    async def restore_brand(
+        self,
+        tenant_id: UUID,
+        brand_space_id: UUID,
+        actor_user_id: UUID | None = None,
+        actor_role_codes: set[str] | None = None,
+    ) -> BrandSpace:
         # Runs the brand service flow by coordinating repositories, validators, and integrations, then returns
         # domain data.
         brand = await self.brands.get_scoped(tenant_id, brand_space_id)
         if not brand:
             raise NotFoundError("Brand Space not found")
         brand.lifecycle_state = BrandSpaceLifecycle.ACTIVE
+        if actor_user_id and actor_role_codes:
+            await InAppNotificationService(self.session).create_brand_space_restored_notification(
+                recipient_user_id=actor_user_id,
+                tenant_id=tenant_id,
+                brand_space_name=brand.name,
+                actor_role_codes=actor_role_codes,
+            )
         return await self._commit_and_refresh_brand(brand)
 
-    async def delete_brand(self, tenant_id: UUID, brand_space_id: UUID) -> BrandSpace:
+    async def delete_brand(
+        self,
+        tenant_id: UUID,
+        brand_space_id: UUID,
+        actor_user_id: UUID | None = None,
+        actor_role_codes: set[str] | None = None,
+    ) -> BrandSpace:
         # Runs the brand service flow by coordinating repositories, validators, and integrations, then returns
         # domain data.
         brand = await self.brands.get_scoped(tenant_id, brand_space_id)
         if not brand:
             raise NotFoundError("Brand Space not found")
         brand.lifecycle_state = BrandSpaceLifecycle.DELETED
+        if actor_user_id and actor_role_codes:
+            await InAppNotificationService(self.session).create_brand_space_deleted_notification(
+                recipient_user_id=actor_user_id,
+                tenant_id=tenant_id,
+                brand_space_name=brand.name,
+                actor_role_codes=actor_role_codes,
+            )
         return await self._commit_and_refresh_brand(brand)
 
     async def list_brands(self, tenant_id: UUID, user_id: UUID, role_codes: set[str]) -> list[BrandSpace]:

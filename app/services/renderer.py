@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.contracts import GeneratedImageAsset, GenerationSceneGraph, RendererInput, RendererResponse, SceneGraphElement
 from app.core.config import get_settings
-from app.integrations.object_storage import LocalObjectStorage
+from app.integrations.object_storage import get_object_storage
 from app.utils.image_assets import open_image_asset
 from app.utils.palette_roles import derive_palette_roles
 
@@ -32,7 +32,7 @@ class RendererService:
     def __init__(self, session: AsyncSession) -> None:
         # Wires the repositories and helper services this workflow reuses across its public methods.
         self.session = session
-        self.storage = LocalObjectStorage()
+        self.storage = get_object_storage()
         self.settings = get_settings()
         self.payload: RendererInput | None = None
         self._active_font_candidates: list[Path] = []

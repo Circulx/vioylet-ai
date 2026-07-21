@@ -13,7 +13,7 @@ from PIL import Image
 
 from app.ai.providers.base import ImageGenerationBackend, PromptEnvelope, TextGenerationProvider
 from app.core.config import get_settings
-from app.integrations.object_storage import LocalObjectStorage
+from app.integrations.object_storage import get_object_storage
 
 
 class OpenAITextProvider(TextGenerationProvider):
@@ -172,7 +172,7 @@ class OpenAIImageProvider(ImageGenerationBackend):
         # Public methods reuse these collaborators instead of rebuilding them for each request.
         self.settings = get_settings()
         self.client = OpenAI(api_key=self.settings.openai_api_key) if self.settings.openai_api_key else None
-        self.storage = LocalObjectStorage()
+        self.storage = get_object_storage()
         self.last_usage: dict[str, Any] | None = None
 
     def _configured_image_quality(self, model_name: str) -> str | None:

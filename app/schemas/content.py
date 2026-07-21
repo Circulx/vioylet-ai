@@ -88,7 +88,7 @@ class ContentImageEditStateRequest(APIModel):
 
 class ContentImageEditApplyRequest(ContentImageEditStateRequest):
     # Request contract for creating a lightweight edited image variant from an existing generated image.
-    target: str = Field(min_length=1)
+    target: str | None = None
     instructions: str = Field(min_length=1)
 
 

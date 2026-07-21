@@ -110,9 +110,9 @@ export function ActivateForm() {
 
       {error ? <p className="text-sm text-red-500">{error}</p> : null}
 
-      <p className="text-base text-gray-500 text-start">
+      {/* <p className="text-base text-gray-500 text-start">
         Secure access to your brand intelligence environment.
-      </p>
+      </p> */}
     </form>
   );
 }

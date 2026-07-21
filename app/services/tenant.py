@@ -11,7 +11,7 @@ import app.models  # noqa: F401
 from app.core.enums import RoleCode
 from app.core.exceptions import DuplicateResourceError, LifecycleError, NotFoundError
 from app.db.base import Base
-from app.integrations.object_storage import LocalObjectStorage
+from app.integrations.object_storage import get_object_storage
 from app.models.brand import BrandSpace, BrandSpaceMember
 from app.models.collaboration import UsageLimit
 from app.models.content import ContentVersion, GeneratedAsset
@@ -30,6 +30,7 @@ from app.schemas.tenant import (
 )
 from app.services.analytics import AnalyticsService
 from app.services.email import EmailDeliveryResult, EmailService
+from app.services.notification import InAppNotificationService
 from app.services.usage import UsageLimitService
 from app.utils.files import decode_base64_content
 
@@ -58,7 +59,7 @@ class TenantService:
         self.brand_spaces = BrandSpaceRepository(session)
         self.usage = UsageLimitService(session)
         self.analytics = AnalyticsService(session)
-        self.storage = LocalObjectStorage()
+        self.storage = get_object_storage()
         self.email = EmailService()
 
     async def _ensure_unique_tenant_slug(self, slug: str, *, current_tenant_id: UUID | None = None) -> None:
@@ -635,13 +636,29 @@ class TenantService:
             raise NotFoundError("User not found")
         return await self.build_user_summary(user)
 
-    async def deactivate_user(self, tenant_id: UUID, user_id: UUID) -> User:
+    async def deactivate_user(
+        self,
+        tenant_id: UUID,
+        user_id: UUID,
+        actor_user_id: UUID | None = None,
+        actor_role_codes: set[str] | None = None,
+    ) -> User:
         # Runs the deactivate user service flow and persists the resulting state before returning it to the
         # route or worker.
         user = await self.users.get(user_id)
         if not user or user.tenant_id != tenant_id:
             raise NotFoundError("User not found")
+        was_active = user.is_active
+        role_code = await self._primary_user_role_code(user.id)
         user.is_active = False
+        if was_active and actor_user_id and actor_user_id != user.id and actor_role_codes:
+            await InAppNotificationService(self.session).create_user_account_status_notification(
+                user,
+                recipient_user_id=actor_user_id,
+                actor_role_codes=actor_role_codes,
+                target_role_codes={role_code} if role_code else None,
+                is_active=False,
+            )
         await self.session.commit()
         return user
 
@@ -695,7 +712,12 @@ class TenantService:
             )
         return delivery
 
-    async def update_tenant(self, tenant_id: UUID, payload: TenantUpdateRequest) -> Tenant:
+    async def update_tenant(
+        self,
+        tenant_id: UUID,
+        payload: TenantUpdateRequest,
+        actor_role_codes: set[str] | None = None,
+    ) -> Tenant:
         # Runs the tenant service flow and persists the resulting state before returning it to the route or
         # worker.
         tenant = await self.get_tenant(tenant_id)
@@ -720,14 +742,24 @@ class TenantService:
         # This branch separates the special case from the normal path so later logic can work with cleaner
         # assumptions.
         if admin_user:
+            admin_profile_changed = False
             if payload.admin_email is not None and payload.admin_email != admin_user.email:
                 await self._ensure_unique_user_email(payload.admin_email, current_user_id=admin_user.id)
             if payload.admin_full_name is not None:
+                admin_profile_changed = admin_profile_changed or payload.admin_full_name != admin_user.full_name
                 admin_user.full_name = payload.admin_full_name
             if payload.admin_email is not None:
+                admin_profile_changed = admin_profile_changed or payload.admin_email != admin_user.email
                 admin_user.email = payload.admin_email
             if payload.admin_phone_number is not None:
+                admin_profile_changed = admin_profile_changed or payload.admin_phone_number != admin_user.phone_number
                 admin_user.phone_number = payload.admin_phone_number
+            if actor_role_codes and admin_profile_changed:
+                await InAppNotificationService(self.session).create_profile_updated_by_admin_notification(
+                    admin_user,
+                    actor_role_codes,
+                    {RoleCode.TENANT_ADMIN.value},
+                )
 
         if payload.usage_limits is not None:
             await self.update_usage_limits(tenant_id, payload.usage_limits, auto_commit=False)
@@ -820,33 +852,86 @@ class TenantService:
         await self.session.refresh(tenant)
         return tenant
 
-    async def update_tenant_user(self, tenant_id: UUID, user_id: UUID, payload: TenantUserUpdateRequest) -> User:
+    async def _primary_user_role_code(self, user_id: UUID) -> str | None:
+        role_codes: set[str] = set()
+        for user_role in await self.user_roles.list_for_user(user_id):
+            role = await self.roles.get(user_role.role_id)
+            if role:
+                role_codes.add(role.code)
+        for role_code in (RoleCode.TENANT_ADMIN.value, RoleCode.TENANT_USER.value, RoleCode.BRAND_USER.value):
+            if role_code in role_codes:
+                return role_code
+        return next(iter(role_codes), None)
+
+    async def _brand_space_names_by_id(self, tenant_id: UUID, brand_space_ids: list[UUID]) -> dict[UUID, str]:
+        if not brand_space_ids:
+            return {}
+        result = await self.session.execute(
+            select(BrandSpace.id, BrandSpace.name).where(
+                BrandSpace.tenant_id == tenant_id,
+                BrandSpace.id.in_(list(dict.fromkeys(brand_space_ids))),
+            )
+        )
+        return {brand_space_id: name for brand_space_id, name in result.all()}
+
+    async def update_tenant_user(
+        self,
+        tenant_id: UUID,
+        user_id: UUID,
+        payload: TenantUserUpdateRequest,
+        actor_user_id: UUID | None = None,
+        actor_role_codes: set[str] | None = None,
+    ) -> User:
         # Runs the tenant user service flow and persists the resulting state before returning it to the route or
         # worker.
         user = await self.users.get(user_id)
         if not user or user.tenant_id != tenant_id:
             raise NotFoundError("User not found")
+        old_role_code = await self._primary_user_role_code(user.id)
+        old_brand_space_ids = await self.brand_members.list_brand_ids_for_user(user.id)
+        was_active = user.is_active
+        profile_changed = False
         if payload.email is not None and payload.email != user.email:
             await self._ensure_unique_user_email(payload.email, current_user_id=user.id)
         if payload.full_name is not None:
+            profile_changed = profile_changed or payload.full_name != user.full_name
             user.full_name = payload.full_name
         if payload.email is not None:
+            profile_changed = profile_changed or payload.email != user.email
             user.email = payload.email
         if payload.phone_number is not None:
+            profile_changed = profile_changed or payload.phone_number != user.phone_number
             user.phone_number = payload.phone_number
         if payload.is_active is not None:
             user.is_active = payload.is_active
 
+        new_role_code = old_role_code
         if payload.role_code is not None:
             role = await self.roles.get_by_code(payload.role_code)
             if not role:
                 raise NotFoundError("Role not found")
             await self.session.execute(delete(UserRole).where(UserRole.user_id == user.id))
             self.session.add(UserRole(user_id=user.id, role_id=role.id, brand_space_id=None))
+            new_role_code = payload.role_code
 
         # This branch enforces tenant, brand, or role boundaries before shared data can be read or changed.
+        brand_space_ids = old_brand_space_ids
+        assigned_brand_space_ids: list[UUID] = []
+        removed_brand_space_ids: list[UUID] = []
         if payload.brand_space_ids is not None:
             brand_space_ids = list(dict.fromkeys(payload.brand_space_ids))
+            old_brand_space_id_set = set(old_brand_space_ids)
+            new_brand_space_id_set = set(brand_space_ids)
+            assigned_brand_space_ids = [
+                brand_space_id
+                for brand_space_id in brand_space_ids
+                if brand_space_id not in old_brand_space_id_set
+            ]
+            removed_brand_space_ids = [
+                brand_space_id
+                for brand_space_id in old_brand_space_ids
+                if brand_space_id not in new_brand_space_id_set
+            ]
             if brand_space_ids:
                 existing_brand_ids = set(
                     (
@@ -879,6 +964,62 @@ class TenantService:
                     )
                     for brand_space_id in brand_space_ids
                 ]
+            )
+
+        if actor_role_codes and actor_user_id != user.id and profile_changed:
+            await InAppNotificationService(self.session).create_profile_updated_by_admin_notification(
+                user,
+                actor_role_codes,
+                {new_role_code},
+            )
+        if (
+            actor_role_codes
+            and actor_user_id != user.id
+            and old_role_code
+            and new_role_code
+            and old_role_code != new_role_code
+        ):
+            await InAppNotificationService(self.session).create_role_updated_notification(
+                user,
+                old_role_code=old_role_code,
+                new_role_code=new_role_code,
+                actor_role_codes=actor_role_codes,
+            )
+
+        if actor_role_codes and actor_user_id != user.id and (assigned_brand_space_ids or removed_brand_space_ids):
+            brand_space_names = await self._brand_space_names_by_id(
+                tenant_id,
+                [*assigned_brand_space_ids, *removed_brand_space_ids],
+            )
+            await InAppNotificationService(self.session).create_brand_space_access_notifications(
+                user,
+                assigned_brand_space_names=[
+                    brand_space_names[brand_space_id]
+                    for brand_space_id in assigned_brand_space_ids
+                    if brand_space_id in brand_space_names
+                ],
+                removed_brand_space_names=[
+                    brand_space_names[brand_space_id]
+                    for brand_space_id in removed_brand_space_ids
+                    if brand_space_id in brand_space_names
+                ],
+                actor_role_codes=actor_role_codes,
+                target_role_code=new_role_code,
+            )
+
+        if (
+            payload.is_active is not None
+            and payload.is_active != was_active
+            and actor_role_codes
+            and actor_user_id
+            and actor_user_id != user.id
+        ):
+            await InAppNotificationService(self.session).create_user_account_status_notification(
+                user,
+                recipient_user_id=actor_user_id,
+                actor_role_codes=actor_role_codes,
+                target_role_codes={new_role_code} if new_role_code else None,
+                is_active=payload.is_active,
             )
 
         await self.session.commit()

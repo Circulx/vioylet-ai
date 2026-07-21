@@ -6,10 +6,12 @@ import { Button } from "@/components/ui/button";
 import TenantForm from "@/components/tenants/TenantForm";
 import { useGetTenantData, useGetTenantUsageSummary, useGetTenantUsers } from "@/hooks/tenantAdmins/useGetTenants";
 import { useUpdateTenantAdmin, useUploadTenantLogo } from "@/hooks/tenantAdmins/useUpdateTenant";
+import { useGetMe } from "@/hooks/useUser";
 import { fileToDataUrl } from "@/lib/file-utils";
 import { mapTenantFormToUpdateRequest, mapTenantSummaryToForm } from "@/lib/tenant-mappers";
 import type { TenantFormData } from "@/types/tenant.types";
 import { formatZodErrors, type FormErrors, tenantSchema } from "@/zod/tenantManagement";
+import { toast } from "@/components/ui/use-toast";
 
 export default function EditTenantPage() {
   const params = useParams<{ id: string }>();
@@ -18,6 +20,7 @@ export default function EditTenantPage() {
   const { data: tenant, isLoading } = useGetTenantData(tenantId);
   const { data: usage } = useGetTenantUsageSummary(tenantId);
   const { data: users } = useGetTenantUsers(tenantId);
+  const { data: currentUser } = useGetMe();
   const { mutateAsync: updateTenant, isPending } = useUpdateTenantAdmin();
   const { mutateAsync: uploadTenantLogo, isPending: isUploadingLogo } = useUploadTenantLogo();
 
@@ -71,6 +74,21 @@ export default function EditTenantPage() {
         },
       });
     }
+    const platformOwnerUpdatedAdminProfile = Boolean(
+      currentUser?.role === "PLATFORM_OWNER" &&
+      initialForm &&
+      (
+        validation.data.admin.name !== initialForm.admin.name ||
+        validation.data.admin.email !== initialForm.admin.email ||
+        validation.data.admin.phone !== initialForm.admin.phone
+      ),
+    );
+    toast({
+      title: platformOwnerUpdatedAdminProfile
+        ? "Your profile has been updated successfully."
+        : "Tenant details have been updated successfully.",
+      variant: "success",
+    });
     router.push(`/tenants/${tenantId}`);
   };
 

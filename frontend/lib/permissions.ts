@@ -16,7 +16,7 @@ export const ROLE_PERMISSIONS: PermissionMap = {
   },
 
   TENANT_USER: {
-    BRAND_SPACE: ["VIEW"],
+    BRAND_SPACE: ["CREATE", "EDIT", "DELETE", "VIEW"],
   },
 
   BRAND_USER: {

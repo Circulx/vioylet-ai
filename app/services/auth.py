@@ -29,6 +29,7 @@ from app.schemas.auth import (
     TwoFactorSetupResponse,
 )
 from app.services.email import EmailService
+from app.services.notification import InAppNotificationService
 
 
 class AuthService:
@@ -197,9 +198,12 @@ class AuthService:
         user = await self.users.get(activation.user_id)
         if not user:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid activation token")
+        was_already_activated = bool(user.is_activated)
         user.hashed_password = hash_password(password)
         user.is_activated = True
         activation.used_at = datetime.now(timezone.utc)
+        if not was_already_activated:
+            await InAppNotificationService(self.session).create_activation_notifications(user)
         await self.session.commit()
         access = create_access_token(user.id, extra={"tenant_id": str(user.tenant_id) if user.tenant_id else None})
         refresh = create_refresh_token(user.id, extra={"tenant_id": str(user.tenant_id) if user.tenant_id else None})
@@ -245,20 +249,26 @@ class AuthService:
         user = await self.users.get(user_id)
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        profile_changed = False
         if full_name is not None:
+            profile_changed = profile_changed or full_name != user.full_name
             user.full_name = full_name
         if email is not None and email != user.email:
             existing = await self.users.get_by_email(email)
             if existing and existing.id != user.id:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email address is already in use")
+            profile_changed = True
             user.email = email
         if phone_number is not None:
+            profile_changed = profile_changed or phone_number != user.phone_number
             user.phone_number = phone_number
         if notifications_enabled is not None:
             user.metadata_json = {
                 **(user.metadata_json or {}),
                 "notifications_enabled": notifications_enabled,
             }
+        if profile_changed:
+            await InAppNotificationService(self.session).create_own_profile_updated_notification(user)
         await self.session.commit()
         await self.session.refresh(user)
         return user
@@ -272,6 +282,7 @@ class AuthService:
         if not verify_password(current_password, user.hashed_password):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is invalid")
         user.hashed_password = hash_password(new_password)
+        await InAppNotificationService(self.session).create_password_changed_notification(user)
         await self.session.commit()
         return PasswordResetResponse(message="Password updated successfully.")
 

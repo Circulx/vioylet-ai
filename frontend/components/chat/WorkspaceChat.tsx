@@ -26,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { toast } from "@/components/ui/use-toast";
 import { SurfaceCard, UsageRing } from "@/components/common/DesignPrimitives";
 import type {
     AssetReference,
@@ -33,6 +34,7 @@ import type {
     ChatMessageResponse,
     ChatSessionResponse,
     GenerationDecision,
+    ImageEditVariant,
     ImageEditStateResponse,
     KnowledgeAssetResponse,
     StudioPanelSelection,
@@ -68,7 +70,6 @@ import { FormField } from "../brandSpaces/tabs/FormFields";
 import Image from "next/image";
 import { AUDIENCE_OPTIONS } from "@/lib/brand-space-options";
 import { Label } from "../ui/label";
-import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 
 type WorkspaceChatProps = { brandKey: string };
 type Platform = "instagram" | "linkedin" | "x" | "youtube_thumbnail";
@@ -83,13 +84,7 @@ const platformLabels: Record<Platform, string> = {
     youtube_thumbnail: "YouTube",
 };
 const fileTypeOptions: FileType[] = ["doc", "pdf", "jpg", "png"];
-const imageEditTargetOptions = [
-    "Background",
-    "Text",
-    "Color",
-    "Logo placement",
-    "Layout",
-];
+const MAX_IMAGE_EDITS_PER_IMAGE = 3;
 const campaignGoalOptions = [
     "Brand Awareness",
     "Authority Building",
@@ -117,6 +112,12 @@ function canEnhancePromptText(value: string) {
 const ENHANCE_PROMPT_FALLBACK = "Create a LinkedIn thought leadership post explaining why investors should consider bonds as part of a diversified portfolio.";
 
 type EnhancePromptMode = "workspace" | "composer";
+
+type EditedImageOverride = {
+    asset: AssetReference;
+    previewStyle?: Record<string, string>;
+    variantId: string;
+};
 
 function hasEnhanceableSentence(value: string) {
     const words = value.trim().split(/\s+/).filter(Boolean);
@@ -573,6 +574,56 @@ function downloadAsset(asset: AssetReference, filename: string) {
     triggerDownload(downloadUrlWithFilename(downloadUrl, filename), filename);
 }
 
+function loadImageFromUrl(url: string) {
+    return new Promise<HTMLImageElement>((resolve, reject) => {
+        const image = document.createElement("img");
+        image.onload = () => resolve(image);
+        image.onerror = () => reject(new Error("Selected image could not be loaded."));
+        image.src = url;
+    });
+}
+
+async function downloadAssetAsPng(asset: AssetReference, filename: string, filter?: string) {
+    if (!asset.asset_url) {
+        throw new Error("Selected image is not ready to download.");
+    }
+    const response = await fetch(proxiedShareAssetUrl(asset.asset_url), { credentials: "same-origin" });
+    if (!response.ok) {
+        throw new Error("Selected image could not be loaded for download.");
+    }
+    const sourceBlob = await response.blob();
+    const sourceUrl = URL.createObjectURL(sourceBlob);
+    try {
+        const image = await loadImageFromUrl(sourceUrl);
+        const canvas = document.createElement("canvas");
+        canvas.width = image.naturalWidth || image.width;
+        canvas.height = image.naturalHeight || image.height;
+        const context = canvas.getContext("2d");
+        if (!context) {
+            throw new Error("Selected image could not be prepared for download.");
+        }
+        context.filter = filter || "none";
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        const pngBlob = await new Promise<Blob>((resolve, reject) => {
+            canvas.toBlob((blob) => {
+                if (blob) {
+                    resolve(blob);
+                    return;
+                }
+                reject(new Error("Selected image could not be prepared for download."));
+            }, "image/png");
+        });
+        const downloadUrl = URL.createObjectURL(pngBlob);
+        try {
+            triggerDownload(downloadUrl, filename);
+        } finally {
+            window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+        }
+    } finally {
+        URL.revokeObjectURL(sourceUrl);
+    }
+}
+
 
 function proxiedShareAssetUrl(assetUrl: string) {
     try {
@@ -934,11 +985,12 @@ function GeneratedImageViewer({
     const [isPreparingShare, setIsPreparingShare] = useState(false);
     const [shareError, setShareError] = useState("");
     const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
-    const [editTarget, setEditTarget] = useState(imageEditTargetOptions[0]);
     const [editInstruction, setEditInstruction] = useState("");
     const [imageEditState, setImageEditState] = useState<ImageEditStateResponse | null>(null);
     const [selectedEditVariantId, setSelectedEditVariantId] = useState("original");
     const [editError, setEditError] = useState("");
+    const [isDownloadingEditImage, setIsDownloadingEditImage] = useState(false);
+    const [editedImageByIndex, setEditedImageByIndex] = useState<Record<number, EditedImageOverride>>({});
     const loadImageEditState = useImageEditState(brandId);
     const applyImageEdit = useApplyImageEdit(brandId);
     const createReviewLink = useCreateShareLink(brandId);
@@ -952,7 +1004,29 @@ function GeneratedImageViewer({
                 .filter((asset) => Boolean(asset.resolvedUrl)),
         [assets],
     );
+    const displayImageAssets = useMemo(
+        () =>
+            imageAssets.map((asset, index) => {
+                const override = editedImageByIndex[index];
+                if (!override?.asset.asset_url) {
+                    return { ...asset, previewStyle: undefined as Record<string, string> | undefined };
+                }
+                return {
+                    ...asset,
+                    ...override.asset,
+                    resolvedUrl: override.asset.asset_url,
+                    previewStyle: override.previewStyle,
+                };
+            }),
+        [editedImageByIndex, imageAssets],
+    );
+    const imageAssetSignature = useMemo(
+        () => imageAssets.map((asset) => `${asset.asset_id}:${asset.asset_url || ""}:${asset.storage_path || ""}`).join("|"),
+        [imageAssets],
+    );
     const activeAsset = imageAssets[Math.min(activeIndex, Math.max(imageAssets.length - 1, 0))];
+    const activeDisplayAsset = displayImageAssets[Math.min(activeIndex, Math.max(displayImageAssets.length - 1, 0))];
+    const activeEditedImage = editedImageByIndex[activeIndex];
     const sourceAssetForEdit = useMemo<AssetReference | null>(() => activeAsset ? {
         asset_id: activeAsset.asset_id,
         mime_type: activeAsset.mime_type,
@@ -966,11 +1040,13 @@ function GeneratedImageViewer({
     const sharePreparingNotice = `${fileType.toUpperCase()} file is being prepared.`;
     const docShareFallbackNotice = "Word document shared as a link. The recipient can download the DOC file.";
     const shareLinkCopiedNotice = "Share link copied.";
+    const shareDownloadFallbackNotice = `${fileType.toUpperCase()} file downloaded.`;
     const isSharePreparingNotice = shareError.startsWith(sharePreparingNotice);
     const isShareNotice =
         isSharePreparingNotice ||
         shareError.startsWith(docShareFallbackNotice) ||
-        shareError.startsWith(shareLinkCopiedNotice);
+        shareError.startsWith(shareLinkCopiedNotice) ||
+        shareError.startsWith(shareDownloadFallbackNotice);
     const platformShareHint = useMemo(() => {
         if (typeof navigator === "undefined" || !navigator.share) {
             return "Native sharing is not available in this browser. Use Download or Copy Link instead.";
@@ -991,12 +1067,11 @@ function GeneratedImageViewer({
             [
                 contentVersionId,
                 fileType,
-                activeIndex,
                 sourcePrompt,
                 ...assets.map((asset) => `${asset.asset_url || ""}:${asset.storage_path || ""}:${asset.mime_type || ""}`),
                 ...existingExportAssets.map((asset) => `${asset.asset_url || ""}:${asset.storage_path || ""}:${asset.mime_type || ""}`),
             ].join("|"),
-        [activeIndex, assets, contentVersionId, existingExportAssets, fileType, sourcePrompt],
+        [assets, contentVersionId, existingExportAssets, fileType, sourcePrompt],
     );
     const prepareShareFiles = useCallback(async () => {
         if (preparedShareRef.current?.key === shareCacheKey) {
@@ -1010,22 +1085,19 @@ function GeneratedImageViewer({
         }
         const promise = (async () => {
             setIsPreparingShare(true);
-            if (!contentVersionId) {
-                throw new Error("Generated content is not ready to share yet.");
-            }
             const matchingExistingAssets = existingExportAssets.filter((asset) => assetMatchesFileType(asset, fileType) && Boolean(asset.asset_url));
-            const refreshedAssets = matchingExistingAssets.length
-                ? []
-                : (await onExportForType(contentVersionId, fileType)).filter((asset) => assetMatchesFileType(asset, fileType) && Boolean(asset.asset_url));
-            const selectedFormatAssets = sortAssetsBySequence(matchingExistingAssets.length ? matchingExistingAssets : refreshedAssets);
-            if (!selectedFormatAssets.length) {
-                throw new Error(`No ${fileType.toUpperCase()} asset is available to share. Please export or regenerate this format first.`);
+            let refreshedAssets: AssetReference[] = [];
+            if (!matchingExistingAssets.length && contentVersionId) {
+                refreshedAssets = (await onExportForType(contentVersionId, fileType)).filter((asset) => assetMatchesFileType(asset, fileType) && Boolean(asset.asset_url));
             }
-            const assetsToShare = fileType === "jpg" || fileType === "png"
-                ? (selectedFormatAssets[activeIndex] ? [selectedFormatAssets[activeIndex]] : [])
-                : selectedFormatAssets;
-            if (!assetsToShare.length || assetsToShare.some((asset) => !assetMatchesFileType(asset, fileType) || !asset.asset_url)) {
-                throw new Error(`Selected ${fileType.toUpperCase()} asset is not available for sharing.`);
+            const fallbackImageAssets = assets.filter((asset) => asset.mime_type.startsWith("image/") && Boolean(asset.asset_url));
+            const selectedFormatAssets = sortAssetsBySequence(matchingExistingAssets.length ? matchingExistingAssets : refreshedAssets);
+            const assetsToShare = selectedFormatAssets.length ? selectedFormatAssets : sortAssetsBySequence(dedupeImageAssets(fallbackImageAssets));
+            if (!assetsToShare.length) {
+                throw new Error("No generated image is available to share yet.");
+            }
+            if (assetsToShare.some((asset) => !asset.asset_url)) {
+                throw new Error("Selected generated image is not available for sharing.");
             }
             const files = await Promise.all(
                 assetsToShare.map((asset, index) => assetToShareFile(
@@ -1048,7 +1120,7 @@ function GeneratedImageViewer({
             }
             setIsPreparingShare(false);
         }
-    }, [activeIndex, contentVersionId, existingExportAssets, fileType, onExportForType, shareCacheKey, sourcePrompt]);
+    }, [assets, contentVersionId, existingExportAssets, fileType, onExportForType, shareCacheKey, sourcePrompt]);
     useEffect(() => {
         if (preparedShareRef.current?.key !== shareCacheKey) {
             preparedShareRef.current = null;
@@ -1058,6 +1130,9 @@ function GeneratedImageViewer({
         }
         setShareError("");
     }, [shareCacheKey]);
+    useEffect(() => {
+        setEditedImageByIndex({});
+    }, [contentVersionId, imageAssetSignature]);
 
     if (!activeAsset) {
         return null;
@@ -1066,11 +1141,19 @@ function GeneratedImageViewer({
     const handleSave = async () => {
         setIsSaving(true);
         try {
+            if (activeEditedImage?.asset.asset_url) {
+                await downloadAssetAsPng(
+                    activeEditedImage.asset,
+                    `${filenameTopicFromPrompt(sourcePrompt)}-edited.png`,
+                    activeEditedImage.previewStyle?.filter,
+                );
+                return;
+            }
             const matchingExistingAssets = existingExportAssets.filter((asset) => assetMatchesFileType(asset, fileType));
             const exportedAssets = matchingExistingAssets.length || !contentVersionId ? matchingExistingAssets : await onExport(contentVersionId);
             const downloadableAssets = exportedAssets.filter((asset) => Boolean(asset.asset_url));
             if (!downloadableAssets.length) {
-                await downloadAsset(activeAsset, generatedDownloadFilename(sourcePrompt, activeAsset));
+                await downloadAsset(activeDisplayAsset || activeAsset, generatedDownloadFilename(sourcePrompt, activeDisplayAsset || activeAsset));
                 return;
             }
             if (fileType === "jpg" || fileType === "png") {
@@ -1102,6 +1185,10 @@ function GeneratedImageViewer({
             title: `${title} Review`,
             allow_external_comments: true,
         });
+        toast({
+            title: "Review link created successfully.",
+            variant: "success",
+        });
         const reviewUrl = `${window.location.origin}/review/${response.token}`;
         reviewShareRef.current = { contentVersionId, url: reviewUrl };
         return reviewUrl;
@@ -1123,6 +1210,18 @@ function GeneratedImageViewer({
     const handleDownloadFallback = async () => {
         setShareError("");
         await handleSave();
+    };
+
+    const downloadPreparedShareAssets = (preparedShare: { files: File[] }) => {
+        preparedShare.files.forEach((file) => {
+            const downloadUrl = URL.createObjectURL(file);
+            try {
+                triggerDownload(downloadUrl, file.name);
+            } finally {
+                window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+            }
+        });
+        setShareError(shareDownloadFallbackNotice);
     };
 
     const handleOpenComments = (event?: ReactMouseEvent<HTMLButtonElement>) => {
@@ -1147,6 +1246,10 @@ function GeneratedImageViewer({
             },
             {
                 onSuccess: (response) => {
+                    toast({
+                        title: "Review link created successfully.",
+                        variant: "success",
+                    });
                     const reviewUrl = `${window.location.origin}/review/${response.token}`;
                     if (reviewTab && !reviewTab.closed) {
                         reviewTab.location.href = reviewUrl;
@@ -1172,48 +1275,55 @@ function GeneratedImageViewer({
         setShareError("");
         try {
             if (!navigator.share) {
-                throw new Error("Native sharing is not available in this browser. Use Download instead.");
+                const preparedShare = await prepareShareFiles();
+                if (!preparedShare.files.length) {
+                    throw new Error(`Selected ${fileType.toUpperCase()} asset is not available for sharing.`);
+                }
+                downloadPreparedShareAssets(preparedShare);
+                setShareError(shareDownloadFallbackNotice);
+                return;
             }
             setIsSharing(true);
             const preparedShare = await prepareShareFiles();
             if (!preparedShare.files.length) {
                 throw new Error(`Selected ${fileType.toUpperCase()} asset is not available for sharing.`);
             }
-            const reviewUrl = await getReviewShareLink();
-            const shareDataWithLink: ShareData = {
-                title,
-                text: `Review and comment on ${title}`,
-                url: reviewUrl,
-                files: preparedShare.files,
-            };
-            const fileOnlyShareData: ShareData = {
+            const shareData: ShareData = {
                 title,
                 files: preparedShare.files,
             };
-            const canShareWithLink = typeof navigator.canShare !== "function" || navigator.canShare(shareDataWithLink);
-            const shareData = canShareWithLink ? shareDataWithLink : fileOnlyShareData;
             if (typeof navigator.canShare === "function" && !navigator.canShare(shareData)) {
                 throw new Error(`This browser cannot share the selected ${fileType.toUpperCase()} file. Use Download instead.`);
             }
-            if (!canShareWithLink) {
-                try {
-                    await copyTextToClipboard(reviewUrl);
-                    setShareError("Preview link copied. Choose an app to share the file.");
-                } catch {
-                    // File sharing should still work even if clipboard access is blocked.
-                }
-            }
             await navigator.share(shareData);
-            if (!canShareWithLink) {
-                try {
-                    await copyTextToClipboard(reviewUrl);
-                    setShareError("Preview link copied.");
-                } catch {
-                    // Ignore clipboard failures after native sharing completes.
-                }
-            }
         } catch (error) {
             if (error instanceof DOMException && error.name === "AbortError") {
+                return;
+            }
+            if (error instanceof DOMException && error.name === "NotAllowedError") {
+                const preparedShare = preparedShareRef.current?.key === shareCacheKey
+                    ? {
+                        files: preparedShareRef.current.files,
+                        assets: preparedShareRef.current.assets,
+                    }
+                    : null;
+                if (preparedShare) {
+                    const shareData: ShareData = {
+                        title,
+                        files: preparedShare.files,
+                    };
+                    if (typeof navigator.canShare !== "function" || navigator.canShare(shareData)) {
+                        try {
+                            await navigator.share(shareData);
+                            return;
+                        } catch (retryError) {
+                            if (retryError instanceof DOMException && retryError.name === "AbortError") {
+                                return;
+                            }
+                        }
+                    }
+                }
+                setShareError(`${fileType.toUpperCase()} file is ready, but the browser blocked native sharing. Please click Share again.`);
                 return;
             }
             setShareError(error instanceof Error ? error.message : `Could not share selected ${fileType.toUpperCase()} file.`);
@@ -1223,12 +1333,66 @@ function GeneratedImageViewer({
     };
 
 
-    const editVariants = imageEditState?.variants || [];
+    const imageEditStateForActiveAsset = imageEditState?.source_asset_id === sourceAssetForEdit?.asset_id ? imageEditState : null;
+    const editVariants = imageEditStateForActiveAsset?.variants || [];
     const selectedEditVariant = editVariants.find((variant) => variant.id === selectedEditVariantId) || editVariants[0] || null;
+    const completedImageEditCount = editVariants.filter((variant) => !variant.is_original).length;
+    const remainingImageEditCount = Math.max(MAX_IMAGE_EDITS_PER_IMAGE - completedImageEditCount, 0);
+    const hasReachedImageEditLimit = completedImageEditCount >= MAX_IMAGE_EDITS_PER_IMAGE;
+    const imageEditLimitNotice = hasReachedImageEditLimit
+        ? "Edit limit reached. This image already has 3 edits."
+        : `You have up to ${MAX_IMAGE_EDITS_PER_IMAGE} edits available for this image. ${remainingImageEditCount} ${remainingImageEditCount === 1 ? "edit" : "edits"} remaining.`;
+
+    const applyEditVariantToChat = (variant: ImageEditVariant | null | undefined) => {
+        setEditedImageByIndex((current) => {
+            const next = { ...current };
+            if (!variant || variant.is_original) {
+                delete next[activeIndex];
+                return next;
+            }
+            next[activeIndex] = {
+                asset: variant.asset,
+                previewStyle: variant.preview_style,
+                variantId: variant.id,
+            };
+            return next;
+        });
+    };
+
+    const handleSelectEditVariant = (variant: ImageEditVariant) => {
+        setSelectedEditVariantId(variant.id);
+        applyEditVariantToChat(variant);
+    };
+
+    const handleDownloadSelectedEditVariant = async () => {
+        if (!selectedEditVariant?.asset.asset_url) {
+            setEditError("No image variant is ready to download.");
+            return;
+        }
+        setEditError("");
+        setIsDownloadingEditImage(true);
+        try {
+            const variantLabel = selectedEditVariant.label
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, "-")
+                .replace(/(^-|-$)/g, "") || "selected";
+            await downloadAssetAsPng(
+                selectedEditVariant.asset,
+                `${filenameTopicFromPrompt(sourcePrompt)}-${variantLabel}.png`,
+                selectedEditVariant.preview_style?.filter,
+            );
+        } catch (error) {
+            setEditError(error instanceof Error ? error.message : "Could not download selected image.");
+        } finally {
+            setIsDownloadingEditImage(false);
+        }
+    };
 
     const handleOpenEditDialog = async () => {
         setIsEditDialogOpen(true);
         setEditError("");
+        setImageEditState(null);
+        setSelectedEditVariantId("original");
         if (!contentVersionId || !sourceAssetForEdit) {
             setEditError("Generated image is not ready for editing.");
             return;
@@ -1239,7 +1403,9 @@ function GeneratedImageViewer({
                 source_asset: sourceAssetForEdit,
             });
             setImageEditState(state);
-            setSelectedEditVariantId(state.variants[state.variants.length - 1]?.id || "original");
+            const latestVariant = state.variants[state.variants.length - 1] || null;
+            setSelectedEditVariantId(latestVariant?.id || "original");
+            applyEditVariantToChat(latestVariant);
         } catch (error) {
             setEditError(error instanceof Error ? error.message : "Could not load image edits.");
         }
@@ -1256,15 +1422,20 @@ function GeneratedImageViewer({
             setEditError("Generated image is not ready for editing.");
             return;
         }
+        if (hasReachedImageEditLimit) {
+            setEditError("Edit limit reached. This image already has 3 edits.");
+            return;
+        }
         try {
             const state = await applyImageEdit.mutateAsync({
                 content_version_id: contentVersionId,
                 source_asset: sourceAssetForEdit,
-                target: editTarget,
                 instructions,
             });
             setImageEditState(state);
-            setSelectedEditVariantId(state.variants[state.variants.length - 1]?.id || "original");
+            const latestVariant = state.variants[state.variants.length - 1] || null;
+            setSelectedEditVariantId(latestVariant?.id || "original");
+            applyEditVariantToChat(latestVariant);
             setEditInstruction("");
         } catch (error) {
             setEditError(error instanceof Error ? error.message : "Could not apply image edit.");
@@ -1294,11 +1465,16 @@ function GeneratedImageViewer({
             <div className="flex items-center gap-4">
                 <div className="flex min-h-[220px] flex-1 items-center justify-center bg-[#EEF0F5] p-4">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={activeAsset.resolvedUrl} alt="Generated image" className="max-h-[360px] w-auto max-w-full object-contain" />
+                    <img
+                        src={activeDisplayAsset?.resolvedUrl || activeAsset.resolvedUrl}
+                        alt="Generated image"
+                        className="max-h-[360px] w-auto max-w-full object-contain"
+                        style={{ filter: activeDisplayAsset?.previewStyle?.filter || undefined }}
+                    />
                 </div>
-                {imageAssets.length > 1 ? (
+                {displayImageAssets.length > 1 ? (
                     <div className="flex max-h-[320px] w-[78px] shrink-0 flex-col gap-3 overflow-y-auto pr-1">
-                        {imageAssets.map((asset, index) => (
+                        {displayImageAssets.map((asset, index) => (
                             <button
                                 key={asset.asset_id || asset.storage_path || asset.asset_url || index}
                                 type="button"
@@ -1307,7 +1483,12 @@ function GeneratedImageViewer({
                                     }`}
                             >
                                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img src={asset.resolvedUrl} alt={`Generated image ${index + 1}`} className="h-14 w-full object-cover" />
+                                <img
+                                    src={asset.resolvedUrl}
+                                    alt={`Generated image ${index + 1}`}
+                                    className="h-14 w-full object-cover"
+                                    style={{ filter: asset.previewStyle?.filter || undefined }}
+                                />
                             </button>
                         ))}
                     </div>
@@ -1348,7 +1529,7 @@ function GeneratedImageViewer({
                     aria-label={isSharing || isPreparingShare ? "Preparing share" : "Share"}
                     title={isSharing || isPreparingShare ? "Preparing share" : "Share"}
                     onClick={() => void handleShare()}
-                    disabled={isSharing || isPreparingShare}
+                    disabled={isSharing}
                     className={actionButtonClass}
                 >
                     {isSharing || isPreparingShare ? <Loader2 className="h-4 w-4 animate-spin" /> : <Image src={"/actions_icons/share_black.svg"} alt="share" width={16} height={16} />}
@@ -1368,26 +1549,9 @@ function GeneratedImageViewer({
                         </DialogTitle>
                     </DialogHeader>
                     <div className="space-y-4 px-5 ">
-                        <div className="space-y-2">
-                            <Label className="block text-sm font-semibold text-[#303245]">
-                                Target
-                            </Label>
-                            <Select value={editTarget} onValueChange={setEditTarget}>
-                                <SelectTrigger className="w-full">
-                                    <SelectValue placeholder="Select target" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectGroup>
-                                        {imageEditTargetOptions.map((option) => (
-                                            <SelectItem key={option} value={option} className="text-sm">{option}</SelectItem>
-                                        ))}
-                                    </SelectGroup>
-                                </SelectContent>
-                            </Select>
-
-                        </div>
-
-
+                        <p className={`text-[11px] font-medium ${hasReachedImageEditLimit ? "text-red-600" : "text-[#6F7282]"}`} role="status">
+                            {imageEditLimitNotice}
+                        </p>
                         <div>
                             <p className="mb-2 text-sm font-semibold text-[#303245]">Selected Section</p>
                             <div className="mb-3 flex flex-wrap items-center gap-2 bg-[#EDEEF0] w-fit p-2">
@@ -1395,7 +1559,7 @@ function GeneratedImageViewer({
                                     <Button
                                         key={variant.id}
                                         type="button"
-                                        onClick={() => setSelectedEditVariantId(variant.id)}
+                                        onClick={() => handleSelectEditVariant(variant)}
                                         className={`h-7 rounded-[3px] px-3 text-xs font-semibold transition ${selectedEditVariant?.id === variant.id ? "bg-[#34258B] text-white" : "bg-[#EDEEF0] text-[#3D4050] hover:bg-[#E8EAF2]"}`}
                                     >
                                         {variant.label}
@@ -1404,7 +1568,19 @@ function GeneratedImageViewer({
                                     <span className="text-[11px] text-[#6F7282]">Open image edit state to see variants.</span>
                                 )}
                             </div>
-                            <div className="w-full flex min-h-[280px] items-center justify-center border border-primary bg-[#F7F8FB] p-4">
+                            <div className="relative w-full flex min-h-[280px] items-center justify-center border border-primary bg-[#F7F8FB] p-4">
+                                {selectedEditVariant?.asset.asset_url ? (
+                                    <Button
+                                        type="button"
+                                        aria-label={isDownloadingEditImage ? "Downloading selected image" : "Download selected image"}
+                                        title={isDownloadingEditImage ? "Downloading selected image" : "Download selected image"}
+                                        onClick={() => void handleDownloadSelectedEditVariant()}
+                                        disabled={isDownloadingEditImage}
+                                        className={`${actionButtonClass} absolute right-3 top-3 z-10`}
+                                    >
+                                        {isDownloadingEditImage ? <Loader2 className="h-4 w-4 animate-spin" /> : <Image src={"/actions_icons/download.svg"} alt="download" width={16} height={16} />}
+                                    </Button>
+                                ) : null}
                                 {selectedEditVariant?.asset.asset_url ? (
                                     // eslint-disable-next-line @next/next/no-img-element
                                     <img
@@ -1445,7 +1621,7 @@ function GeneratedImageViewer({
                             type="button"
                             className="h-10 rounded-[3px] bg-primary/72 px-5 text-sm font-semibold text-white hover:bg-primary/90"
                             onClick={() => void handleApplyImageEdit()}
-                            disabled={applyImageEdit.isPending || !editInstruction.trim()}
+                            disabled={loadImageEditState.isPending || applyImageEdit.isPending || !editInstruction.trim() || hasReachedImageEditLimit}
                         >
                             <Image src={"/actions_icons/shine.svg"} alt="edit" width={16} height={16} />
                             {applyImageEdit.isPending ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
@@ -1781,7 +1957,6 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
     const activeGenerationControllerRef = useRef<AbortController | null>(null);
     const activeGenerationSessionRef = useRef<string>("");
     const exportAssetCacheRef = useRef(new Map<string, AssetReference[]>());
-    const exportWarmupRef = useRef(new Set<string>());
 
     const sizeOption = useMemo(
         () => sizeOptionsByPlatform[studioPlatform].find((entry) => entry.label === studioSizeLabel) || sizeOptionsByPlatform[studioPlatform][0],
@@ -1906,25 +2081,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
             }
         }
 
-        let cancelled = false;
-        void (async () => {
-            for (const fileType of fileTypeOptions) {
-                const cacheKey = `${contentVersionId}:${fileType}`;
-                if (cancelled || exportAssetCacheRef.current.get(cacheKey)?.length || exportWarmupRef.current.has(cacheKey)) {
-                    continue;
-                }
-                exportWarmupRef.current.add(cacheKey);
-                try {
-                    await exportGeneratedAssetsForType(contentVersionId, fileType);
-                } catch {
-                    exportWarmupRef.current.delete(cacheKey);
-                }
-            }
-        })();
-        return () => {
-            cancelled = true;
-        };
-    }, [exportGeneratedAssetsForType, orderedMessages]);
+    }, [orderedMessages]);
     const normalizedChatSearchQuery = chatSearchQuery.trim().toLowerCase();
     const chatSearchMatches = useMemo(() => {
         if (!normalizedChatSearchQuery) {

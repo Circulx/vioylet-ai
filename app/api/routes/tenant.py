@@ -66,7 +66,7 @@ async def list_tenants(session: AsyncSession = Depends(get_db_session)) -> list[
 @router.get("/{tenant_id}", response_model=TenantSummaryResponse)
 async def get_tenant(
     tenant_id: UUID,
-    _: CurrentPrincipal = Depends(require_roles(RoleCode.SUPER_ADMIN, RoleCode.TENANT_ADMIN)),
+    _: CurrentPrincipal = Depends(require_roles(RoleCode.SUPER_ADMIN, RoleCode.TENANT_ADMIN, RoleCode.TENANT_USER)),
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> TenantSummaryResponse:
@@ -106,7 +106,7 @@ async def update_tenant(
     # the response schema.
     assert_tenant_access(principal, tenant_id)
     service = TenantService(session)
-    await service.update_tenant(tenant_id, payload)
+    await service.update_tenant(tenant_id, payload, principal.role_codes)
     summary = await service.get_tenant_summary(tenant_id)
     return TenantSummaryResponse.model_validate(summary)
 
@@ -115,7 +115,7 @@ async def update_tenant(
 async def update_brand_usage_targets(
     tenant_id: UUID,
     payload: TenantBrandUsageTargetsUpdate,
-    _: CurrentPrincipal = Depends(require_roles(RoleCode.SUPER_ADMIN, RoleCode.TENANT_ADMIN)),
+    _: CurrentPrincipal = Depends(require_roles(RoleCode.SUPER_ADMIN, RoleCode.TENANT_ADMIN, RoleCode.TENANT_USER)),
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> TenantBrandUsageTargetsResponse:
@@ -240,7 +240,7 @@ async def update_user(
             detail="You cannot change your own admin role.",
         )
     service = TenantService(session)
-    user = await service.update_tenant_user(tenant_id, user_id, payload)
+    user = await service.update_tenant_user(tenant_id, user_id, payload, principal.user_id, principal.role_codes)
     return TenantUserResponse.model_validate(await service.build_user_summary(user))
 
 
@@ -255,7 +255,7 @@ async def deactivate_user(
     # Serves the deactivate user endpoint; it uses FastAPI dependencies, delegates work to services, and returns
     # the response schema.
     assert_tenant_access(principal, tenant_id)
-    await TenantService(session).deactivate_user(tenant_id, user_id)
+    await TenantService(session).deactivate_user(tenant_id, user_id, principal.user_id, principal.role_codes)
     return MessageResponse(message="User deactivated")
 
 

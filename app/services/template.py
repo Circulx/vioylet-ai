@@ -18,7 +18,7 @@ from app.ai.template_vision import TemplateVisionAnalyzer
 from app.core.enums import JobType, UsageMetricCode
 from app.core.exceptions import NotFoundError
 from app.core.studio import resolve_studio_panel_defaults
-from app.integrations.object_storage import LocalObjectStorage
+from app.integrations.object_storage import get_object_storage
 from app.models.knowledge import Template, TemplateMetadata
 from app.repositories.brand import BrandSpaceRepository
 from app.repositories.knowledge import TemplateMetadataRepository, TemplateRepository
@@ -113,7 +113,7 @@ class TemplateService:
         self.templates = TemplateRepository(session)
         self.metadata = TemplateMetadataRepository(session)
         self.brands = BrandSpaceRepository(session)
-        self.storage = LocalObjectStorage()
+        self.storage = get_object_storage()
         self.jobs = JobService(session)
         self.vision = TemplateVisionAnalyzer()
         self.brand_asset_analyzer = BrandAssetAnalyzer()

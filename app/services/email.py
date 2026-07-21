@@ -43,6 +43,11 @@ class EmailService:
         base_url = self.settings.frontend_base_url.rstrip("/")
         return f"{base_url}/auth/activate?token={quote(token, safe='')}"
 
+    def build_review_link(self, token: str) -> str:
+        # Builds the public review thread URL used in comment notification emails.
+        base_url = self.settings.frontend_base_url.rstrip("/")
+        return f"{base_url}/review/{quote(token, safe='')}"
+
     def send_activation_email(
         self,
         recipient_email: str,
@@ -146,6 +151,37 @@ class EmailService:
             'background:#3C2F8F;color:#ffffff;text-decoration:none;border-radius:8px;">Reset Password</a></p>'
             f"<p>If the button does not work, open this link:</p><p>{reset_link}</p>"
             "<p>If you did not request a password reset, you can ignore this email.</p>"
+        )
+        return self._send_email(recipient_email, subject, text_body, html_body)
+
+    def send_review_comment_notification_email(
+        self,
+        recipient_email: str,
+        commenter_name: str,
+        comment_text: str,
+        review_link: str,
+        post_title: str | None = None,
+    ) -> EmailDeliveryResult:
+        # Sends a review-thread notice without changing the comment workflow result.
+        title_label = post_title or "Shared image"
+        subject = f"New comment on {title_label}"
+        escaped_commenter_name = escape(commenter_name)
+        escaped_comment_text = escape(comment_text)
+        escaped_title_label = escape(title_label)
+        escaped_review_link = escape(review_link)
+        text_body = (
+            f"{commenter_name} added a new comment on {title_label}.\n\n"
+            f"Comment:\n{comment_text}\n\n"
+            f"Open the review thread:\n{review_link}"
+        )
+        html_body = (
+            f"<p><strong>{escaped_commenter_name}</strong> added a new comment on "
+            f"<strong>{escaped_title_label}</strong>.</p>"
+            f"<p>{escaped_comment_text}</p>"
+            f'<p><a href="{escaped_review_link}" style="display:inline-block;padding:12px 20px;'
+            "background:#3C2F8F;color:#ffffff;text-decoration:none;border-radius:8px;"
+            '">Open Review Thread</a></p>'
+            f"<p>If the button does not work, open this link:</p><p>{escaped_review_link}</p>"
         )
         return self._send_email(recipient_email, subject, text_body, html_body)
 

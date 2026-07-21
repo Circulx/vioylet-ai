@@ -124,9 +124,9 @@ export function LoginForm() {
         {isPending ? 'Signing in...' : 'Access Workspace'}
       </Button>
 
-      <p className="text-base leading-6 text-[#3D3D3D]">
+      {/* <p className="text-base leading-6 text-[#3D3D3D]">
         Secure access to your brand intelligence environment.
-      </p>
+      </p> */}
     </form>
   );
 }

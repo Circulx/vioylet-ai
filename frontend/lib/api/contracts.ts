@@ -31,6 +31,14 @@ export interface CurrentUserResponse {
   extra: Record<string, unknown>;
 }
 
+export interface InAppNotificationResponse {
+  id: UUID;
+  title: string;
+  message: string;
+  created_at: string;
+  unread: boolean;
+}
+
 export interface UiUser {
   id: UUID;
   tenantId?: UUID;
@@ -632,7 +640,7 @@ export interface ImageEditStateRequest {
 }
 
 export interface ImageEditApplyRequest extends ImageEditStateRequest {
-  target: string;
+  target?: string;
   instructions: string;
 }
 export interface AnalyticsResponse {

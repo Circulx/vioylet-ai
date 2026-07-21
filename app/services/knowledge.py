@@ -13,7 +13,7 @@ from app.ai.rag.ocr import OCRService
 from app.ai.rag.retrieval import KnowledgeRetrievalService
 from app.core.enums import AssetLifecycle, JobType, UsageMetricCode
 from app.core.exceptions import NotFoundError
-from app.integrations.object_storage import LocalObjectStorage
+from app.integrations.object_storage import get_object_storage
 from app.models.knowledge import KnowledgeAsset
 from app.repositories.knowledge import KnowledgeAssetRepository
 from app.schemas.knowledge import KnowledgeUploadRequest
@@ -30,7 +30,7 @@ class KnowledgeService:
         # Wires the repositories and helper services this workflow reuses across its public methods.
         self.session = session
         self.assets = KnowledgeAssetRepository(session)
-        self.storage = LocalObjectStorage()
+        self.storage = get_object_storage()
         self.ocr = OCRService()
         self.retrieval = KnowledgeRetrievalService()
         self.jobs = JobService(session)

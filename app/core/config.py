@@ -40,6 +40,10 @@ class Settings(BaseSettings):
 
     object_storage_provider: str = "local"
     object_storage_base_path: str = str(BASE_DIR / "storage")
+    object_storage_cache_path: str = str(BASE_DIR / "storage" / "object_cache")
+    aws_region: str | None = None
+    aws_s3_bucket: str | None = None
+    aws_s3_prefix: str | None = None
     generated_assets_base_url: str = "http://localhost:8000/storage"
     asset_download_base_url: str = "http://localhost:8000/api/v1/storage/download"
     signed_asset_url_ttl_seconds: int = 60 * 30

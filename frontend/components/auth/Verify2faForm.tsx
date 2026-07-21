@@ -78,7 +78,7 @@ const Verify2faForm = () => {
         Back to login
       </button>
 
-      <p className="text-base text-gray-500">Secure access to your brand intelligence environment.</p>
+      {/* <p className="text-base text-gray-500">Secure access to your brand intelligence environment.</p> */}
     </div>
   );
 };

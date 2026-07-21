@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 from io import BytesIO
+import logging
 from pathlib import Path
 import shutil
 from typing import Any
@@ -17,7 +18,7 @@ from app.ai.rag.retrieval import KnowledgeRetrievalService
 from app.core.enums import AssetLifecycle, AssetValidationState, JobType, UsageMetricCode
 from app.core.exceptions import NotFoundError
 from app.db.session import AsyncSessionLocal
-from app.integrations.object_storage import LocalObjectStorage
+from app.integrations.object_storage import get_object_storage
 from app.models.brand_assets import (
     AssetCategoryRouting,
     AssetProcessingStatus,
@@ -67,6 +68,9 @@ from app.utils.image_assets import open_image_asset
 from app.services.usage import UsageLimitService
 
 
+logger = logging.getLogger(__name__)
+
+
 class BrandAssetService:
     # Business layer for brand asset; routes and workers pass validated inputs here and receive domain results
     # back.
@@ -74,7 +78,7 @@ class BrandAssetService:
         # Wires the repositories and helper services this workflow reuses across its public methods.
         self.session = session
         self.assets = KnowledgeAssetRepository(session)
-        self.storage = LocalObjectStorage()
+        self.storage = get_object_storage()
         self.jobs = JobService(session)
         self.usage = UsageLimitService(session)
         self.retrieval = KnowledgeRetrievalService()
@@ -200,7 +204,7 @@ class BrandAssetService:
             status_message="Attachment unsynced and removed from validated brand context.",
         )
         await self.session.commit()
-        await self.validator.refresh_brand_context(brand_space_id)
+        await self._refresh_brand_context_best_effort(brand_space_id)
         await self.session.refresh(asset)
         return asset
 
@@ -217,9 +221,28 @@ class BrandAssetService:
             status_message="Attachment deleted.",
         )
         await self.session.commit()
-        await self.validator.refresh_brand_context(brand_space_id)
+        await self._refresh_brand_context_best_effort(brand_space_id)
         await self.session.refresh(asset)
         return asset
+
+    async def _refresh_brand_context_best_effort(self, brand_space_id: UUID) -> None:
+        # A failed derived-context refresh should not turn a completed file removal into a 500.
+        try:
+            await self.validator.refresh_brand_context(brand_space_id)
+        except Exception as exc:  # noqa: BLE001 - validation touches several optional derived tables
+            logger.warning(
+                "brand context refresh failed after attachment status change for brand %s: %s",
+                brand_space_id,
+                exc,
+                exc_info=True,
+            )
+            try:
+                await self.session.rollback()
+            except Exception:  # noqa: BLE001 - rollback is defensive session cleanup
+                logger.warning(
+                    "session rollback failed after brand context refresh error",
+                    exc_info=True,
+                )
 
     async def reprocess(self, tenant_id: UUID, brand_space_id: UUID, asset_id: UUID) -> KnowledgeAsset:
         # Runs the reprocess service flow and persists the resulting state before returning it to the route or
@@ -1072,19 +1095,36 @@ class BrandAssetService:
         # Internal helper for clear reusable assets; it keeps the public service method focused on orchestration
         # instead of low-level shaping.
         for reusable_asset in await self.reusable_assets.list_by_knowledge_asset(knowledge_asset_id):
-            self.storage.delete(reusable_asset.storage_path)
+            self._delete_storage_object(reusable_asset.storage_path, "reusable brand asset")
         await self.reusable_assets.delete_by_knowledge_asset(knowledge_asset_id)
 
     async def _cleanup_attachment_side_effects(self, asset: KnowledgeAsset) -> None:
         # Internal helper for cleanup attachment side effects; it keeps the public service method focused on
         # orchestration instead of low-level shaping.
-        self.retrieval.delete_asset(str(asset.tenant_id), str(asset.brand_space_id), asset.channel, str(asset.id))
+        self._delete_retrieval_asset(asset)
         await self._clear_reusable_assets(asset.id)
         await self.palette_entries.delete_by_asset(asset.id)
         await self._delete_linked_records(asset.id)
         await self._clear_visual_identity_palette_if_orphaned(asset)
         self._delete_attachment_storage_artifacts(asset.storage_path)
         await self.session.flush()
+
+    def _delete_retrieval_asset(self, asset: KnowledgeAsset) -> None:
+        # Vector cleanup must not block the database delete.
+        try:
+            self.retrieval.delete_asset(
+                str(asset.tenant_id),
+                str(asset.brand_space_id),
+                asset.channel,
+                str(asset.id),
+            )
+        except Exception as exc:  # noqa: BLE001 - provider errors vary by backend
+            logger.warning(
+                "brand attachment vector cleanup failed for asset %s: %s",
+                asset.id,
+                exc,
+                exc_info=True,
+            )
 
     @staticmethod
     def _is_color_palette_attachment(asset: KnowledgeAsset) -> bool:
@@ -1204,9 +1244,20 @@ class BrandAssetService:
         normalized_path = str(storage_path or "").strip()
         if not normalized_path:
             return
+        self._delete_storage_object(normalized_path, "brand attachment")
+
+        if not hasattr(self.storage, "base_path"):
+            return
+
         try:
             absolute_path = Path(self.storage.absolute_path(normalized_path))
-        except ValueError:
+        except (OSError, ValueError) as exc:
+            logger.warning(
+                "brand attachment local artifact cleanup skipped for %s: %s",
+                normalized_path,
+                exc,
+                exc_info=True,
+            )
             return
 
         scratch_root = absolute_path.parent / "_ocr"
@@ -1241,6 +1292,22 @@ class BrandAssetService:
             ]
         )
 
+    def _delete_storage_object(self, storage_path: str | None, label: str) -> None:
+        # Storage cleanup is best-effort because DB state is the source of truth for active attachments.
+        normalized_path = str(storage_path or "").strip()
+        if not normalized_path:
+            return
+        try:
+            self.storage.delete(normalized_path)
+        except Exception as exc:  # noqa: BLE001 - storage providers surface backend-specific errors
+            logger.warning(
+                "%s storage delete failed for %s: %s",
+                label,
+                normalized_path,
+                exc,
+                exc_info=True,
+            )
+
     @staticmethod
     def _remove_storage_target(target: Path) -> None:
         # Internal helper for storage target; it keeps the public service method focused on orchestration
@@ -1256,7 +1323,9 @@ class BrandAssetService:
     def _prune_empty_storage_dirs(self, directories: list[Path]) -> None:
         # Internal helper for prune empty storage dirs; it keeps the public service method focused on
         # orchestration instead of low-level shaping.
-        base_path = self.storage.base_path
+        base_path = getattr(self.storage, "base_path", None)
+        if base_path is None:
+            return
         for directory in directories:
             current = directory
             while current.exists() and current != base_path:

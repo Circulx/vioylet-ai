@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiOrigin } from "@/lib/env";
+import { apiOrigin, serverApiOrigin } from "@/lib/env";
 
 export const dynamic = "force-dynamic";
 
@@ -20,7 +20,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Asset URL is not allowed" }, { status: 400 });
   }
 
-  const response = await fetch(parsedUrl.toString(), { cache: "no-store" });
+  const fetchUrl = new URL(parsedUrl.pathname + parsedUrl.search, serverApiOrigin);
+  const response = await fetch(fetchUrl.toString(), { cache: "no-store" });
   if (!response.ok) {
     return NextResponse.json({ error: "Asset could not be loaded" }, { status: response.status });
   }

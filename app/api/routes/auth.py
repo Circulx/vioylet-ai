@@ -128,7 +128,12 @@ async def change_password(
 ) -> PasswordResetResponse:
     # Serves the change password endpoint; it uses FastAPI dependencies, delegates work to services, and returns
     # the response schema.
-    return await AuthService(session).change_password(principal.user_id, payload.current_password, payload.new_password)
+    return await AuthService(session).change_password(
+        principal.user_id,
+        payload.current_password,
+        payload.new_password,
+        principal.role_codes,
+    )
 
 
 @router.delete("/profile", response_model=MessageResponse)
@@ -170,7 +175,7 @@ async def enable_two_factor(
 ) -> TwoFactorSetupResponse:
     # Serves the enable two factor endpoint; it uses FastAPI dependencies, delegates work to services, and
     # returns the response schema.
-    return await AuthService(session).enable_two_factor(principal.user_id, payload.code)
+    return await AuthService(session).enable_two_factor(principal.user_id, payload.code, principal.role_codes)
 
 
 @router.post("/2fa/disable", response_model=TwoFactorSetupResponse)
@@ -181,7 +186,7 @@ async def disable_two_factor(
 ) -> TwoFactorSetupResponse:
     # Serves the disable two factor endpoint; it uses FastAPI dependencies, delegates work to services, and
     # returns the response schema.
-    return await AuthService(session).disable_two_factor(principal.user_id, payload.code)
+    return await AuthService(session).disable_two_factor(principal.user_id, payload.code, principal.role_codes)
 
 
 @router.post("/2fa/verify", response_model=TokenPairResponse)

@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { Archive, Edit2, Edit3Icon, MoreVertical, NotebookPen, Trash2 } from "lucide-react";
+import { Archive, Edit3Icon, Eye, MoreVertical, NotebookPen, Trash2 } from "lucide-react";
 import { StatusChip } from "@/components/common/DesignPrimitives";
 import {
   DropdownMenu,
@@ -11,7 +11,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { BrandResponse } from "@/lib/api/contracts";
-import { buildBrandEditHref, buildBrandWorkspaceHref } from "@/lib/brand-routing";
+import { buildBrandEditHref, buildBrandViewHref, buildBrandWorkspaceHref } from "@/lib/brand-routing";
 import { resolveBrandLogoUrl } from "@/lib/brand-assets";
 import { Button } from "../ui/button";
 
@@ -26,6 +26,7 @@ type BrandSpacesProps = {
   onArchive?: (item: BrandSpaceListItem) => void;
   onRestore?: (item: BrandSpaceListItem) => void;
   onDelete?: (item: BrandSpaceListItem) => void;
+  canManage?: boolean;
 };
 
 export default function BrandSpaces({
@@ -35,6 +36,7 @@ export default function BrandSpaces({
   onArchive,
   onRestore,
   onDelete,
+  canManage = true,
 }: BrandSpacesProps) {
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -67,38 +69,50 @@ export default function BrandSpaces({
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-44">
-                  {lifecycleState === "draft" ? (
+                  {!canManage ? (
+                    <DropdownMenuItem asChild>
+                      <Link href={buildBrandViewHref(item)}>
+                        <Eye />
+                        View
+                      </Link>
+                    </DropdownMenuItem>
+                  ) : null}
+                  {canManage && lifecycleState === "draft" ? (
                     <DropdownMenuItem onClick={() => onPublish?.(item)}>
                       Make Active
                     </DropdownMenuItem>
                   ) : null}
-                  {lifecycleState === "active" ? (
+                  {canManage && lifecycleState === "active" ? (
                     <DropdownMenuItem onClick={() => onUnpublish?.(item)}>
                         <NotebookPen />
                       Move to Draft
                     </DropdownMenuItem>
                   ) : null}
-                  {lifecycleState !== "archived" ? (
+                  {canManage && lifecycleState !== "archived" ? (
                     <DropdownMenuItem onClick={() => onArchive?.(item)}>
                         <Archive />
                       Archive
                     </DropdownMenuItem>
                   ) : null}
-                  {lifecycleState === "archived" ? (
+                  {canManage && lifecycleState === "archived" ? (
                     <DropdownMenuItem onClick={() => onRestore?.(item)}>
                       Restore
                     </DropdownMenuItem>
                   ) : null}
-                  <DropdownMenuItem asChild>
-                    <Link href={buildBrandEditHref(item)}>
-                        <Edit3Icon />
-                      Edit
-                    </Link>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem variant="destructive" onClick={() => onDelete?.(item)}>
-                  <Trash2 />
-                    Delete
-                  </DropdownMenuItem>
+                  {canManage ? (
+                    <DropdownMenuItem asChild>
+                      <Link href={buildBrandEditHref(item)}>
+                          <Edit3Icon />
+                        Edit
+                      </Link>
+                    </DropdownMenuItem>
+                  ) : null}
+                  {canManage ? (
+                    <DropdownMenuItem variant="destructive" onClick={() => onDelete?.(item)}>
+                    <Trash2 />
+                      Delete
+                    </DropdownMenuItem>
+                  ) : null}
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>

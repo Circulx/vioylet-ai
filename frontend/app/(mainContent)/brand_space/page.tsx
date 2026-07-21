@@ -61,6 +61,7 @@ export default function BrandSpacePage() {
     const restoreBrand = useRestoreBrandMutation();
     const deleteBrand = useDeleteBrandMutation();
     const isAdmin = user?.role === "TENANT_ADMIN";
+    const canManageBrandSpaces = can("BRAND_SPACE", "EDIT") && can("BRAND_SPACE", "DELETE");
     const [activeTab, setActiveTab] = useState<"brand_spaces" | "archive">("brand_spaces");
     const [searchQuery, setSearchQuery] = useState("");
     const [pendingDeleteBrand, setPendingDeleteBrand] = useState<{ id: string; name: string } | null>(null);
@@ -218,6 +219,7 @@ export default function BrandSpacePage() {
                     ) : (
                         <BrandSpaces
                             items={filteredVisibleSpaces}
+                            canManage={canManageBrandSpaces}
                             onPublish={(item) => {
                                 void publishBrandSpace(item);
                             }}

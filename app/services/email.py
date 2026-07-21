@@ -154,6 +154,313 @@ class EmailService:
         )
         return self._send_email(recipient_email, subject, text_body, html_body)
 
+    def send_password_changed_confirmation_email(
+        self,
+        recipient_email: str,
+        recipient_name: str | None,
+    ) -> EmailDeliveryResult:
+        greeting_name = recipient_name or recipient_email
+        escaped_greeting_name = escape(greeting_name)
+        subject = "Your Violyt Password Has Been Changed"
+        text_body = (
+            f"Hello {greeting_name},\n\n"
+            "This is a confirmation that the password for your Violyt account has been changed successfully.\n\n"
+            "If you made this change, no further action is required.\n\n"
+            "If you did not change your password, please contact your administrator immediately and "
+            "secure your account as soon as possible.\n\n"
+            "Regards,\n"
+            "Violyt Team"
+        )
+        html_body = (
+            f"<p>Hello {escaped_greeting_name},</p>"
+            "<p>This is a confirmation that the password for your Violyt account has been changed successfully.</p>"
+            "<p>If you made this change, no further action is required.</p>"
+            "<p>If you did not change your password, please contact your administrator immediately and "
+            "secure your account as soon as possible.</p>"
+            "<p>Regards,<br>Violyt Team</p>"
+        )
+        return self._send_email(recipient_email, subject, text_body, html_body)
+
+    def send_two_factor_security_email(
+        self,
+        recipient_email: str,
+        recipient_name: str | None,
+        *,
+        enabled: bool,
+    ) -> EmailDeliveryResult:
+        # Sends an account-security notice after a confirmed 2FA status change.
+        greeting_name = recipient_name or recipient_email
+        escaped_greeting_name = escape(greeting_name)
+        if enabled:
+            subject = "Two-Factor Authentication Enabled"
+            status_sentence = "Two-factor authentication has been successfully enabled for your Violyt account."
+            protection_sentence = "Your account now has an additional layer of security."
+            unexpected_sentence = (
+                "If you did not enable two-factor authentication, please contact your administrator "
+                "or support team immediately."
+            )
+        else:
+            subject = "Two-Factor Authentication Disabled"
+            status_sentence = "Two-factor authentication has been disabled for your Violyt account."
+            protection_sentence = "Your account is no longer protected by two-factor authentication."
+            unexpected_sentence = (
+                "If you did not disable two-factor authentication, please contact your administrator "
+                "or support team immediately."
+            )
+
+        text_body = (
+            f"Hello {greeting_name},\n\n"
+            f"{status_sentence}\n\n"
+            f"{protection_sentence}\n\n"
+            "If you performed this action, no further action is required.\n\n"
+            f"{unexpected_sentence}\n\n"
+            "Regards,\n"
+            "Violyt Team"
+        )
+        html_body = (
+            f"<p>Hello {escaped_greeting_name},</p>"
+            f"<p>{escape(status_sentence)}</p>"
+            f"<p>{escape(protection_sentence)}</p>"
+            "<p>If you performed this action, no further action is required.</p>"
+            f"<p>{escape(unexpected_sentence)}</p>"
+            "<p>Regards,<br>Violyt Team</p>"
+        )
+        return self._send_email(recipient_email, subject, text_body, html_body)
+
+    def send_account_deactivated_email(
+        self,
+        recipient_email: str,
+        recipient_name: str | None,
+        *,
+        deactivated_by_platform_owner: bool = False,
+    ) -> EmailDeliveryResult:
+        # Sends a user-facing account status notice after an administrator deactivates access.
+        greeting_name = recipient_name or recipient_email
+        escaped_greeting_name = escape(greeting_name)
+        subject = "Your Violyt Account Has Been Deactivated"
+        actor_label = "the Platform Owner" if deactivated_by_platform_owner else "your Tenant Admin"
+        contact_label = "the Platform Owner" if deactivated_by_platform_owner else "your Tenant Administrator"
+        text_body = (
+            f"Hello {greeting_name},\n\n"
+            f"Your Violyt account has been deactivated by {actor_label}.\n\n"
+            "You will no longer be able to access your account until it is reactivated.\n\n"
+            f"If you believe this was done in error, please contact {contact_label}.\n\n"
+            "Regards,\n"
+            "Violyt Team"
+        )
+        html_body = (
+            f"<p>Hello {escaped_greeting_name},</p>"
+            f"<p>Your Violyt account has been deactivated by {escape(actor_label)}.</p>"
+            "<p>You will no longer be able to access your account until it is reactivated.</p>"
+            f"<p>If you believe this was done in error, please contact {escape(contact_label)}.</p>"
+            "<p>Regards,<br>Violyt Team</p>"
+        )
+        return self._send_email(recipient_email, subject, text_body, html_body)
+
+    def send_user_deactivated_confirmation_email(
+        self,
+        recipient_email: str,
+        recipient_name: str | None,
+        deactivated_user_name: str,
+        deactivated_user_role: str,
+    ) -> EmailDeliveryResult:
+        greeting_name = recipient_name or recipient_email
+        escaped_greeting_name = escape(greeting_name)
+        escaped_user_name = escape(deactivated_user_name)
+        escaped_user_role = escape(deactivated_user_role)
+        subject = "User Account Deactivated"
+        text_body = (
+            f"Hello {greeting_name},\n\n"
+            f'"{deactivated_user_name}" ({deactivated_user_role}) has been successfully deactivated.\n\n'
+            "Regards,\n"
+            "Violyt Team"
+        )
+        html_body = (
+            f"<p>Hello {escaped_greeting_name},</p>"
+            f'<p>"{escaped_user_name}" ({escaped_user_role}) has been successfully deactivated.</p>'
+            "<p>Regards,<br>Violyt Team</p>"
+        )
+        return self._send_email(recipient_email, subject, text_body, html_body)
+
+    def send_platform_owner_user_deactivated_email(
+        self,
+        recipient_email: str,
+        recipient_name: str | None,
+        deactivated_user_name: str,
+        deactivated_user_role: str,
+        tenant_admin_name: str,
+        tenant_name: str,
+    ) -> EmailDeliveryResult:
+        greeting_name = recipient_name or recipient_email
+        escaped_greeting_name = escape(greeting_name)
+        escaped_user_name = escape(deactivated_user_name)
+        escaped_user_role = escape(deactivated_user_role)
+        escaped_admin_name = escape(tenant_admin_name)
+        escaped_tenant_name = escape(tenant_name)
+        subject = "User Account Deactivated"
+        text_body = (
+            f"Hello {greeting_name},\n\n"
+            f'"{deactivated_user_name}" ({deactivated_user_role}) has been deactivated by '
+            f'Tenant Admin "{tenant_admin_name}".\n\n'
+            "Tenant:\n"
+            f"{tenant_name}\n\n"
+            "Regards,\n"
+            "Violyt Team"
+        )
+        html_body = (
+            f"<p>Hello {escaped_greeting_name},</p>"
+            f'<p>"{escaped_user_name}" ({escaped_user_role}) has been deactivated by '
+            f'Tenant Admin "{escaped_admin_name}".</p>'
+            "<p>Tenant:<br>"
+            f"{escaped_tenant_name}</p>"
+            "<p>Regards,<br>Violyt Team</p>"
+        )
+        return self._send_email(recipient_email, subject, text_body, html_body)
+
+    def send_tenant_admin_deactivated_confirmation_email(
+        self,
+        recipient_email: str,
+        recipient_name: str | None,
+        tenant_admin_name: str,
+        tenant_name: str,
+    ) -> EmailDeliveryResult:
+        greeting_name = recipient_name or recipient_email
+        escaped_greeting_name = escape(greeting_name)
+        escaped_admin_name = escape(tenant_admin_name)
+        escaped_tenant_name = escape(tenant_name)
+        subject = "Tenant Admin Account Deactivated"
+        text_body = (
+            f"Hello {greeting_name},\n\n"
+            f'Tenant Admin "{tenant_admin_name}" has been successfully deactivated.\n\n'
+            "Tenant:\n"
+            f"{tenant_name}\n\n"
+            "Regards,\n"
+            "Violyt Team"
+        )
+        html_body = (
+            f"<p>Hello {escaped_greeting_name},</p>"
+            f'<p>Tenant Admin "{escaped_admin_name}" has been successfully deactivated.</p>'
+            "<p>Tenant:<br>"
+            f"{escaped_tenant_name}</p>"
+            "<p>Regards,<br>Violyt Team</p>"
+        )
+        return self._send_email(recipient_email, subject, text_body, html_body)
+
+    def send_account_reactivated_email(
+        self,
+        recipient_email: str,
+        recipient_name: str | None,
+        *,
+        reactivated_by_platform_owner: bool = False,
+    ) -> EmailDeliveryResult:
+        greeting_name = recipient_name or recipient_email
+        escaped_greeting_name = escape(greeting_name)
+        subject = "Your Violyt Account Has Been Reactivated"
+        actor_label = "the Platform Owner" if reactivated_by_platform_owner else "your Tenant Admin"
+        text_body = (
+            f"Hello {greeting_name},\n\n"
+            f"Your Violyt account has been reactivated by {actor_label}.\n\n"
+            "You can now sign in and access your account again.\n\n"
+            "Regards,\n"
+            "Violyt Team"
+        )
+        html_body = (
+            f"<p>Hello {escaped_greeting_name},</p>"
+            f"<p>Your Violyt account has been reactivated by {escape(actor_label)}.</p>"
+            "<p>You can now sign in and access your account again.</p>"
+            "<p>Regards,<br>Violyt Team</p>"
+        )
+        return self._send_email(recipient_email, subject, text_body, html_body)
+
+    def send_user_reactivated_confirmation_email(
+        self,
+        recipient_email: str,
+        recipient_name: str | None,
+        reactivated_user_name: str,
+        reactivated_user_role: str,
+    ) -> EmailDeliveryResult:
+        greeting_name = recipient_name or recipient_email
+        escaped_greeting_name = escape(greeting_name)
+        escaped_user_name = escape(reactivated_user_name)
+        escaped_user_role = escape(reactivated_user_role)
+        subject = "User Account Reactivated"
+        text_body = (
+            f"Hello {greeting_name},\n\n"
+            f'"{reactivated_user_name}" ({reactivated_user_role}) has been successfully reactivated.\n\n'
+            "Regards,\n"
+            "Violyt Team"
+        )
+        html_body = (
+            f"<p>Hello {escaped_greeting_name},</p>"
+            f'<p>"{escaped_user_name}" ({escaped_user_role}) has been successfully reactivated.</p>'
+            "<p>Regards,<br>Violyt Team</p>"
+        )
+        return self._send_email(recipient_email, subject, text_body, html_body)
+
+    def send_platform_owner_user_reactivated_email(
+        self,
+        recipient_email: str,
+        recipient_name: str | None,
+        reactivated_user_name: str,
+        reactivated_user_role: str,
+        tenant_admin_name: str,
+        tenant_name: str,
+    ) -> EmailDeliveryResult:
+        greeting_name = recipient_name or recipient_email
+        escaped_greeting_name = escape(greeting_name)
+        escaped_user_name = escape(reactivated_user_name)
+        escaped_user_role = escape(reactivated_user_role)
+        escaped_admin_name = escape(tenant_admin_name)
+        escaped_tenant_name = escape(tenant_name)
+        subject = "User Account Reactivated"
+        text_body = (
+            f"Hello {greeting_name},\n\n"
+            f'"{reactivated_user_name}" ({reactivated_user_role}) has been reactivated by '
+            f'Tenant Admin "{tenant_admin_name}".\n\n'
+            "Tenant:\n"
+            f"{tenant_name}\n\n"
+            "Regards,\n"
+            "Violyt Team"
+        )
+        html_body = (
+            f"<p>Hello {escaped_greeting_name},</p>"
+            f'<p>"{escaped_user_name}" ({escaped_user_role}) has been reactivated by '
+            f'Tenant Admin "{escaped_admin_name}".</p>'
+            "<p>Tenant:<br>"
+            f"{escaped_tenant_name}</p>"
+            "<p>Regards,<br>Violyt Team</p>"
+        )
+        return self._send_email(recipient_email, subject, text_body, html_body)
+
+    def send_tenant_admin_reactivated_confirmation_email(
+        self,
+        recipient_email: str,
+        recipient_name: str | None,
+        tenant_admin_name: str,
+        tenant_name: str,
+    ) -> EmailDeliveryResult:
+        greeting_name = recipient_name or recipient_email
+        escaped_greeting_name = escape(greeting_name)
+        escaped_admin_name = escape(tenant_admin_name)
+        escaped_tenant_name = escape(tenant_name)
+        subject = "Tenant Admin Account Reactivated"
+        text_body = (
+            f"Hello {greeting_name},\n\n"
+            f'Tenant Admin "{tenant_admin_name}" has been successfully reactivated.\n\n'
+            "Tenant:\n"
+            f"{tenant_name}\n\n"
+            "Regards,\n"
+            "Violyt Team"
+        )
+        html_body = (
+            f"<p>Hello {escaped_greeting_name},</p>"
+            f'<p>Tenant Admin "{escaped_admin_name}" has been successfully reactivated.</p>'
+            "<p>Tenant:<br>"
+            f"{escaped_tenant_name}</p>"
+            "<p>Regards,<br>Violyt Team</p>"
+        )
+        return self._send_email(recipient_email, subject, text_body, html_body)
+
     def send_review_comment_notification_email(
         self,
         recipient_email: str,
@@ -182,6 +489,33 @@ class EmailService:
             "background:#3C2F8F;color:#ffffff;text-decoration:none;border-radius:8px;"
             '">Open Review Thread</a></p>'
             f"<p>If the button does not work, open this link:</p><p>{escaped_review_link}</p>"
+        )
+        return self._send_email(recipient_email, subject, text_body, html_body)
+
+    def send_brand_space_updated_email(
+        self,
+        recipient_email: str,
+        recipient_name: str | None,
+        brand_space_name: str,
+    ) -> EmailDeliveryResult:
+        greeting_name = recipient_name or recipient_email
+        escaped_greeting_name = escape(greeting_name)
+        escaped_brand_space_name = escape(brand_space_name)
+        subject = "Brand Space Updated"
+        text_body = (
+            f"Hello {greeting_name},\n\n"
+            f'The Brand Space "{brand_space_name}" has been updated.\n\n'
+            "The latest changes will be applied to all future creative outputs generated using this Brand Space.\n\n"
+            "If you need to review the updated Brand Space details, please sign in to Violyt.\n\n"
+            "Regards,\n"
+            "Violyt Team"
+        )
+        html_body = (
+            f"<p>Hello {escaped_greeting_name},</p>"
+            f'<p>The Brand Space "{escaped_brand_space_name}" has been updated.</p>'
+            "<p>The latest changes will be applied to all future creative outputs generated using this Brand Space.</p>"
+            "<p>If you need to review the updated Brand Space details, please sign in to Violyt.</p>"
+            "<p>Regards,<br>Violyt Team</p>"
         )
         return self._send_email(recipient_email, subject, text_body, html_body)
 

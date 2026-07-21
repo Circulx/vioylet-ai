@@ -7,7 +7,13 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import CurrentPrincipal, assert_brand_access, forbid_super_admin_brand_access, get_current_principal
+from app.core.dependencies import (
+    CurrentPrincipal,
+    assert_brand_access,
+    assert_brand_manage_access,
+    forbid_super_admin_brand_access,
+    get_current_principal,
+)
 from app.db.session import get_db_session
 from app.schemas.brand_assets import (
     AssetCategoryRoutingResponse,
@@ -137,6 +143,7 @@ async def upload_brand_attachment(
     # returns the response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
+    assert_brand_manage_access(principal)
     service = BrandAssetService(session)
     asset = await service.upload(principal.tenant_id, brand_id, field_key, payload)
     return await serialize_attachment(service, asset)
@@ -214,6 +221,7 @@ async def reprocess_brand_attachment(
     # returns the response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
+    assert_brand_manage_access(principal)
     service = BrandAssetService(session)
     asset = await service.reprocess(principal.tenant_id, brand_id, asset_id)
     return BrandAttachmentStatusUpdateResponse(
@@ -233,6 +241,7 @@ async def unsync_brand_attachment(
     # returns the response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
+    assert_brand_manage_access(principal)
     service = BrandAssetService(session)
     asset = await service.unsync(principal.tenant_id, brand_id, asset_id)
     return BrandAttachmentStatusUpdateResponse(
@@ -252,6 +261,7 @@ async def delete_brand_attachment(
     # returns the response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
+    assert_brand_manage_access(principal)
     service = BrandAssetService(session)
     asset = await service.delete(principal.tenant_id, brand_id, asset_id)
     return BrandAttachmentStatusUpdateResponse(

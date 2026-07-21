@@ -3,6 +3,7 @@ import { API } from "@/lib/api/endpoints";
 import type { TwoFactorSetupResponse } from "@/lib/api/contracts";
 import { request } from "@/lib/api/request";
 import { clearTwoFactorTicket, setAuthTokens } from "@/lib/api/session";
+import { refreshNotificationQueries } from "@/lib/notification-queries";
 
 export const useProfile = (enabled = true) =>
   useQuery({
@@ -19,15 +20,20 @@ export const useUpdateProfile = () => {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["auth", "profile"] });
       await queryClient.invalidateQueries({ queryKey: ["me"] });
-      await queryClient.invalidateQueries({ queryKey: ["notifications"] });
+      await refreshNotificationQueries(queryClient);
     },
   });
 };
 
-export const useChangePassword = () =>
-  useMutation({
+export const useChangePassword = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
     mutationFn: (data: { current_password: string; new_password: string }) => request(API.AUTH.CHANGE_PASSWORD, { data }),
+    onSuccess: async () => {
+      await refreshNotificationQueries(queryClient);
+    },
   });
+};
 
 export const useDeleteProfile = () => {
   const queryClient = useQueryClient();
@@ -64,6 +70,7 @@ export const useEnableTwoFactor = () => {
       await queryClient.invalidateQueries({ queryKey: ["auth", "two-factor-status"] });
       await queryClient.invalidateQueries({ queryKey: ["auth", "profile"] });
       await queryClient.invalidateQueries({ queryKey: ["me"] });
+      await refreshNotificationQueries(queryClient);
     },
   });
 };
@@ -76,6 +83,7 @@ export const useDisableTwoFactor = () => {
       await queryClient.invalidateQueries({ queryKey: ["auth", "two-factor-status"] });
       await queryClient.invalidateQueries({ queryKey: ["auth", "profile"] });
       await queryClient.invalidateQueries({ queryKey: ["me"] });
+      await refreshNotificationQueries(queryClient);
     },
   });
 };

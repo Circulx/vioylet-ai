@@ -128,6 +128,7 @@ class Settings(BaseSettings):
     demo_owner_email: str = "owner@violyt.ai"
     demo_owner_password: str = "DemoPass123!"
     demo_owner_name: str = "Demo Platform Owner"
+    platform_owner_two_factor_email_recipient: str | None = None
 
     smtp_host: str | None = None
     smtp_port: int = 587

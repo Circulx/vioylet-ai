@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.dependencies import CurrentPrincipal, get_current_principal
 from app.db.session import get_db_session
 from app.schemas.common import MessageResponse
-from app.schemas.notification import InAppNotificationResponse
+from app.schemas.notification import InAppNotificationResponse, InAppNotificationUnreadCountResponse
 from app.services.notification import InAppNotificationService
 
 
@@ -29,6 +29,24 @@ async def list_notifications(
         )
         for notification in notifications
     ]
+
+
+@router.get("/unread-count", response_model=InAppNotificationUnreadCountResponse)
+async def unread_notification_count(
+    principal: CurrentPrincipal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db_session),
+) -> InAppNotificationUnreadCountResponse:
+    unread_count = await InAppNotificationService(session).unread_count_for_user(principal.user_id)
+    return InAppNotificationUnreadCountResponse(unread_count=unread_count)
+
+
+@router.patch("/read", response_model=MessageResponse)
+async def mark_notifications_read(
+    principal: CurrentPrincipal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db_session),
+) -> MessageResponse:
+    await InAppNotificationService(session).mark_all_read_for_user(principal.user_id)
+    return MessageResponse(message="Notifications marked as read")
 
 
 @router.delete("", response_model=MessageResponse)

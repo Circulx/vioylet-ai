@@ -13,3 +13,7 @@ class InAppNotificationResponse(APIModel):
     message: str
     created_at: datetime
     unread: bool
+
+
+class InAppNotificationUnreadCountResponse(APIModel):
+    unread_count: int

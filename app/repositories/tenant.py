@@ -41,6 +41,30 @@ class UserRepository(Repository[User]):
         result = await self.session.execute(select(User).where(User.tenant_id == tenant_id))
         return list(result.scalars().all())
 
+    async def list_by_tenant_role_codes(
+        self,
+        tenant_id: UUID,
+        role_codes: set[str],
+        exclude_role_codes: set[str] | None = None,
+    ) -> list[User]:
+        # Returns tenant users whose assigned roles match the requested role codes.
+        stmt = (
+            select(User)
+            .join(UserRole, UserRole.user_id == User.id)
+            .join(Role, Role.id == UserRole.role_id)
+            .where(User.tenant_id == tenant_id, Role.code.in_(role_codes))
+            .distinct()
+        )
+        if exclude_role_codes:
+            excluded_user_ids = (
+                select(UserRole.user_id)
+                .join(Role, Role.id == UserRole.role_id)
+                .where(Role.code.in_(exclude_role_codes))
+            )
+            stmt = stmt.where(~User.id.in_(excluded_user_ids))
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
 
 class RoleRepository(Repository[Role]):
     # Data-access helper for role; services call this class instead of repeating SQLAlchemy filters inline.

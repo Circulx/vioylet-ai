@@ -1045,11 +1045,27 @@ class TenantService:
         usage_limit = await self.usage_limits.get_by_tenant(tenant_id)
         if not usage_limit:
             raise NotFoundError("Usage limit record not found")
+        previous_limits = {
+            field_name: int(getattr(usage_limit, field_name) or 0)
+            for field_name in self.usage.FIELD_MAP.values()
+        }
         usage_limit.max_users = payload.max_users
         usage_limit.max_brand_spaces = payload.max_brand_spaces
         usage_limit.max_content_generations = payload.max_content_generations
         usage_limit.max_image_generations = payload.max_image_generations
         usage_limit.max_ocr_pages = payload.max_ocr_pages
+        current_limits = {
+            field_name: int(getattr(usage_limit, field_name) or 0)
+            for field_name in self.usage.FIELD_MAP.values()
+        }
+        # Limit-change alerts must use the same consumption values shown in the tenant dashboard.
+        dashboard_usage = await self._real_usage_consumption(tenant_id)
+        await self.usage.notify_for_limit_changes(
+            tenant_id,
+            previous_limits,
+            current_limits,
+            usage_by_metric=dashboard_usage,
+        )
         if auto_commit:
             await self.session.commit()
         return usage_limit

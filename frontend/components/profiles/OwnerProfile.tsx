@@ -12,6 +12,8 @@ import Setup2faForm from "@/components/auth/Setup2faForm";
 import { useLogout } from "@/hooks/useLogout";
 import { useProfile, useTwoFactorStatus, useUpdateProfile } from "@/hooks/useAuthProfile";
 import { useRBAC } from "@/hooks/useRBAC";
+import { addInAppNotification } from "@/hooks/useInAppNotifications";
+import { toast } from "@/components/ui/use-toast";
 import { DialogTitle } from "@radix-ui/react-dialog";
 import { Label } from "../ui/label";
 import Image from "next/image";
@@ -40,6 +42,24 @@ export default function OwnerProfile() {
     );
 
     const notifications = notificationsOverride ?? (profile?.extra?.notifications_enabled === false ? false : true);
+    const handleTwoFactorNotification = (enabled: boolean) => {
+        if (user?.role !== "PLATFORM_OWNER" || !user.id) {
+            return;
+        }
+        const message = enabled
+            ? "Two-factor authentication has been successfully enabled for your account."
+            : "Two-factor authentication has been disabled for your account.";
+
+        addInAppNotification(user.id, {
+            title: "Security Update",
+            message,
+        });
+        toast({
+            title: "Security Update",
+            description: message,
+            variant: "success",
+        });
+    };
 
     return (
         <>
@@ -158,7 +178,7 @@ export default function OwnerProfile() {
                                     ? "Manage your Google Authenticator protection for this account."
                                     : "Secure your account with Google Authenticator."}
                             </p>
-                            <Setup2faForm compact onConfigured={() => undefined} />
+                            <Setup2faForm compact onConfigured={() => undefined} onTwoFactorChanged={handleTwoFactorNotification} />
                         </div>
                     </div>
                 </DialogContent>

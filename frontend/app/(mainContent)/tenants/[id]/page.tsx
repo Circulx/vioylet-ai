@@ -15,6 +15,7 @@ import {
 } from "@/components/platformOwner/PlatformOwnerPrimitives";
 import { useGetTenantBrandSpaces, useGetTenantData, useGetTenantUsageSummary, useGetTenantUsers } from "@/hooks/tenantAdmins/useGetTenants";
 import { useUpdateTenantAdmin } from "@/hooks/tenantAdmins/useUpdateTenant";
+import { toast } from "@/components/ui/use-toast";
 import {
     buildRangeLabel,
     buildUsageWindowRows,
@@ -421,6 +422,13 @@ export default function TenantDetailsPage() {
                                     id: tenantId,
                                     data: {
                                         is_active: !tenant.is_active,
+                                    },
+                                }, {
+                                    onSuccess: () => {
+                                        toast({
+                                            title: "Tenant details have been updated successfully.",
+                                            variant: "success",
+                                        });
                                     },
                                 })
                             }

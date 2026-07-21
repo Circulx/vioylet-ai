@@ -7,6 +7,7 @@ import type { KeyboardEvent } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { SurfaceCard } from "@/components/common/DesignPrimitives";
+import { toast } from "@/components/ui/use-toast";
 import { resolveBrandByRouteKey } from "@/lib/brand-routing";
 import { apiOrigin } from "@/lib/env";
 import { useBrands } from "@/hooks/useBrands";
@@ -384,6 +385,12 @@ export default function ShareReviewScreen({
     const appOrigin = typeof window !== "undefined" ? window.location.origin : "http://localhost:3000";
     const shareUrl = reviewToken ? `${appOrigin}/review/${reviewToken}` : "";
     const accessGrantorName = review.data?.link.created_by_name?.trim() || "Violyt";
+    const showReviewLinkSuccessToast = () => {
+        toast({
+            title: "Review link created successfully.",
+            variant: "success",
+        });
+    };
 
     const commentAuthorName = isAuthenticatedReviewer
         ? profile.data?.full_name || profile.data?.email || "Reviewer"
@@ -422,6 +429,7 @@ export default function ShareReviewScreen({
                 onSuccess: (response) => {
                     setReviewToken(response.token);
                     setModalMode("share");
+                    showReviewLinkSuccessToast();
                 },
             },
         );
@@ -486,6 +494,7 @@ export default function ShareReviewScreen({
         }
         await navigator.clipboard.writeText(shareUrl);
         setCopied(true);
+        showReviewLinkSuccessToast();
         window.setTimeout(() => setCopied(false), 1500);
     };
 
@@ -501,6 +510,7 @@ export default function ShareReviewScreen({
         try {
             if (navigator.share) {
                 await navigator.share(shareData);
+                showReviewLinkSuccessToast();
                 return;
             }
             await handleCopyLink();

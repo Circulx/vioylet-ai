@@ -18,6 +18,7 @@ from app.models.collaboration import ReviewComment, ReviewLink
 from app.models.tenant import Role, User, UserRole
 from app.repositories.collaboration import ReviewCommentRepository, ReviewLinkRepository
 from app.services.email import EmailService
+from app.services.notification import InAppNotificationService
 
 
 logger = logging.getLogger(__name__)
@@ -116,10 +117,18 @@ class ReviewService:
         if not link or not comment:
             return
         try:
+            await self._create_comment_in_app_notifications(link, comment)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Review comment in-app notification failed for review_link_id=%s: %s",
+                review_link_id,
+                exc,
+            )
+        try:
             await self._send_comment_notifications(link, comment)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "Review comment notification failed for review_link_id=%s: %s",
+                "Review comment email notification failed for review_link_id=%s: %s",
                 review_link_id,
                 exc,
             )
@@ -145,6 +154,61 @@ class ReviewService:
                 review_url,
                 post_title,
             )
+
+    async def _create_comment_in_app_notifications(self, link: ReviewLink, comment: ReviewComment) -> None:
+        recipients = await self._comment_notification_recipients(link)
+        if not recipients:
+            return
+        commenter_name = await self._commenter_name(comment)
+        comment_body = (comment.body or "").strip()
+        message = (
+            f'{commenter_name} commented on your content:\n"{comment_body}"'
+            if comment_body
+            else f"{commenter_name} commented on your content."
+        )
+        notification_service = InAppNotificationService(self.session)
+        for recipient in recipients:
+            await notification_service.create(
+                recipient_user_id=recipient.id,
+                tenant_id=recipient.tenant_id,
+                title="New Comment",
+                message=message,
+                metadata={
+                    "event": "review_comment_added",
+                    "review_link_id": str(link.id),
+                    "comment_id": str(comment.id),
+                },
+            )
+        await self.session.commit()
+
+    async def _create_review_approved_in_app_notifications(
+        self,
+        link: ReviewLink,
+        reviewer_user_id: UUID | None = None,
+    ) -> None:
+        recipients = await self._comment_notification_recipients(link)
+        if not recipients:
+            return
+        reviewer_name = await self._reviewer_name(reviewer_user_id)
+        notification_service = InAppNotificationService(self.session)
+        for recipient in recipients:
+            await notification_service.create(
+                recipient_user_id=recipient.id,
+                tenant_id=recipient.tenant_id,
+                title="Content Approved",
+                message=f"Your content has been approved by {reviewer_name}.",
+                metadata={
+                    "event": "review_approved",
+                    "review_link_id": str(link.id),
+                },
+            )
+
+    async def _reviewer_name(self, reviewer_user_id: UUID | None) -> str:
+        if reviewer_user_id:
+            reviewer = await self._get_active_user(reviewer_user_id)
+            if reviewer:
+                return reviewer.full_name or reviewer.email
+        return "Reviewer"
 
     async def _comment_notification_recipients(self, link: ReviewLink) -> list[User]:
         sharer = await self._get_active_user(link.created_by)
@@ -271,7 +335,12 @@ class ReviewService:
             recipients.append(user)
         return recipients
 
-    async def update_status(self, review_link_id: UUID, status: str) -> ReviewLink:
+    async def update_status(
+        self,
+        review_link_id: UUID,
+        status: str,
+        reviewer_user_id: UUID | None = None,
+    ) -> ReviewLink:
         # Runs the status service flow and persists the resulting state before returning it to the route or
         # worker.
         link = await self.links.get(review_link_id)
@@ -279,6 +348,9 @@ class ReviewService:
             raise NotFoundError("Review link not found")
         if status not in {ReviewStatus.PENDING, ReviewStatus.APPROVED, ReviewStatus.NEEDS_CHANGES}:
             raise LifecycleError("Invalid review status")
+        was_approved = link.status == ReviewStatus.APPROVED
         link.status = status
+        if status == ReviewStatus.APPROVED and not was_approved:
+            await self._create_review_approved_in_app_notifications(link, reviewer_user_id)
         await self.session.commit()
         return link

@@ -47,6 +47,17 @@ class ReviewComment(UUIDPrimaryKeyMixin, TenantScopedMixin, BrandScopedMixin, Ti
     metadata_json: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
 
 
+class InAppNotification(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "in_app_notifications"
+
+    recipient_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    tenant_id: Mapped[UUID | None] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True, index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    metadata_json: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+
+
 class SocialConnection(UUIDPrimaryKeyMixin, TenantScopedMixin, BrandScopedMixin, TimestampMixin, Base):
     __tablename__ = "social_connections"
     __table_args__ = (UniqueConstraint("brand_space_id", "platform", name="uq_brand_platform_connection"),)

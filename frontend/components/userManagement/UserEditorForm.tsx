@@ -13,6 +13,7 @@ import { useBrands } from "@/hooks/useBrands";
 import { getTenantUserRequestId, useSaveTenantUser, useTenantUserDetail } from "@/hooks/useTeamAccess";
 import { useGetMe } from "@/hooks/useUser";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
+import { toast } from "@/components/ui/use-toast";
 
 type UserEditorFormProps = {
     mode: "create" | "edit";
@@ -38,6 +39,13 @@ type SubmissionFeedback = {
     title: string;
     description: string;
 };
+
+function isSupportedRoleSwap(oldRoleCode: UserEditorState["roleCode"], newRoleCode: UserEditorState["roleCode"]) {
+    return (
+        oldRoleCode !== newRoleCode &&
+        [oldRoleCode, newRoleCode].every((roleCode) => roleCode === "tenant_user" || roleCode === "brand_user")
+    );
+}
 
 function getMutationErrorMessage(error: unknown, mode: UserEditorFormProps["mode"]) {
     if (isAxiosError(error)) {
@@ -147,6 +155,10 @@ export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
         if (saveUser.isPending) {
             return;
         }
+        const roleChangedByTenantAdmin =
+            mode === "edit" &&
+            currentUser?.role === "TENANT_ADMIN" &&
+            isSupportedRoleSwap(initialForm.roleCode, resolvedForm.roleCode);
         setSubmissionFeedback(null);
         saveUser.mutate(
             {
@@ -174,6 +186,24 @@ export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
                         }
                         router.push(`/user_management?${params.toString()}`);
                         return;
+                    }
+                    if (roleChangedByTenantAdmin) {
+                        toast({
+                            title: "User role updated successfully.",
+                            variant: "success",
+                        });
+                        router.push(`/user_management/${getTenantUserRequestId(savedUser)}`);
+                        return;
+                    }
+                    const shouldShowProfileUpdateToast =
+                        (currentUser?.role === "PLATFORM_OWNER" && savedUser.role_codes.includes("tenant_admin")) ||
+                        (currentUser?.role === "TENANT_ADMIN" &&
+                            (savedUser.role_codes.includes("tenant_user") || savedUser.role_codes.includes("brand_user")));
+                    if (shouldShowProfileUpdateToast) {
+                        toast({
+                            title: "Your profile has been updated successfully.",
+                            variant: "success",
+                        });
                     }
                     router.push(`/user_management/${getTenantUserRequestId(savedUser)}`);
                 },

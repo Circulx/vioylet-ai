@@ -16,6 +16,7 @@ import type {
   ImageEditApplyRequest,
   ImageEditStateRequest,
   ImageEditStateResponse,
+  InAppNotificationResponse,
   CurrentUserResponse,
   KnowledgeAssetResponse,
   LoginResponse,
@@ -70,6 +71,7 @@ export const API = {
     CREATE: { method: "POST", url: "/api/v1/tenants" } as ApiEndpoint<unknown, TenantCreateResponse>,
     DETAIL: { method: "GET", url: (tenantId: string) => `/api/v1/tenants/${tenantId}` } as ApiEndpoint<void, TenantSummaryResponse>,
     UPDATE: { method: "PUT", url: (tenantId: string) => `/api/v1/tenants/${tenantId}` } as ApiEndpoint<unknown, TenantSummaryResponse>,
+    DELETE: { method: "DELETE", url: (tenantId: string) => `/api/v1/tenants/${tenantId}` } as ApiEndpoint<void, { message: string }>,
     UPDATE_BRAND_USAGE_TARGETS: { method: "PUT", url: (tenantId: string) => `/api/v1/tenants/${tenantId}/brand-usage-targets` } as ApiEndpoint<{ brand_usage_targets: Record<string, number> }, { brand_usage_targets: Record<string, number> }>,
     UPLOAD_LOGO: { method: "POST", url: (tenantId: string) => `/api/v1/tenants/${tenantId}/logo` } as ApiEndpoint<TenantLogoUploadRequest, TenantSummaryResponse>,
     USERS: { method: "GET", url: (tenantId: string) => `/api/v1/tenants/${tenantId}/users` } as ApiEndpoint<void, TenantUserResponse[]>,
@@ -149,5 +151,10 @@ export const API = {
     TENANT: { method: "GET", url: "/api/v1/analytics/tenant" } as ApiEndpoint<void, AnalyticsResponse>,
     BRAND: { method: "GET", url: (brandId: string) => `/api/v1/analytics/brand/${brandId}` } as ApiEndpoint<void, AnalyticsResponse>,
     USAGE_SUMMARY: { method: "GET", url: "/api/v1/analytics/usage-summary" } as ApiEndpoint<void, AnalyticsResponse>,
+  },
+  NOTIFICATIONS: {
+    LIST: { method: "GET", url: "/api/v1/notifications" } as ApiEndpoint<void, InAppNotificationResponse[]>,
+    CLEAR: { method: "DELETE", url: "/api/v1/notifications" } as ApiEndpoint<void, { message: string }>,
+    DELETE: { method: "DELETE", url: (notificationId: string) => `/api/v1/notifications/${notificationId}` } as ApiEndpoint<void, { message: string }>,
   },
 } as const;

@@ -53,7 +53,12 @@ async def create_brand(
     # Serves the brand creation endpoint; it uses FastAPI dependencies, delegates work to services, and returns
     # the response schema.
     forbid_super_admin_brand_access(principal)
-    brand = await BrandSpaceService(session).create_brand(principal.tenant_id, principal.user_id, payload)
+    brand = await BrandSpaceService(session).create_brand(
+        principal.tenant_id,
+        principal.user_id,
+        payload,
+        principal.role_codes,
+    )
     return BrandResponse.model_validate(brand)
 
 
@@ -166,7 +171,12 @@ async def finalize_brand(
     # response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
-    brand = await BrandSpaceService(session).finalize_brand(principal.tenant_id, brand_id)
+    brand = await BrandSpaceService(session).finalize_brand(
+        principal.tenant_id,
+        brand_id,
+        principal.user_id,
+        principal.role_codes,
+    )
     return BrandResponse.model_validate(brand)
 
 
@@ -180,7 +190,12 @@ async def publish_brand(
     # response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
-    brand = await BrandSpaceService(session).publish_brand(principal.tenant_id, brand_id)
+    brand = await BrandSpaceService(session).publish_brand(
+        principal.tenant_id,
+        brand_id,
+        principal.user_id,
+        principal.role_codes,
+    )
     return BrandResponse.model_validate(brand)
 
 
@@ -208,7 +223,12 @@ async def archive_brand(
     # response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
-    brand = await BrandSpaceService(session).archive_brand(principal.tenant_id, brand_id)
+    brand = await BrandSpaceService(session).archive_brand(
+        principal.tenant_id,
+        brand_id,
+        principal.user_id,
+        principal.role_codes,
+    )
     return BrandResponse.model_validate(brand)
 
 
@@ -222,7 +242,12 @@ async def restore_brand(
     # response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
-    brand = await BrandSpaceService(session).restore_brand(principal.tenant_id, brand_id)
+    brand = await BrandSpaceService(session).restore_brand(
+        principal.tenant_id,
+        brand_id,
+        principal.user_id,
+        principal.role_codes,
+    )
     return BrandResponse.model_validate(brand)
 
 
@@ -236,7 +261,12 @@ async def delete_brand(
     # response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
-    await BrandSpaceService(session).delete_brand(principal.tenant_id, brand_id)
+    await BrandSpaceService(session).delete_brand(
+        principal.tenant_id,
+        brand_id,
+        principal.user_id,
+        principal.role_codes,
+    )
     return MessageResponse(message="Brand deleted")
 
 

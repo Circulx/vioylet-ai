@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.collaboration import (
     AnalyticsSnapshot,
+    InAppNotification,
     JobRecord,
     ReviewComment,
     ReviewLink,
@@ -72,6 +73,32 @@ class ReviewCommentRepository(Repository[ReviewComment]):
             .order_by(ReviewComment.created_at.asc())
         )
         return list(result.scalars().all())
+
+
+class InAppNotificationRepository(Repository[InAppNotification]):
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session, InAppNotification)
+
+    async def list_for_user(self, user_id: UUID, limit: int = 50) -> list[InAppNotification]:
+        result = await self.session.execute(
+            select(InAppNotification)
+            .where(InAppNotification.recipient_user_id == user_id)
+            .order_by(InAppNotification.created_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    async def delete_for_user(self, user_id: UUID) -> None:
+        notifications = await self.list_for_user(user_id, limit=500)
+        for notification in notifications:
+            await self.delete(notification)
+
+    async def delete_one_for_user(self, user_id: UUID, notification_id: UUID) -> bool:
+        notification = await self.get(notification_id)
+        if not notification or notification.recipient_user_id != user_id:
+            return False
+        await self.delete(notification)
+        return True
 
 
 class SocialConnectionRepository(Repository[SocialConnection]):

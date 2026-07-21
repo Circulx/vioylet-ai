@@ -364,7 +364,7 @@ async def update_review_status(
     link, _ = await service.get_by_token(token)
     assert_tenant_access(principal, link.tenant_id)
     assert_brand_access(principal, link.brand_space_id)
-    updated = await service.update_status(link.id, payload.status)
+    updated = await service.update_status(link.id, payload.status, principal.user_id)
     creator = await session.get(User, updated.created_by)
     return ReviewLinkResponse.model_validate(updated).model_copy(
         update={"created_by_name": creator.full_name if creator else None}

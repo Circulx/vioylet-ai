@@ -2,6 +2,26 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { API } from "@/lib/api/endpoints";
 import { request } from "@/lib/api/request";
 import type { TenantUserResponse } from "@/lib/api/contracts";
+import { toast } from "@/components/ui/use-toast";
+
+function compactTenantUsers(users?: TenantUserResponse[]) {
+  if (!users) {
+    return users;
+  }
+  const seen = new Set<string>();
+  return users.filter((user) => {
+    const stableId = user.user_id || user.id;
+    if (seen.has(stableId)) {
+      return false;
+    }
+    seen.add(stableId);
+    return true;
+  });
+}
+
+function tenantUserMatches(user: TenantUserResponse, ids: Set<string>) {
+  return ids.has(user.id) || (user.user_id ? ids.has(user.user_id) : false);
+}
 
 export const useUpdateTenantAdmin = () => {
   const queryClient = useQueryClient();
@@ -50,6 +70,24 @@ export const useUpdateBrandUsageTargets = () => {
   });
 };
 
+export const useDeleteTenantAdmin = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) =>
+      request(API.TENANTS.DELETE, {
+        pathParams: id,
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["tenants"] });
+      toast({
+        title: "Tenant deleted successfully.",
+        variant: "success",
+      });
+    },
+  });
+};
+
 export const useUploadTenantLogo = () => {
   const queryClient = useQueryClient();
 
@@ -82,6 +120,57 @@ export const useUpdateTenantUser = (tenantId: string, userId: string) => {
       );
       void queryClient.invalidateQueries({ queryKey: ["tenant", tenantId, "users"] });
       void queryClient.invalidateQueries({ queryKey: ["tenant", tenantId, "user", userId] });
+    },
+  });
+};
+
+export const useDeactivateTenantUser = (tenantId: string) => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (userId: string) =>
+      request(API.TENANTS.DEACTIVATE_USER, {
+        pathParams: { tenantId, userId },
+      }),
+    onSuccess: async (_response, userId) => {
+      queryClient.setQueryData<TenantUserResponse[]>(["tenant", tenantId, "users"], (current) =>
+        compactTenantUsers(
+          current?.map((user) =>
+            tenantUserMatches(user, new Set([userId]))
+              ? { ...user, is_active: false }
+              : user,
+          ),
+        ),
+      );
+      await queryClient.invalidateQueries({ queryKey: ["tenant", tenantId, "users"] });
+      await queryClient.invalidateQueries({ queryKey: ["tenant", tenantId, "user", userId] });
+    },
+  });
+};
+
+export const useReactivateTenantUser = (tenantId: string) => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (userId: string) =>
+      request(API.TENANTS.UPDATE_USER, {
+        pathParams: { tenantId, userId },
+        data: { is_active: true },
+      }),
+    onSuccess: async (updatedUser, userId) => {
+      const targetIds = new Set([userId, updatedUser.id, updatedUser.user_id].filter((id): id is string => Boolean(id)));
+      queryClient.setQueryData(["tenant", tenantId, "user", userId], updatedUser);
+      queryClient.setQueryData<TenantUserResponse[]>(["tenant", tenantId, "users"], (current) =>
+        compactTenantUsers(
+          current?.map((user) =>
+            tenantUserMatches(user, targetIds)
+              ? updatedUser
+              : user,
+          ),
+        ),
+      );
+      await queryClient.invalidateQueries({ queryKey: ["tenant", tenantId, "users"] });
+      await queryClient.invalidateQueries({ queryKey: ["tenant", tenantId, "user", userId] });
     },
   });
 };

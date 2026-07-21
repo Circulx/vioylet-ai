@@ -26,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { toast } from "@/components/ui/use-toast";
 import { SurfaceCard, UsageRing } from "@/components/common/DesignPrimitives";
 import type {
     AssetReference,
@@ -1184,6 +1185,10 @@ function GeneratedImageViewer({
             title: `${title} Review`,
             allow_external_comments: true,
         });
+        toast({
+            title: "Review link created successfully.",
+            variant: "success",
+        });
         const reviewUrl = `${window.location.origin}/review/${response.token}`;
         reviewShareRef.current = { contentVersionId, url: reviewUrl };
         return reviewUrl;
@@ -1241,6 +1246,10 @@ function GeneratedImageViewer({
             },
             {
                 onSuccess: (response) => {
+                    toast({
+                        title: "Review link created successfully.",
+                        variant: "success",
+                    });
                     const reviewUrl = `${window.location.origin}/review/${response.token}`;
                     if (reviewTab && !reviewTab.closed) {
                         reviewTab.location.href = reviewUrl;

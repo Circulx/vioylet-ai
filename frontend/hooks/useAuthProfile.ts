@@ -19,6 +19,7 @@ export const useUpdateProfile = () => {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["auth", "profile"] });
       await queryClient.invalidateQueries({ queryKey: ["me"] });
+      await queryClient.invalidateQueries({ queryKey: ["notifications"] });
     },
   });
 };

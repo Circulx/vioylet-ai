@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, Edit2, FolderOpen, MoreVertical, PlusCircle, Trash2 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { useSidebar } from "@/context/SidebarContext";
 import {
     buildBrandChatHref,
@@ -23,6 +24,9 @@ import {
 } from "@/hooks/useContentWorkspace";
 import { Button } from "./ui/button";
 import { NotificationDrawer } from "./NotificationDrawer";
+import { useInAppNotifications } from "@/hooks/useInAppNotifications";
+import { API } from "@/lib/api/endpoints";
+import { request } from "@/lib/api/request";
 import {
     BrandResponse,
     ChatSessionResponse,
@@ -47,6 +51,14 @@ import {
 export default function Sidebar() {
     const { isSidebarOpen, toggleSidebar } = useSidebar();
     const { user, canAccessModule } = useRBAC();
+    const { notifications: localNotifications } = useInAppNotifications(user?.id);
+    const { data: unreadNotificationCountData } = useQuery({
+        queryKey: ["notifications", user?.id, "unread-count"],
+        enabled: Boolean(user?.id),
+        queryFn: () => request(API.NOTIFICATIONS.UNREAD_COUNT),
+        refetchOnWindowFocus: "always",
+        refetchInterval: user?.id ? 30000 : false,
+    });
     const { data: brands } = useBrands(user?.role !== "PLATFORM_OWNER");
     const path = usePathname();
     const router = useRouter();
@@ -62,6 +74,10 @@ export default function Sidebar() {
 
     const filteredSidebarItems = sidebarItems.filter((item) => (user ? canAccessModule(item.module) : false));
     const isPlatformOwner = user?.role === "PLATFORM_OWNER";
+    const unreadNotificationCount =
+        (unreadNotificationCountData?.unread_count || 0) +
+        localNotifications.filter((notification) => notification.unread).length;
+    const unreadNotificationLabel = unreadNotificationCount > 99 ? "99+" : String(unreadNotificationCount);
 
     return (
         <aside
@@ -128,7 +144,17 @@ export default function Sidebar() {
                                             )}
                                             type="button"
                                         >
-                                            <Image src={icon} width={20} height={20} alt={item.name} className="h-5 w-5" />
+                                            <span className="relative inline-flex h-5 w-5 shrink-0">
+                                                <Image src={icon} width={20} height={20} alt={item.name} className="h-5 w-5" />
+                                                {unreadNotificationCount > 0 ? (
+                                                    <span
+                                                        className="absolute -right-2 -top-2 flex h-5 min-w-5 items-center justify-center rounded-full bg-[#FF6D5E] px-1 text-[10px] font-semibold leading-none text-white shadow-sm"
+                                                        aria-label={`${unreadNotificationCount} unread notifications`}
+                                                    >
+                                                        {unreadNotificationLabel}
+                                                    </span>
+                                                ) : null}
+                                            </span>
                                             <span className={cn("text-[16px]", !isPlatformOwner && !isSidebarOpen && "hidden")}>{item.name}</span>
                                         </button>
                                     </NotificationDrawer>

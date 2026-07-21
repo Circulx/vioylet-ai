@@ -5,6 +5,21 @@ import { useUpdateTenantUser } from "@/hooks/tenantAdmins/useUpdateTenant";
 import { useGetMe } from "@/hooks/useUser";
 import type { TenantUserResponse } from "@/lib/api/contracts";
 
+const SUPER_USER_ROLE_CODE = "tenant_user";
+const BRAND_USER_ROLE_CODE = "brand_user";
+const TEAM_ACCESS_ROLE_CODES = [SUPER_USER_ROLE_CODE, BRAND_USER_ROLE_CODE];
+const TEAM_ACCESS_EXCLUDED_ROLE_CODES = ["tenant_admin"];
+const ASSIGNABLE_USER_ROLE_CODES = [...TEAM_ACCESS_ROLE_CODES, ...TEAM_ACCESS_EXCLUDED_ROLE_CODES];
+
+function hasOnlyAssignableRole(user: TenantUserResponse, roleCode: string) {
+  return (
+    user.role_codes.includes(roleCode) &&
+    ASSIGNABLE_USER_ROLE_CODES.every((assignableRoleCode) => {
+      return assignableRoleCode === roleCode || !user.role_codes.includes(assignableRoleCode);
+    })
+  );
+}
+
 export function getTenantUserRequestId(user?: TenantUserResponse | null) {
   return user?.user_id || user?.id || "";
 }
@@ -12,13 +27,13 @@ export function getTenantUserRequestId(user?: TenantUserResponse | null) {
 export const useTenantUsers = () => {
   const { data: currentUser } = useGetMe();
   const tenantId = currentUser?.tenantId || "";
-  const query = useGetTenantUsers(tenantId);
+  const query = useGetTenantUsers(tenantId, TEAM_ACCESS_ROLE_CODES, TEAM_ACCESS_EXCLUDED_ROLE_CODES);
   const tenantUsers = useMemo(
-    () => (query.data || []).filter((user) => !user.role_codes.includes("brand_user")),
+    () => (query.data || []).filter((user) => hasOnlyAssignableRole(user, SUPER_USER_ROLE_CODE)),
     [query.data],
   );
   const brandUsers = useMemo(
-    () => (query.data || []).filter((user) => user.role_codes.includes("brand_user")),
+    () => (query.data || []).filter((user) => hasOnlyAssignableRole(user, BRAND_USER_ROLE_CODE)),
     [query.data],
   );
   return {

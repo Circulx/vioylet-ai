@@ -202,9 +202,16 @@ class TenantService:
                     return user
         return None
 
-    async def list_users(self, tenant_id: UUID) -> list[User]:
+    async def list_users(
+        self,
+        tenant_id: UUID,
+        role_codes: set[str] | None = None,
+        exclude_role_codes: set[str] | None = None,
+    ) -> list[User]:
         # Runs the users service flow by coordinating repositories, validators, and integrations, then returns
         # domain data.
+        if role_codes:
+            return await self.users.list_by_tenant_role_codes(tenant_id, role_codes, exclude_role_codes)
         return await self.users.list_by_tenant(tenant_id)
 
     async def list_tenants(self) -> list[Tenant]:

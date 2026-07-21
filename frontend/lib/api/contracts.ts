@@ -39,6 +39,10 @@ export interface InAppNotificationResponse {
   unread: boolean;
 }
 
+export interface InAppNotificationUnreadCountResponse {
+  unread_count: number;
+}
+
 export interface UiUser {
   id: UUID;
   tenantId?: UUID;

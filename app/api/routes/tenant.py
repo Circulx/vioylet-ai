@@ -1,7 +1,7 @@
 # FastAPI route handlers live here; they validate request inputs, call services, and return response schemas.
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import CurrentPrincipal, assert_tenant_access, get_current_principal, require_roles
@@ -144,6 +144,8 @@ async def delete_tenant(
 @router.get("/{tenant_id}/users", response_model=list[TenantUserResponse])
 async def list_users(
     tenant_id: UUID,
+    role_codes: str | None = Query(default=None),
+    exclude_role_codes: str | None = Query(default=None),
     _: CurrentPrincipal = Depends(require_roles(RoleCode.SUPER_ADMIN, RoleCode.TENANT_ADMIN)),
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
@@ -152,7 +154,17 @@ async def list_users(
     # the response schema.
     assert_tenant_access(principal, tenant_id)
     service = TenantService(session)
-    users = await service.list_users(tenant_id)
+    requested_role_codes = (
+        {role_code.strip() for role_code in role_codes.split(",") if role_code.strip()}
+        if role_codes
+        else None
+    )
+    requested_excluded_role_codes = (
+        {role_code.strip() for role_code in exclude_role_codes.split(",") if role_code.strip()}
+        if exclude_role_codes
+        else None
+    )
+    users = await service.list_users(tenant_id, requested_role_codes, requested_excluded_role_codes)
     enriched = [await service.build_user_summary(user) for user in users]
     return [TenantUserResponse.model_validate(item) for item in enriched]
 

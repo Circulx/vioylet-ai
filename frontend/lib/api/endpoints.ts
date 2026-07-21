@@ -17,6 +17,7 @@ import type {
   ImageEditStateRequest,
   ImageEditStateResponse,
   InAppNotificationResponse,
+  InAppNotificationUnreadCountResponse,
   CurrentUserResponse,
   KnowledgeAssetResponse,
   LoginResponse,
@@ -154,6 +155,8 @@ export const API = {
   },
   NOTIFICATIONS: {
     LIST: { method: "GET", url: "/api/v1/notifications" } as ApiEndpoint<void, InAppNotificationResponse[]>,
+    UNREAD_COUNT: { method: "GET", url: "/api/v1/notifications/unread-count" } as ApiEndpoint<void, InAppNotificationUnreadCountResponse>,
+    MARK_READ: { method: "PATCH", url: "/api/v1/notifications/read" } as ApiEndpoint<void, { message: string }>,
     CLEAR: { method: "DELETE", url: "/api/v1/notifications" } as ApiEndpoint<void, { message: string }>,
     DELETE: { method: "DELETE", url: (notificationId: string) => `/api/v1/notifications/${notificationId}` } as ApiEndpoint<void, { message: string }>,
   },

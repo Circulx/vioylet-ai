@@ -104,6 +104,19 @@ export function removeInAppNotification(userId: string, notificationId: string) 
   );
 }
 
+export function markInAppNotificationsRead(userId: string) {
+  if (typeof window === "undefined" || !userId) {
+    return;
+  }
+  writeNotifications(
+    userId,
+    readNotifications(userId).map((notification) => ({
+      ...notification,
+      unread: false,
+    })),
+  );
+}
+
 export function useInAppNotifications(userId?: string) {
   const [version, setVersion] = useState(0);
 
@@ -147,6 +160,11 @@ export function useInAppNotifications(userId?: string) {
     clear: () => {
       if (userId) {
         clearInAppNotifications(userId);
+      }
+    },
+    markAllRead: () => {
+      if (userId) {
+        markInAppNotificationsRead(userId);
       }
     },
   };

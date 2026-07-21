@@ -69,6 +69,7 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
     )
 
     # 1b. STAGE 2: Expand the image prompt into a professional 2500+ word cinematic art direction brief
+    expander_meta: dict = {}
     logger.info(
         "visual_reasoning.prompt_expansion_start",
         initial_prompt_len=len(output.image_prompt_direction),
@@ -107,23 +108,20 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
         fmt=fmt,
     )
 
-    expander_meta: dict = {}
     try:
         expanded_prompt, expander_meta = await service.complete_text(
             system=expander_system,
             user=expander_user,
             layer="l8_prompt_expander",
             temperature=0.85,
-            max_tokens=4096,
+            max_tokens=2048,
         )
         logger.info(
             "visual_reasoning.prompt_expansion_complete",
             expanded_prompt_len=len(expanded_prompt),
             expander_tokens=expander_meta.get("output_tokens", 0),
         )
-        # Use the expanded prompt for image generation
         image_gen_prompt = expanded_prompt
-        # Also store it in the output for visibility/debugging
         output.image_prompt_direction = expanded_prompt
     except Exception as e:
         logger.warning(
@@ -174,12 +172,28 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
     elif fmt == "infographic":
         # Infographics require a vertical portrait layout to fit detailed charts and tables
         size = "1080x1350"
+    elif fmt == "banner":
+        size = "1200x628"
+    elif fmt == "newsletter":
+        size = "600x800"
+    elif fmt == "blog":
+        size = "1200x630"
+    elif fmt == "email":
+        size = "600x800"
+    elif fmt == "presentation":
+        size = "1920x1080"
+    elif fmt == "ad_creative":
+        size = "1080x1080"
     else:
         ratios = {
             "linkedin": "1200x627",
             "instagram": "1080x1080",
             "twitter": "1200x675",
             "x": "1200x675",
+            "facebook": "1200x628",
+            "website": "1200x628",
+            "email": "600x800",
+            "internal": "1200x627",
             "story": "1080x1920",
         }
         size = ratios.get(platform, "1024x1024")

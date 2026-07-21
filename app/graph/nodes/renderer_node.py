@@ -254,9 +254,8 @@ async def renderer_node(state: ViolytState) -> dict:
     final_image_urls: list[str] = []
     final_image_url = ""
 
-    # Carousels need multiple slide images, so bypass the single-image renderer and use
-    # the already-generated per-slide images directly.
-    # Infographics are now generated as a single fully text-baked AI image (headline,
+    # Carousels and infographics use AI-generated images directly, bypassing the PIL renderer.
+    # Infographics are generated as a single fully text-baked AI image (headline,
     # cards, stats, icons, CTA all rendered by the image model) plus a pixel-composited
     # brand logo — skip the PIL card/text renderer entirely for this format.
     if fmt in ("carousel", "infographic") and visual_reasoning.generated_image_urls:

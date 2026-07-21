@@ -89,7 +89,9 @@ class RendererService:
             if not family_name or not storage_path:
                 continue
             if family_name.casefold() == normalized_hint:
-                return Path(self.storage.absolute_path(storage_path))
+                # Use absolute paths directly for fonts (static frontend assets)
+                # without storage adapter validation, since they're outside storage root
+                return Path(storage_path)
         return None
 
     def _font(self, size: int, family_hint: str | None = None, weight: str | None = None) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
@@ -395,7 +397,12 @@ class RendererService:
         # Internal helper for background canvas; it keeps the public service method focused on orchestration
         # instead of low-level shaping.
         if base_canvas_asset_path:
-            source = Path(self.storage.absolute_path(base_canvas_asset_path))
+            # Use absolute paths directly if they're already absolute (static assets)
+            # otherwise resolve through storage adapter
+            if Path(base_canvas_asset_path).is_absolute():
+                source = Path(base_canvas_asset_path)
+            else:
+                source = Path(self.storage.absolute_path(base_canvas_asset_path))
             if source.exists():
                 try:
                     with open_image_asset(source) as raw:
@@ -2818,7 +2825,11 @@ class RendererService:
     def _resolve_template_background_source(self, template_asset_path: str) -> Path | None:
         # Internal helper for template background source; it keeps the public service method focused on
         # orchestration instead of low-level shaping.
-        source = Path(self.storage.absolute_path(template_asset_path))
+        # Use absolute paths directly if they're already absolute (static assets)
+        if Path(template_asset_path).is_absolute():
+            source = Path(template_asset_path)
+        else:
+            source = Path(self.storage.absolute_path(template_asset_path))
         if source.exists() and source.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
             return source
         scratch_root = source.parent / "_ocr"
@@ -2844,7 +2855,11 @@ class RendererService:
         # low-level shaping.
         if not logo_path:
             return False
-        source = Path(self.storage.absolute_path(logo_path))
+        # Use absolute paths directly if they're already absolute (static assets)
+        if Path(logo_path).is_absolute():
+            source = Path(logo_path)
+        else:
+            source = Path(self.storage.absolute_path(logo_path))
         if not source.exists():
             logger.warning("renderer.logo.missing storage_path=%s", logo_path)
             return False
@@ -3239,6 +3254,9 @@ class RendererService:
             # returns domain data.
             if not str(storage_path or "").strip():
                 return False
+            # Use absolute paths directly if they're already absolute (static assets)
+            if Path(storage_path).is_absolute():
+                return Path(storage_path).exists()
             if hasattr(self.storage, "exists"):
                 return bool(self.storage.exists(storage_path))
             try:
@@ -4850,6 +4868,49 @@ class RendererService:
                 draw.ellipse((cx - 3, cy + s // 4, cx + 3, cy + s // 4 + 6), fill=ic)
             elif name in ("checkmark", "check", "accessible"):
                 draw.line([(cx - s, cy), (cx - s // 4, cy + s), (cx + s, cy - s)], fill=ic, width=w + 1)
+            elif name in ("bank", "government", "gsec", "institution"):
+                # Government building: pediment triangle + columns + base
+                draw.polygon([(cx - s, cy - s // 3), (cx, cy - s), (cx + s, cy - s // 3)], outline=ic, width=w)
+                col_w = max(2, s // 5)
+                for ci in range(-2, 3):
+                    col_x = cx + ci * (s // 2)
+                    draw.line([(col_x, cy - s // 3), (col_x, cy + s // 2)], fill=ic, width=col_w)
+                draw.line([(cx - s, cy + s), (cx + s, cy + s)], fill=ic, width=w)
+            elif name in ("bond", "certificate", "debt", "document"):
+                draw.rounded_rectangle((cx - s * 0.7, cy - s, cx + s * 0.7, cy + s), radius=4, outline=ic, width=w)
+                for li in range(3):
+                    ly = cy - s // 2 + li * (s // 2)
+                    draw.line([(cx - s * 0.4, ly), (cx + s * 0.4, ly)], fill=ic, width=max(1, w - 1))
+                draw.ellipse((cx - s // 4, cy + s // 2, cx + s // 4, cy + s), outline=ic, width=w)
+            elif name in ("equity", "stock", "etf", "market"):
+                pts3 = [(cx - s, cy + s // 3), (cx - s // 3, cy - s // 4), (cx + s // 4, cy + s // 6), (cx + s, cy - s)]
+                draw.line(pts3, fill=ic, width=w + 1, joint="curve")
+                for px2, py2 in pts3:
+                    draw.ellipse((px2 - 3, py2 - 3, px2 + 3, py2 + 3), fill=ic)
+            elif name in ("cash", "money-market", "money_market", "liquidity", "coins"):
+                for oi, oy in enumerate([cy + s // 2, cy, cy - s // 2]):
+                    draw.ellipse((cx - s, oy - s // 3, cx + s, oy + s // 3), outline=ic, width=w)
+            elif name in ("safe", "vault", "capital preservation", "security-safe"):
+                draw.rounded_rectangle((cx - s, cy - s, cx + s, cy + s), radius=6, outline=ic, width=w)
+                draw.ellipse((cx - s // 3, cy - s // 3, cx + s // 3, cy + s // 3), outline=ic, width=w)
+                draw.line([(cx, cy), (cx, cy - s // 3)], fill=ic, width=w)
+            elif name in ("piggy", "piggy-bank", "savings", "fixed deposit", "fixed_deposit"):
+                draw.ellipse((cx - s, cy - s * 0.6, cx + s * 0.8, cy + s * 0.7), outline=ic, width=w)
+                draw.polygon([(cx + s * 0.6, cy - s * 0.2), (cx + s * 1.1, cy - s * 0.4), (cx + s * 1.1, cy)], outline=ic, width=w)
+                draw.ellipse((cx - s * 0.55, cy - s * 0.25, cx - s * 0.35, cy - s * 0.05), fill=ic)
+            elif name in ("real estate", "real_estate", "house", "property", "building"):
+                bw2 = int(s * 0.5)
+                draw.rectangle((cx - s, cy - s * 0.6, cx + s, cy + s), outline=ic, width=w)
+                for row in range(2):
+                    for col in range(2):
+                        wx = cx - s * 0.6 + col * s * 0.7
+                        wy = cy - s * 0.3 + row * s * 0.6
+                        draw.rectangle((wx, wy, wx + bw2 * 0.5, wy + bw2 * 0.5), outline=ic, width=max(1, w - 1))
+            elif name in ("lightbulb", "idea", "takeaway", "insight"):
+                draw.ellipse((cx - s * 0.7, cy - s, cx + s * 0.7, cy + s * 0.4), outline=ic, width=w)
+                draw.line([(cx - s * 0.3, cy + s * 0.4), (cx - s * 0.3, cy + s * 0.8)], fill=ic, width=w)
+                draw.line([(cx + s * 0.3, cy + s * 0.4), (cx + s * 0.3, cy + s * 0.8)], fill=ic, width=w)
+                draw.line([(cx - s * 0.3, cy + s * 0.8), (cx + s * 0.3, cy + s * 0.8)], fill=ic, width=w)
             else:
                 # Default star
                 for angle_deg in range(0, 360, 60):
@@ -4946,16 +5007,18 @@ class RendererService:
             y += ps_h + 24
 
         # ══════════════════════════════════════════════════════════════════════
-        # 8. FEATURE CARDS with REAL PIL-DRAWN ICONS
+        # 8. ASSET/FEATURE ROW CARDS — icon + label + stat + includes bullets + why
+        #    All text comes from the validated (spell-checked) CopyOutput fields —
+        #    never generated by an image model, so spelling is guaranteed correct.
         # ══════════════════════════════════════════════════════════════════════
         y = draw_section_heading("BUILT FOR MODERN INVESTORS", y)
 
         default_features = [
-            {"label": "AI-Powered\nIntelligence",  "body": "Advanced analysis of market trends, behavior, and goals.", "icon": "brain",       "color": purple},
-            {"label": "Diversified\nPortfolios",   "body": "Curated portfolios across asset classes to balance risk.", "icon": "portfolio",   "color": blue},
-            {"label": "Goal-Based\nApproach",      "body": "Define your goals — Jiraaf guides you every step.",       "icon": "target",      "color": orange},
-            {"label": "Risk-First\nPhilosophy",    "body": "We understand and manage risk for long-term stability.",  "icon": "shield",      "color": red_pill},
-            {"label": "Simple &\nAccessible",      "body": "Easy to use, whether you are a beginner or expert.",     "icon": "checkmark",   "color": success},
+            {"label": "AI-Powered\nIntelligence",  "stat": "",     "includes": [], "body": "Advanced analysis of market trends, behavior, and goals.", "icon": "brain",       "color": purple},
+            {"label": "Diversified\nPortfolios",   "stat": "",     "includes": [], "body": "Curated portfolios across asset classes to balance risk.", "icon": "portfolio",   "color": blue},
+            {"label": "Goal-Based\nApproach",      "stat": "",     "includes": [], "body": "Define your goals — Jiraaf guides you every step.",       "icon": "target",      "color": orange},
+            {"label": "Risk-First\nPhilosophy",    "stat": "",     "includes": [], "body": "We understand and manage risk for long-term stability.",  "icon": "shield",      "color": red_pill},
+            {"label": "Simple &\nAccessible",      "stat": "",     "includes": [], "body": "Easy to use, whether you are a beginner or expert.",     "icon": "checkmark",   "color": success},
         ]
 
         features = []
@@ -4964,6 +5027,8 @@ class RendererService:
                 def_feat = default_features[idx % len(default_features)]
                 features.append({
                     "label": str(sec.get("section_label") or def_feat["label"]).strip(),
+                    "stat":  str(sec.get("stat") or "").strip(),
+                    "includes": [str(b).strip() for b in (sec.get("includes") or []) if str(b).strip()][:3],
                     "body":  str(sec.get("body") or def_feat["body"]).strip(),
                     "icon":  str(sec.get("icon_hint") or def_feat["icon"]).strip().lower(),
                     "color": def_feat["color"],
@@ -4971,7 +5036,7 @@ class RendererService:
         else:
             features = default_features
 
-        feat_card_h = 150
+        feat_card_h = 226
         num_feats = min(len(features), 5)
         feat_gap = 10
         feat_card_w = (W - 2 * margin_x - (num_feats - 1) * feat_gap) // num_feats
@@ -4981,139 +5046,85 @@ class RendererService:
             fbox = (fx0, y, fx0 + feat_card_w, y + feat_card_h)
             self._draw_panel(draw, fbox, bg_color, radius=16, outline=border_color, width=1)
 
-            # Real icon circle (48px)
+            # Real icon circle (44px)
             icon_name = feat.get("icon", "checkmark")
             ic_col = feat.get("color") or purple
-            icon_size = 48
+            icon_size = 44
             icon_cx = fx0 + feat_card_w // 2
-            icon_cy = y + 32
+            icon_cy = y + 30
             draw_icon_circle(icon_name, icon_cx, icon_cy, icon_size, ic_col)
 
+            cursor_y = y + 60
             # Label
-            lbl_zone = self._zone_manifest(f"feat_lbl_{idx}", "label", (fx0 + 4, y + 62, fx0 + feat_card_w - 4, y + 106), 3)
+            lbl_zone = self._zone_manifest(f"feat_lbl_{idx}", "label", (fx0 + 6, cursor_y, fx0 + feat_card_w - 6, cursor_y + 38), 2)
             self._draw_text_block(draw, feat.get("label", ""), type("Z", (), lbl_zone)(), dark_text, 12, padding=0, weight="bold", align="center")
+            cursor_y += 40
 
-            # Body description
-            body_zone2 = self._zone_manifest(f"feat_body_{idx}", "body", (fx0 + 4, y + 106, fx0 + feat_card_w - 4, y + feat_card_h - 8), 4)
-            self._draw_text_block(draw, feat.get("body", ""), type("Z", (), body_zone2)(), sec_text, 10, padding=0, align="center")
+            # Stat/metric (if present)
+            if feat.get("stat"):
+                stat_zone = self._zone_manifest(f"feat_stat_{idx}", "stat", (fx0 + 6, cursor_y, fx0 + feat_card_w - 6, cursor_y + 22), 1)
+                self._draw_text_block(draw, feat["stat"], type("Z", (), stat_zone)(), ic_col, 13, padding=0, weight="bold", align="center")
+                cursor_y += 24
+
+            # Includes bullets (left-aligned, small)
+            for bullet in feat.get("includes", []):
+                bz3 = self._zone_manifest(f"feat_incl_{idx}_{bullet[:6]}", "body", (fx0 + 10, cursor_y, fx0 + feat_card_w - 8, cursor_y + 20), 1)
+                self._draw_text_block(draw, f"• {bullet}", type("Z", (), bz3)(), sec_text, 9, padding=0)
+                cursor_y += 20
+
+            # Why body description
+            body_zone2 = self._zone_manifest(f"feat_body_{idx}", "body", (fx0 + 6, cursor_y + 2, fx0 + feat_card_w - 6, y + feat_card_h - 6), 4)
+            self._draw_text_block(draw, feat.get("body", ""), type("Z", (), body_zone2)(), sec_text, 9, padding=0, align="center")
 
             zones_used.append(self._zone_manifest(f"feature_card_{idx}", "body", fbox))
 
         y += feat_card_h + 24
 
         # ══════════════════════════════════════════════════════════════════════
-        # 9. METRICS STAT CARDS (large number + label)
+        # 9. PROOF-POINT BADGE ROW (icon + short label, e.g. Capital Preservation,
+        #    Diversification, Stable Income, Growth) — matches reference layout.
         # ══════════════════════════════════════════════════════════════════════
-        y = draw_section_heading("REAL IMPACT. MEASURABLE RESULTS.", y)
+        proof_points = self._page_list_value(page_text.get("proof_points"))
+        default_proof = ["Capital Preservation", "Diversification", "Stable Income", "Growth"]
+        proof_items = proof_points[:4] if proof_points else default_proof
+        proof_icon_map = ["safe", "portfolio", "target", "growth"]
 
-        default_stats = [
-            {"num": "2X",   "label": "Higher Potential Returns vs traditional investing approaches", "color": purple},
-            {"num": "30%",  "label": "Lower Risk through intelligent diversification",               "color": orange},
-            {"num": "90%+", "label": "Goal Achievement Focus with personalized goal tracking",      "color": success},
-            {"num": "10K+", "label": "Happy Investors growing their wealth with confidence",        "color": blue},
-        ]
-        stat_cards = []
-        if stat_highlights:
-            for i, s in enumerate(stat_highlights[:4]):
-                parts = str(s).split(" ", 1)
-                num = parts[0] if parts else str(s)
-                label = parts[1] if len(parts) > 1 else ""
-                stat_cards.append({"num": num, "label": label, "color": default_stats[i % len(default_stats)]["color"]})
-        else:
-            stat_cards = default_stats
-
-        stat_card_h = 110
-        num_stats = min(len(stat_cards), 4)
-        stat_gap = 12
-        stat_card_w = (W - 2 * margin_x - (num_stats - 1) * stat_gap) // num_stats
-
-        for idx, sc in enumerate(stat_cards[:4]):
-            sx0 = margin_x + idx * (stat_card_w + stat_gap)
-            sbox = (sx0, y, sx0 + stat_card_w, y + stat_card_h)
-            col = sc.get("color") or purple
-            self._draw_panel(draw, sbox, bg_color, radius=16, outline=border_color, width=1)
-            draw.rounded_rectangle((sx0, y, sx0 + stat_card_w, y + 5), radius=3, fill=col)
-            # Large number
-            num_zone2 = self._zone_manifest(f"stat_num_{idx}", "headline", (sx0 + 8, y + 12, sx0 + stat_card_w - 8, y + 58), 1)
-            self._draw_text_block(draw, sc.get("num", ""), type("Z", (), num_zone2)(), col, 30, padding=0, weight="bold", align="center")
-            # Label text
-            lbl2_zone = self._zone_manifest(f"stat_lbl_{idx}", "body", (sx0 + 8, y + 60, sx0 + stat_card_w - 8, y + stat_card_h - 8), 3)
-            self._draw_text_block(draw, sc.get("label", ""), type("Z", (), lbl2_zone)(), sec_text, 11, padding=0, align="center")
-            zones_used.append(self._zone_manifest(f"stat_card_{idx}", "body", sbox))
-
-        y += stat_card_h + 24
+        if proof_items:
+            badge_h = 46
+            num_badges = len(proof_items)
+            badge_gap = 20
+            badge_w = (W - 2 * margin_x - (num_badges - 1) * badge_gap) // num_badges
+            draw.line((margin_x, y, W - margin_x, y), fill=border_color, width=1)
+            y += 16
+            for idx, item in enumerate(proof_items):
+                bx0 = margin_x + idx * (badge_w + badge_gap)
+                icon_r = 14
+                icx = bx0 + icon_r
+                icy = y + badge_h // 2
+                draw_icon_circle(proof_icon_map[idx % len(proof_icon_map)], icx, icy, icon_r * 2, purple)
+                lbl_zone2 = self._zone_manifest(f"proof_{idx}", "label", (bx0 + icon_r * 2 + 10, y + 2, bx0 + badge_w, y + badge_h - 2), 2)
+                self._draw_text_block(draw, str(item), type("Z", (), lbl_zone2)(), dark_text, 11, padding=0, weight="bold")
+            zones_used.append(self._zone_manifest("proof_row", "body", (margin_x, y, W - margin_x, y + badge_h)))
+            y += badge_h + 20
 
         # ══════════════════════════════════════════════════════════════════════
-        # 10. TESTIMONIAL QUOTE
+        # 10. TAKEAWAY BOX — lightbulb icon + concise, validated summary text
         # ══════════════════════════════════════════════════════════════════════
-        if customer_quote:
-            quote_h = 110
-            qbox = (margin_x, y, W - margin_x, y + quote_h)
-            self._draw_panel(draw, qbox, card_bg, radius=20, outline=border_color, width=1)
-            draw.rounded_rectangle((margin_x, y, margin_x + 6, y + quote_h), radius=3, fill=purple)
-            q_font = self._font(48, weight="bold")
-            draw.text((margin_x + 16, y + 4), "\u201c", fill=orange, font=q_font)
-            q_zone = self._zone_manifest("quote_text", "body", (margin_x + 52, y + 16, W - margin_x - 130, y + quote_h - 30), 4)
-            self._draw_text_block(draw, customer_quote, type("Z", (), q_zone)(), dark_text, 14, padding=0)
-            av_size = 44
-            av_x = W - margin_x - av_size - 18
-            av_y = y + (quote_h - av_size) // 2
-            draw.ellipse((av_x, av_y, av_x + av_size, av_y + av_size), fill=purple)
-            init = (customer_name or "U")[0].upper()
-            i_zone = self._zone_manifest("avatar_init", "headline", (av_x, av_y, av_x + av_size, av_y + av_size), 1)
-            self._draw_text_block(draw, init, type("Z", (), i_zone)(), (255, 255, 255), 18, padding=0, weight="bold", align="center")
-            n_zone2 = self._zone_manifest("quote_name", "label", (margin_x + 52, y + quote_h - 28, W - margin_x - 130, y + quote_h - 8), 1)
-            self._draw_text_block(draw, f"\u2014 {customer_name}", type("Z", (), n_zone2)(), purple, 12, padding=0, weight="bold")
-            zones_used.append(self._zone_manifest("quote_card", "body", qbox))
-            y += quote_h + 24
+        takeaway_text = (solution_statement or customer_quote or body_text or "").strip()
+        if takeaway_text:
+            takeaway_h = 96
+            tbox = (margin_x, y, W - margin_x, y + takeaway_h)
+            self._draw_panel(draw, tbox, (255, 246, 224), radius=16, outline=(250, 224, 160), width=1)
+            draw_icon_circle("lightbulb", margin_x + 30, y + takeaway_h // 2, 34, orange)
+            head_zone = self._zone_manifest("takeaway_head", "label", (margin_x + 62, y + 14, W - margin_x - 20, y + 34), 1)
+            self._draw_text_block(draw, "THE TAKEAWAY", type("Z", (), head_zone)(), dark_text, 13, padding=0, weight="bold")
+            body_zone3 = self._zone_manifest("takeaway_body", "body", (margin_x + 62, y + 34, W - margin_x - 20, y + takeaway_h - 10), 3)
+            self._draw_text_block(draw, takeaway_text, type("Z", (), body_zone3)(), sec_text, 12, padding=0)
+            zones_used.append(self._zone_manifest("takeaway_box", "body", tbox))
+            y += takeaway_h + 20
 
         # ══════════════════════════════════════════════════════════════════════
-        # 11. HOW IT WORKS TIMELINE
-        # ══════════════════════════════════════════════════════════════════════
-        y = draw_section_heading("HOW IT WORKS", y)
-
-        default_steps = [
-            {"label": "Tell Us\nAbout You",   "body": "Share goals and risk appetite."},
-            {"label": "AI Analyzes\n& Plans", "body": "We build a personalized investment plan."},
-            {"label": "Invest\nSecurely",     "body": "Invest in curated portfolios."},
-            {"label": "Track &\nOptimize",    "body": "Monitor returns and optimize anytime."},
-        ]
-        steps_list = []
-        if process_steps:
-            for i, s in enumerate(process_steps[:4]):
-                steps_list.append({"label": str(s), "body": default_steps[i]["body"] if i < len(default_steps) else ""})
-        else:
-            steps_list = default_steps
-
-        step_h = 90
-        num_steps = min(len(steps_list), 4)
-        arrow_w = 28
-        usable_w = W - 2 * margin_x - (num_steps - 1) * arrow_w
-        step_w = usable_w // num_steps
-
-        for idx, step in enumerate(steps_list[:4]):
-            sx0 = margin_x + idx * (step_w + arrow_w)
-            sbox2 = (sx0, y, sx0 + step_w, y + step_h)
-            self._draw_panel(draw, sbox2, card_bg, radius=14, outline=border_color, width=1)
-            circle_r = 17
-            cx3 = sx0 + step_w // 2
-            cy3 = y + circle_r + 8
-            draw.ellipse((cx3 - circle_r, cy3 - circle_r, cx3 + circle_r, cy3 + circle_r), fill=purple)
-            n3_zone = self._zone_manifest(f"step_n_{idx}", "headline", (cx3 - circle_r, cy3 - circle_r, cx3 + circle_r, cy3 + circle_r), 1)
-            self._draw_text_block(draw, str(idx + 1), type("Z", (), n3_zone)(), (255, 255, 255), 14, padding=0, weight="bold", align="center")
-            lbl3_zone = self._zone_manifest(f"step_lbl_{idx}", "label", (sx0 + 4, cy3 + circle_r + 4, sx0 + step_w - 4, y + step_h - 8), 3)
-            self._draw_text_block(draw, step.get("label", ""), type("Z", (), lbl3_zone)(), dark_text, 11, padding=0, weight="bold", align="center")
-            if idx < num_steps - 1:
-                ax2 = sx0 + step_w + 4
-                ay2 = y + step_h // 2
-                draw.line([(ax2, ay2), (ax2 + arrow_w - 8, ay2)], fill=gray, width=2)
-                draw.polygon([(ax2 + arrow_w - 8, ay2 - 5), (ax2 + arrow_w - 8, ay2 + 5), (ax2 + arrow_w - 2, ay2)], fill=gray)
-            zones_used.append(self._zone_manifest(f"step_{idx}", "body", sbox2))
-
-        y += step_h + 24
-
-        # ══════════════════════════════════════════════════════════════════════
-        # 12. CTA BANNER
+        # 11. CTA BANNER
         # ══════════════════════════════════════════════════════════════════════
         cta_h = 72
         cta_box2 = (0, y, W, y + cta_h)
@@ -5375,8 +5386,10 @@ class RendererService:
         previous_payload = self.payload
         self.payload = payload
         typography = (payload.brand_visual_rules or {}).get("typography", {}) if payload.brand_visual_rules else {}
+        # Use absolute paths directly for fonts (static frontend assets)
+        # without storage adapter validation, since they're outside storage root
         self._active_font_candidates = [
-            Path(self.storage.absolute_path(path))
+            Path(path)
             for path in payload.font_asset_paths
             if str(path).strip()
         ]

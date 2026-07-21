@@ -88,9 +88,69 @@ ILLUSTRATIONS: Premium flat vector, friendly, corporate. No realism, no anime, n
 
 SPACING: Extremely generous whitespace. Consistent margins and paddings. Nothing cramped.
 
-TEXT RENDERING (CRITICAL): This is a text-in-image infographic. Render every headline, subheadline, card title, description, stat, quote, name, timeline label, and CTA directly inside the image as crisp, perfectly spelled, perfectly legible typography exactly as provided in the content brief below. Do not invent, translate, abbreviate, misspell, or omit any word. Do not leave any card or section blank or as a placeholder — every card must contain real finished text.
-Only the top-right logo badge zone stays empty (the real brand logo is composited afterward).
-All visual elements must fit safely inside the canvas with generous margins — nothing cropped or touching edges.
+TEXT RENDERING: This is a text-in-image infographic. Render all text content directly in the image as crisp, perfectly spelled typography. Only the top-right logo badge zone stays empty.
+"""
+        elif fmt == "banner":
+            format_instructions = """
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+BANNER FORMAT RULES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- Canvas size: 1200x628 landscape (web banner) or 728x90 (leaderboard) or 300x250 (medium rectangle).
+- Logo Zone: Always reserve the top-right corner area (160x50 pixels, 56px padding) completely clean, empty, and free of any visual elements, details, or overlays so the logo can be composited safely.
+- No text inside image: DALL-E must generate clean marketing creatives with no text, leaving clean negative space for programmatic text overlay.
+- Strong visual focal point, minimal text density, clear CTA placement.
+"""
+        elif fmt == "newsletter":
+            format_instructions = """
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+NEWSLETTER FORMAT RULES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- Canvas size: 600x800 portrait (email-optimized width).
+- Logo Zone: Reserve top-right corner (120x40 pixels, 24px padding) for logo compositing.
+- No text inside image: Generate clean visual layout with negative space for programmatic text overlay.
+- Multi-section visual hierarchy: header image → content blocks → CTA area.
+- Clean, professional, email-safe design. Minimal complexity for small-screen rendering.
+"""
+        elif fmt == "blog":
+            format_instructions = """
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+BLOG FORMAT RULES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- Canvas size: 1200x630 landscape (blog header/hero image).
+- Logo Zone: Reserve top-right corner (120x40 pixels, 24px padding) for logo compositing.
+- No text inside image: Generate clean editorial hero visual with negative space for title overlay.
+- Editorial, magazine-quality visual. Strong narrative imagery. Clean, sophisticated, readable.
+"""
+        elif fmt == "email":
+            format_instructions = """
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+EMAIL FORMAT RULES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- Canvas size: 600x800 portrait (email-optimized width).
+- Logo Zone: Reserve top-right corner (120x40 pixels, 24px padding) for logo compositing.
+- No text inside image: Generate clean visual with negative space for programmatic text overlay.
+- Direct response aesthetic. Clear visual hierarchy. Action-oriented. Email-safe design.
+"""
+        elif fmt == "presentation":
+            format_instructions = """
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PRESENTATION FORMAT RULES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- Canvas size: 1920x1080 landscape (16:9 presentation slide).
+- Logo Zone: Reserve top-right corner (160x50 pixels, 48px padding) for logo compositing.
+- No text inside image: Generate clean slide backgrounds with negative space for programmatic text overlay.
+- Professional, corporate presentation aesthetic. Clean layouts, generous whitespace, strong visual hierarchy.
+- Each slide should have ONE dominant visual element with ample negative space for text.
+"""
+        elif fmt == "ad_creative":
+            format_instructions = """
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+AD CREATIVE FORMAT RULES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- Canvas size: 1080x1080 square (social ad) or 1200x628 landscape (display ad).
+- Logo Zone: Always reserve the top-right corner area (160x50 pixels, 56px padding) completely clean, empty, and free of any visual elements, details, or overlays so the logo can be composited safely.
+- No text inside image: DALL-E must generate clean, high-impact marketing creatives with no text, leaving clean negative space for programmatic text overlay.
+- Performance-optimized: strong focal point, emotional appeal, clear visual hierarchy, CTA-friendly composition.
 """
         else:
             format_instructions = """
@@ -119,7 +179,7 @@ CRITICAL RULES:
 - Define a color_behavior that uses the brand's palette appropriately with hex codes.
 - Logo Zone: Define where the logo must sit safely (e.g. 'top-right corner, 32px padding').
 - DO NOT invent/fetch real image URLs in the LLM. Return an empty string "" for generated_image_url in the JSON.
-- For the "infographic" format: the generated_image_prompt MUST describe a fully finished poster with every headline, card title, description, stat, quote, and CTA rendered as real, correctly spelled, legible text baked directly into the image — do not follow a "no text" rule for this format. Only the top-right logo badge stays empty for later compositing.
+- For the "infographic" format: the generated_image_prompt MUST describe a fully finished poster with text baked in. Only the top-right logo badge stays empty for later compositing.
 - For all other formats, follow a strictly 'No text, no logos, no watermarks' rule in the generated_image_prompt. Typography and copy will be laid out cleanly on top of the blank space by the compositor.
 
 CONTENT SECTIONS:
@@ -130,7 +190,7 @@ TEXT OVERLAY PLAN:
 - Allowed element_type values: headline, subheadline, supporting_line, body, cta, label, footer, section_label, stat, badge.
 
 IMAGE PROMPT DIRECTION:
-- The image_prompt_direction you write will be sent to the Prompt Expander. Write a structured prompt of 600-900 words describing the visual layout, background, 3D shapes/icons, or illustrations. For "infographic" format, also describe exactly which real headline/card/stat/quote/CTA text appears in each section. For all other formats, describe visuals only — no text.
+- The image_prompt_direction you write will be sent to the Prompt Expander. Write a structured prompt of 600-900 words describing the visual layout, background, 3D shapes/icons, or illustrations. For "infographic" format, include the text content for each section. For all other formats, describe visuals only — no text.
 
 JSON OUTPUT STRUCTURE:
 {
@@ -191,7 +251,7 @@ No preamble. No markdown code fences. Return ONLY raw JSON."""
         text_directive = (
             "No text inside the image."
             if fmt != "infographic"
-            else "This is an infographic: bake every headline, card title, description, stat, quote, and CTA in as real, correctly spelled, legible text."
+            else "Text-baked infographic: render all provided content as legible text in the image."
         )
 
         return f"""BRAND VISUAL SYSTEM CONTEXT:
@@ -503,9 +563,7 @@ Now write the final expanded image-generation prompt following the template stru
         process_steps: list[str],
         user_prompt: str,
     ) -> str:
-        """Build the master-design-system + dynamic-content prompt for a single, fully
-        text-baked infographic image (no backend text overlay — everything the model
-        renders is the final pixel content)."""
+        """Build the infographic prompt with 3D-style icons (pig, invest, etc.) matching reference images."""
 
         title = headline or "Untitled"
         subtitle = supporting_line or ""
@@ -540,14 +598,14 @@ Now write the final expanded image-generation prompt following the template stru
                 f'"{user_prompt}"'
             )
 
-        return f"""Create a premium, corporate LinkedIn infographic. It must look like it was designed by a senior UI/UX designer from Stripe, Apple, Notion, or McKinsey — every word spelled correctly, every card fully finished, not a generic AI poster.
+        return f"""Create a premium, corporate LinkedIn infographic with 3D-style icons. It must look like it was designed by a senior UI/UX designer from Stripe, Apple, Notion, or McKinsey — every word spelled correctly, every card fully finished, not a generic AI poster.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 FIXED MASTER DESIGN SYSTEM (never change this styling)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Brand Personality: Professional, Trustworthy, Educational, Premium, Minimal, Modern, Financial, Clean, Data-driven, Human-centered.
 Target Audience: Retail Investors, HNIs, Young Professionals, Finance Enthusiasts.
-Canvas: Portrait 1080x1350, high resolution, vector illustration style. No pixelation, no watercolor, no painterly effect, no 3D rendering, no comic style. Flat premium vector graphics only.
+Canvas: Portrait 1080x1350, high resolution, 3D rendered icons with clean typography. Use premium 3D icons like piggy bank, investment charts, coins, shields, growth arrows, etc.
 Grid: 12-column grid layout, large white margins, generous breathing space, perfect alignment and spacing throughout.
 
 Brand Colors (use exactly):
@@ -565,13 +623,13 @@ Brand Colors (use exactly):
 
 Typography: Modern sans-serif (Inter, Manrope, SF Pro, Plus Jakarta Sans style). Bold very large headings, semi-bold subheadings, medium-weight body, regular captions. Extremely clear text hierarchy. Perfect readability. Avoid decorative fonts.
 
-Visual Style: Premium flat illustrations, no gradients unless extremely subtle, rounded corners (16-24px radius), soft shadows, large cards, minimal outlines, soft color palette, friendly illustrations, consistent stroke width, rounded icons, financial dashboard aesthetic.
+Visual Style: Premium 3D rendered icons (piggy bank, investment growth, coins, shield, target, graph, etc.) with clean flat backgrounds. Rounded corners (16-24px radius), soft shadows, large cards, minimal outlines, soft color palette, friendly illustrations, consistent stroke width, financial dashboard aesthetic.
 
-Icon Style: Outlined modern vector icons — simple, minimal, uniform stroke, one visual family, same thickness and corner radius throughout. Finance-related motifs: brain, chart, shield, coin, wallet, graph, calendar, document, target, checkmark, arrow, growth, investment, portfolio, risk, clock, goal.
+Icon Style: Premium 3D rendered icons — piggy bank for savings, investment charts for growth, coins for wealth, shield for security, target for goals, graph for performance, calendar for time, document for reports. All icons should be 3D-style with subtle lighting and shadows, matching modern fintech apps.
 
 Card Style: 16-24px radius, very light shadow, soft border, large padding, consistent spacing, equal width, perfectly aligned.
 
-Illustrations: Premium flat vector, friendly, corporate, no realism, no anime, no cartoon. Characters have simple faces, minimal expressions, clean shapes, soft colors.
+Illustrations: Premium 3D rendered icons, friendly, corporate, no realism, no anime, no cartoon. Icons have subtle lighting, clean shapes, soft colors.
 
 Spacing: Extremely generous whitespace, consistent margins/paddings, nothing cramped, professional presentation.
 
@@ -580,12 +638,12 @@ Logo Zone: Reserve the top-right corner (about 160x50px, 56px padding) completel
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 LAYOUT (top to bottom) — populate every card with the DYNAMIC CONTENT below
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-1. Top Section: empty logo-safe corner, then the Title as a large bold headline, the Subtitle beneath it, a thin divider line, then one relevant flat-vector hero illustration for the topic.
-2. Problem vs Solution: two equal side-by-side cards. Left card labeled "The Problem" with a small illustration and the Problem text. Right card labeled "The Solution" with a small illustration and the Solution text. Only include this section if Problem and Solution text are provided below.
-3. Features: up to five horizontal cards in a row/grid, each with one outlined icon, the feature title, and its short description, using the Features list below. Only include as many cards as items are supplied.
-4. Statistics: statistic cards each showing one large number/stat plus a short supporting label and a small icon, using the Statistics list below. Only include as many cards as items are supplied.
+1. Top Section: empty logo-safe corner, then the Title as a large bold headline, the Subtitle beneath it, a thin divider line, then one relevant 3D icon for the topic (piggy bank, investment chart, etc.).
+2. Problem vs Solution: two equal side-by-side cards. Left card labeled "The Problem" with a small 3D icon and the Problem text. Right card labeled "The Solution" with a small 3D icon and the Solution text. Only include this section if Problem and Solution text are provided below.
+3. Features: up to five horizontal cards in a row/grid, each with one 3D icon (piggy bank, investment, coin, shield, target, etc.), the feature title, and its short description, using the Features list below. Only include as many cards as items are supplied.
+4. Statistics: statistic cards each showing one large number/stat plus a short supporting label and a small 3D icon, using the Statistics list below. Only include as many cards as items are supplied.
 5. Testimonial: one rounded card with a circular avatar placeholder, the quote text, and the attribution name, using the Quote block below. Skip this section entirely if no quote is supplied.
-6. Process Timeline: a horizontal 4-step timeline with small numbered icon badges connected by thin arrows, one short label per step, using the Timeline list below. Skip if no steps are supplied.
+6. Process Timeline: a horizontal 4-step timeline with small numbered 3D icon badges connected by thin arrows, one short label per step, using the Timeline list below. Skip if no steps are supplied.
 7. CTA: a closing band with the CTA text as a short bold line, plus a rounded button-style shape containing the CTA text (or a short imperative derived from it). Keep the logo-safe zone here empty too.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -612,10 +670,8 @@ NON-NEGOTIABLE RULES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 1. Every word above must appear in the image exactly as written, with perfect spelling and grammar — proofread before rendering. Never invent extra copy, filler Lorem Ipsum, or duplicate text.
 2. Never leave a card, section, or label visually empty or blank; if content for a section is marked "None supplied", omit that whole section rather than drawing an empty placeholder card.
-3. Keep the top-right and CTA logo-safe zones completely empty — no drawn logo, wordmark, or watermark anywhere.
-4. Background stays pure white (#FFFFFF) with #FAFAFC cards and #ECECEC borders — no gradients, tints, or frames outside the specified palette.
-5. Every icon must be a simple, content-specific, outlined vector icon from one consistent family — never generic, mismatched, or decorative stock art.
-6. All cards, text, and illustrations must fit completely inside the 1080x1350 canvas with generous margins — nothing cropped, clipped, or crowding an edge.
-7. Quality bar: crisp vector, magazine quality, premium fintech branding, ultra sharp, high detail, balanced composition, award-winning infographic design — suitable for LinkedIn.
+3. All cards, text, and 3D icons must fit completely inside the 1080x1350 canvas with generous margins — nothing cropped, clipped, or crowding an edge.
+4. Use 3D-style icons (piggy bank, investment charts, coins, shields, targets, graphs) with subtle lighting and shadows — not flat vector icons.
 
 Return ONLY the finished image. Follow the layout and dynamic content exactly."""
+

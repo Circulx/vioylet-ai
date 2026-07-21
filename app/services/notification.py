@@ -38,6 +38,15 @@ class InAppNotificationService:
     async def list_for_user(self, user_id: UUID) -> list[InAppNotification]:
         return await self.notifications.list_for_user(user_id)
 
+    async def unread_count_for_user(self, user_id: UUID) -> int:
+        return await self.notifications.count_unread_for_user(user_id)
+
+    async def mark_all_read_for_user(self, user_id: UUID) -> int:
+        updated_count = await self.notifications.mark_all_read_for_user(user_id)
+        if updated_count:
+            await self.session.commit()
+        return updated_count
+
     async def clear_for_user(self, user_id: UUID) -> None:
         await self.notifications.delete_for_user(user_id)
         await self.session.commit()

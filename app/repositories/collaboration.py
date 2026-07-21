@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.collaboration import (
@@ -87,6 +87,26 @@ class InAppNotificationRepository(Repository[InAppNotification]):
             .limit(limit)
         )
         return list(result.scalars().all())
+
+    async def count_unread_for_user(self, user_id: UUID) -> int:
+        result = await self.session.scalar(
+            select(func.count(InAppNotification.id)).where(
+                InAppNotification.recipient_user_id == user_id,
+                InAppNotification.is_read.is_(False),
+            )
+        )
+        return int(result or 0)
+
+    async def mark_all_read_for_user(self, user_id: UUID) -> int:
+        result = await self.session.execute(
+            update(InAppNotification)
+            .where(
+                InAppNotification.recipient_user_id == user_id,
+                InAppNotification.is_read.is_(False),
+            )
+            .values(is_read=True)
+        )
+        return int(result.rowcount or 0)
 
     async def delete_for_user(self, user_id: UUID) -> None:
         notifications = await self.list_for_user(user_id, limit=500)

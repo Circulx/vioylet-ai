@@ -65,6 +65,7 @@ type TableRow = {
     cells: string[];
     createdAt?: string | null;
     isActive: boolean;
+    isTenantAdmin: boolean;
     activityStatus: UserActivityStatus;
     isPendingActivation: boolean;
     activationLinkSentCount: number;
@@ -116,6 +117,7 @@ export default function TeamAccessManager() {
             email: user.email,
             createdAt: user.created_at,
             isActive: user.is_active,
+            isTenantAdmin: user.role_codes.includes("tenant_admin"),
             activityStatus,
             isPendingActivation: user.is_active && !user.is_activated,
             activationLinkSentCount: user.activation_link_sent_count || 0,
@@ -141,6 +143,7 @@ export default function TeamAccessManager() {
             email: user.email,
             createdAt: user.created_at,
             isActive: user.is_active,
+            isTenantAdmin: user.role_codes.includes("tenant_admin"),
             activityStatus,
             isPendingActivation: user.is_active && !user.is_activated,
             activationLinkSentCount: user.activation_link_sent_count || 0,
@@ -473,22 +476,26 @@ function UserTable({
                                                             Total attempts done: {row.activationLinkSentCount}
                                                         </span> */}
                                                     </div>
-                                                    <UserActionMenu
-                                                        row={row}
-                                                        onEditUser={onEditUser}
-                                                        onDeactivateUser={onDeactivateUser}
-                                                        onReactivateUser={onReactivateUser}
-                                                    />
+                                                    {row.isTenantAdmin ? null : (
+                                                        <UserActionMenu
+                                                            row={row}
+                                                            onEditUser={onEditUser}
+                                                            onDeactivateUser={onDeactivateUser}
+                                                            onReactivateUser={onReactivateUser}
+                                                        />
+                                                    )}
                                                 </div>
                                             ) : index === 4 ? (
                                                 <div className="flex items-center justify-between gap-3">
                                                     <span>{cell}</span>
-                                                    <UserActionMenu
-                                                        row={row}
-                                                        onEditUser={onEditUser}
-                                                        onDeactivateUser={onDeactivateUser}
-                                                        onReactivateUser={onReactivateUser}
-                                                    />
+                                                    {row.isTenantAdmin ? null : (
+                                                        <UserActionMenu
+                                                            row={row}
+                                                            onEditUser={onEditUser}
+                                                            onDeactivateUser={onDeactivateUser}
+                                                            onReactivateUser={onReactivateUser}
+                                                        />
+                                                    )}
                                                 </div>
                                             ) : (
                                                 cell

@@ -16,11 +16,24 @@ export const useGetTenantData = (id: string) =>
         queryFn: () => request(API.TENANTS.DETAIL, { pathParams: id }),
     });
 
-export const useGetTenantUsers = (tenantId: string) =>
+export const useGetTenantUsers = (tenantId: string, roleCodes?: string[], excludeRoleCodes?: string[]) =>
     useQuery({
-        queryKey: ["tenant", tenantId, "users"],
+        queryKey: [
+            "tenant",
+            tenantId,
+            "users",
+            roleCodes?.join(",") || "all",
+            excludeRoleCodes?.join(",") || "none",
+        ],
         enabled: Boolean(tenantId),
-        queryFn: () => request(API.TENANTS.USERS, { pathParams: tenantId }),
+        queryFn: () =>
+            request(API.TENANTS.USERS, {
+                pathParams: tenantId,
+                params: {
+                    ...(roleCodes?.length ? { role_codes: roleCodes.join(",") } : {}),
+                    ...(excludeRoleCodes?.length ? { exclude_role_codes: excludeRoleCodes.join(",") } : {}),
+                },
+            }),
     });
 
 export const useGetTenantBrandSpaces = (tenantId: string) =>

@@ -46,7 +46,12 @@ export function NotificationDrawer({ children }: { children: ReactNode }) {
   const { data: user } = useGetMe()
   const queryClient = useQueryClient()
   const [open, setOpen] = useState(false)
-  const { notifications: localNotifications, remove: removeLocalNotification, clear: clearLocalNotifications } = useInAppNotifications(user?.id)
+  const {
+    notifications: localNotifications,
+    remove: removeLocalNotification,
+    clear: clearLocalNotifications,
+    markAllRead: markLocalNotificationsRead,
+  } = useInAppNotifications(user?.id)
   const { data: serverNotifications = [], refetch: refetchServerNotifications } = useQuery({
     queryKey: ["notifications", user?.id],
     enabled: Boolean(user?.id),
@@ -54,10 +59,35 @@ export function NotificationDrawer({ children }: { children: ReactNode }) {
     refetchOnWindowFocus: "always",
     refetchInterval: user?.id ? 30000 : false,
   })
+  const markServerNotificationsRead = useMutation({
+    mutationFn: () => request(API.NOTIFICATIONS.MARK_READ),
+    onMutate: async () => {
+      await Promise.all([
+        queryClient.cancelQueries({ queryKey: ["notifications", user?.id] }),
+        queryClient.cancelQueries({ queryKey: ["notifications", user?.id, "unread-count"] }),
+      ])
+      queryClient.setQueryData<typeof serverNotifications>(["notifications", user?.id], (current) =>
+        (current || []).map((notification) => ({
+          ...notification,
+          unread: false,
+        })),
+      )
+      queryClient.setQueryData(["notifications", user?.id, "unread-count"], { unread_count: 0 })
+    },
+    onSettled: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["notifications", user?.id] }),
+        queryClient.invalidateQueries({ queryKey: ["notifications", user?.id, "unread-count"] }),
+      ])
+    },
+  })
   const clearServerNotifications = useMutation({
     mutationFn: () => request(API.NOTIFICATIONS.CLEAR),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["notifications", user?.id] })
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["notifications", user?.id] }),
+        queryClient.invalidateQueries({ queryKey: ["notifications", user?.id, "unread-count"] }),
+      ])
     },
   })
   const deleteServerNotification = useMutation({
@@ -66,7 +96,10 @@ export function NotificationDrawer({ children }: { children: ReactNode }) {
         pathParams: notificationId,
       }),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["notifications", user?.id] })
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["notifications", user?.id] }),
+        queryClient.invalidateQueries({ queryKey: ["notifications", user?.id, "unread-count"] }),
+      ])
     },
   })
   const notifications = [
@@ -109,6 +142,8 @@ export function NotificationDrawer({ children }: { children: ReactNode }) {
       onOpenChange={(nextOpen) => {
         setOpen(nextOpen)
         if (nextOpen && user?.id) {
+          markLocalNotificationsRead()
+          markServerNotificationsRead.mutate()
           void refetchServerNotifications()
         }
       }}

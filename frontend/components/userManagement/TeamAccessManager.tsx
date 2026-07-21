@@ -238,6 +238,7 @@ export default function TeamAccessManager() {
                                 onActivityChange={setActivityFilter}
                                 onClear={() => {
                                     setCreatedFilter("all");
+
                                     setActivityFilter("all");
                                 }}
                                 activeFilterCount={activeFilterCount}

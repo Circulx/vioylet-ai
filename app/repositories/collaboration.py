@@ -161,6 +161,13 @@ class UsageLimitRepository(Repository[UsageLimit]):
         result = await self.session.execute(select(UsageLimit).where(UsageLimit.tenant_id == tenant_id))
         return result.scalar_one_or_none()
 
+    async def get_by_tenant_for_update(self, tenant_id: UUID) -> UsageLimit | None:
+        """Lock the tenant's limits row to serialize usage increments, including the first one."""
+        result = await self.session.execute(
+            select(UsageLimit).where(UsageLimit.tenant_id == tenant_id).with_for_update()
+        )
+        return result.scalar_one_or_none()
+
 
 class UsageConsumptionRepository(Repository[UsageConsumption]):
     # Data-access helper for usage consumption; services call this class instead of repeating SQLAlchemy filters
@@ -178,6 +185,24 @@ class UsageConsumptionRepository(Repository[UsageConsumption]):
                 UsageConsumption.metric_code == metric_code,
                 UsageConsumption.period_key == period_key,
             )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_metric_for_update(
+        self,
+        tenant_id: UUID,
+        metric_code: str,
+        period_key: str,
+    ) -> UsageConsumption | None:
+        """Return and lock a usage row so threshold crossings are evaluated once per transaction."""
+        result = await self.session.execute(
+            select(UsageConsumption)
+            .where(
+                UsageConsumption.tenant_id == tenant_id,
+                UsageConsumption.metric_code == metric_code,
+                UsageConsumption.period_key == period_key,
+            )
+            .with_for_update()
         )
         return result.scalar_one_or_none()
 

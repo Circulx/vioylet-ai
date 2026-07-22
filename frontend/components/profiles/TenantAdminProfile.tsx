@@ -182,7 +182,7 @@ export default function TenantAdminProfile() {
         <>
             <div className="w-full px-4 py-6">
                 <div className="mx-auto space-y-4">
-                    <PlatformPageTitle title={account.fullName} />
+                    <PlatformPageTitle title={`${account.fullName}'s Profile`} />
 
                     {feedback ? <p className="text-sm text-emerald-600">{feedback}</p> : null}
                     {error ? <p className="text-sm text-red-500">{error}</p> : null}

@@ -1284,7 +1284,12 @@ class TemplateService:
             if text or extracted.get("images") or analysis_path:
                 usage_amount = max(page_count, 1)
                 await self.usage.enforce(template.tenant_id, UsageMetricCode.OCR_PAGES, usage_amount)
-                await self.usage.increment(template.tenant_id, UsageMetricCode.OCR_PAGES, usage_amount)
+                await self.usage.increment(
+                    template.tenant_id,
+                    UsageMetricCode.OCR_PAGES,
+                    usage_amount,
+                    brand_space_id=template.brand_space_id,
+                )
 
             vision_source = self._resolve_vision_source(absolute_path, extracted)
             if vision_source:

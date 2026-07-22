@@ -331,7 +331,12 @@ class BrandAssetService:
             billable_ocr_pages = 0 if is_typography_guide else max(asset.page_count, 1)
             if billable_ocr_pages:
                 await self.usage.enforce(asset.tenant_id, UsageMetricCode.OCR_PAGES, billable_ocr_pages)
-                await self.usage.increment(asset.tenant_id, UsageMetricCode.OCR_PAGES, billable_ocr_pages)
+                await self.usage.increment(
+                    asset.tenant_id,
+                    UsageMetricCode.OCR_PAGES,
+                    billable_ocr_pages,
+                    brand_space_id=asset.brand_space_id,
+                )
 
             await self._upsert_processing_status(
                 asset=asset,

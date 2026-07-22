@@ -12079,11 +12079,25 @@ class ContentService:
 
         session_update_started_at = perf_counter()
         await self._record_session_context(session, payload, content_version)
-        await self.usage.increment(tenant_id, UsageMetricCode.CONTENT_GENERATIONS)
+        await self.usage.increment(
+            tenant_id,
+            UsageMetricCode.CONTENT_GENERATIONS,
+            brand_space_id=brand_space_id,
+        )
         if response.image_assets:
-            await self.usage.increment(tenant_id, UsageMetricCode.IMAGE_GENERATIONS, len(response.image_assets))
+            await self.usage.increment(
+                tenant_id,
+                UsageMetricCode.IMAGE_GENERATIONS,
+                len(response.image_assets),
+                brand_space_id=brand_space_id,
+            )
         elif persisted_final_render_assets:
-            await self.usage.increment(tenant_id, UsageMetricCode.IMAGE_GENERATIONS, len(persisted_final_render_assets))
+            await self.usage.increment(
+                tenant_id,
+                UsageMetricCode.IMAGE_GENERATIONS,
+                len(persisted_final_render_assets),
+                brand_space_id=brand_space_id,
+            )
         await self.session.commit()
         generation_performance.append(
             {
@@ -12506,7 +12520,11 @@ class ContentService:
                 rewritten.explainability_metadata if isinstance(rewritten.explainability_metadata, dict) else {}
             ),
         )
-        await self.usage.increment(tenant_id, UsageMetricCode.CONTENT_GENERATIONS)
+        await self.usage.increment(
+            tenant_id,
+            UsageMetricCode.CONTENT_GENERATIONS,
+            brand_space_id=brand_space_id,
+        )
         await self.session.commit()
         await self.session.refresh(rewritten)
         logger.info(

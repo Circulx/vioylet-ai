@@ -64,6 +64,37 @@ async def test_increment_does_not_repeat_alert_above_threshold(starting_usage: i
 
 
 @pytest.mark.asyncio
+async def test_stateful_increment_replaces_stale_brand_space_counter() -> None:
+    session = SimpleNamespace(flush=AsyncMock())
+    service = UsageLimitService(session)
+    metric = SimpleNamespace(consumed=10)
+    usage_limit = SimpleNamespace(max_brand_spaces=5)
+    service.limits.get_by_tenant_for_update = AsyncMock(return_value=usage_limit)
+    service.limits.get_by_tenant = AsyncMock(return_value=usage_limit)
+    service.consumption.get_metric_for_update = AsyncMock(return_value=metric)
+
+    with (
+        patch(
+            "app.services.usage.InAppNotificationService.create_usage_threshold_notifications",
+            new_callable=AsyncMock,
+        ) as create_warning,
+        patch(
+            "app.services.usage.InAppNotificationService.create_usage_exhausted_notifications",
+            new_callable=AsyncMock,
+        ) as create_exhausted,
+    ):
+        await service.increment(
+            uuid4(),
+            UsageMetricCode.BRAND_SPACES,
+            current_usage=3,
+        )
+
+    assert metric.consumed == 4
+    create_warning.assert_awaited_once()
+    create_exhausted.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_limit_reduction_can_trigger_crossing() -> None:
     session = SimpleNamespace()
     service = UsageLimitService(session)
@@ -88,7 +119,7 @@ async def test_limit_reduction_can_trigger_crossing() -> None:
 
 
 @pytest.mark.asyncio
-async def test_alert_does_not_trigger_when_usage_skips_past_eighty_percent() -> None:
+async def test_warning_does_not_trigger_at_one_hundred_percent() -> None:
     session = SimpleNamespace()
     service = UsageLimitService(session)
     service.limits.get_by_tenant = AsyncMock(
@@ -109,6 +140,28 @@ async def test_alert_does_not_trigger_when_usage_skips_past_eighty_percent() -> 
         )
 
     create_notifications.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_warning_triggers_when_usage_crosses_above_eighty_percent() -> None:
+    session = SimpleNamespace()
+    service = UsageLimitService(session)
+    service.limits.get_by_tenant = AsyncMock(
+        return_value=SimpleNamespace(max_content_generations=100)
+    )
+
+    with patch(
+        "app.services.usage.InAppNotificationService.create_usage_threshold_notifications",
+        new_callable=AsyncMock,
+    ) as create_notifications:
+        await service.notify_if_threshold_crossed(
+            tenant_id=uuid4(),
+            metric_code=UsageMetricCode.CONTENT_GENERATIONS,
+            previous_usage=79,
+            current_usage=85,
+        )
+
+    create_notifications.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -186,6 +239,28 @@ async def test_exact_limit_creates_usage_exhausted_notification() -> None:
             metric_code=UsageMetricCode.OCR_PAGES,
             previous_usage=99,
             current_usage=100,
+        )
+
+    create_notifications.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_usage_above_limit_creates_exhausted_notification() -> None:
+    session = SimpleNamespace()
+    service = UsageLimitService(session)
+    service.limits.get_by_tenant = AsyncMock(
+        return_value=SimpleNamespace(max_ocr_pages=100)
+    )
+
+    with patch(
+        "app.services.usage.InAppNotificationService.create_usage_exhausted_notifications",
+        new_callable=AsyncMock,
+    ) as create_notifications:
+        await service.notify_if_exhausted(
+            tenant_id=uuid4(),
+            metric_code=UsageMetricCode.OCR_PAGES,
+            previous_usage=99,
+            current_usage=105,
         )
 
     create_notifications.assert_awaited_once()

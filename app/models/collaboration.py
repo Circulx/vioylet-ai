@@ -102,6 +102,27 @@ class UsageConsumption(UUIDPrimaryKeyMixin, TenantScopedMixin, TimestampMixin, B
     metadata_json: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
 
 
+class BrandCapacityAlertState(UUIDPrimaryKeyMixin, TenantScopedMixin, BrandScopedMixin, TimestampMixin, Base):
+    __tablename__ = "brand_capacity_alert_states"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "brand_space_id",
+            "period_key",
+            name="uq_brand_capacity_alert_period",
+        ),
+    )
+
+    brand_space_id: Mapped[UUID] = mapped_column(
+        ForeignKey("brand_spaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    period_key: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    last_usage_percent: Mapped[float] = mapped_column(default=0.0, nullable=False)
+    warning_sent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+
 class JobRecord(UUIDPrimaryKeyMixin, TenantScopedMixin, BrandScopedMixin, TimestampMixin, Base):
     __tablename__ = "jobs"
 

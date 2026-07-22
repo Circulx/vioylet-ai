@@ -3,6 +3,7 @@
 import { isAxiosError } from "axios";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { UserMinus, X } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -11,7 +12,9 @@ import { FormField, StyledInput } from "@/components/brandSpaces/tabs/FormFields
 import { PlatformPageTitle, SectionCard } from "@/components/platformOwner/PlatformOwnerPrimitives";
 import { useBrands } from "@/hooks/useBrands";
 import { getTenantUserRequestId, useSaveTenantUser, useTenantUserDetail } from "@/hooks/useTeamAccess";
+import { useDeactivateTenantUser, useReactivateTenantUser } from "@/hooks/tenantAdmins/useUpdateTenant";
 import { useGetMe } from "@/hooks/useUser";
+import { getApiErrorMessage } from "@/lib/api/error-message";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { toast } from "@/components/ui/use-toast";
 
@@ -63,11 +66,14 @@ export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
     const router = useRouter();
     const { data: brands } = useBrands();
     const { data: currentUser } = useGetMe();
-    const { data: liveUser, isLoading } = useTenantUserDetail(userId || "");
+    const { tenantId, data: liveUser, isLoading } = useTenantUserDetail(userId || "");
     const saveUserId = mode === "edit" ? getTenantUserRequestId(liveUser) || userId : undefined;
 
     const saveUser = useSaveTenantUser(saveUserId);
+    const deactivateUser = useDeactivateTenantUser(tenantId);
+    const reactivateUser = useReactivateTenantUser(tenantId);
     const [confirmOpen, setConfirmOpen] = useState(false);
+    const [deactivateConfirmOpen, setDeactivateConfirmOpen] = useState(false);
     const [errors, setErrors] = useState<FormErrorState>({});
     const [submissionFeedback, setSubmissionFeedback] = useState<SubmissionFeedback | null>(null);
 
@@ -119,6 +125,9 @@ export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
     const showBrandAssignment = resolvedForm.roleCode === "brand_user";
     const liveUserId = getTenantUserRequestId(liveUser);
     const isSelfEdit = mode === "edit" && Boolean(currentUser?.id) && liveUserId === currentUser?.id;
+    const isTenantAdminUser = liveUser?.role_codes.includes("tenant_admin") || resolvedForm.roleCode === "tenant_admin";
+    const canChangeAccountStatus = mode === "edit" && Boolean(saveUserId) && Boolean(liveUser) && !isTenantAdminUser && !isSelfEdit;
+    const accountStatusMutationPending = deactivateUser.isPending || reactivateUser.isPending;
 
     const updateForm = (patch: Partial<UserEditorState>) => {
         setForm((current) => ({ ...(current ?? resolvedForm), ...patch }));
@@ -228,6 +237,43 @@ export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
         submit();
     };
 
+    const confirmDeactivateUser = async () => {
+        if (!saveUserId || deactivateUser.isPending) {
+            return;
+        }
+
+        try {
+            await deactivateUser.mutateAsync(saveUserId);
+            setDeactivateConfirmOpen(false);
+        } catch (error) {
+            toast({
+                title: "Unable to deactivate user",
+                description: getApiErrorMessage(error, "Please try again."),
+                variant: "destructive",
+            });
+        }
+    };
+
+    const handleAccountStatusClick = async () => {
+        if (!saveUserId || accountStatusMutationPending) {
+            return;
+        }
+        if (liveUser?.is_active) {
+            setDeactivateConfirmOpen(true);
+            return;
+        }
+
+        try {
+            await reactivateUser.mutateAsync(saveUserId);
+        } catch (error) {
+            toast({
+                title: "Unable to reactivate user",
+                description: getApiErrorMessage(error, "Please try again."),
+                variant: "destructive",
+            });
+        }
+    };
+
     if (mode === "edit" && isLoading && !liveUser) {
         return <div className="w-full px-6 py-10 text-sm text-slate-500">Loading user details...</div>;
     }
@@ -243,13 +289,32 @@ export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
                     <PlatformPageTitle
                         title={title}
                         action={
-                            <Button
-                                onClick={handleSaveClick}
-                                disabled={saveUser.isPending}
-                                className="h-12 rounded-none bg-primary/72 px-10 py-6 text-[15px] font-medium hover:bg-primary/90"
-                            >
-                                {saveUser.isPending ? (mode === "create" ? "Creating..." : "Saving...") : mode === "create" ? "Create" : "Save"}
-                            </Button>
+                            <div className="flex flex-wrap items-center justify-end gap-3">
+                                <Button
+                                    onClick={handleSaveClick}
+                                    disabled={saveUser.isPending}
+                                    className="h-12 rounded-none bg-primary/72 px-10 py-6 text-[15px] font-medium hover:bg-primary/90"
+                                >
+                                    {saveUser.isPending ? (mode === "create" ? "Creating..." : "Saving...") : mode === "create" ? "Create" : "Save"}
+                                </Button>
+                                {canChangeAccountStatus ? (
+                                    <Button
+                                        type="button"
+                                        onClick={handleAccountStatusClick}
+                                        disabled={accountStatusMutationPending}
+                                        className="h-12 rounded-none bg-[#BDBDBD] px-5 py-6 text-[15px] font-medium text-white hover:bg-[#AFAFAF]"
+                                    >
+                                        <UserMinus className="h-4 w-4" />
+                                        {accountStatusMutationPending
+                                            ? liveUser?.is_active
+                                                ? "Deactivating..."
+                                                : "Reactivating..."
+                                            : liveUser?.is_active
+                                                ? "Deactivate"
+                                                : "Reactivate"}
+                                    </Button>
+                                ) : null}
+                            </div>
                         }
                     />
 
@@ -376,6 +441,38 @@ export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
                             onClick={submit}
                         >
                             Confirm
+                        </AlertDialogAction>
+                        <AlertDialogCancel className="h-11 w-[140px] rounded-none border border-black bg-white p-0 text-base text-black hover:bg-white focus-visible:outline-none focus-visible:ring-0">
+                            Cancel
+                        </AlertDialogCancel>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
+
+            <AlertDialog open={deactivateConfirmOpen} onOpenChange={setDeactivateConfirmOpen}>
+                <AlertDialogContent className="w-[432px] max-w-[calc(100vw-32px)] gap-0 rounded-[4px] border-0 bg-white px-0 pb-[60px] pt-[60px] shadow-none">
+                    <AlertDialogCancel className="absolute right-4 top-3 flex h-6 w-6 items-center justify-center rounded-full border-0 bg-[#F5F2F2] p-0 text-sm leading-none text-black hover:bg-[#F5F2F2] focus-visible:outline-none focus-visible:ring-0">
+                        <X className="h-4 w-4" />
+                        <span className="sr-only">Close</span>
+                    </AlertDialogCancel>
+                    <AlertDialogHeader className="flex items-center justify-center gap-1 text-center">
+                        <AlertDialogTitle className="max-w-[360px] text-[30px] font-semibold leading-9 tracking-normal text-black">
+                            Are you sure you want to deactivate this user?
+                        </AlertDialogTitle>
+                        <AlertDialogDescription className="max-w-[360px] text-[18px] leading-6 text-black">
+                            This user will no longer be able to access Violyt until their account is reactivated.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter className="mx-auto mt-[25px] flex w-[306px] !flex-row items-center justify-center gap-[26px]">
+                        <AlertDialogAction
+                            className="h-11 w-[140px] rounded-none bg-primary/72 p-0 text-base text-white hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-0"
+                            disabled={deactivateUser.isPending}
+                            onClick={(event) => {
+                                event.preventDefault();
+                                void confirmDeactivateUser();
+                            }}
+                        >
+                            {deactivateUser.isPending ? "Deactivating..." : "Confirm"}
                         </AlertDialogAction>
                         <AlertDialogCancel className="h-11 w-[140px] rounded-none border border-black bg-white p-0 text-base text-black hover:bg-white focus-visible:outline-none focus-visible:ring-0">
                             Cancel

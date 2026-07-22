@@ -1,7 +1,7 @@
 import type { Module, Role } from "@/types/rbac.types";
 
 export const ROLE_MODULES: Record<Role, Module[]> = {
-  PLATFORM_OWNER: ["TENANT_MANAGEMENT", "DASHBOARD"],
+  PLATFORM_OWNER: ["TENANT_MANAGEMENT", "DASHBOARD",  "NOTIFICATION"],
 
   TENANT_ADMIN: [
     "BRAND_SPACE",

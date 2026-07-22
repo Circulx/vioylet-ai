@@ -255,7 +255,7 @@ export default function BrandUsageAllocationPage() {
               <AlertDialogTitle>Increase Capacity Allocation?</AlertDialogTitle>
               <AlertDialogDescription>
                 {pendingIncrease
-                  ? `${pendingIncrease.brandName} is currently allocated ${pendingIncrease.previousValue}% capacity. Would you like to increase its capacity allocation?`
+                  ? `${pendingIncrease.brandName} is currently allocated ${pendingIncrease.previousValue}% of the available capacity. Would you like to increase its capacity allocation?`
                   : "Would you like to increase this capacity allocation?"}
               </AlertDialogDescription>
             </AlertDialogHeader>

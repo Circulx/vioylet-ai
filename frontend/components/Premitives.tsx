@@ -5,8 +5,16 @@ import { Button } from "./ui/button";
 import { CalendarDays } from "lucide-react";
 import { useId } from "react";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
+import { InformationTip } from "./InformationTip";
 
-export function ProgressRow({ label, value, icon }: { label: string; value: number; icon?: string; }) {
+type ProgressRowProps = {
+    label: string;
+    value: number;
+    icon?: string;
+    info?: boolean
+}
+
+export function ProgressRow({ label, value, icon, info }: ProgressRowProps) {
     return (
         <div className="space-y-2 border border-[#E4E7EC] p-2">
             <div className="flex items-center gap-4 text-sm">
@@ -16,7 +24,10 @@ export function ProgressRow({ label, value, icon }: { label: string; value: numb
                     </div>
                 )}
                 <div className="flex flex-col gap-1">
+                    <div className="flex gap-1">
                     <span className="text-base text-[#666666] font-semibold">{label}</span>
+                    {info && (<InformationTip content="This is total capacity" />)}
+                    </div>
                     <div className=" flex items-end">
                         <span className="text-xl font-medium">{value}</span>
                         <span className="text-xl font-medium">%</span>

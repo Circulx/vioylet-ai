@@ -17,10 +17,11 @@ export function PlatformPageTitle({
     action?: ReactNode;
     children?: ReactNode;
 }) {
+    const firstName = title.split(" ")[0];
     return (
         <div className="space-y-6">
             <div className="flex items-start justify-between gap-4">
-                <h1 className="font-dmSans text-[32px] font-bold leading-none text-primary">{title}</h1>
+                <h1 className="font-dmSans text-[32px] font-bold leading-none text-primary">{firstName}&apos;s Profile</h1>
                 {action}
             </div>
             {children}
@@ -122,7 +123,7 @@ export function SectionCard({
                 toolbar ? "sm:flex-row sm:items-start sm:justify-between" : "items-start",
             )}>
                 <div className="min-w-0 flex flex-col items-start justify-center">
-                    <h2 className={cn`text-xl font-semibold text-black ${!toolbar ? 'py-4' : ''}`}>{title}</h2>
+                    <h2 className={cn`text-lg font-semibold text-black ${!toolbar ? 'py-4' : ''}`}>{title}</h2>
                     {description ? (
                         <p className="text-sm text-[#6B7280]">
                             {description}

@@ -393,7 +393,7 @@ function UploadStatusPanel({
     );
 
     return (
-        <div className="rounded-2xl border border-[#E3E6F2] bg-white px-5 py-4 shadow-[0_14px_32px_-28px_rgba(15,23,42,0.65)]">
+        <div className="rounded-2xl border border-[#E3E6F2] bg-white px-5 py-4 my-6 shadow-[0_14px_32px_-28px_rgba(15,23,42,0.65)]">
             <Collapsible
                 open={isOpen}
                 onOpenChange={setIsOpen}
@@ -1499,7 +1499,7 @@ export default function BrandSpaceEditor({
                                 className="flex items-center justify-center gap-2 rounded-none bg-primary/72 p-6 text-base hover:bg-primary/90"
                             >
                                 <Eye className="h-4 w-4" />
-                                <span>Open Brand Space</span>
+                                <span>Open Studio</span>
                             </Button>
                         ) : null}
 
@@ -1554,14 +1554,7 @@ export default function BrandSpaceEditor({
 
             {/* <ValidationSummaryPanel lifecycleState={brandLifecycleState} summary={validationSummary} /> */}
 
-            <UploadStatusPanel
-                items={uploadStatusItems}
-                isSubmitting={isSubmitting}
-                actionItemId={actionItemId}
-                onReprocess={handleReprocessUpload}
-                onUnsync={handleUnsyncUpload}
-                onRemove={handleRemoveUpload}
-            />
+
 
             {canOpenWorkspace && hasPendingUploadItems ? (
                 <div className="rounded-xl border border-primary/15 bg-primary/5 px-4 py-3 text-sm text-primary">
@@ -1709,9 +1702,18 @@ export default function BrandSpaceEditor({
                 </DialogContent>
             </Dialog>
 
-            <p className="absolute bottom-2 left-1/4 mx-auto pt-8 text-center text-sm text-[#929292]">
+            <UploadStatusPanel
+                items={uploadStatusItems}
+                isSubmitting={isSubmitting}
+                actionItemId={actionItemId}
+                onReprocess={handleReprocessUpload}
+                onUnsync={handleUnsyncUpload}
+                onRemove={handleRemoveUpload}
+            />
+
+            {/* <p className="absolute bottom-2 left-1/4 mx-auto pt-8 text-center text-sm text-[#929292]">
                 Violyt suggestions may need review. Verify accuracy before use.
-            </p>
+            </p> */}
         </div>
     );
 }

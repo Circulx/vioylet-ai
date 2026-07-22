@@ -191,7 +191,7 @@ export function UsageRing({
                 </ResponsiveContainer>
             </div>
             <div className="absolute -top-1 -right-2">
-                <InformationTip content={`Shows how much of the usage allocated to this brand is left. Current usage pending: ${Math.round(safeValue)}%. The colored portion of the pie represents the remaining amount.`} />
+                <InformationTip content={`Shows how much of the usage allocated to this brand is left. Current usage pending: ${Math.round(safeValue)}%. The coloured portion of the pie represents the remaining amount.`} />
             </div>
         </div>
     );

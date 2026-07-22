@@ -7,9 +7,17 @@ import { Field } from "@/components/ui/field";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import { REGEXP_ONLY_DIGITS } from "input-otp";
 import { getTwoFactorEmail, getTwoFactorTicket } from "@/lib/api/session";
+import type { CurrentUserResponse } from "@/lib/api/contracts";
+import { API } from "@/lib/api/endpoints";
+import { request } from "@/lib/api/request";
+import { roleFromRoleCodes, safeAppRedirectForRole } from "@/lib/role-navigation";
 import { useVerifyTwoFactor } from "@/hooks/useAuthProfile";
 
 const LOGIN_REDIRECT_KEY = "violyt.login_redirect";
+async function resolvePostLoginRedirect(requestedRedirect: string) {
+  const profile = await request(API.USER.GET_ME) as CurrentUserResponse;
+  return safeAppRedirectForRole(roleFromRoleCodes(profile.role_codes), requestedRedirect);
+}
 
 const Verify2faForm = () => {
   const router = useRouter();
@@ -31,10 +39,10 @@ const Verify2faForm = () => {
     verifyTwoFactor.mutate(
       { ticket, code },
       {
-        onSuccess: () => {
+        onSuccess: async () => {
           const redirectTo = window.sessionStorage.getItem(LOGIN_REDIRECT_KEY) || "/dashboard";
           window.sessionStorage.removeItem(LOGIN_REDIRECT_KEY);
-          router.replace(redirectTo.startsWith("/") && !redirectTo.startsWith("//") ? redirectTo : "/dashboard");
+          router.replace(await resolvePostLoginRedirect(redirectTo));
         },
         onError: () => {
           setError("Invalid verification code. Please try again.");
@@ -84,3 +92,4 @@ const Verify2faForm = () => {
 };
 
 export default Verify2faForm;
+

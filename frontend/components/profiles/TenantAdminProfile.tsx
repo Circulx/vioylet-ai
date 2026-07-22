@@ -182,7 +182,7 @@ export default function TenantAdminProfile() {
         <>
             <div className="w-full px-4 py-6">
                 <div className="mx-auto space-y-4">
-                    <PlatformPageTitle title="Profile" />
+                    <PlatformPageTitle title={account.fullName} />
 
                     {feedback ? <p className="text-sm text-emerald-600">{feedback}</p> : null}
                     {error ? <p className="text-sm text-red-500">{error}</p> : null}
@@ -241,7 +241,9 @@ export default function TenantAdminProfile() {
 
                     <SettingsRow
                         title="Privacy Policy"
-                        description="Review how your personal information is collected, used, and protected on the platform. View Privacy & Policy."
+                        description="Review how your personal information is collected, used, and protected on the platform."
+                        link="privacy_policy"
+                        linkText="View Privacy Policy"
                     />
 
                     <SettingsRow
@@ -430,15 +432,21 @@ function SettingsRow({
     title,
     description,
     trailing,
+    link,
+    linkText
 }: {
     title: string;
     description?: string;
     trailing?: ReactNode;
+    link?: string;
+    linkText?: string;
 }) {
     return (
         <ProfileSectionCard
             title={title}
             description={description}
+            externalLink={link}
+            externalLinkText={linkText}
             className="flex items-center justify-between border gap-4 px-5 py-3 shadow-[0px_4px_10px_0px_rgba(0,0,0,0.05)]"
         >
             {trailing}

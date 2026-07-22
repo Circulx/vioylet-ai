@@ -161,7 +161,7 @@ export default function BrandSpacePage() {
         <div className="w-full px-4 py-6">
             <div className="space-y-6">
                 <PlatformPageTitle
-                    title="Brand Spaces"
+                    title="My Brand Spaces"
                     action={
                         <div className="flex gap-4">
                             {isAdmin && (

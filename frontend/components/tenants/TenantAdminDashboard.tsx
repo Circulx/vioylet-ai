@@ -689,7 +689,7 @@ export default function TenantAdminDashboard() {
                     }
                 >
                     <div className="space-y-4">
-                        <ProgressRow label="Total Capacity" value={selectedUsageMetrics.totalCapacity} icon="/tenants/capacity.svg" />
+                        <ProgressRow label="Total Capacity" info value={selectedUsageMetrics.totalCapacity} icon="/tenants/capacity.svg" />
                         <div className="grid gap-4 md:grid-cols-3">
                             <MiniMetric label="Content" progress={true} value={selectedUsageMetrics.contentPercent} icon="/tenants/content.svg" />
                             <MiniMetric label="Visuals" progress={true} value={selectedUsageMetrics.visualsPercent} icon="/tenants/visuals.svg" />
@@ -768,7 +768,7 @@ export default function TenantAdminDashboard() {
                     </SectionCard>
                 </div>
 
-                <SectionCard title="Brand Spaces" className="border-none p-0" >
+                <SectionCard title="Brand Wise Activity" className="border-none p-0" >
                     <div className="overflow-x-auto">
                         <table className="table">
                             <thead>

@@ -70,6 +70,7 @@ import { FormField } from "../brandSpaces/tabs/FormFields";
 import Image from "next/image";
 import { AUDIENCE_OPTIONS } from "@/lib/brand-space-options";
 import { Label } from "../ui/label";
+import { Tooltip } from "../ui/tooltip";
 
 type WorkspaceChatProps = { brandKey: string };
 type Platform = "instagram" | "linkedin" | "x" | "youtube_thumbnail";
@@ -2495,8 +2496,11 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                             {/* <h1 className="font-dmSans text-3xl font-bold text-primary">{brand.name}</h1> */}
                                             <div className="flex gap-2 relative">
                                                 <h1 className="font-dmSans text-3xl font-bold text-primary">{brand.name}</h1>
+
                                                 <Link
                                                     href={`/brand_space/${brandId}/edit`}
+                                                    title={`${brand.name} Brand Space`}
+                                                    aria-label={`${brand.name} Brand Space`}
                                                     className="absolute -right-7 -top-1 text-sm text-[#121212] hover:underline"
                                                 >
                                                     <Image src="/actions_icons/chat/redirect_link.svg" alt="Edit icon" width={19} height={19} className="inline-block mr-1" />
@@ -2775,6 +2779,8 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                                 <h1 className="font-dmSans text-3xl font-bold text-primary">{brand.name}</h1>
                                                 <Link
                                                     href={`/brand_space/${brandId}/edit`}
+                                                    title={`${brand.name} Brand Space`}
+                                                    aria-label={`${brand.name} Brand Space`}
                                                     className="absolute -right-7 -top-1 text-sm text-[#121212] hover:underline"
                                                 >
                                                     <Image src="/actions_icons/chat/redirect_link.svg" alt="Edit icon" width={19} height={19} className="inline-block mr-1" />
@@ -2814,7 +2820,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                             This Brand Space is currently <span className="font-medium capitalize">{brandLifecycle}</span>. Finish activation before generating content or images in the workspace.
                                         </div>
                                     ) : null}
-                                    <div className="max-w-5xl mx-auto flex flex-col items-center px-4 my-[22vh]">
+                                    <div className="max-w-5xl mx-auto flex flex-col items-center px-4 my-[21vh]">
                                         <div className="flex items-center gap-5">
                                             <Image src="/logo.svg" alt="Violyt Icon" width={40} height={40} className="" />
                                             <h2 className="font-dmSans text-2xl md:text-3xl xl:text-4xl font-medium tracking-normal text-[#121212]">Greeting message</h2>
@@ -2880,6 +2886,8 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                                 </div>
                                             </SurfaceCard>
                                         </div>
+
+
                                         {attachedAssets.length ? (
                                             <div className="flex w-full flex-wrap justify-center gap-2">
                                                 {attachedAssets.map((asset) => (
@@ -2911,6 +2919,9 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                         ) : null}
 
                                     </div>
+
+                                    <p className="bottom-0 mt-auto pb-3 pt-8 text-center text-sm text-[#A0A0A7]">Violyt suggestions may need review. Verify accuracy before use.</p>
+
                                 </div>
                                 {isStudioOpen ? (
                                     <StudioPanel
@@ -2935,7 +2946,6 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                         </div>
                     )}
                 </div>
-                {/* <p className="bottom-0 mt-auto pb-3 pt-8 text-center text-sm text-[#A0A0A7]">Violyt suggestions may need review. Verify accuracy before use.</p> */}
             </div>
         </div>
     );

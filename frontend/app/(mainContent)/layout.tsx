@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 import LoaderFullscreen from "@/components/LoaderFullscreen";
 import { useGetMe } from "@/hooks/useUser";
+import { canAccessPath, defaultPathForRole } from "@/lib/role-navigation";
 
 export default function ContentLayout({
   children,
@@ -12,7 +13,9 @@ export default function ContentLayout({
   children: React.ReactNode;
 }>) {
   const router = useRouter();
+  const pathname = usePathname();
   const { data: user, isLoading } = useGetMe();
+  const isForbidden = Boolean(user && !canAccessPath(user.role, pathname));
 
   useEffect(() => {
     if (isLoading) {
@@ -20,10 +23,14 @@ export default function ContentLayout({
     }
     if (!user) {
       router.replace("/auth/login");
+      return;
     }
-  }, [isLoading, router, user]);
+    if (isForbidden) {
+      router.replace(defaultPathForRole(user.role));
+    }
+  }, [isForbidden, isLoading, router, user]);
 
-  if (isLoading || !user) {
+  if (isLoading || !user || isForbidden) {
     return <LoaderFullscreen />;
   }
 

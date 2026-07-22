@@ -1,19 +1,19 @@
-import { Module, Role } from "@/types/rbac.types";
-
+import type { Module, Role } from "@/types/rbac.types";
 
 export const ROLE_MODULES: Record<Role, Module[]> = {
-  PLATFORM_OWNER: ["DASHBOARD", "TENANT_MANAGEMENT", "ANALYTICS", "NOTIFICATION"],
+  PLATFORM_OWNER: ["TENANT_MANAGEMENT", "DASHBOARD"],
 
   TENANT_ADMIN: [
-    "DASHBOARD",
     "BRAND_SPACE",
+    "DASHBOARD",
     "USER_MANAGEMENT",
     "NOTIFICATION",
   ],
 
   TENANT_USER: [
-    "DASHBOARD",
     "BRAND_SPACE",
+    "DASHBOARD",
+    // "USER_MANAGEMENT",
     "NOTIFICATION",
   ],
 
@@ -21,4 +21,4 @@ export const ROLE_MODULES: Record<Role, Module[]> = {
     "BRAND_SPACE",
     "NOTIFICATION",
   ],
-}
+};

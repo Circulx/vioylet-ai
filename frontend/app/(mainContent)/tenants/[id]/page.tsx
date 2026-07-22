@@ -514,7 +514,7 @@ export default function TenantDetailsPage() {
                         }
                     >
                         <div className="space-y-4">
-                            <ProgressRow label="Total Capacity" value={selectedUsageMetrics.totalCapacity} icon="/tenants/capacity.svg" />
+                            <ProgressRow label="Total Capacity" value={selectedUsageMetrics.totalCapacity} icon="/tenants/capacity.svg" info />
                             <div className="grid gap-4 md:grid-cols-3">
                                 <MiniMetric label="Content" progress={true} value={selectedUsageMetrics.contentPercent} icon="/tenants/content.svg" />
                                 <MiniMetric label="Visuals" progress={true} value={selectedUsageMetrics.visualsPercent} icon="/tenants/visuals.svg" />

@@ -8,19 +8,29 @@ import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Eye, EyeOff } from 'lucide-react';
 import { useLogin } from '@/hooks/useLogin';
+import type { CurrentUserResponse } from '@/lib/api/contracts';
+import { API } from '@/lib/api/endpoints';
 import { getApiErrorMessage } from '@/lib/api/error-message';
+import { request } from '@/lib/api/request';
+import { roleFromRoleCodes, safeAppRedirectForRole } from '@/lib/role-navigation';
 
 const LOGIN_REDIRECT_KEY = 'violyt.login_redirect';
 
 function safeRedirectFromLocation() {
   if (typeof window === 'undefined') {
-    return '/dashboard';
+    return '/brand_space';
   }
+
   const redirect = new URLSearchParams(window.location.search).get('redirect') || '';
   if (!redirect.startsWith('/') || redirect.startsWith('//')) {
-    return '/dashboard';
+    return '/brand_space';
   }
   return redirect;
+}
+
+async function resolvePostLoginRedirect(requestedRedirect: string) {
+  const profile = await request(API.USER.GET_ME) as CurrentUserResponse;
+  return safeAppRedirectForRole(roleFromRoleCodes(profile.role_codes), requestedRedirect);
 }
 
 export function LoginForm() {
@@ -42,14 +52,14 @@ export function LoginForm() {
         password,
       },
       {
-        onSuccess: (response) => {
+        onSuccess: async (response) => {
           const redirectTo = safeRedirectFromLocation();
           if ('requires_two_factor' in response && response.requires_two_factor) {
             window.sessionStorage.setItem(LOGIN_REDIRECT_KEY, redirectTo);
             router.replace('/auth/verify-2fa');
             return;
           }
-          router.replace(redirectTo);
+          router.replace(await resolvePostLoginRedirect(redirectTo));
         },
       },
     );
@@ -130,3 +140,5 @@ export function LoginForm() {
     </form>
   );
 }
+
+

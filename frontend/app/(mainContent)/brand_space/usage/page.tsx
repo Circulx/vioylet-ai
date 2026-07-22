@@ -144,8 +144,8 @@ export default function BrandUsageAllocationPage() {
 
         <div className="grid gap-4 md:grid-cols-3">
           <MetricTile label="Assigned Brands" value={String(rows.length)} />
-          <MetricTile label="Current Total" value={`${total}%`} />
-          <MetricTile label="Status" value={total === 100 ? "Balanced" : "Under allocated"} />
+          <MetricTile label="Total Capacity Used" value={`${total}%`} />
+          {/* <MetricTile label="Status" value={total === 100 ? "Balanced" : "Under allocated"} /> */}
         </div>
 
         <SectionCard title="Usage Overview" className="border-none p-0">
@@ -182,7 +182,7 @@ export default function BrandUsageAllocationPage() {
             ))}
           </div>
 
-          <p className="text-sm text-[#6B7280] mt-6">Current total allocation: {total}%</p>
+          {/* <p className="text-sm text-[#6B7280] mt-6">Current total allocation: {total}%</p> */}
         </SectionCard>
       </div>
     </div>

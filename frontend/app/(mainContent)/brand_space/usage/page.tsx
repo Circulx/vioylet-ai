@@ -3,6 +3,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   MetricTile,
   PlatformPageTitle,
   SectionCard,
@@ -17,6 +27,13 @@ type UsageRow = {
   id: string;
   name: string;
   value: number;
+};
+
+type PendingAllocationIncrease = {
+  brandId: string;
+  brandName: string;
+  previousValue: number;
+  nextValue: number;
 };
 
 export default function BrandUsageAllocationPage() {
@@ -49,11 +66,52 @@ export default function BrandUsageAllocationPage() {
   const [rows, setRows] = useState<UsageRow[]>(initialRows);
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [pendingIncrease, setPendingIncrease] = useState<PendingAllocationIncrease | null>(null);
   const isSavingRef = useRef(false);
+  const confirmedIncreaseBrandIdsRef = useRef(new Set<string>());
 
   useEffect(() => {
     setRows(initialRows);
+    setPendingIncrease(null);
+    confirmedIncreaseBrandIdsRef.current.clear();
   }, [initialRows]);
+
+  const updateRowValue = (brandId: string, value: number) => {
+    setRows((current) => current.map((item) => (item.id === brandId ? { ...item, value } : item)));
+  };
+
+  const handleAllocationChange = (row: UsageRow, nextValue: number) => {
+    const savedValue = initialRows.find((item) => item.id === row.id)?.value ?? row.value;
+    setFeedback(null);
+    setError(null);
+    if (nextValue > savedValue && !confirmedIncreaseBrandIdsRef.current.has(row.id)) {
+      setPendingIncrease({
+        brandId: row.id,
+        brandName: row.name,
+        previousValue: savedValue,
+        nextValue,
+      });
+      return;
+    }
+    updateRowValue(row.id, nextValue);
+  };
+
+  const confirmAllocationIncrease = () => {
+    if (!pendingIncrease) {
+      return;
+    }
+    confirmedIncreaseBrandIdsRef.current.add(pendingIncrease.brandId);
+    updateRowValue(pendingIncrease.brandId, pendingIncrease.nextValue);
+    setPendingIncrease(null);
+  };
+
+  const discardAllocationIncrease = () => {
+    if (!pendingIncrease) {
+      return;
+    }
+    updateRowValue(pendingIncrease.brandId, pendingIncrease.previousValue);
+    setPendingIncrease(null);
+  };
 
   const total = rows.reduce((sum, row) => sum + row.value, 0);
   const savedAllocationKey = useMemo(
@@ -172,9 +230,7 @@ export default function BrandUsageAllocationPage() {
                   onChange={(event) => {
                     const numericValue = Number(event.target.value.replace(/[^\d]/g, "") || 0);
                     const nextValue = Math.max(0, Math.min(100, numericValue));
-                    setFeedback(null);
-                    setError(null);
-                    setRows((current) => current.map((item) => (item.id === row.id ? { ...item, value: nextValue } : item)));
+                    handleAllocationChange(row, nextValue);
                   }}
                   className="min-w-0 rounded-[4px] bg-[#F5F6FA] px-3 py-3.5 text-base font-medium text-[#121212] outline-none transition focus:ring-2 focus:ring-primary/20"
                 />
@@ -184,6 +240,45 @@ export default function BrandUsageAllocationPage() {
 
           <p className="text-sm text-[#6B7280] mt-6">Current total allocation: {total}%</p>
         </SectionCard>
+
+        <AlertDialog
+          open={Boolean(pendingIncrease)}
+          onOpenChange={(open) => {
+            if (open) {
+              return;
+            }
+            discardAllocationIncrease();
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Increase Capacity Allocation?</AlertDialogTitle>
+              <AlertDialogDescription>
+                {pendingIncrease
+                  ? `${pendingIncrease.brandName} is currently allocated ${pendingIncrease.previousValue}% capacity. Would you like to increase its capacity allocation?`
+                  : "Would you like to increase this capacity allocation?"}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogAction
+                onClick={(event) => {
+                  event.preventDefault();
+                  confirmAllocationIncrease();
+                }}
+              >
+                Yes
+              </AlertDialogAction>
+              <AlertDialogCancel
+                onClick={(event) => {
+                  event.preventDefault();
+                  discardAllocationIncrease();
+                }}
+              >
+                No
+              </AlertDialogCancel>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </div>
   );

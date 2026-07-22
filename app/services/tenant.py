@@ -29,6 +29,7 @@ from app.schemas.tenant import (
     TenantUserUpdateRequest,
 )
 from app.services.analytics import AnalyticsService
+from app.services.brand_capacity import BrandCapacityAllocationService
 from app.services.email import EmailDeliveryResult, EmailService
 from app.services.notification import InAppNotificationService
 from app.services.usage import UsageLimitService
@@ -799,6 +800,10 @@ class TenantService:
         metadata = dict(tenant.metadata_json or {})
         metadata["brand_usage_targets"] = targets
         tenant.metadata_json = metadata
+        await self.session.flush()
+        capacity_service = BrandCapacityAllocationService(self.session)
+        for brand_id in targets:
+            await capacity_service.evaluate(tenant_id, UUID(brand_id))
         await self.session.commit()
         return targets
 

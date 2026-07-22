@@ -164,6 +164,44 @@ class InAppNotificationService:
                 message=owner_message,
                 metadata=metadata,
             )
+
+    async def create_brand_capacity_warning_notifications(
+        self,
+        *,
+        tenant_id: UUID,
+        brand_space_id: UUID,
+        brand_name: str,
+        allocation_percent: float,
+        usage_percent: float,
+        period_key: str,
+    ) -> None:
+        metadata = {
+            "event": "brand_capacity_allocation_warning",
+            "brand_space_id": str(brand_space_id),
+            "brand_name": brand_name,
+            "allocation_percent": allocation_percent,
+            "usage_percent": round(usage_percent, 2),
+            "threshold": 80,
+            "period_key": period_key,
+        }
+        message = (
+            f'"{brand_name}" has reached 80% of its assigned capacity allocation. '
+            "This is an informational update to help you monitor usage distribution across Brand Spaces."
+        )
+        recipient_roles = (
+            RoleCode.TENANT_ADMIN,
+            RoleCode.TENANT_USER,
+            RoleCode.BRAND_USER,
+        )
+        for recipient in await self._active_users_by_roles(recipient_roles, tenant_id=tenant_id):
+            await self.create(
+                recipient_user_id=recipient.id,
+                tenant_id=tenant_id,
+                title="Capacity Allocation Warning",
+                message=message,
+                metadata=metadata,
+            )
+
     async def list_for_user(self, user_id: UUID) -> list[InAppNotification]:
         return await self.notifications.list_for_user(user_id)
 

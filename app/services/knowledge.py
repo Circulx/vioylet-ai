@@ -151,7 +151,12 @@ class KnowledgeService:
             asset.extracted_summary = (text[:1000] if text else None)
             asset.page_count = extracted.get("page_count", 0)
             await self.usage.enforce(asset.tenant_id, UsageMetricCode.OCR_PAGES, max(asset.page_count, 1))
-            await self.usage.increment(asset.tenant_id, UsageMetricCode.OCR_PAGES, max(asset.page_count, 1))
+            await self.usage.increment(
+                asset.tenant_id,
+                UsageMetricCode.OCR_PAGES,
+                max(asset.page_count, 1),
+                brand_space_id=asset.brand_space_id,
+            )
             self.retrieval.delete_asset(str(asset.tenant_id), str(asset.brand_space_id), asset.channel, str(asset.id))
             if text:
                 self.retrieval.index_asset(

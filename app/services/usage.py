@@ -31,7 +31,14 @@ class UsageLimitService:
         self.limits = UsageLimitRepository(session)
         self.consumption = UsageConsumptionRepository(session)
 
-    async def enforce(self, tenant_id: UUID, metric_code: str, amount: int = 1) -> None:
+    async def enforce(
+        self,
+        tenant_id: UUID,
+        metric_code: str,
+        amount: int = 1,
+        *,
+        current_usage: int | None = None,
+    ) -> None:
         # Runs the enforce service flow by coordinating repositories, validators, and integrations, then returns
         # domain data.
         usage_limit = await self.limits.get_by_tenant(tenant_id)
@@ -40,12 +47,23 @@ class UsageLimitService:
         limit_field = self.FIELD_MAP[metric_code]
         limit_value = getattr(usage_limit, limit_field)
         period_key = current_period_key()
-        consumption = await self.consumption.get_metric(tenant_id, metric_code, period_key)
-        current_value = consumption.consumed if consumption else 0
+        if current_usage is None:
+            consumption = await self.consumption.get_metric(tenant_id, metric_code, period_key)
+            current_value = consumption.consumed if consumption else 0
+        else:
+            current_value = max(0, int(current_usage))
         if current_value + amount > limit_value:
             raise UsageLimitExceededError(f"Usage limit exceeded for {metric_code}")
 
-    async def increment(self, tenant_id: UUID, metric_code: str, amount: int = 1) -> None:
+    async def increment(
+        self,
+        tenant_id: UUID,
+        metric_code: str,
+        amount: int = 1,
+        *,
+        current_usage: int | None = None,
+        brand_space_id: UUID | None = None,
+    ) -> None:
         # Runs the increment service flow and persists the resulting state before returning it to the route or
         # worker.
         period_key = current_period_key()
@@ -61,7 +79,11 @@ class UsageLimitService:
                 metadata_json={},
             )
             await self.consumption.add(metric)
-        previous_usage = int(metric.consumed or 0)
+        previous_usage = (
+            max(0, int(current_usage))
+            if current_usage is not None
+            else int(metric.consumed or 0)
+        )
         metric.consumed = previous_usage + amount
         await self.session.flush()
         await self.notify_if_threshold_crossed(
@@ -88,6 +110,14 @@ class UsageLimitService:
                 else None
             ),
         )
+        if brand_space_id and metric_code in {
+            UsageMetricCode.CONTENT_GENERATIONS,
+            UsageMetricCode.IMAGE_GENERATIONS,
+            UsageMetricCode.OCR_PAGES,
+        }:
+            from app.services.brand_capacity import BrandCapacityAllocationService
+
+            await BrandCapacityAllocationService(self.session).evaluate(tenant_id, brand_space_id)
 
     async def notify_if_threshold_crossed(
         self,
@@ -110,8 +140,12 @@ class UsageLimitService:
             return
         threshold = self.ALERT_THRESHOLD
         was_below = previous_usage * 100 < previous_limit * threshold
-        is_exact_threshold = current_usage * 100 == current_limit * threshold
-        if not (was_below and is_exact_threshold):
+        current_percentage_basis = current_usage * 100
+        is_warning_range = (
+            current_percentage_basis >= current_limit * threshold
+            and current_percentage_basis < current_limit * 100
+        )
+        if not (was_below and is_warning_range):
             return
         await InAppNotificationService(self.session).create_usage_threshold_notifications(
             tenant_id=tenant_id,
@@ -143,9 +177,9 @@ class UsageLimitService:
         previous_limit = int(previous_limit if previous_limit is not None else current_limit)
         if previous_limit <= 0 or current_limit <= 0:
             return
-        was_below = previous_usage < previous_limit
-        is_exact_limit = current_usage == current_limit
-        if not (was_below and is_exact_limit):
+        was_below = previous_usage * 100 < previous_limit * 100
+        is_exhausted = current_usage * 100 >= current_limit * 100
+        if not (was_below and is_exhausted):
             return
         await InAppNotificationService(self.session).create_usage_exhausted_notifications(
             tenant_id=tenant_id,

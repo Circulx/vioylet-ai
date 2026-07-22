@@ -1,6 +1,7 @@
 # Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -24,6 +25,7 @@ from app.repositories.brand import (
 )
 from app.schemas.brand import BrandCreateRequest, BrandSectionUpsertRequest, BrandSectionsUpsertRequest, BrandUpdateRequest, GuardrailPayload
 from app.services.brand_summary_memory import BrandSummaryMemoryService
+from app.services.brand_capacity import BrandCapacityAllocationService
 from app.services.data_validation import DataValidatorService
 from app.services.notification import InAppNotificationService
 from app.services.usage import UsageLimitService
@@ -93,7 +95,20 @@ class BrandSpaceService:
     ) -> BrandSpace:
         # Runs the brand service flow and persists the resulting state before returning it to the route or
         # worker.
-        await self.usage.enforce(tenant_id, UsageMetricCode.BRAND_SPACES)
+        current_brand_spaces = int(
+            await self.session.scalar(
+                select(func.count(BrandSpace.id)).where(
+                    BrandSpace.tenant_id == tenant_id,
+                    BrandSpace.lifecycle_state != BrandSpaceLifecycle.DELETED,
+                )
+            )
+            or 0
+        )
+        await self.usage.enforce(
+            tenant_id,
+            UsageMetricCode.BRAND_SPACES,
+            current_usage=current_brand_spaces,
+        )
         slug = slugify(payload.identity.brand_name)
         brand = BrandSpace(
             tenant_id=tenant_id,
@@ -183,7 +198,11 @@ class BrandSpaceService:
                     completion_percent=0,
                 )
             )
-        await self.usage.increment(tenant_id, UsageMetricCode.BRAND_SPACES)
+        await self.usage.increment(
+            tenant_id,
+            UsageMetricCode.BRAND_SPACES,
+            current_usage=current_brand_spaces,
+        )
         if actor_role_codes:
             await InAppNotificationService(self.session).create_brand_space_created_notification(
                 recipient_user_id=created_by,
@@ -359,12 +378,21 @@ class BrandSpaceService:
                 configured_targets = raw_targets
         capacity_percent = self._clamp_percent(configured_targets.get(str(brand_space_id)) or configured_targets.get(brand_space_id))
         capacity_ratio = capacity_percent / 100
+        now = datetime.now(timezone.utc)
+        month_start = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
+        month_end = (
+            datetime(now.year + 1, 1, 1, tzinfo=timezone.utc)
+            if now.month == 12
+            else datetime(now.year, now.month + 1, 1, tzinfo=timezone.utc)
+        )
 
         content_used = int(
             await self.session.scalar(
                 select(func.count(ContentVersion.id)).where(
                     ContentVersion.tenant_id == tenant_id,
                     ContentVersion.brand_space_id == brand_space_id,
+                    ContentVersion.created_at >= month_start,
+                    ContentVersion.created_at < month_end,
                 )
             )
             or 0
@@ -374,6 +402,8 @@ class BrandSpaceService:
                 select(func.count(GeneratedAsset.id)).where(
                     GeneratedAsset.tenant_id == tenant_id,
                     GeneratedAsset.brand_space_id == brand_space_id,
+                    GeneratedAsset.created_at >= month_start,
+                    GeneratedAsset.created_at < month_end,
                 )
             )
             or 0
@@ -383,6 +413,8 @@ class BrandSpaceService:
                 select(func.coalesce(func.sum(KnowledgeAsset.page_count), 0)).where(
                     KnowledgeAsset.tenant_id == tenant_id,
                     KnowledgeAsset.brand_space_id == brand_space_id,
+                    KnowledgeAsset.created_at >= month_start,
+                    KnowledgeAsset.created_at < month_end,
                 )
             )
             or 0
@@ -411,8 +443,12 @@ class BrandSpaceService:
                 UsageMetricCode.OCR_PAGES,
             )
         ]
-        active_metric_percents = [item["percent"] for item in metrics if item["allocated_limit"] > 0]
-        usage_percent = round(sum(active_metric_percents) / len(active_metric_percents)) if active_metric_percents else 0
+        usage_percent = round(
+            BrandCapacityAllocationService.equal_average_usage_percent(
+                {str(metric_code): value for metric_code, value in usage_values.items()},
+                {str(metric_code): value for metric_code, value in limits.items()},
+            )
+        )
 
         return {
             "brand_space_id": brand_space_id,

@@ -3,15 +3,18 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { Eye, EyeOff } from "lucide-react";
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { API } from "@/lib/api/endpoints";
 import { getApiErrorMessage } from "@/lib/api/error-message";
 import { request } from "@/lib/api/request";
 import { setAuthTokens } from "@/lib/api/session";
+import { refreshNotificationQueries } from "@/lib/notification-queries";
 
 export function ActivateForm() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const searchParams = useSearchParams();
   const activationToken = searchParams.get("token") || "";
   const [password, setPassword] = useState("");
@@ -41,6 +44,7 @@ export function ActivateForm() {
         },
       });
       setAuthTokens(tokens.access_token, tokens.refresh_token);
+      await refreshNotificationQueries(queryClient);
       router.replace("/dashboard");
     } catch (activationError: unknown) {
       setError(getApiErrorMessage(activationError, "Activation failed."));

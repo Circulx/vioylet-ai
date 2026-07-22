@@ -173,7 +173,7 @@ export default function TenantManagementPage() {
                                             ? isPendingActivation
                                                 ? "Pending"
                                                 : tenant.tenant_admin_is_active === false
-                                                    ? "Deactive"
+                                                    ? "Inactive"
                                                     : "Active"
                                             : "-";
                                         const attemptsLeft = tenant.tenant_admin_activation_link_attempts_left ?? 0;

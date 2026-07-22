@@ -15,6 +15,16 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
     Dialog,
     DialogContent,
     DialogDescription,
@@ -66,7 +76,7 @@ import {
 } from "@/types/brand-space.types";
 
 type BrandSpaceEditorProps = {
-    mode: "create" | "edit";
+    mode: "create" | "edit" | "view";
     brandId?: string;
     initialForm?: BrandFormState;
     initialLifecycleState?: string;
@@ -684,6 +694,7 @@ export default function BrandSpaceEditor({
     const tenantId = currentUser?.tenantId ?? "";
     const { data: tenant } = useGetTenantData(tenantId);
     const { data: brands } = useBrands();
+    const isReadOnly = mode === "view";
 
     const [form, setForm] = useState<BrandFormState>(initialForm);
     const [submissionPhase, setSubmissionPhase] = useState<string | null>(null);
@@ -700,16 +711,18 @@ export default function BrandSpaceEditor({
     const [hydratedBrandStateId, setHydratedBrandStateId] = useState<string | null>(null);
     const [hydratedAttachmentBrandId, setHydratedAttachmentBrandId] = useState<string | null>(null);
     const [capacityDialogOpen, setCapacityDialogOpen] = useState(false);
+    const [editConfirmationOpen, setEditConfirmationOpen] = useState(false);
     const [capacityRows, setCapacityRows] = useState<CapacityUsageRow[]>([]);
     const [capacityError, setCapacityError] = useState<string | null>(null);
     const formRef = useRef(form);
+    const readOnlySetForm = useMemo(() => (() => undefined) as typeof setForm, []);
 
     useEffect(() => {
         formRef.current = form;
     }, [form]);
 
     useEffect(() => {
-        if (mode !== "edit") {
+        if (mode !== "edit" && mode !== "view") {
             return;
         }
         const nextLogos = normalizeBrandLogoItems(
@@ -775,7 +788,7 @@ export default function BrandSpaceEditor({
     }, [mode, skipDraftHydration]);
 
     useEffect(() => {
-        if (mode !== "create" || !didHydrateDraft) {
+        if (isReadOnly || mode !== "create" || !didHydrateDraft) {
             return;
         }
         saveBrandSpaceDraft({
@@ -783,7 +796,7 @@ export default function BrandSpaceEditor({
             lifecycleState: brandLifecycleState,
             form,
         });
-    }, [brandLifecycleState, didHydrateDraft, draftBrandId, form, mode]);
+    }, [brandLifecycleState, didHydrateDraft, draftBrandId, form, isReadOnly, mode]);
 
     const effectiveBrandId = draftBrandId ?? brandId ?? null;
     const activeTabNeedsAttachments = hasActivatedAttachmentTab && ATTACHMENT_TAB_VALUES.has(activeTab);
@@ -885,6 +898,8 @@ export default function BrandSpaceEditor({
         isSubmitting && (activeSubmitIntent === "publish" || activeSubmitIntent === "save");
     const capacityTotal = capacityRows.reduce((sum, row) => sum + row.value, 0);
     const currentBrandCapacityRow = capacityRows.find((row) => row.isCurrentBrand || row.isNewBrand);
+    const requiresPublishedEditConfirmation =
+        mode === "edit" && brandLifecycleState === "active" && primarySubmitIntent === "save";
 
     const showSuccessToast = (title: string, description?: string) => {
         toast({
@@ -1149,6 +1164,9 @@ export default function BrandSpaceEditor({
     };
 
     const handleSubmit = async (intent: "draft" | "publish" | "save", usageRows?: CapacityUsageRow[]) => {
+        if (isReadOnly) {
+            return;
+        }
         if (canOpenWorkspace && intent === "publish") {
             router.push(buildBrandWorkspaceHref(draftBrand as BrandResponse));
             return;
@@ -1282,6 +1300,9 @@ export default function BrandSpaceEditor({
     };
 
     const handleRemoveUpload = async (itemId: string) => {
+        if (isReadOnly) {
+            return;
+        }
         const targetItem = findBrandUploadItem(formRef.current, itemId);
         if (!targetItem) {
             return;
@@ -1313,6 +1334,9 @@ export default function BrandSpaceEditor({
     };
 
     const handleReprocessUpload = async (itemId: string) => {
+        if (isReadOnly) {
+            return;
+        }
         const targetItem = findBrandUploadItem(formRef.current, itemId);
         if (!targetItem?.uploadedAssetId || !effectiveBrandId) {
             return;
@@ -1355,6 +1379,9 @@ export default function BrandSpaceEditor({
     };
 
     const handleUnsyncUpload = async (itemId: string) => {
+        if (isReadOnly) {
+            return;
+        }
         const targetItem = findBrandUploadItem(formRef.current, itemId);
         if (!targetItem?.uploadedAssetId || !effectiveBrandId) {
             return;
@@ -1397,6 +1424,9 @@ export default function BrandSpaceEditor({
     };
 
     const handleUnpublish = async () => {
+        if (isReadOnly) {
+            return;
+        }
         if (!effectiveBrandId) {
             return;
         }
@@ -1443,6 +1473,9 @@ export default function BrandSpaceEditor({
     };
 
     const handlePrimarySubmit = () => {
+        if (isReadOnly) {
+            return;
+        }
         if (primarySubmitIntent === "publish") {
             if (!validateRequiredFieldsForPublish()) {
                 return;
@@ -1453,10 +1486,18 @@ export default function BrandSpaceEditor({
             return;
         }
 
+        if (requiresPublishedEditConfirmation) {
+            setEditConfirmationOpen(true);
+            return;
+        }
+
         void handleSubmit(primarySubmitIntent);
     };
 
     const handleCapacityRowChange = (rowId: string, value: string) => {
+        if (isReadOnly) {
+            return;
+        }
         const nextValue = parseCapacityValue(value);
         setCapacityRows((current) =>
             current.map((row) => (row.id === rowId ? { ...row, value: nextValue } : row)),
@@ -1465,6 +1506,9 @@ export default function BrandSpaceEditor({
     };
 
     const handleConfirmCapacityUsage = () => {
+        if (isReadOnly) {
+            return;
+        }
         if (!tenantId || !tenant) {
             setCapacityError("Tenant context is missing. Please refresh and try again.");
             return;
@@ -1489,7 +1533,9 @@ export default function BrandSpaceEditor({
                         ? canOpenWorkspace
                             ? "Brand Space Ready"
                             : "Create Brand Space"
-                        : "Edit Brand Space"
+                        : isReadOnly
+                            ? "View Brand Space"
+                            : "Edit Brand Space"
                 }
                 actions={
                     <div className="flex flex-wrap items-center justify-end gap-3">
@@ -1503,7 +1549,7 @@ export default function BrandSpaceEditor({
                             </Button>
                         ) : null}
 
-                        {brandLifecycleState !== "active" ? (
+                        {!isReadOnly && brandLifecycleState !== "active" ? (
                             <Button
                                 type="button"
                                 variant="outline"
@@ -1521,7 +1567,7 @@ export default function BrandSpaceEditor({
                             </Button>
                         ) : null}
 
-                        {brandLifecycleState === "active" ? (
+                        {!isReadOnly && brandLifecycleState === "active" ? (
                             <Button
                                 type="button"
                                 variant="outline"
@@ -1533,27 +1579,28 @@ export default function BrandSpaceEditor({
                             </Button>
                         ) : null}
 
-                        <Button
-                            onClick={handlePrimarySubmit}
-                            disabled={createBrand.isPending || isSubmitting}
-                            className="flex items-center justify-center gap-2 rounded-none bg-primary/72 p-6 text-base hover:bg-primary/90"
-                        >
-                            <span>
-                                {isPrimarySubmitting
-                                    ? primarySubmitIntent === "save"
-                                        ? "Saving..."
-                                        : "Publishing..."
-                                    : primarySubmitIntent === "save"
-                                        ? "Save Changes"
-                                        : "Publish Brand Space"}
-                            </span>
-                        </Button>
+                        {!isReadOnly ? (
+                            <Button
+                                onClick={handlePrimarySubmit}
+                                disabled={createBrand.isPending || isSubmitting}
+                                className="flex items-center justify-center gap-2 rounded-none bg-primary/72 p-6 text-base hover:bg-primary/90"
+                            >
+                                <span>
+                                    {isPrimarySubmitting
+                                        ? primarySubmitIntent === "save"
+                                            ? "Saving..."
+                                            : "Publishing..."
+                                        : primarySubmitIntent === "save"
+                                            ? "Save Changes"
+                                            : "Publish Brand Space"}
+                                </span>
+                            </Button>
+                        ) : null}
                     </div>
                 }
             />
 
             {/* <ValidationSummaryPanel lifecycleState={brandLifecycleState} summary={validationSummary} /> */}
-
 
 
             {canOpenWorkspace && hasPendingUploadItems ? (
@@ -1605,12 +1652,17 @@ export default function BrandSpaceEditor({
                         const TabComponent = tab.content;
                         return (
                             <TabsContent key={tab.id} value={tab.value} className="w-full">
-                                <TabComponent
-                                    form={form}
-                                    setForm={setForm}
-                                    onRemoveUpload={handleRemoveUpload}
-                                    onSelectColorPaletteUpload={handleSelectColorPaletteUpload}
-                                />
+                                <fieldset
+                                    disabled={isReadOnly}
+                                    className={cn(isReadOnly ? "pointer-events-none opacity-95" : "")}
+                                >
+                                    <TabComponent
+                                        form={form}
+                                        setForm={isReadOnly ? readOnlySetForm : setForm}
+                                        onRemoveUpload={isReadOnly ? undefined : handleRemoveUpload}
+                                        onSelectColorPaletteUpload={isReadOnly ? undefined : handleSelectColorPaletteUpload}
+                                    />
+                                </fieldset>
                             </TabsContent>
                         );
                     })}

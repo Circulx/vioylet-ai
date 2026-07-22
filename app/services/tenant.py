@@ -1,7 +1,9 @@
 # Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
+import logging
 from uuid import UUID, uuid4
 
 from sqlalchemy import delete, func, literal_column, select, update
@@ -16,7 +18,7 @@ from app.models.brand import BrandSpace, BrandSpaceMember
 from app.models.collaboration import UsageLimit
 from app.models.content import ContentVersion, GeneratedAsset
 from app.models.knowledge import KnowledgeAsset
-from app.models.tenant import ActivationToken, Tenant, User, UserRole
+from app.models.tenant import ActivationToken, Role, Tenant, User, UserRole
 from app.repositories.brand import BrandMemberRepository, BrandSpaceRepository
 from app.repositories.collaboration import UsageLimitRepository
 from app.repositories.tenant import ActivationTokenRepository, RoleRepository, TenantRepository, UserRepository, UserRoleRepository
@@ -42,6 +44,7 @@ USAGE_METRIC_USERS = "users"
 USAGE_METRIC_BRAND_SPACES = "brand_spaces"
 ACTIVATION_TOKEN_TTL = timedelta(hours=48)
 ACTIVATION_LINK_MAX_SENDS = 10
+logger = logging.getLogger(__name__)
 
 
 class TenantService:
@@ -649,6 +652,7 @@ class TenantService:
         user_id: UUID,
         actor_user_id: UUID | None = None,
         actor_role_codes: set[str] | None = None,
+        actor_email: str | None = None,
     ) -> User:
         # Runs the deactivate user service flow and persists the resulting state before returning it to the
         # route or worker.
@@ -657,6 +661,7 @@ class TenantService:
             raise NotFoundError("User not found")
         was_active = user.is_active
         role_code = await self._primary_user_role_code(user.id)
+        tenant = await self.tenants.get(tenant_id)
         user.is_active = False
         if was_active and actor_user_id and actor_user_id != user.id and actor_role_codes:
             await InAppNotificationService(self.session).create_user_account_status_notification(
@@ -667,7 +672,287 @@ class TenantService:
                 is_active=False,
             )
         await self.session.commit()
+        if was_active:
+            await self._dispatch_user_deactivation_emails(
+                user,
+                actor_user_id,
+                actor_role_codes,
+                role_code,
+                tenant,
+                actor_email,
+            )
         return user
+
+    async def _send_user_deactivation_emails(
+        self,
+        user: User,
+        actor_user_id: UUID | None,
+        actor_role_codes: set[str] | None,
+        target_role_code: str | None,
+        tenant: Tenant | None,
+        actor_email: str | None = None,
+    ) -> None:
+        # Sends post-commit account deactivation notices for the supported actor and target combinations.
+        email_tasks = await self._build_user_deactivation_email_tasks(
+            user,
+            actor_user_id,
+            actor_role_codes,
+            target_role_code,
+            tenant,
+            actor_email,
+        )
+        self._run_user_deactivation_email_tasks(email_tasks)
+
+    async def _dispatch_user_deactivation_emails(
+        self,
+        user: User,
+        actor_user_id: UUID | None,
+        actor_role_codes: set[str] | None,
+        target_role_code: str | None,
+        tenant: Tenant | None,
+        actor_email: str | None = None,
+    ) -> None:
+        email_tasks = await self._build_user_deactivation_email_tasks(
+            user,
+            actor_user_id,
+            actor_role_codes,
+            target_role_code,
+            tenant,
+            actor_email,
+        )
+        if not email_tasks:
+            return
+        asyncio.create_task(asyncio.to_thread(self._run_user_deactivation_email_tasks, email_tasks))
+
+    async def _build_user_deactivation_email_tasks(
+        self,
+        user: User,
+        actor_user_id: UUID | None,
+        actor_role_codes: set[str] | None,
+        target_role_code: str | None,
+        tenant: Tenant | None,
+        actor_email: str | None = None,
+    ) -> list[tuple[str, tuple, dict]]:
+        normalized_actor_roles = {str(role_code) for role_code in (actor_role_codes or set())}
+        role_label = self._role_label(target_role_code)
+        tenant_name = tenant.name if tenant else "Unknown Tenant"
+        actor = await self.users.get(actor_user_id) if actor_user_id else None
+
+        if (
+            RoleCode.TENANT_ADMIN.value in normalized_actor_roles
+            and target_role_code in {RoleCode.TENANT_USER.value, RoleCode.BRAND_USER.value}
+        ):
+            email_tasks = [
+                ("send_account_deactivated_email", (user.email, user.full_name), {}),
+            ]
+            if actor:
+                email_tasks.append(
+                    (
+                        "send_user_deactivated_confirmation_email",
+                        (actor.email, actor.full_name, user.full_name, role_label),
+                        {},
+                    )
+                )
+                for platform_owner_email, platform_owner_name in await self._platform_owner_email_recipients():
+                    email_tasks.append(
+                        (
+                            "send_platform_owner_user_deactivated_email",
+                            (
+                                platform_owner_email,
+                                platform_owner_name,
+                                user.full_name,
+                                role_label,
+                                actor.full_name,
+                                tenant_name,
+                            ),
+                            {},
+                        )
+                    )
+            return email_tasks
+
+        if (
+            RoleCode.SUPER_ADMIN.value in normalized_actor_roles
+            and target_role_code == RoleCode.TENANT_ADMIN.value
+        ):
+            email_tasks = [
+                (
+                    "send_account_deactivated_email",
+                    (user.email, user.full_name),
+                    {"deactivated_by_platform_owner": True},
+                ),
+            ]
+            platform_owner_email = (
+                self._configured_platform_owner_email_recipient()
+                or (actor.email if actor else actor_email)
+            )
+            platform_owner_name = actor.full_name if actor else "Platform Owner"
+            if platform_owner_email:
+                email_tasks.append(
+                    (
+                        "send_tenant_admin_deactivated_confirmation_email",
+                        (platform_owner_email, platform_owner_name, user.full_name, tenant_name),
+                        {},
+                    )
+                )
+            return email_tasks
+
+        return []
+
+    def _run_user_deactivation_email_tasks(self, email_tasks: list[tuple[str, tuple, dict]]) -> None:
+        for method_name, args, kwargs in email_tasks:
+            try:
+                getattr(self.email, method_name)(*args, **kwargs)
+            except Exception:
+                logger.exception("Failed to send account deactivation email via %s.", method_name)
+
+    async def _send_user_reactivation_emails(
+        self,
+        user: User,
+        actor_user_id: UUID | None,
+        actor_role_codes: set[str] | None,
+        target_role_code: str | None,
+        tenant: Tenant | None,
+        actor_email: str | None = None,
+    ) -> None:
+        email_tasks = await self._build_user_reactivation_email_tasks(
+            user,
+            actor_user_id,
+            actor_role_codes,
+            target_role_code,
+            tenant,
+            actor_email,
+        )
+        self._run_user_reactivation_email_tasks(email_tasks)
+
+    async def _dispatch_user_reactivation_emails(
+        self,
+        user: User,
+        actor_user_id: UUID | None,
+        actor_role_codes: set[str] | None,
+        target_role_code: str | None,
+        tenant: Tenant | None,
+        actor_email: str | None = None,
+    ) -> None:
+        email_tasks = await self._build_user_reactivation_email_tasks(
+            user,
+            actor_user_id,
+            actor_role_codes,
+            target_role_code,
+            tenant,
+            actor_email,
+        )
+        if not email_tasks:
+            return
+        asyncio.create_task(asyncio.to_thread(self._run_user_reactivation_email_tasks, email_tasks))
+
+    async def _build_user_reactivation_email_tasks(
+        self,
+        user: User,
+        actor_user_id: UUID | None,
+        actor_role_codes: set[str] | None,
+        target_role_code: str | None,
+        tenant: Tenant | None,
+        actor_email: str | None = None,
+    ) -> list[tuple[str, tuple, dict]]:
+        normalized_actor_roles = {str(role_code) for role_code in (actor_role_codes or set())}
+        role_label = self._role_label(target_role_code)
+        tenant_name = tenant.name if tenant else "Unknown Tenant"
+        actor = await self.users.get(actor_user_id) if actor_user_id else None
+
+        if (
+            RoleCode.TENANT_ADMIN.value in normalized_actor_roles
+            and target_role_code in {RoleCode.TENANT_USER.value, RoleCode.BRAND_USER.value}
+        ):
+            email_tasks = [
+                ("send_account_reactivated_email", (user.email, user.full_name), {}),
+            ]
+            if actor:
+                email_tasks.append(
+                    (
+                        "send_user_reactivated_confirmation_email",
+                        (actor.email, actor.full_name, user.full_name, role_label),
+                        {},
+                    )
+                )
+                for platform_owner_email, platform_owner_name in await self._platform_owner_email_recipients():
+                    email_tasks.append(
+                        (
+                            "send_platform_owner_user_reactivated_email",
+                            (
+                                platform_owner_email,
+                                platform_owner_name,
+                                user.full_name,
+                                role_label,
+                                actor.full_name,
+                                tenant_name,
+                            ),
+                            {},
+                        )
+                    )
+            return email_tasks
+
+        if (
+            RoleCode.SUPER_ADMIN.value in normalized_actor_roles
+            and target_role_code == RoleCode.TENANT_ADMIN.value
+        ):
+            email_tasks = [
+                (
+                    "send_account_reactivated_email",
+                    (user.email, user.full_name),
+                    {"reactivated_by_platform_owner": True},
+                ),
+            ]
+            platform_owner_email = (
+                self._configured_platform_owner_email_recipient()
+                or (actor.email if actor else actor_email)
+            )
+            platform_owner_name = actor.full_name if actor else "Platform Owner"
+            if platform_owner_email:
+                email_tasks.append(
+                    (
+                        "send_tenant_admin_reactivated_confirmation_email",
+                        (platform_owner_email, platform_owner_name, user.full_name, tenant_name),
+                        {},
+                    )
+                )
+            return email_tasks
+
+        return []
+
+    def _run_user_reactivation_email_tasks(self, email_tasks: list[tuple[str, tuple, dict]]) -> None:
+        for method_name, args, kwargs in email_tasks:
+            try:
+                getattr(self.email, method_name)(*args, **kwargs)
+            except Exception:
+                logger.exception("Failed to send account reactivation email via %s.", method_name)
+
+    async def _active_platform_owners(self) -> list[User]:
+        result = await self.session.execute(
+            select(User)
+            .join(UserRole, UserRole.user_id == User.id)
+            .join(Role, Role.id == UserRole.role_id)
+            .where(User.is_active.is_(True), Role.code == RoleCode.SUPER_ADMIN.value)
+            .distinct()
+        )
+        return list(result.scalars().all())
+
+    def _configured_platform_owner_email_recipient(self) -> str | None:
+        return (self.email.settings.platform_owner_two_factor_email_recipient or "").strip() or None
+
+    async def _platform_owner_email_recipients(self) -> list[tuple[str, str]]:
+        override_email = self._configured_platform_owner_email_recipient()
+        if override_email:
+            return [(override_email, "Platform Owner")]
+        return [(platform_owner.email, platform_owner.full_name) for platform_owner in await self._active_platform_owners()]
+
+    @staticmethod
+    def _role_label(role_code: str | None) -> str:
+        labels = {
+            RoleCode.TENANT_ADMIN.value: "Tenant Admin",
+            RoleCode.TENANT_USER.value: "Super User",
+            RoleCode.BRAND_USER.value: "Brand User",
+        }
+        return labels.get(str(role_code), str(role_code or "User"))
 
     async def resend_activation_link(
         self,
@@ -888,6 +1173,7 @@ class TenantService:
         payload: TenantUserUpdateRequest,
         actor_user_id: UUID | None = None,
         actor_role_codes: set[str] | None = None,
+        actor_email: str | None = None,
     ) -> User:
         # Runs the tenant user service flow and persists the resulting state before returning it to the route or
         # worker.
@@ -1031,6 +1317,22 @@ class TenantService:
 
         await self.session.commit()
         await self.session.refresh(user)
+        if (
+            payload.is_active is True
+            and not was_active
+            and actor_role_codes
+            and actor_user_id
+            and actor_user_id != user.id
+        ):
+            tenant = await self.tenants.get(tenant_id)
+            await self._dispatch_user_reactivation_emails(
+                user,
+                actor_user_id,
+                actor_role_codes,
+                new_role_code,
+                tenant,
+                actor_email,
+            )
         return user
 
     async def update_usage_limits(
@@ -1045,11 +1347,27 @@ class TenantService:
         usage_limit = await self.usage_limits.get_by_tenant(tenant_id)
         if not usage_limit:
             raise NotFoundError("Usage limit record not found")
+        previous_limits = {
+            field_name: int(getattr(usage_limit, field_name) or 0)
+            for field_name in self.usage.FIELD_MAP.values()
+        }
         usage_limit.max_users = payload.max_users
         usage_limit.max_brand_spaces = payload.max_brand_spaces
         usage_limit.max_content_generations = payload.max_content_generations
         usage_limit.max_image_generations = payload.max_image_generations
         usage_limit.max_ocr_pages = payload.max_ocr_pages
+        current_limits = {
+            field_name: int(getattr(usage_limit, field_name) or 0)
+            for field_name in self.usage.FIELD_MAP.values()
+        }
+        # Limit-change alerts must use the same consumption values shown in the tenant dashboard.
+        dashboard_usage = await self._real_usage_consumption(tenant_id)
+        await self.usage.notify_for_limit_changes(
+            tenant_id,
+            previous_limits,
+            current_limits,
+            usage_by_metric=dashboard_usage,
+        )
         if auto_commit:
             await self.session.commit()
         return usage_limit

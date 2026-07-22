@@ -7,11 +7,41 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import RoleCode
 from app.models.collaboration import InAppNotification
-from app.models.tenant import Role, User, UserRole
+from app.models.tenant import Role, Tenant, User, UserRole
 from app.repositories.collaboration import InAppNotificationRepository
 
 
 class InAppNotificationService:
+    USAGE_CAPACITY_LABELS = {
+        "content_generations": "content-generation",
+        "image_generations": "visual-generation",
+        "ocr_pages": "OCR-page",
+        "users": "user",
+        "brand_spaces": "Brand Space",
+    }
+    USAGE_EXHAUSTED_MESSAGES = {
+        "content_generations": (
+            "content-generation",
+            "Some content-generation features may be restricted until additional capacity is available.",
+        ),
+        "image_generations": (
+            "visual-generation",
+            "Some visual-generation features may be restricted until additional capacity is available.",
+        ),
+        "ocr_pages": (
+            "OCR-page",
+            "Some OCR-processing features may be restricted until additional capacity is available.",
+        ),
+        "users": (
+            "user",
+            "Additional users cannot be added until additional capacity is available.",
+        ),
+        "brand_spaces": (
+            "Brand Space",
+            "Additional Brand Spaces cannot be created until additional capacity is available.",
+        ),
+    }
+
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
         self.notifications = InAppNotificationRepository(session)
@@ -35,6 +65,105 @@ class InAppNotificationService:
         )
         return await self.notifications.add(notification)
 
+    async def create_usage_threshold_notifications(
+        self,
+        *,
+        tenant_id: UUID,
+        metric_code: str,
+        period_key: str,
+        previous_usage: int,
+        current_usage: int,
+        configured_limit: int,
+        threshold: int = 80,
+    ) -> None:
+        capacity_label = self.USAGE_CAPACITY_LABELS.get(str(metric_code))
+        if not capacity_label:
+            return
+
+        tenant = await self.session.get(Tenant, tenant_id)
+        if not tenant:
+            return
+
+        metadata = {
+            "event": "usage_threshold_crossed",
+            "metric_code": str(metric_code),
+            "threshold": threshold,
+            "period_key": period_key,
+            "previous_usage": previous_usage,
+            "current_usage": current_usage,
+            "configured_limit": configured_limit,
+        }
+        organization_message = f"Your organization has used {threshold}% of its {capacity_label} capacity."
+        owner_message = f"{tenant.name} has used {threshold}% of its {capacity_label} capacity."
+
+        tenant_roles = (RoleCode.TENANT_ADMIN, RoleCode.TENANT_USER)
+        for recipient in await self._active_users_by_roles(tenant_roles, tenant_id=tenant_id):
+            await self.create(
+                recipient_user_id=recipient.id,
+                tenant_id=tenant_id,
+                title="Usage Warning",
+                message=organization_message,
+                metadata=metadata,
+            )
+        for recipient in await self._active_users_by_role(RoleCode.SUPER_ADMIN):
+            await self.create(
+                recipient_user_id=recipient.id,
+                tenant_id=tenant_id,
+                title="Usage Warning",
+                message=owner_message,
+                metadata=metadata,
+            )
+
+    async def create_usage_exhausted_notifications(
+        self,
+        *,
+        tenant_id: UUID,
+        metric_code: str,
+        period_key: str,
+        previous_usage: int,
+        current_usage: int,
+        configured_limit: int,
+    ) -> None:
+        message_parts = self.USAGE_EXHAUSTED_MESSAGES.get(str(metric_code))
+        if not message_parts:
+            return
+        capacity_label, restriction_message = message_parts
+        tenant = await self.session.get(Tenant, tenant_id)
+        if not tenant:
+            return
+
+        metadata = {
+            "event": "usage_exhausted",
+            "metric_code": str(metric_code),
+            "threshold": 100,
+            "period_key": period_key,
+            "previous_usage": previous_usage,
+            "current_usage": current_usage,
+            "configured_limit": configured_limit,
+        }
+        organization_message = (
+            f"Your organization has reached its allocated {capacity_label} limit. "
+            f"{restriction_message}"
+        )
+        owner_message = f"{tenant.name} has reached its allocated {capacity_label} limit."
+
+        tenant_roles = (RoleCode.TENANT_ADMIN, RoleCode.TENANT_USER)
+        for recipient in await self._active_users_by_roles(tenant_roles, tenant_id=tenant_id):
+            await self.create(
+                recipient_user_id=recipient.id,
+                tenant_id=tenant_id,
+                title="Usage Exhausted",
+                message=organization_message,
+                metadata=metadata,
+            )
+        for recipient in await self._active_users_by_role(RoleCode.SUPER_ADMIN):
+            await self.create(
+                recipient_user_id=recipient.id,
+                tenant_id=tenant_id,
+                title="Usage Exhausted",
+                message=owner_message,
+                metadata=metadata,
+            )
     async def list_for_user(self, user_id: UUID) -> list[InAppNotification]:
         return await self.notifications.list_for_user(user_id)
 
@@ -454,11 +583,18 @@ class InAppNotificationService:
         return f"{first_three}, and {len(quoted_names) - 3} more"
 
     async def _active_users_by_role(self, role_code: str, tenant_id: UUID | None = None) -> list[User]:
+        return await self._active_users_by_roles((role_code,), tenant_id=tenant_id)
+
+    async def _active_users_by_roles(
+        self,
+        role_codes: tuple[str, ...],
+        tenant_id: UUID | None = None,
+    ) -> list[User]:
         stmt = (
             select(User)
             .join(UserRole, UserRole.user_id == User.id)
             .join(Role, Role.id == UserRole.role_id)
-            .where(User.is_active.is_(True), Role.code == role_code)
+            .where(User.is_active.is_(True), Role.code.in_(role_codes))
             .distinct()
         )
         if tenant_id:

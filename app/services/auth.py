@@ -9,6 +9,7 @@ from uuid import UUID
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.enums import RoleCode
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -137,7 +138,12 @@ class AuthService:
             qr_code_url=self.build_qr_code_url(otpauth_url),
         )
 
-    async def enable_two_factor(self, user_id, code: str) -> TwoFactorSetupResponse:
+    async def enable_two_factor(
+        self,
+        user_id,
+        code: str,
+        actor_role_codes: set[str] | None = None,
+    ) -> TwoFactorSetupResponse:
         # Runs the two factor service flow and persists the resulting state before returning it to the route or
         # worker.
         user = await self.users.get(user_id)
@@ -158,9 +164,15 @@ class AuthService:
         }
         await self.session.commit()
         await self.session.refresh(user)
+        self._send_platform_owner_two_factor_email(user, enabled=True, actor_role_codes=actor_role_codes)
         return TwoFactorSetupResponse(enabled=True, pending_setup=False)
 
-    async def disable_two_factor(self, user_id, code: str) -> TwoFactorSetupResponse:
+    async def disable_two_factor(
+        self,
+        user_id,
+        code: str,
+        actor_role_codes: set[str] | None = None,
+    ) -> TwoFactorSetupResponse:
         # Runs the two factor service flow and persists the resulting state before returning it to the route or
         # worker.
         user = await self.users.get(user_id)
@@ -178,7 +190,22 @@ class AuthService:
         user.metadata_json = metadata
         await self.session.commit()
         await self.session.refresh(user)
+        self._send_platform_owner_two_factor_email(user, enabled=False, actor_role_codes=actor_role_codes)
         return TwoFactorSetupResponse(enabled=False, pending_setup=False)
+
+    def _send_platform_owner_two_factor_email(
+        self,
+        user,
+        *,
+        enabled: bool,
+        actor_role_codes: set[str] | None,
+    ) -> None:
+        # Restricts 2FA security email notices to the Platform Owner performing the action.
+        if RoleCode.SUPER_ADMIN.value not in {str(role_code) for role_code in (actor_role_codes or set())}:
+            return
+        override_email = (self.email.settings.platform_owner_two_factor_email_recipient or "").strip()
+        recipient_email = override_email or user.email
+        self.email.send_two_factor_security_email(recipient_email, user.full_name, enabled=enabled)
 
     async def _complete_login(self, user) -> TokenPairResponse:
         # Internal helper for complete login; it keeps the public service method focused on orchestration
@@ -273,7 +300,13 @@ class AuthService:
         await self.session.refresh(user)
         return user
 
-    async def change_password(self, user_id, current_password: str, new_password: str) -> PasswordResetResponse:
+    async def change_password(
+        self,
+        user_id,
+        current_password: str,
+        new_password: str,
+        actor_role_codes: set[str] | None = None,
+    ) -> PasswordResetResponse:
         # Runs the change password service flow and persists the resulting state before returning it to the
         # route or worker.
         user = await self.users.get(user_id)
@@ -284,7 +317,23 @@ class AuthService:
         user.hashed_password = hash_password(new_password)
         await InAppNotificationService(self.session).create_password_changed_notification(user)
         await self.session.commit()
+        self._send_password_changed_confirmation_email(user, actor_role_codes)
         return PasswordResetResponse(message="Password updated successfully.")
+
+    def _send_password_changed_confirmation_email(
+        self,
+        user,
+        actor_role_codes: set[str] | None,
+    ) -> None:
+        normalized_role_codes = {str(role_code) for role_code in (actor_role_codes or set())}
+        supported_role_codes = {
+            RoleCode.TENANT_ADMIN.value,
+            RoleCode.TENANT_USER.value,
+            RoleCode.BRAND_USER.value,
+        }
+        if not normalized_role_codes.intersection(supported_role_codes):
+            return
+        self.email.send_password_changed_confirmation_email(user.email, user.full_name)
 
     async def delete_profile(self, user_id) -> PasswordResetResponse:
         # Runs the profile service flow and persists the resulting state before returning it to the route or

@@ -1,6 +1,8 @@
 # Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
+import asyncio
+import logging
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -13,7 +15,7 @@ from app.models.brand import BrandConfigurationSection, BrandSpace, BrandSpaceMe
 from app.models.collaboration import UsageLimit
 from app.models.content import ContentVersion, GeneratedAsset
 from app.models.knowledge import KnowledgeAsset
-from app.models.tenant import Tenant
+from app.models.tenant import Role, Tenant, User, UserRole
 from app.repositories.brand import (
     BrandMemberRepository,
     BrandSectionRepository,
@@ -25,9 +27,13 @@ from app.repositories.brand import (
 from app.schemas.brand import BrandCreateRequest, BrandSectionUpsertRequest, BrandSectionsUpsertRequest, BrandUpdateRequest, GuardrailPayload
 from app.services.brand_summary_memory import BrandSummaryMemoryService
 from app.services.data_validation import DataValidatorService
+from app.services.email import EmailService
 from app.services.notification import InAppNotificationService
 from app.services.usage import UsageLimitService
 from app.utils.text import slugify
+
+
+logger = logging.getLogger(__name__)
 
 
 class BrandSpaceService:
@@ -46,6 +52,7 @@ class BrandSpaceService:
         self.intelligence = BrandIntelligenceService()
         self.validator = DataValidatorService(session)
         self.brand_summary_memory = BrandSummaryMemoryService()
+        self.email = EmailService()
 
     @staticmethod
     def _clamp_percent(value: object) -> int:
@@ -310,12 +317,20 @@ class BrandSpaceService:
         await self.session.commit()
         return await self.refresh_context(brand_space_id)
 
-    async def upsert_sections(self, tenant_id: UUID, brand_space_id: UUID, payload: BrandSectionsUpsertRequest) -> BrandSpace:
+    async def upsert_sections(
+        self,
+        tenant_id: UUID,
+        brand_space_id: UUID,
+        payload: BrandSectionsUpsertRequest,
+        actor_user_id: UUID | None = None,
+        actor_role_codes: set[str] | None = None,
+    ) -> BrandSpace:
         # Runs the sections service flow and persists the resulting state before returning it to the route or
         # worker.
         brand = await self.brands.get_scoped(tenant_id, brand_space_id)
         if not brand:
             raise NotFoundError("Brand Space not found")
+        was_published = brand.lifecycle_state == BrandSpaceLifecycle.ACTIVE
         existing_sections = await self.sections.list_current_sections(brand_space_id, tenant_id)
         section_versions = {
             section.section_code: max(
@@ -327,7 +342,11 @@ class BrandSpaceService:
         for section in payload.sections:
             await self._apply_section_upsert(tenant_id, brand_space_id, brand, section, existing_sections, section_versions)
         await self.session.commit()
-        return await self.refresh_context(brand_space_id)
+        updated_brand = await self.refresh_context(brand_space_id)
+        normalized_actor_roles = {str(role_code) for role_code in (actor_role_codes or set())}
+        if was_published and actor_user_id and RoleCode.TENANT_ADMIN.value in normalized_actor_roles:
+            await self._dispatch_published_brand_space_updated_emails(updated_brand, actor_user_id)
+        return updated_brand
 
     async def update_brand(self, tenant_id: UUID, brand_space_id: UUID, payload: BrandUpdateRequest) -> BrandSpace:
         # Runs the brand service flow by coordinating repositories, validators, and integrations, then returns
@@ -545,6 +564,80 @@ class BrandSpaceService:
             all_brands = await self.brands.list_by_tenant(tenant_id)
             return [brand for brand in all_brands if brand.id in set(brand_ids)]
         return await self.brands.list_by_tenant(tenant_id)
+
+    async def _brand_space_update_email_recipients(
+        self,
+        tenant_id: UUID,
+        brand_space_id: UUID,
+        actor_user_id: UUID,
+    ) -> list[User]:
+        actor_result = await self.session.execute(
+            select(User)
+            .join(UserRole, UserRole.user_id == User.id)
+            .join(Role, Role.id == UserRole.role_id)
+            .where(
+                User.id == actor_user_id,
+                User.tenant_id == tenant_id,
+                User.is_active.is_(True),
+                Role.code == RoleCode.TENANT_ADMIN.value,
+            )
+            .distinct()
+        )
+        super_user_result = await self.session.execute(
+            select(User)
+            .join(UserRole, UserRole.user_id == User.id)
+            .join(Role, Role.id == UserRole.role_id)
+            .where(
+                User.tenant_id == tenant_id,
+                User.is_active.is_(True),
+                Role.code == RoleCode.TENANT_USER.value,
+            )
+            .distinct()
+        )
+        brand_user_result = await self.session.execute(
+            select(User)
+            .join(BrandSpaceMember, BrandSpaceMember.user_id == User.id)
+            .join(UserRole, UserRole.user_id == User.id)
+            .join(Role, Role.id == UserRole.role_id)
+            .where(
+                BrandSpaceMember.tenant_id == tenant_id,
+                BrandSpaceMember.brand_space_id == brand_space_id,
+                User.tenant_id == tenant_id,
+                User.is_active.is_(True),
+                Role.code == RoleCode.BRAND_USER.value,
+            )
+            .distinct()
+        )
+        recipients: list[User] = []
+        seen_emails: set[str] = set()
+        for user in [
+            *actor_result.scalars().all(),
+            *super_user_result.scalars().all(),
+            *brand_user_result.scalars().all(),
+        ]:
+            email = (user.email or "").strip()
+            email_key = email.lower()
+            if not email_key or email_key in seen_emails:
+                continue
+            seen_emails.add(email_key)
+            recipients.append(user)
+        return recipients
+
+    async def _dispatch_published_brand_space_updated_emails(self, brand: BrandSpace, actor_user_id: UUID) -> None:
+        email_tasks = [
+            (recipient.email, recipient.full_name, brand.name)
+            for recipient in await self._brand_space_update_email_recipients(brand.tenant_id, brand.id, actor_user_id)
+        ]
+        if not email_tasks:
+            return
+        asyncio.create_task(asyncio.to_thread(self._run_brand_space_updated_email_tasks, email_tasks))
+
+    def _run_brand_space_updated_email_tasks(self, email_tasks: list[tuple[str, str | None, str]]) -> None:
+        for recipient_email, recipient_name, brand_space_name in email_tasks:
+            try:
+                self.email.send_brand_space_updated_email(recipient_email, recipient_name, brand_space_name)
+            except Exception:
+                logger.exception("Failed to send Brand Space updated email to %s.", recipient_email)
 
     async def require_active(self, tenant_id: UUID, brand_space_id: UUID) -> BrandSpace:
         # Runs the require active service flow by coordinating repositories, validators, and integrations, then

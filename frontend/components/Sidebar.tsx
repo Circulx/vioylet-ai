@@ -27,6 +27,7 @@ import { NotificationDrawer } from "./NotificationDrawer";
 import { useInAppNotifications } from "@/hooks/useInAppNotifications";
 import { API } from "@/lib/api/endpoints";
 import { request } from "@/lib/api/request";
+import { NOTIFICATION_REFETCH_INTERVAL_MS } from "@/lib/notification-queries";
 import {
     BrandResponse,
     ChatSessionResponse,
@@ -57,7 +58,7 @@ export default function Sidebar() {
         enabled: Boolean(user?.id),
         queryFn: () => request(API.NOTIFICATIONS.UNREAD_COUNT),
         refetchOnWindowFocus: "always",
-        refetchInterval: user?.id ? 30000 : false,
+        refetchInterval: user?.id ? NOTIFICATION_REFETCH_INTERVAL_MS : false,
     });
     const { data: brands } = useBrands(user?.role !== "PLATFORM_OWNER");
     const path = usePathname();

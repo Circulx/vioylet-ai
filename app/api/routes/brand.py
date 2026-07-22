@@ -5,7 +5,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import CurrentPrincipal, assert_brand_access, forbid_super_admin_brand_access, get_current_principal
+from app.core.dependencies import (
+    CurrentPrincipal,
+    assert_brand_access,
+    assert_brand_manage_access,
+    forbid_super_admin_brand_access,
+    get_current_principal,
+)
 from app.db.session import get_db_session
 from app.schemas.brand import (
     BrandCreateRequest,
@@ -53,6 +59,7 @@ async def create_brand(
     # Serves the brand creation endpoint; it uses FastAPI dependencies, delegates work to services, and returns
     # the response schema.
     forbid_super_admin_brand_access(principal)
+    assert_brand_manage_access(principal)
     brand = await BrandSpaceService(session).create_brand(
         principal.tenant_id,
         principal.user_id,
@@ -117,6 +124,7 @@ async def update_brand(
     # response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
+    assert_brand_manage_access(principal)
     brand = await BrandSpaceService(session).update_brand(principal.tenant_id, brand_id, payload)
     return BrandResponse.model_validate(brand)
 
@@ -133,6 +141,7 @@ async def upsert_section(
     # response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
+    assert_brand_manage_access(principal)
     try:
         request = BrandSectionUpsertRequest(
             section_code=section_code,
@@ -156,7 +165,14 @@ async def upsert_sections(
     # response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
-    brand = await BrandSpaceService(session).upsert_sections(principal.tenant_id, brand_id, payload)
+    assert_brand_manage_access(principal)
+    brand = await BrandSpaceService(session).upsert_sections(
+        principal.tenant_id,
+        brand_id,
+        payload,
+        principal.user_id,
+        principal.role_codes,
+    )
     return BrandResponse.model_validate(brand)
 
 
@@ -171,6 +187,7 @@ async def finalize_brand(
     # response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
+    assert_brand_manage_access(principal)
     brand = await BrandSpaceService(session).finalize_brand(
         principal.tenant_id,
         brand_id,
@@ -190,6 +207,7 @@ async def publish_brand(
     # response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
+    assert_brand_manage_access(principal)
     brand = await BrandSpaceService(session).publish_brand(
         principal.tenant_id,
         brand_id,
@@ -209,6 +227,7 @@ async def unpublish_brand(
     # response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
+    assert_brand_manage_access(principal)
     brand = await BrandSpaceService(session).unpublish_brand(principal.tenant_id, brand_id)
     return BrandResponse.model_validate(brand)
 
@@ -223,6 +242,7 @@ async def archive_brand(
     # response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
+    assert_brand_manage_access(principal)
     brand = await BrandSpaceService(session).archive_brand(
         principal.tenant_id,
         brand_id,
@@ -242,6 +262,7 @@ async def restore_brand(
     # response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
+    assert_brand_manage_access(principal)
     brand = await BrandSpaceService(session).restore_brand(
         principal.tenant_id,
         brand_id,
@@ -261,6 +282,7 @@ async def delete_brand(
     # response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
+    assert_brand_manage_access(principal)
     await BrandSpaceService(session).delete_brand(
         principal.tenant_id,
         brand_id,

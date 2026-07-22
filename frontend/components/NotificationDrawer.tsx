@@ -14,6 +14,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { API } from "@/lib/api/endpoints"
 import { request } from "@/lib/api/request"
+import { NOTIFICATION_REFETCH_INTERVAL_MS } from "@/lib/notification-queries"
 import { useGetMe } from "@/hooks/useUser"
 import { useInAppNotifications } from "@/hooks/useInAppNotifications"
 import { ReactNode, useState } from "react"
@@ -57,7 +58,7 @@ export function NotificationDrawer({ children }: { children: ReactNode }) {
     enabled: Boolean(user?.id),
     queryFn: () => request(API.NOTIFICATIONS.LIST),
     refetchOnWindowFocus: "always",
-    refetchInterval: user?.id ? 30000 : false,
+    refetchInterval: user?.id ? NOTIFICATION_REFETCH_INTERVAL_MS : false,
   })
   const markServerNotificationsRead = useMutation({
     mutationFn: () => request(API.NOTIFICATIONS.MARK_READ),

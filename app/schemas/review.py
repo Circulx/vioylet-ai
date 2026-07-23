@@ -33,6 +33,8 @@ class ReviewStatusUpdateRequest(APIModel):
 
 class ReviewShareAccessUpdateRequest(APIModel):
     user_ids: list[UUID] = Field(default_factory=list)
+    user_emails: list[str] = Field(default_factory=list)
+    remove_user_ids: list[UUID] = Field(default_factory=list)
 
 
 class ReviewLinkResponse(APIModel):

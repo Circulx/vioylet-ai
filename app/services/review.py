@@ -6,7 +6,7 @@ import logging
 import secrets
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import ReviewStatus, RoleCode
@@ -76,6 +76,7 @@ class ReviewService:
         link: ReviewLink,
         user_id: UUID | None,
         role_codes: set[str] | None = None,
+        brand_space_ids: set[UUID] | None = None,
     ) -> bool:
         if not user_id:
             return False
@@ -83,16 +84,18 @@ class ReviewService:
         if not user:
             return False
         normalized_roles = role_codes or await self._get_user_role_codes(user_id)
-        if RoleCode.SUPER_ADMIN in normalized_roles:
-            return False
         if user.id == link.created_by:
             return True
-        if user.tenant_id != link.tenant_id:
-            return False
-        if RoleCode.TENANT_ADMIN in normalized_roles:
-            return True
         participant = await self.participants.get_for_link_user(link.id, user.id)
-        return participant is not None
+        if participant is not None:
+            return True
+        if RoleCode.SUPER_ADMIN in normalized_roles:
+            return False
+        if user.tenant_id == link.tenant_id and RoleCode.TENANT_ADMIN in normalized_roles:
+            return True
+        if brand_space_ids and link.brand_space_id in brand_space_ids:
+            return True
+        return False
 
     async def list_share_access(
         self,
@@ -103,9 +106,9 @@ class ReviewService:
         participant_pairs: list[tuple[ReviewLinkParticipant, User]] = []
         for participant in participants:
             user = await self._get_active_user(participant.user_id)
-            if user and user.tenant_id == link.tenant_id:
+            if user:
                 participant_pairs.append((participant, user))
-        mentionable_users = await self._list_active_tenant_users(link.tenant_id)
+        mentionable_users = await self._list_active_platform_users()
         user_ids = {user.id for user in mentionable_users}
         if owner:
             user_ids.add(owner.id)
@@ -118,14 +121,31 @@ class ReviewService:
         review_link_id: UUID,
         user_ids: list[UUID],
         mentioned_by: UUID,
+        user_emails: list[str] | None = None,
     ) -> list[User]:
         link = await self.links.get(review_link_id)
         if not link:
             raise NotFoundError("Review link not found")
-        unique_user_ids = [user_id for user_id in dict.fromkeys(user_ids) if user_id != link.created_by]
-        if not unique_user_ids:
+        normalized_emails = [
+            email.strip().lower()
+            for email in dict.fromkeys(user_emails or [])
+            if email and email.strip()
+        ]
+        users_from_email = await self._list_active_platform_users_by_emails(normalized_emails)
+        found_emails = {(user.email or "").strip().lower() for user in users_from_email}
+        missing_emails = [email for email in normalized_emails if email not in found_emails]
+        if missing_emails:
+            raise LifecycleError(f"Registered user not found for: {', '.join(missing_emails)}")
+        users_by_id = {
+            user.id: user
+            for user in await self._list_active_platform_users_by_ids(
+                [user_id for user_id in dict.fromkeys(user_ids) if user_id != link.created_by]
+            )
+        }
+        users_by_email = {user.id: user for user in users_from_email if user.id != link.created_by}
+        users = list({**users_by_id, **users_by_email}.values())
+        if not users:
             return []
-        users = await self._list_active_users_by_ids(link.tenant_id, unique_user_ids)
         new_users: list[User] = []
         for user in users:
             existing = await self.participants.get_for_link_user(link.id, user.id)
@@ -153,6 +173,37 @@ class ReviewService:
                     exc,
                 )
         return new_users
+
+    async def revoke_share_access(
+        self,
+        review_link_id: UUID,
+        user_ids: list[UUID],
+        removed_by: UUID,
+    ) -> list[User]:
+        link = await self.links.get(review_link_id)
+        if not link:
+            raise NotFoundError("Review link not found")
+        unique_user_ids = [user_id for user_id in dict.fromkeys(user_ids) if user_id != link.created_by]
+        if not unique_user_ids:
+            return []
+        participants = await self.participants.list_for_link_users(link.id, unique_user_ids)
+        removed_users: list[User] = []
+        for participant in participants:
+            user = await self._get_active_user(participant.user_id)
+            if user and user.tenant_id == link.tenant_id:
+                removed_users.append(user)
+            await self.participants.delete(participant)
+        await self.session.commit()
+        if removed_users:
+            try:
+                await self._send_access_removed_notifications(link, removed_users, removed_by)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Review access removed notification failed for review_link_id=%s: %s",
+                    link.id,
+                    exc,
+                )
+        return removed_users
 
     async def add_comment(
         self,
@@ -323,6 +374,40 @@ class ReviewService:
             )
         await self.session.commit()
 
+    async def _send_access_removed_notifications(
+        self,
+        link: ReviewLink,
+        recipients: list[User],
+        removed_by: UUID,
+    ) -> None:
+        remover_name = await self._reviewer_name(removed_by)
+        content = await self.contents.get_scoped(
+            link.content_version_id,
+            link.tenant_id,
+            link.brand_space_id,
+        )
+        post_title = link.title or (content.title if content else None)
+        notification_service = InAppNotificationService(self.session)
+        for recipient in recipients:
+            await notification_service.create(
+                recipient_user_id=recipient.id,
+                tenant_id=recipient.tenant_id,
+                title="Review Access Removed",
+                message=f"{remover_name} removed your access to {post_title or 'a shared image'}.",
+                metadata={
+                    "event": "review_access_removed",
+                    "review_link_id": str(link.id),
+                },
+            )
+            await asyncio.to_thread(
+                self.email.send_review_access_removed_notification_email,
+                recipient.email,
+                recipient.full_name,
+                remover_name,
+                post_title,
+            )
+        await self.session.commit()
+
     async def _send_review_approved_email_notifications(
         self,
         link: ReviewLink,
@@ -434,26 +519,40 @@ class ReviewService:
         )
         return list(result.scalars().all())
 
-    async def _list_active_tenant_users(self, tenant_id: UUID) -> list[User]:
+    async def _list_active_platform_users(self) -> list[User]:
         result = await self.session.execute(
             select(User)
-            .where(
-                User.tenant_id == tenant_id,
-                User.is_active.is_(True),
-            )
+            .where(User.is_active.is_(True))
             .order_by(User.full_name.asc(), User.email.asc())
         )
         return list(result.scalars().all())
 
-    async def _list_active_users_by_ids(self, tenant_id: UUID, user_ids: list[UUID]) -> list[User]:
+    async def _list_active_platform_users_by_ids(self, user_ids: list[UUID]) -> list[User]:
         if not user_ids:
             return []
         result = await self.session.execute(
             select(User)
             .where(
-                User.tenant_id == tenant_id,
                 User.is_active.is_(True),
                 User.id.in_(user_ids),
+            )
+            .order_by(User.full_name.asc(), User.email.asc())
+        )
+        return list(result.scalars().all())
+
+    async def _list_active_platform_users_by_emails(self, emails: list[str]) -> list[User]:
+        normalized_emails = [
+            email.strip().lower()
+            for email in dict.fromkeys(emails)
+            if email and email.strip()
+        ]
+        if not normalized_emails:
+            return []
+        result = await self.session.execute(
+            select(User)
+            .where(
+                User.is_active.is_(True),
+                func.lower(User.email).in_(normalized_emails),
             )
             .order_by(User.full_name.asc(), User.email.asc())
         )

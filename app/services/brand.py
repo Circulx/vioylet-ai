@@ -13,10 +13,11 @@ from app.ai.brand_intelligence import BrandIntelligenceService
 from app.core.enums import BrandSpaceLifecycle, RoleCode, UsageMetricCode
 from app.core.exceptions import LifecycleError, NotFoundError
 from app.models.brand import BrandConfigurationSection, BrandSpace, BrandSpaceMember, Guardrail, Objective, Persona
-from app.models.collaboration import UsageLimit
+from app.models.collaboration import BrandSpaceHistory, UsageLimit
 from app.models.content import ContentVersion, GeneratedAsset
 from app.models.knowledge import KnowledgeAsset
 from app.models.tenant import Role, Tenant, User, UserRole
+from app.repositories.collaboration import BrandSpaceHistoryRepository
 from app.repositories.brand import (
     BrandMemberRepository,
     BrandSectionRepository,
@@ -50,6 +51,7 @@ class BrandSpaceService:
         self.guardrails = GuardrailRepository(session)
         self.objectives = ObjectiveRepository(session)
         self.members = BrandMemberRepository(session)
+        self.history = BrandSpaceHistoryRepository(session)
         self.usage = UsageLimitService(session)
         self.intelligence = BrandIntelligenceService()
         self.validator = DataValidatorService(session)
@@ -364,7 +366,16 @@ class BrandSpaceService:
         updated_brand = await self.refresh_context(brand_space_id)
         normalized_actor_roles = {str(role_code) for role_code in (actor_role_codes or set())}
         if was_published and actor_user_id and RoleCode.TENANT_ADMIN.value in normalized_actor_roles:
-            await self._dispatch_published_brand_space_updated_emails(updated_brand, actor_user_id)
+            emails_scheduled = await self._dispatch_published_brand_space_updated_emails(updated_brand, actor_user_id)
+            if emails_scheduled:
+                await self.create_history_entry(
+                    tenant_id=tenant_id,
+                    brand_space_id=brand_space_id,
+                    activity_type="brand_space_updated",
+                    message="Brand Space updated.",
+                    performed_by=actor_user_id,
+                    metadata={"brand_space_name": updated_brand.name},
+                )
         return updated_brand
 
     async def update_brand(self, tenant_id: UUID, brand_space_id: UUID, payload: BrandUpdateRequest) -> BrandSpace:
@@ -601,6 +612,34 @@ class BrandSpaceService:
             return [brand for brand in all_brands if brand.id in set(brand_ids)]
         return await self.brands.list_by_tenant(tenant_id)
 
+    async def list_history(self, tenant_id: UUID, brand_space_id: UUID) -> list[BrandSpaceHistory]:
+        brand = await self.brands.get_scoped(tenant_id, brand_space_id)
+        if not brand:
+            raise NotFoundError("Brand Space not found")
+        return await self.history.list_for_brand(tenant_id, brand_space_id)
+
+    async def create_history_entry(
+        self,
+        *,
+        tenant_id: UUID,
+        brand_space_id: UUID,
+        activity_type: str,
+        message: str,
+        performed_by: UUID | None = None,
+        metadata: dict | None = None,
+    ) -> BrandSpaceHistory:
+        history_entry = BrandSpaceHistory(
+            tenant_id=tenant_id,
+            brand_space_id=brand_space_id,
+            activity_type=activity_type,
+            message=message,
+            performed_by=performed_by,
+            metadata_json=metadata or {},
+        )
+        await self.history.add(history_entry)
+        await self.session.commit()
+        return history_entry
+
     async def _brand_space_update_email_recipients(
         self,
         tenant_id: UUID,
@@ -659,14 +698,15 @@ class BrandSpaceService:
             recipients.append(user)
         return recipients
 
-    async def _dispatch_published_brand_space_updated_emails(self, brand: BrandSpace, actor_user_id: UUID) -> None:
+    async def _dispatch_published_brand_space_updated_emails(self, brand: BrandSpace, actor_user_id: UUID) -> bool:
         email_tasks = [
             (recipient.email, recipient.full_name, brand.name)
             for recipient in await self._brand_space_update_email_recipients(brand.tenant_id, brand.id, actor_user_id)
         ]
         if not email_tasks:
-            return
+            return False
         asyncio.create_task(asyncio.to_thread(self._run_brand_space_updated_email_tasks, email_tasks))
+        return True
 
     def _run_brand_space_updated_email_tasks(self, email_tasks: list[tuple[str, str | None, str]]) -> None:
         for recipient_email, recipient_name, brand_space_name in email_tasks:

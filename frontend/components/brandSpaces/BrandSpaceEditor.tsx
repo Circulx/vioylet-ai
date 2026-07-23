@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import {
     AlertCircle,
     CheckCircle2,
+    Clock3,
     Eye,
     FileText,
     Loader2,
@@ -37,6 +38,7 @@ import {
 } from "@/components/ui/collapsible";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageHeading } from "@/components/common/DesignPrimitives";
+import { BrandSpaceHistoryDrawer } from "@/components/brandSpaces/BrandSpaceHistoryDrawer";
 import type { BrandAttachmentResponse, BrandResponse, ValidationSummaryResponse } from "@/lib/api/contracts";
 import { API } from "@/lib/api/endpoints";
 import { request } from "@/lib/api/request";
@@ -890,6 +892,7 @@ export default function BrandSpaceEditor({
         [uploadStatusItems],
     );
     const canOpenWorkspace = Boolean(draftBrand?.id) && brandLifecycleState === "active";
+    const canShowHistoryButton = canOpenWorkspace && currentUser?.role !== "PLATFORM_OWNER";
     const primarySubmitIntent: "publish" | "save" =
         brandLifecycleState === "active" || hasUnsavedUploadItems ? "save" : "publish";
     const isDraftSubmitting = isSubmitting && activeSubmitIntent === "draft";
@@ -1595,6 +1598,20 @@ export default function BrandSpaceEditor({
                                             : "Publish Brand Space"}
                                 </span>
                             </Button>
+                        ) : null}
+
+                        {canShowHistoryButton ? (
+                            <BrandSpaceHistoryDrawer brandId={effectiveBrandId}>
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    aria-label="History"
+                                    title="History"
+                                    className="h-[50px] w-[50px] rounded-none border-primary/72 p-0 text-primary hover:bg-primary/5 hover:text-primary"
+                                >
+                                    <Clock3 className="h-5 w-5" />
+                                </Button>
+                            </BrandSpaceHistoryDrawer>
                         ) : null}
                     </div>
                 }

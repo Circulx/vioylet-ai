@@ -43,6 +43,15 @@ export interface InAppNotificationUnreadCountResponse {
   unread_count: number;
 }
 
+export interface BrandSpaceHistoryResponse {
+  id: UUID;
+  tenant_id: UUID;
+  brand_space_id: UUID;
+  activity_type: string;
+  message: string;
+  performed_by?: UUID | null;
+  created_at: string;
+}
 export interface UiUser {
   id: UUID;
   tenantId?: UUID;

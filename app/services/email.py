@@ -549,6 +549,32 @@ class EmailService:
         )
         return self._send_email(recipient_email, subject, text_body, html_body)
 
+    def send_review_access_removed_notification_email(
+        self,
+        recipient_email: str,
+        recipient_name: str | None,
+        remover_name: str,
+        post_title: str | None = None,
+    ) -> EmailDeliveryResult:
+        title_label = post_title or "Shared image"
+        greeting_name = recipient_name or recipient_email
+        subject = f"Access removed for {title_label}"
+        escaped_greeting_name = escape(greeting_name)
+        escaped_remover_name = escape(remover_name)
+        escaped_title_label = escape(title_label)
+        text_body = (
+            f"Hello {greeting_name},\n\n"
+            f"{remover_name} removed your access to {title_label}.\n\n"
+            "You will no longer be able to open this review thread."
+        )
+        html_body = (
+            f"<p>Hello {escaped_greeting_name},</p>"
+            f"<p><strong>{escaped_remover_name}</strong> removed your access to "
+            f"<strong>{escaped_title_label}</strong>.</p>"
+            "<p>You will no longer be able to open this review thread.</p>"
+        )
+        return self._send_email(recipient_email, subject, text_body, html_body)
+
     def send_brand_space_updated_email(
         self,
         recipient_email: str,

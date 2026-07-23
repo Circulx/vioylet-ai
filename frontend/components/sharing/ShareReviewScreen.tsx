@@ -351,7 +351,9 @@ export default function ShareReviewScreen({
     const [modalMode, setModalMode] = useState<ModalMode>("none");
     const [copied, setCopied] = useState(false);
     const [shareSearch, setShareSearch] = useState("");
+    const [isShareSearchFocused, setIsShareSearchFocused] = useState(false);
     const [selectedMentionIds, setSelectedMentionIds] = useState<string[]>([]);
+    const [selectedMentionEmails, setSelectedMentionEmails] = useState<string[]>([]);
     const [activePreviewIndex, setActivePreviewIndex] = useState(0);
     const [hasAuthToken] = useState(() => Boolean(getAccessToken()));
 
@@ -403,18 +405,32 @@ export default function ShareReviewScreen({
         () => (shareAccess.data?.mentionable_users || []).filter((user) => selectedMentionIds.includes(user.id)),
         [selectedMentionIds, shareAccess.data?.mentionable_users],
     );
+    const exactEmailCandidate = useMemo(() => {
+        const value = shareSearch.trim().toLowerCase();
+        if (!isShareSearchFocused || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+            return "";
+        }
+        const existingEmails = new Set([
+            shareAccess.data?.owner?.email?.toLowerCase(),
+            ...(shareAccess.data?.participants || []).map((participant) => participant.email.toLowerCase()),
+            ...(shareAccess.data?.mentionable_users || []).map((user) => user.email.toLowerCase()),
+            ...selectedMentionUsers.map((user) => user.email.toLowerCase()),
+            ...selectedMentionEmails,
+        ].filter(Boolean));
+        return existingEmails.has(value) ? "" : value;
+    }, [isShareSearchFocused, selectedMentionEmails, selectedMentionUsers, shareAccess.data, shareSearch]);
     const mentionSuggestions = useMemo(() => {
         const query = shareSearch.trim().toLowerCase();
+        if (!isShareSearchFocused || !query) {
+            return [];
+        }
         return (shareAccess.data?.mentionable_users || [])
             .filter((user) => !existingShareUserIds.has(user.id) && !selectedMentionIds.includes(user.id))
             .filter((user) => {
-                if (!query) {
-                    return true;
-                }
                 return `${user.full_name} ${user.email}`.toLowerCase().includes(query);
             })
             .slice(0, 6);
-    }, [existingShareUserIds, selectedMentionIds, shareAccess.data?.mentionable_users, shareSearch]);
+    }, [existingShareUserIds, isShareSearchFocused, selectedMentionIds, shareAccess.data?.mentionable_users, shareSearch]);
     const showReviewLinkSuccessToast = () => {
         toast({
             title: "Review link created successfully.",
@@ -531,23 +547,57 @@ export default function ShareReviewScreen({
     const handleSelectMentionUser = (user: ReviewUserSummary) => {
         setSelectedMentionIds((current) => current.includes(user.id) ? current : [...current, user.id]);
         setShareSearch("");
+        setIsShareSearchFocused(false);
+    };
+
+    const handleSelectMentionEmail = (email: string) => {
+        setSelectedMentionEmails((current) => current.includes(email) ? current : [...current, email]);
+        setShareSearch("");
+        setIsShareSearchFocused(false);
     };
 
     const handleRemoveMentionUser = (userId: string) => {
         setSelectedMentionIds((current) => current.filter((id) => id !== userId));
     };
 
+    const handleRemoveMentionEmail = (email: string) => {
+        setSelectedMentionEmails((current) => current.filter((item) => item !== email));
+    };
+
     const handleDoneShare = async () => {
-        if (selectedMentionIds.length) {
-            await updateShareAccess.mutateAsync({ user_ids: selectedMentionIds });
-            toast({
-                title: "Review access updated.",
-                variant: "success",
-            });
+        if (selectedMentionIds.length || selectedMentionEmails.length) {
+            try {
+                await updateShareAccess.mutateAsync({
+                    user_ids: selectedMentionIds,
+                    user_emails: selectedMentionEmails,
+                    remove_user_ids: [],
+                });
+                toast({
+                    title: "Review access updated.",
+                    variant: "success",
+                });
+            } catch {
+                toast({
+                    title: "Unable to update review access.",
+                    description: "Please check that the email belongs to a registered Violyt user.",
+                    variant: "destructive",
+                });
+                return;
+            }
         }
         setSelectedMentionIds([]);
+        setSelectedMentionEmails([]);
         setShareSearch("");
+        setIsShareSearchFocused(false);
         setModalMode("none");
+    };
+
+    const handleRevokeAccess = async (userId: string) => {
+        await updateShareAccess.mutateAsync({ user_ids: [], remove_user_ids: [userId] });
+        toast({
+            title: "Review access removed.",
+            variant: "success",
+        });
     };
 
     const handleShareReviewPage = async () => {
@@ -664,7 +714,9 @@ export default function ShareReviewScreen({
                         onClick={() => {
                             setModalMode("none");
                             setShareSearch("");
+                            setIsShareSearchFocused(false);
                             setSelectedMentionIds([]);
+                            setSelectedMentionEmails([]);
                         }}
                         className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full text-[#121212] hover:bg-[#F2F2F4]"
                         aria-label="Close"
@@ -676,7 +728,7 @@ export default function ShareReviewScreen({
                         <div className="space-y-5 p-6">
                             <div className="flex items-center gap-3 pr-10">
                                 <Share2 className="h-5 w-5 text-primary" />
-                                <h2 className="truncate text-[22px] font-semibold text-[#202124]">Share '{effectiveTitle}'</h2>
+                                <h2 className="truncate text-[22px] font-semibold text-[#202124]">Share &apos;{effectiveTitle}&apos;</h2>
                             </div>
 
                             <div className="relative">
@@ -694,22 +746,44 @@ export default function ShareReviewScreen({
                                             </button>
                                         </span>
                                     ))}
+                                    {selectedMentionEmails.map((email) => (
+                                        <span key={email} className="flex items-center gap-2 rounded-full bg-[#EFEFF8] py-1 pl-2 pr-1 text-sm text-[#252837]">
+                                            {email}
+                                            <button
+                                                type="button"
+                                                onClick={() => handleRemoveMentionEmail(email)}
+                                                className="flex h-5 w-5 items-center justify-center rounded-full hover:bg-white"
+                                                aria-label={`Remove ${email}`}
+                                            >
+                                                <X className="h-3 w-3" />
+                                            </button>
+                                        </span>
+                                    ))}
                                     <div className="flex min-w-[180px] flex-1 items-center gap-2">
                                         <Search className="h-4 w-4 text-[#777777]" />
                                         <Input
                                             value={shareSearch}
                                             onChange={(event) => setShareSearch(event.target.value)}
+                                            onFocus={() => setIsShareSearchFocused(true)}
+                                            onBlur={() => setIsShareSearchFocused(false)}
+                                            onKeyDown={(event) => {
+                                                if (event.key === "Enter" && exactEmailCandidate) {
+                                                    event.preventDefault();
+                                                    handleSelectMentionEmail(exactEmailCandidate);
+                                                }
+                                            }}
                                             placeholder="Add people"
                                             className="h-8 border-none bg-transparent px-0 text-sm shadow-none focus-visible:ring-0"
                                         />
                                     </div>
                                 </div>
-                                {mentionSuggestions.length ? (
+                                {mentionSuggestions.length || exactEmailCandidate ? (
                                     <div className="absolute left-0 right-0 top-[calc(100%+4px)] z-10 max-h-56 overflow-y-auto border border-[#E0E3ED] bg-white shadow-xl">
                                         {mentionSuggestions.map((user) => (
                                             <button
                                                 key={user.id}
                                                 type="button"
+                                                onMouseDown={(event) => event.preventDefault()}
                                                 onClick={() => handleSelectMentionUser(user)}
                                                 className="flex w-full items-center gap-3 px-3 py-3 text-left hover:bg-[#F6F6FA]"
                                             >
@@ -720,6 +794,20 @@ export default function ShareReviewScreen({
                                                 </span>
                                             </button>
                                         ))}
+                                        {exactEmailCandidate ? (
+                                            <button
+                                                type="button"
+                                                onMouseDown={(event) => event.preventDefault()}
+                                                onClick={() => handleSelectMentionEmail(exactEmailCandidate)}
+                                                className="flex w-full items-center gap-3 px-3 py-3 text-left hover:bg-[#F6F6FA]"
+                                            >
+                                                {renderUserAvatar(exactEmailCandidate, exactEmailCandidate)}
+                                                <span className="min-w-0">
+                                                    <span className="block truncate text-sm font-semibold text-[#252837]">{exactEmailCandidate}</span>
+                                                    <span className="block truncate text-xs text-[#777777]">Verify and give access</span>
+                                                </span>
+                                            </button>
+                                        ) : null}
                                     </div>
                                 ) : null}
                             </div>
@@ -747,7 +835,18 @@ export default function ShareReviewScreen({
                                                 <p className="truncate text-sm font-semibold text-[#252837]">{displayUserName(participant)}</p>
                                                 <p className="truncate text-xs text-[#777777]">{participant.email}</p>
                                             </div>
-                                            <span className="text-sm font-medium capitalize text-[#777777]">{participant.access_role}</span>
+                                            {/* <span className="text-sm font-medium capitalize text-[#777777]">{participant.access_role}</span> */}
+                                            <Button
+                                            title="Remove Access"
+                                            variant={"ghost"}
+                                                type="button"
+                                                onClick={() => void handleRevokeAccess(participant.id)}
+                                                disabled={updateShareAccess.isPending}
+                                                className="flex h-7 w-7 items-center justify-center rounded-full text-[#777777] hover:bg-[#F2F2F4] hover:text-[#121212] disabled:opacity-50"
+                                                aria-label={`Remove access for ${displayUserName(participant)}`}
+                                            >
+                                                <X className="h-4 w-4" />
+                                            </Button>
                                         </div>
                                     ))}
                                 </div>

@@ -10,7 +10,7 @@ from app.core.dependencies import CurrentPrincipal, assert_brand_access, assert_
 from app.core.enums import RoleCode
 from app.core.security import decode_token
 from app.db.session import AsyncSessionLocal, get_db_session
-from app.models.brand import BrandSpace
+from app.models.brand import BrandSpace, BrandSpaceMember
 from app.models.content import ContentVersion, GeneratedAsset
 from app.models.tenant import Role, User, UserRole
 from app.repositories.content import AssetRepository, ChatMessageRepository, ContentRepository
@@ -65,11 +65,23 @@ async def _optional_principal_from_authorization(
         .join(UserRole, UserRole.role_id == Role.id)
         .where(UserRole.user_id == user.id)
     )
+    role_rows_result = await session.execute(
+        select(UserRole.brand_space_id).where(
+            UserRole.user_id == user.id,
+            UserRole.brand_space_id.is_not(None),
+        )
+    )
+    member_rows_result = await session.execute(
+        select(BrandSpaceMember.brand_space_id).where(BrandSpaceMember.user_id == user.id)
+    )
+    brand_space_ids = set(role_rows_result.scalars().all())
+    brand_space_ids.update(member_rows_result.scalars().all())
     return CurrentPrincipal(
         user_id=user.id,
         tenant_id=user.tenant_id,
         email=user.email,
         role_codes=set(role_result.scalars().all()),
+        brand_space_ids=brand_space_ids,
     )
 
 
@@ -318,6 +330,7 @@ async def get_review(
         link,
         principal.user_id if principal else None,
         principal.role_codes if principal else None,
+        principal.brand_space_ids if principal else None,
     ):
         raise _review_access_denied()
     creator = await session.get(User, link.created_by)
@@ -421,7 +434,8 @@ async def update_review_share_access(
     link, _ = await service.get_by_token(token)
     assert_tenant_access(principal, link.tenant_id)
     assert_brand_access(principal, link.brand_space_id)
-    await service.grant_share_access(link.id, payload.user_ids, principal.user_id)
+    await service.grant_share_access(link.id, payload.user_ids, principal.user_id, payload.user_emails)
+    await service.revoke_share_access(link.id, payload.remove_user_ids, principal.user_id)
     owner, participants, mentionable_users, role_codes_by_user = await service.list_share_access(link)
     return ReviewShareAccessResponse(
         owner=_review_participant_summary(
@@ -462,6 +476,7 @@ async def add_comment(
         link,
         principal.user_id if principal else None,
         principal.role_codes if principal else None,
+        principal.brand_space_ids if principal else None,
     ):
         raise _review_access_denied()
     comment = await service.add_comment(

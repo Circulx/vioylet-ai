@@ -642,6 +642,8 @@ export interface ReviewShareAccessResponse {
 
 export interface ReviewShareAccessUpdateRequest {
   user_ids: UUID[];
+  user_emails?: string[];
+  remove_user_ids?: UUID[];
 }
 
 export interface RenderResponse {

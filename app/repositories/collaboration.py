@@ -102,6 +102,21 @@ class ReviewLinkParticipantRepository(Repository[ReviewLinkParticipant]):
         )
         return result.scalar_one_or_none()
 
+    async def list_for_link_users(
+        self,
+        review_link_id: UUID,
+        user_ids: list[UUID],
+    ) -> list[ReviewLinkParticipant]:
+        if not user_ids:
+            return []
+        result = await self.session.execute(
+            select(ReviewLinkParticipant).where(
+                ReviewLinkParticipant.review_link_id == review_link_id,
+                ReviewLinkParticipant.user_id.in_(user_ids),
+            )
+        )
+        return list(result.scalars().all())
+
 
 class InAppNotificationRepository(Repository[InAppNotification]):
     def __init__(self, session: AsyncSession) -> None:

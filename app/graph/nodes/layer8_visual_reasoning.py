@@ -12,6 +12,7 @@ from app.services.image_generation.dalle_service import DalleService
 from app.services.image_generation.logo_fetcher import get_brand_logo_storage_path
 from app.services.image_generation.sdxl_service import SdxlService
 from app.services.llm.llm_router import LLMRouter
+from app.services.copy_proofread import NO_AI_LOGO_RULE, SPELLING_ACCURACY_RULE
 
 logger = get_logger(__name__)
 
@@ -19,10 +20,53 @@ _router = LLMRouter()
 _prompt_builder = VisualReasoningPromptBuilder()
 
 
+def _q(value: object, max_chars: int = 280) -> str:
+    """Quote exact copy for image prompts; trim long strings to reduce garbling."""
+    if isinstance(value, (list, tuple)):
+        parts: list[str] = []
+        for v in value:
+            if isinstance(v, dict):
+                label = v.get("section_label") or v.get("label") or ""
+                body = v.get("body") or v.get("stat") or ""
+                chunk = f"{label}: {body}".strip(": ").strip()
+                if chunk:
+                    parts.append(chunk)
+            else:
+                s = str(v).strip()
+                if s:
+                    parts.append(s)
+        text = " | ".join(parts)
+    else:
+        text = str(value or "")
+    text = " ".join(text.split()).strip()
+    if not text:
+        return '""'
+    if len(text) > max_chars:
+        text = text[: max_chars - 1].rstrip(" ,.;:") + "…"
+    safe = text.replace('"', "'")
+    return f'"{safe}"'
+
+
+def _error_free_text_block(lines: list[tuple[str, str]]) -> str:
+    """Build quoted-text bake instructions (font + contrast + exact strings)."""
+    parts = [
+        "\n\nCRITICAL — ERROR-FREE BAKED TEXT (quoted strings are EXACT):\n",
+        "Typography: bold clean sans-serif / block letters only.\n",
+        "Contrast: dark navy text (#1B2A4A) on light background (#E8F2FA / #F7F8FA).\n",
+        "Render ONLY the quoted strings below — letter-perfect, never truncate headline with '...'.\n",
+        "Do not invent words. Do not leave empty cards. No Pillow overlay will be applied.\n",
+    ]
+    for label, quoted in lines:
+        if quoted and quoted != '""':
+            parts.append(f"{label}: {quoted}\n")
+    return "".join(parts)
+
+
 async def layer8_visual_reasoning(state: ViolytState) -> dict:
     brand_intelligence = state.get("brand_intelligence")
     format_plan = state.get("format_plan")
     copy = state.get("copy")
+    blueprint = state.get("creative_blueprint")
     creative_concepts = state.get("creative_concepts")
     user_prompt = state.get("user_prompt", "")
 
@@ -36,6 +80,48 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
             "Layer 2 brand_intelligence, Layer 5 creative_concepts, Layer 6 format_plan, "
             "and Layer 7 copy are required for Layer 8"
         )
+
+    # Prefer approved Creative Blueprint text for art direction cues
+    headline = (blueprint.headline if blueprint and blueprint.headline else copy.headline)
+    body = (blueprint.body if blueprint and blueprint.body else copy.body)
+    supporting = (
+        blueprint.supporting_line
+        if blueprint and blueprint.supporting_line is not None
+        else copy.supporting_line
+    ) or ""
+    cta = (blueprint.cta if blueprint and blueprint.cta else copy.cta) or ""
+    sections = (
+        [s.model_dump() for s in blueprint.sections]
+        if blueprint and blueprint.sections
+        else [s.model_dump() for s in copy.infographic_sections]
+    )
+    proof_points = (
+        list(blueprint.proof_points)
+        if blueprint and blueprint.proof_points
+        else list(copy.proof_points or [])
+    )
+    stat_highlights = (
+        list(blueprint.stat_highlights)
+        if blueprint and blueprint.stat_highlights
+        else list(copy.stat_highlights or [])
+    )
+    problem_statement = (
+        (blueprint.problem_statement if blueprint else None) or copy.problem_statement or ""
+    )
+    solution_statement = (
+        (blueprint.solution_statement if blueprint else None) or copy.solution_statement or ""
+    )
+    customer_quote = (
+        (blueprint.customer_quote if blueprint else None) or copy.customer_quote or ""
+    )
+    customer_name = (
+        (blueprint.customer_name if blueprint else None) or copy.customer_name or ""
+    )
+    process_steps = (
+        list(blueprint.process_steps)
+        if blueprint and blueprint.process_steps
+        else list(copy.process_steps or [])
+    )
 
     recommended = creative_concepts.recommended_concept
 
@@ -57,6 +143,21 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
         user_prompt=user_prompt,
         fmt=fmt,
     )
+    if blueprint:
+        story = "; ".join(blueprint.story_flow or [])
+        user = (
+            user
+            + "\n\nAPPROVED CREATIVE BLUEPRINT (bake this EXACT text into the image — no Pillow overlay):\n"
+            + f"purpose={blueprint.purpose}\nlayout={blueprint.layout_archetype}\n"
+            + f"text_density={blueprint.text_density}\nhierarchy={blueprint.visual_hierarchy}\n"
+            + f"hook={blueprint.hook}\nstory_flow={story}\n"
+            + f"headline={headline}\nsupporting_line={supporting}\nbody={body}\ncta={cta}\n"
+            + f"problem={problem_statement}\nsolution={solution_statement}\n"
+            + f"sections={sections}\nstats={stat_highlights}\nproof={proof_points}\n"
+            + f"process_steps={process_steps}\nquote={customer_quote}\nquote_by={customer_name}\n"
+            + "CRITICAL: Generate a FINISHED creative. Render the approved strings as sharp typography in the image. "
+            "Do not leave empty shells. Do not invent alternate copy."
+        )
 
     # 1. Complete visual reasoning structure (GPT-4o)
     service = _router.get_service("l8_visual_reasoning")
@@ -87,25 +188,34 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
         concept_name=concept_dict.get("concept_name", ""),
         core_idea=concept_dict.get("core_idea", ""),
         visual_angle=concept_dict.get("visual_angle", ""),
-        copy_headline=copy.headline,
-        copy_body=copy.body,
-        supporting_line=copy.supporting_line or "",
-        cta=copy.cta or "",
-        infographic_sections=[s.model_dump() for s in copy.infographic_sections],
-        proof_points=copy.proof_points,
-        stat_highlights=copy.stat_highlights,
-        problem_statement=getattr(copy, "problem_statement", "") or "",
-        solution_statement=getattr(copy, "solution_statement", "") or "",
-        customer_quote=getattr(copy, "customer_quote", "") or "",
-        customer_name=getattr(copy, "customer_name", "") or "",
-        process_steps=getattr(copy, "process_steps", []) or [],
+        copy_headline=headline,
+        copy_body=body,
+        supporting_line=supporting,
+        cta=cta,
+        infographic_sections=sections,
+        proof_points=proof_points,
+        stat_highlights=stat_highlights,
+        problem_statement=problem_statement,
+        solution_statement=solution_statement,
+        customer_quote=customer_quote,
+        customer_name=customer_name,
+        process_steps=process_steps,
         format_strategy=format_plan.format_strategy,
-        layout_archetype=format_plan.layout_archetype,
+        layout_archetype=(
+            blueprint.layout_archetype if blueprint and blueprint.layout_archetype else format_plan.layout_archetype
+        ),
         platform=platform,
         initial_prompt=output.image_prompt_direction,
         user_prompt=user_prompt,
         dominant_visual_system=output.dominant_visual_system,
         fmt=fmt,
+        hook=(blueprint.hook if blueprint else "") or getattr(copy, "hook", None) or "",
+        story_flow=list(blueprint.story_flow) if blueprint and blueprint.story_flow else [],
+        slides=(
+            [s.model_dump() for s in blueprint.slides]
+            if blueprint and blueprint.slides
+            else [s.model_dump() for s in (copy.slide_copy or [])]
+        ),
     )
 
     try:
@@ -167,10 +277,9 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
 
     # 3. Size computation based on platform and format
     if fmt == "carousel":
-        # Carousel slide decks are best as 1:1 square for slide presentation on LinkedIn and Instagram
-        size = "1080x1080"
+        # Sample carousel slides are vertical educational 4:5
+        size = "1080x1350"
     elif fmt == "infographic":
-        # Infographics require a vertical portrait layout to fit detailed charts and tables
         size = "1080x1350"
     elif fmt == "banner":
         size = "1200x628"
@@ -200,17 +309,25 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
 
     # 4. Image generation with gpt-image-1 + brand logo composite, falling back to SDXL/Mock
     async def _generate_one_image(prompt: str, image_size: str, fallback_suffix: str = "") -> str:
+        # Brand logo comes from Brand Space compositing — never from the image model.
+        safe_prompt = (prompt + NO_AI_LOGO_RULE + SPELLING_ACCURACY_RULE)[:6000]
         try:
             dalle = DalleService()
             url = await dalle.generate_and_save(
                 tenant_id=tenant_id,
                 brand_space_id=brand_id,
-                prompt=prompt,
+                prompt=safe_prompt,
                 size=image_size,
                 logo_storage_path=logo_storage_path,
-                logo_zone_instruction=logo_zone_instruction,
+                logo_zone_instruction=logo_zone_instruction
+                or "tiny top-right pocket, ~12% width, 20px padding, no brand-name text",
             )
-            logger.info("visual_reasoning.dalle_success", url=url, suffix=fallback_suffix)
+            logger.info(
+                "visual_reasoning.dalle_success",
+                url=url,
+                suffix=fallback_suffix,
+                logo_composited=bool(logo_storage_path),
+            )
             return url
         except Exception as e:
             logger.warning(
@@ -221,7 +338,7 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
                 url = await sdxl.generate_and_save(
                     tenant_id=tenant_id,
                     brand_space_id=brand_id,
-                    prompt=prompt,
+                    prompt=safe_prompt,
                     size=image_size,
                 )
                 logger.info("visual_reasoning.sdxl_success", url=url, suffix=fallback_suffix)
@@ -232,30 +349,67 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
 
     generated_urls: list[str] = []
     if fmt == "carousel" and format_plan.slide_plan:
-        # Build a lookup for slide copy by slide_number
+        # Prefer approved blueprint slides; fall back to L7 slide_copy
         slide_copy_by_number = {
             s.slide_number: s for s in (copy.slide_copy or [])
         }
+        blueprint_slides = {
+            s.slide_number: s for s in ((blueprint.slides if blueprint else None) or [])
+        }
         for slide in format_plan.slide_plan:
+            bp_slide = blueprint_slides.get(slide.slide_number)
             slide_copy = slide_copy_by_number.get(slide.slide_number)
-            slide_headline = slide_copy.headline if slide_copy else ""
-            slide_body = slide_copy.body if slide_copy else ""
-            slide_cta = slide_copy.cta if slide_copy else ""
+            slide_headline = (
+                bp_slide.headline if bp_slide else (slide_copy.headline if slide_copy else "")
+            )
+            slide_body = bp_slide.body if bp_slide else (slide_copy.body if slide_copy else "")
+            slide_cta = (
+                (bp_slide.cta if bp_slide else None)
+                or (slide_copy.cta if slide_copy else "")
+                or ""
+            )
+            slide_supporting = (
+                (bp_slide.supporting_line if bp_slide else None)
+                or (getattr(slide_copy, "supporting_line", None) if slide_copy else None)
+                or ""
+            )
             slide_prompt = (
                 f"{image_gen_prompt}\n\n"
-                f"--- SLIDE {slide.slide_number} SPECIFIC DIRECTION ---\n"
+                f"--- CAROUSEL SLIDE {slide.slide_number} (SAMPLE SYSTEM) ---\n"
+                f"Background MUST remain solid #E8F2FA (identical across all slides).\n"
                 f"Focus: {slide.focus}\n"
                 f"Visual intent: {slide.visual_intent}\n"
-                f"Headline for this slide: {slide_headline}\n"
-                f"Body for this slide: {slide_body}\n"
-                f"CTA for this slide: {slide_cta}\n"
-                f"Render this as a single carousel slide image."
+                "Typography: bold clean sans-serif, dark navy on light blue, high contrast.\n"
+                f"HEADLINE (exact): {_q(slide_headline, 120)}\n"
+                f"SUPPORTING LINE (exact): {_q(slide_supporting, 160)}\n"
+                f"BODY / CALLOUT (exact): {_q(slide_body, 220)}\n"
+                f"CTA (exact, closing slides only): {_q(slide_cta, 60)}\n"
+                "Layout: headline → supporting → soft blue callout → multi-object ultra-premium 3D hero cluster "
+                "→ orange divider → THREE bottom insight cards with unique 3D icons + bold short labels.\n"
+                "Keep labels to 1–2 correctly spelled words. Bake all quoted text into the image."
             )[:6000]
             slide_url = await _generate_one_image(slide_prompt, size, f"-slide-{slide.slide_number}")
             generated_urls.append(slide_url)
     else:
-        # Static / infographic / story / single-image formats
-        single_url = await _generate_one_image(image_gen_prompt[:6000], size)
+        # Static / infographic / other — single finished image only
+        # (Carousel is the only multi-image format.)
+        text_bake_suffix = _error_free_text_block(
+            [
+                ("HEADLINE", _q(headline, 140)),
+                ("SUPPORTING LINE", _q(supporting, 180)),
+                ("BODY", _q(body, 260)),
+                ("CTA", _q(cta, 60)),
+                ("PROBLEM", _q(problem_statement, 160)),
+                ("SOLUTION", _q(solution_statement, 160)),
+                ("SECTIONS", _q(sections, 220)),
+                ("STATS", _q(stat_highlights, 160)),
+                ("PROOF POINTS", _q(proof_points, 180)),
+                ("PROCESS STEPS", _q(process_steps, 160)),
+                ("QUOTE", _q(customer_quote, 160)),
+                ("QUOTE ATTRIBUTION", _q(customer_name, 60)),
+            ]
+        )
+        single_url = await _generate_one_image((image_gen_prompt + text_bake_suffix)[:6000], size)
         generated_urls.append(single_url)
 
     # Set the generated image fields on the output Pydantic model

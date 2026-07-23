@@ -273,3 +273,41 @@ class BrandOverviewResponse(APIModel):
     personas: list[dict[str, Any]]
     guardrails: list[dict[str, Any]]
     objectives: list[dict[str, Any]]
+
+
+class BrandAutofillResponse(APIModel):
+    """Suggested Brand Space form values extracted from vector knowledge."""
+
+    brand_name: str = ""
+    brand_description: str = ""
+    industry_category: str = ""
+    differentiators: str = ""
+    core_tone_attributes: list[str] = Field(default_factory=list)
+    primary_emotion: str = ""
+    secondary_emotion: str = ""
+    avoided_emotion: str = ""
+    content_complexity: str = ""
+    sentence_length: str = ""
+    perspective: str = ""
+    selected_audiences: list[str] = Field(default_factory=list)
+    audience_goals: str = ""
+    audience_motivations: str = ""
+    audience_fears: str = ""
+    audience_objections: str = ""
+    logo_placements: list[str] = Field(default_factory=list)
+    primary_color: str = ""
+    secondary_color: str = ""
+    typography: str = ""
+    brand_mood: str = ""
+    visual_style: str = ""
+    selected_rules: list[str] = Field(default_factory=list)
+    positive_word_bank: str = ""
+    restricted_topics: str = ""
+    restricted_claims: str = ""
+    blocked_words_phrases: str = ""
+    brand_mission: str = ""
+    brand_vision: str = ""
+    brand_promise: str = ""
+    market_positioning: str = ""
+    sources_used: int = 0
+    notes: list[str] = Field(default_factory=list)

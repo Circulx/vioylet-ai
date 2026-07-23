@@ -8,7 +8,6 @@ import PromptIntelligence from "@/components/brandSpaces/tabs/PromptIntelligence
 import TargetAudience from "@/components/brandSpaces/tabs/TargetAudience";
 import VisualIdentity from "@/components/brandSpaces/tabs/VisualIdentity";
 import VoiceTone from "@/components/brandSpaces/tabs/VoiceTone";
-import IntelligencePipeline from "@/components/brandSpaces/tabs/IntelligencePipeline";
 import AdditionalDetails from "@/components/brandSpaces/tabs/AdditionalDetails";
 import type { BrandTabProps } from "@/types/brand-space.types";
 
@@ -90,12 +89,5 @@ export const brandSpaceTabs: BrandSpaceTab[] = [
         value: "review",
         layer: "Review",
         content: BrandReview,
-    },
-    {
-        id: 11,
-        label: "Violyt Intelligence (Beta)",
-        value: "intelligence_pipeline",
-        layer: "Intelligence Layer",
-        content: IntelligencePipeline,
     },
 ];

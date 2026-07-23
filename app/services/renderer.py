@@ -1,4 +1,4 @@
-﻿# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
+# Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
 from io import BytesIO
@@ -2530,7 +2530,17 @@ class RendererService:
             elif align == "right":
                 cursor_x = inner_x + max(inner_w - line_width, 0)
             text_top = cursor_y - top
-            draw.text((cursor_x, text_top), line, fill=fill, font=font)
+            # Soft contrast stroke keeps Pillow overlay readable on busy artwork
+            luminance = (0.299 * fill[0]) + (0.587 * fill[1]) + (0.114 * fill[2])
+            stroke_fill = (255, 255, 255) if luminance < 140 else (20, 20, 20)
+            draw.text(
+                (cursor_x, text_top),
+                line,
+                fill=fill,
+                font=font,
+                stroke_width=1,
+                stroke_fill=stroke_fill,
+            )
             occupied_bounds.append((cursor_x, text_top, cursor_x + line_width, text_top + line_height))
             cursor_y += line_height + spacing
         occupied_box = None

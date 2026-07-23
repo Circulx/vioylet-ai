@@ -86,6 +86,7 @@ export const API = {
     UPSERT_SECTION: { method: "PUT", url: ({ brandId, sectionCode }: { brandId: string; sectionCode: string }) => `/api/v1/brands/${brandId}/sections/${sectionCode}` } as ApiEndpoint<unknown, BrandResponse>,
     FINALIZE: { method: "POST", url: (brandId: string) => `/api/v1/brands/${brandId}/finalize` } as ApiEndpoint<{ review_notes?: string }, BrandResponse>,
     PUBLISH: { method: "POST", url: (brandId: string) => `/api/v1/brands/${brandId}/publish` } as ApiEndpoint<void, BrandResponse>,
+    AUTOFILL_FROM_KNOWLEDGE: { method: "POST", url: (brandId: string) => `/api/v1/brands/${brandId}/autofill-from-knowledge` } as ApiEndpoint<void, import("./contracts").BrandAutofillResponse>,
     UNPUBLISH: { method: "POST", url: (brandId: string) => `/api/v1/brands/${brandId}/unpublish` } as ApiEndpoint<void, BrandResponse>,
     ARCHIVE: { method: "POST", url: (brandId: string) => `/api/v1/brands/${brandId}/archive` } as ApiEndpoint<void, BrandResponse>,
     RESTORE: { method: "POST", url: (brandId: string) => `/api/v1/brands/${brandId}/restore` } as ApiEndpoint<void, BrandResponse>,
@@ -144,5 +145,8 @@ export const API = {
   },
   PIPELINE: {
     RUN: { method: "POST", url: "/api/v1/pipeline/run" } as ApiEndpoint<import("./contracts").PipelineRunRequest, import("./contracts").PipelineRunResponse>,
+    APPROVE: { method: "POST", url: "/api/v1/pipeline/approve" } as ApiEndpoint<import("./contracts").PipelineApproveRequest, import("./contracts").PipelineRunResponse>,
+    REJECT: { method: "POST", url: "/api/v1/pipeline/reject" } as ApiEndpoint<import("./contracts").PipelineRejectRequest, import("./contracts").PipelineRunResponse>,
+    EDIT_IMAGE_TEXT: { method: "POST", url: "/api/v1/pipeline/edit-image-text" } as ApiEndpoint<import("./contracts").PipelineEditImageTextRequest, import("./contracts").PipelineEditImageTextResponse>,
   },
 } as const;

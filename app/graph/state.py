@@ -8,6 +8,7 @@ from app.graph.models.layer5_models import CreativeConceptsOutput
 from app.graph.models.layer6_models import FormatPlanOutput
 from app.graph.models.layer7_models import CopyOutput
 from app.graph.models.layer7b_models import ContentValidationOutput
+from app.graph.models.layer7c_models import CreativeBlueprint
 from app.graph.models.layer8_models import VisualReasoningOutput
 from app.graph.models.layer9_models import SceneGraphOutput
 from app.graph.models.layer10_models import EvaluationOutput
@@ -39,6 +40,7 @@ class ViolytState(TypedDict):
     format_plan: NotRequired[Optional[FormatPlanOutput]]
     copy: NotRequired[Optional[CopyOutput]]
     content_validation: NotRequired[Optional[ContentValidationOutput]]
+    creative_blueprint: NotRequired[Optional[CreativeBlueprint]]
     visual_reasoning: NotRequired[Optional[VisualReasoningOutput]]
     scene_graph: NotRequired[Optional[SceneGraphOutput]]
     evaluation: NotRequired[Optional[EvaluationOutput]]

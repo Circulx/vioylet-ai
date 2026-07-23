@@ -87,6 +87,12 @@ const useBrandLifecycleMutation = (
 
 export const usePublishBrand = (brandId: string) => useBrandLifecycleMutation(brandId, API.BRANDS.PUBLISH);
 
+export const useAutofillBrandFromKnowledge = (brandId: string) =>
+  useMutation({
+    mutationFn: () =>
+      request(API.BRANDS.AUTOFILL_FROM_KNOWLEDGE, { pathParams: brandId }),
+  });
+
 export const useUnpublishBrand = (brandId: string) => useBrandLifecycleMutation(brandId, API.BRANDS.UNPUBLISH);
 
 export const useArchiveBrand = (brandId: string) => useBrandLifecycleMutation(brandId, API.BRANDS.ARCHIVE);

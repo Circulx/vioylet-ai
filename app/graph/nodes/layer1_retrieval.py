@@ -17,6 +17,14 @@ async def layer1_retrieval(state: ViolytState) -> dict:
     user_prompt = state.get("user_prompt", "")
     platform = state.get("platform", "")
     format = state.get("format", "")
+    logger.info(
+        "layer1_retrieval.start",
+        brand_id=brand_id,
+        platform=platform,
+        format=format,
+        prompt_preview=(user_prompt or "")[:80],
+        run_id=state.get("run_id"),
+    )
 
     service = BrandRetrievalService()
     try:

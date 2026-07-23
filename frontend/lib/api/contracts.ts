@@ -363,6 +363,42 @@ export interface BrandOverviewResponse {
   objectives: Array<Record<string, unknown>>;
 }
 
+export interface BrandAutofillResponse {
+  brand_name?: string;
+  brand_description?: string;
+  industry_category?: string;
+  differentiators?: string;
+  core_tone_attributes?: string[];
+  primary_emotion?: string;
+  secondary_emotion?: string;
+  avoided_emotion?: string;
+  content_complexity?: string;
+  sentence_length?: string;
+  perspective?: string;
+  selected_audiences?: string[];
+  audience_goals?: string;
+  audience_motivations?: string;
+  audience_fears?: string;
+  audience_objections?: string;
+  logo_placements?: string[];
+  primary_color?: string;
+  secondary_color?: string;
+  typography?: string;
+  brand_mood?: string;
+  visual_style?: string;
+  selected_rules?: string[];
+  positive_word_bank?: string;
+  restricted_topics?: string;
+  restricted_claims?: string;
+  blocked_words_phrases?: string;
+  brand_mission?: string;
+  brand_vision?: string;
+  brand_promise?: string;
+  market_positioning?: string;
+  sources_used?: number;
+  notes?: string[];
+}
+
 export interface KnowledgeAssetResponse {
   id: UUID;
   brand_space_id?: UUID;
@@ -757,6 +793,97 @@ export interface CopyOutputResponse {
   claim_safety_notes: string[];
 }
 
+export interface BlueprintSlideResponse {
+  slide_number: number;
+  role: string;
+  headline: string;
+  body?: string;
+  label?: string | null;
+  supporting_line?: string | null;
+  cta?: string | null;
+}
+
+export interface BlueprintInfographicSectionResponse {
+  section_label: string;
+  stat?: string | null;
+  includes?: string[];
+  body?: string;
+  icon_hint?: string | null;
+}
+
+export interface OverlayZoneResponse {
+  zone_id: string;
+  role: string;
+  text: string;
+  priority?: number;
+  x_rel?: number | null;
+  y_rel?: number | null;
+  w_rel?: number | null;
+  h_rel?: number | null;
+  slide_number?: number | null;
+}
+
+export interface CreativeBlueprintResponse {
+  purpose?: string;
+  intent?: string;
+  audience?: string;
+  platform?: string;
+  format?: "static" | "carousel" | "infographic";
+  tone?: string;
+  hook?: string;
+  story_flow?: string[];
+  messaging_pillars?: string[];
+  cta?: string;
+  headline?: string;
+  supporting_line?: string | null;
+  body?: string;
+  labels?: string[];
+  hashtags?: string[];
+  slides?: BlueprintSlideResponse[];
+  title?: string | null;
+  sections?: BlueprintInfographicSectionResponse[];
+  problem_statement?: string | null;
+  solution_statement?: string | null;
+  proof_points?: string[];
+  stat_highlights?: string[];
+  process_steps?: string[];
+  customer_quote?: string | null;
+  customer_name?: string | null;
+  visual_hierarchy?: string[];
+  text_density?: string;
+  layout_archetype?: string;
+  overlay_zones?: OverlayZoneResponse[];
+  brand_alignment_notes?: string[];
+  validation_checklist?: string[];
+  missing_critical?: string[];
+  claim_safety_notes?: string[];
+}
+
+export interface PipelineApproveRequest {
+  run_id: string;
+  creative_blueprint?: CreativeBlueprintResponse | null;
+}
+
+export interface PipelineRejectRequest {
+  run_id: string;
+}
+
+export interface PipelineEditImageTextRequest {
+  image_url: string;
+  headline?: string;
+  supporting_line?: string;
+  body?: string;
+  cta?: string;
+}
+
+export interface PipelineEditImageTextResponse {
+  image_url: string;
+  headline?: string;
+  supporting_line?: string;
+  body?: string;
+  cta?: string;
+}
+
 export interface VisualReasoningOutputResponse {
   dominant_visual_system: "generated_image" | "type_led" | "illustration" | "infographic" | "data_visual" | "product_visual";
   visual_style: string;
@@ -794,7 +921,7 @@ export interface SceneGraphOutputResponse {
 export interface PipelineRunRequest {
   brand_id: string;
   user_prompt: string;
-  platform?: "linkedin" | "instagram" | "x";
+  platform?: "linkedin" | "instagram" | "x" | "twitter";
   format?: "static" | "carousel" | "infographic";
 }
 
@@ -823,6 +950,7 @@ export interface PipelineRunResponse {
   creative_concepts?: CreativeConceptsOutputResponse;
   format_plan?: FormatPlanOutputResponse;
   copy?: CopyOutputResponse;
+  creative_blueprint?: CreativeBlueprintResponse;
   visual_reasoning?: VisualReasoningOutputResponse;
   scene_graph?: SceneGraphOutputResponse;
   final_output?: FinalOutputResponse;

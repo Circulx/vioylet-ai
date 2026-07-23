@@ -14,6 +14,7 @@ from app.integrations.object_storage import LocalObjectStorage
 from app.models.brand import BrandSpace
 from app.models.retrieval_log import RetrievalLog
 from app.schemas.brand import (
+    BrandAutofillResponse,
     BrandCreateRequest,
     BrandFinalizeRequest,
     BrandOverviewResponse,
@@ -31,6 +32,7 @@ from app.schemas.brand_assets import (
 )
 from app.schemas.common import MessageResponse
 from app.services.brand import BrandSpaceService
+from app.services.brand_autofill import BrandAutofillService
 from app.services.data_validation import DataValidatorService
 from app.services.vectorstore.ingestion_service import IngestionService
 from app.services.vectorstore.retrieval_service import BrandRetrievalService
@@ -191,6 +193,31 @@ async def publish_brand(
     assert_brand_access(principal, brand_id)
     brand = await BrandSpaceService(session).publish_brand(principal.tenant_id, brand_id)
     return BrandResponse.model_validate(brand)
+
+
+@router.post("/{brand_id}/autofill-from-knowledge", response_model=BrandAutofillResponse)
+async def autofill_brand_from_knowledge(
+    brand_id: UUID,
+    principal: CurrentPrincipal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db_session),
+) -> BrandAutofillResponse:
+    """Suggest Brand Space tab values by reading indexed vector-DB knowledge."""
+    forbid_super_admin_brand_access(principal)
+    assert_brand_access(principal, brand_id)
+    brand = await BrandSpaceService(session).brands.get_scoped(principal.tenant_id, brand_id)
+    if not brand:
+        raise HTTPException(status_code=404, detail="Brand Space not found")
+    try:
+        suggestion = await BrandAutofillService().suggest(
+            brand_id=brand_id,
+            brand_name=brand.name or "",
+            brand_description=brand.description or "",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Autofill failed: {exc}") from exc
+    return BrandAutofillResponse.model_validate(suggestion.model_dump())
 
 
 @router.post("/{brand_id}/unpublish", response_model=BrandResponse)

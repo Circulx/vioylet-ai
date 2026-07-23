@@ -31,6 +31,8 @@ import { SurfaceCard } from "@/components/common/DesignPrimitives";
 import type { BrandTabProps } from "@/types/brand-space.types";
 import { cn } from "@/lib/utils";
 import { apiOrigin } from "@/lib/env";
+import BlueprintApprovalCard from "@/components/brandSpaces/tabs/BlueprintApprovalCard";
+import type { CreativeBlueprintResponse, PipelineRunResponse } from "@/lib/api/contracts";
 
 function GeneratedImageCarousel({ imageUrls }: { imageUrls: string[] }) {
   const [activeIndex, setActiveIndex] = useState(0);
@@ -103,29 +105,60 @@ export default function IntelligencePipeline({ brandId }: BrandTabProps) {
   const [prompt, setPrompt] = useState("Create a LinkedIn post about why bonds are useful for predictable income.");
   const [platform, setPlatform] = useState<"linkedin" | "instagram" | "x">("linkedin");
   const [format, setFormat] = useState<"static" | "carousel" | "infographic">("static");
-  
-  const { runPipeline, isLoading, data } = usePipeline();
+  const [result, setResult] = useState<PipelineRunResponse | null>(null);
+
+  const { runPipeline, approveBlueprint, rejectBlueprint, isLoading, isApproving } = usePipeline();
 
   const handleRun = () => {
     if (!prompt.trim()) return;
-    runPipeline.mutate({
-      brand_id: brandId,
-      user_prompt: prompt,
-      platform,
-      format
-    });
+    setResult(null);
+    runPipeline.mutate(
+      {
+        brand_id: brandId,
+        user_prompt: prompt,
+        platform: platform === "x" ? "twitter" : platform,
+        format,
+      },
+      {
+        onSuccess: (data) => setResult(data),
+      }
+    );
   };
+
+  const handleApprove = (edited: CreativeBlueprintResponse) => {
+    if (!result?.run_id) return;
+    approveBlueprint.mutate(
+      { run_id: result.run_id, creative_blueprint: edited },
+      {
+        onSuccess: (data) => setResult(data),
+      }
+    );
+  };
+
+  const handleCancelBlueprint = () => {
+    if (!result?.run_id) {
+      setResult(null);
+      return;
+    }
+    rejectBlueprint.mutate(
+      { run_id: result.run_id },
+      {
+        onSuccess: () => setResult(null),
+        onError: () => setResult(null),
+      }
+    );
+  };
+
+  const data = result;
 
   return (
     <div className="space-y-8 pb-20">
       <div className="space-y-4">
         <h2 className="text-xl font-semibold text-slate-900">Violyt Intelligence Pipeline (Milestone 6)</h2>
         <p className="text-sm text-slate-500">
-          Run the 10-layer LangGraph intelligence pipeline. Layers 1-4 handle brand retrieval, intelligence,
-          brief interpretation, and strategic reasoning. Layer 5 generates creative concepts (Claude) and
-          Layer 6 builds a format-native content plan (GPT-4o) in parallel. Layer 7 generates brand-aligned copy
-          (Claude), Layer 8 produces visual reasoning + DALL-E 3 image generation (GPT-4o), and Layer 9 maps
-          the scene graph layout (GPT-4o).
+          Run the LangGraph intelligence pipeline. Layers 1–7 produce brand-aligned copy, then Layer 7c builds a
+          Creative Blueprint for your approval. After you approve, Layers 8–9 generate a finished AI image
+          with your approved headings, storyline, and CTA baked into the artwork.
         </p>
       </div>
 
@@ -177,7 +210,7 @@ export default function IntelligencePipeline({ brandId }: BrandTabProps) {
 
         <Button 
           onClick={handleRun} 
-          disabled={isLoading || !prompt.trim()} 
+          disabled={isLoading || isApproving || !prompt.trim()} 
           className="w-full bg-primary hover:bg-primary/90 text-white gap-2 h-12"
         >
           {isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}
@@ -202,9 +235,13 @@ export default function IntelligencePipeline({ brandId }: BrandTabProps) {
               Pipeline Results
               <span className={cn(
                 "ml-2 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase",
-                data.status === "complete" ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"
+                data.status === "complete"
+                  ? "bg-emerald-100 text-emerald-700"
+                  : data.status === "awaiting_blueprint_approval"
+                    ? "bg-amber-100 text-amber-800"
+                    : "bg-red-100 text-red-700"
               )}>
-                {data.status}
+                {data.status === "awaiting_blueprint_approval" ? "awaiting approval" : data.status}
               </span>
             </h3>
             <div className="flex gap-4 text-xs font-medium text-slate-500">
@@ -548,6 +585,18 @@ export default function IntelligencePipeline({ brandId }: BrandTabProps) {
               </div>
             </SurfaceCard>
 
+            {data.status === "awaiting_blueprint_approval" && data.creative_blueprint && (
+              <BlueprintApprovalCard
+                blueprint={data.creative_blueprint}
+                format={data.format}
+                isApproving={isApproving}
+                onApprove={handleApprove}
+                onCancel={handleCancelBlueprint}
+              />
+            )}
+
+            {data.status === "complete" && (
+            <>
             {/* Layer 8: Visual Reasoning */}
             <SurfaceCard className="col-span-1 md:col-span-2 p-5 border-indigo-100 bg-indigo-50/30">
               <div className="flex items-center gap-2 mb-4">
@@ -556,7 +605,7 @@ export default function IntelligencePipeline({ brandId }: BrandTabProps) {
                 </div>
                 <div>
                   <h4 className="font-bold text-indigo-900 text-sm">L8: Visual Reasoning</h4>
-                  <p className="text-[10px] text-indigo-600 font-medium">Model: GPT-4o · DALL-E 3 Image Generation</p>
+                  <p className="text-[10px] text-indigo-600 font-medium">Model: GPT-4o · gpt-image (text baked in)</p>
                 </div>
               </div>
               <div className="space-y-4 text-xs">
@@ -690,6 +739,8 @@ export default function IntelligencePipeline({ brandId }: BrandTabProps) {
                 )}
               </div>
             </SurfaceCard>
+            </>
+            )}
 
             {/* Layer 1: Retrieval Logs */}
             <SurfaceCard className="col-span-1 md:col-span-2 p-5 border-slate-200 bg-slate-50/50">

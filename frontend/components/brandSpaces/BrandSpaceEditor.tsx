@@ -11,6 +11,7 @@ import {
     FileText,
     Loader2,
     RefreshCw,
+    Sparkles,
     Unplug,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -50,7 +51,8 @@ import {
 } from "@/lib/brand-space-persistence";
 import { mapBrandFormToCreateRequest, mapBrandSections } from "@/lib/brand-mappers";
 import { cn } from "@/lib/utils";
-import { useBrands, useCreateBrand } from "@/hooks/useBrands";
+import { useAutofillBrandFromKnowledge, useBrands, useCreateBrand } from "@/hooks/useBrands";
+import { applyBrandAutofillToForm } from "@/lib/brand-autofill";
 import { useGetMe } from "@/hooks/useUser";
 import { useGetTenantData } from "@/hooks/tenantAdmins/useGetTenants";
 import { useUpdateTenantAdmin } from "@/hooks/tenantAdmins/useUpdateTenant";
@@ -581,6 +583,7 @@ export default function BrandSpaceEditor({
     const [activeSubmitIntent, setActiveSubmitIntent] = useState<BrandSubmitIntent | null>(null);
     const [draftBrand, setDraftBrand] = useState<BrandResponse | null>(null);
     const [draftBrandId, setDraftBrandId] = useState<string | null>(brandId ?? null);
+    const autofillFromKnowledge = useAutofillBrandFromKnowledge(draftBrandId || brandId || "");
     const [brandLifecycleState, setBrandLifecycleState] = useState(initialLifecycleState);
     const [validationSummary, setValidationSummary] = useState<ValidationSummaryResponse | null>(null);
     const [didHydrateDraft, setDidHydrateDraft] = useState(mode !== "create");
@@ -818,6 +821,49 @@ export default function BrandSpaceEditor({
         setActiveTab(missingRequiredFields[0].tab);
         showWarningToast("Complete required fields before publishing", message);
         return false;
+    };
+
+    const handleAutofillFromKnowledge = async () => {
+        const effectiveId = draftBrandId || brandId;
+        if (!effectiveId) {
+            showWarningToast(
+                "Save a draft first",
+                "Create/save the Brand Space draft, upload documents, then auto-fill from knowledge.",
+            );
+            return;
+        }
+        try {
+            setSubmissionPhase("Reading vector knowledge...");
+            const suggestion = await autofillFromKnowledge.mutateAsync();
+            setForm((current) => {
+                const merged = applyBrandAutofillToForm(current, suggestion);
+                formRef.current = merged;
+                return merged;
+            });
+            const remaining = getMissingRequiredBrandFields(formRef.current);
+            const note = suggestion.notes?.join(" ") || "";
+            if (remaining.length) {
+                showWarningToast(
+                    "Auto-filled from knowledge",
+                    `${note} Still needed: ${formatMissingRequiredBrandFields(remaining)}.`,
+                );
+                setActiveTab(remaining[0].tab);
+            } else {
+                showSuccessToast(
+                    "Auto-filled from knowledge",
+                    note || "Publish-required fields were filled from the vector DB.",
+                );
+            }
+        } catch (error) {
+            const message = axios.isAxiosError(error)
+                ? String(error.response?.data?.detail || error.message)
+                : error instanceof Error
+                    ? error.message
+                    : "Autofill failed";
+            showErrorToast("Could not auto-fill", message);
+        } finally {
+            setSubmissionPhase(null);
+        }
     };
 
     const buildCapacityRows = () => {
@@ -1379,6 +1425,30 @@ export default function BrandSpaceEditor({
                                 {isUnpublishSubmitting ? "Moving..." : "Move to Draft"}
                             </Button>
                         ) : null}
+
+                        <Button
+                            type="button"
+                            variant="outline"
+                            disabled={
+                                createBrand.isPending ||
+                                isSubmitting ||
+                                autofillFromKnowledge.isPending ||
+                                !(draftBrandId || brandId)
+                            }
+                            className="flex items-center justify-center gap-2 rounded-none border-primary/30 p-6 text-base text-primary hover:bg-primary/5"
+                            onClick={() => void handleAutofillFromKnowledge()}
+                        >
+                            {autofillFromKnowledge.isPending ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                                <Sparkles className="h-4 w-4" />
+                            )}
+                            <span>
+                                {autofillFromKnowledge.isPending
+                                    ? "Fetching from knowledge..."
+                                    : "Auto-fill from knowledge"}
+                            </span>
+                        </Button>
 
                         <Button
                             onClick={handlePrimarySubmit}

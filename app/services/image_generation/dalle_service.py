@@ -22,11 +22,12 @@ from app.integrations.object_storage import get_object_storage
 
 logger = get_logger(__name__)
 
-_LOGO_MAX_WIDTH_RATIO = 0.12
+# Keep logo compact so it never crowds the headline (was 12% / huge wipe).
+_LOGO_MAX_WIDTH_RATIO = 0.07
 # Minimum logo short-side in pixels (prevents tiny, unreadable logos).
-_LOGO_MIN_PX = 48
+_LOGO_MIN_PX = 36
 # Padding from the canvas edge when placing the logo (in pixels).
-_LOGO_EDGE_PADDING = 32
+_LOGO_EDGE_PADDING = 20
 # Logo background fill color (used only for solid-background logos without transparency).
 _LOGO_BG_COLOR = (255, 255, 255, 0)  # transparent
 
@@ -76,6 +77,23 @@ def _make_background_transparent(img: Image.Image) -> Image.Image:
     return img
 
 
+def _sample_corner_fill(base_img: Image.Image, canvas_width: int, canvas_height: int) -> tuple[int, int, int, int]:
+    """Pick a fill color from just outside the small logo wipe zone (matches background)."""
+    px = base_img.load()
+    # Sample left of the compact logo corner so we don't pull headline colors.
+    xs = [
+        max(0, int(canvas_width * 0.88)),
+        max(0, int(canvas_width * 0.90)),
+        max(0, int(canvas_width * 0.92)),
+    ]
+    y = min(16, canvas_height - 1)
+    samples = [px[x, y][:3] for x in xs]
+    r = int(sum(s[0] for s in samples) / len(samples))
+    g = int(sum(s[1] for s in samples) / len(samples))
+    b = int(sum(s[2] for s in samples) / len(samples))
+    return (r, g, b, 255)
+
+
 def _composite_logo(
     base_bytes: bytes,
     logo_bytes: bytes,
@@ -83,42 +101,38 @@ def _composite_logo(
     canvas_width: int,
     canvas_height: int,
 ) -> bytes:
-    """Composite the brand logo onto the base image and return the merged PNG bytes.
+    """Wipe only a tiny top-right pocket, then paste a compact Brand Space logo."""
+    from PIL import ImageDraw
 
-    Args:
-        base_bytes: Raw bytes of the AI-generated base image.
-        logo_bytes: Raw bytes of the brand logo file (any PIL-supported format).
-        logo_zone_instruction: Free-text description of where to place the logo
-            (e.g. "bottom-right corner, 40px margin").
-        canvas_width: Width of the generated canvas.
-        canvas_height: Height of the generated canvas.
-
-    Returns:
-        PNG bytes of the composited image.
-    """
     base_img = Image.open(BytesIO(base_bytes)).convert("RGBA")
     logo_raw = Image.open(BytesIO(logo_bytes))
     logo_img = _make_background_transparent(logo_raw).convert("RGBA")
 
     # Scale logo so it fits within max width ratio while keeping aspect ratio
     max_logo_w = max(int(canvas_width * _LOGO_MAX_WIDTH_RATIO), _LOGO_MIN_PX)
+    max_logo_h = max(int(canvas_height * 0.06), _LOGO_MIN_PX)
     logo_w, logo_h = logo_img.size
-    scale = min(max_logo_w / logo_w, (max_logo_w * logo_h / logo_w) / logo_h if logo_h else 1)
-    # Always scale down if needed; never scale up past original size
-    if scale < 1.0:
-        new_w = max(int(logo_w * scale), _LOGO_MIN_PX)
-        new_h = max(int(logo_h * scale), _LOGO_MIN_PX)
-        logo_img = logo_img.resize((new_w, new_h), Image.LANCZOS)
+    scale = min(max_logo_w / max(logo_w, 1), max_logo_h / max(logo_h, 1), 1.0)
+    new_w = max(int(logo_w * scale), _LOGO_MIN_PX)
+    new_h = max(int(logo_h * scale), 1)
+    # Cap height so a wide wordmark logo never becomes a tall block.
+    if new_h > max_logo_h:
+        shrink = max_logo_h / new_h
+        new_w = max(int(new_w * shrink), _LOGO_MIN_PX)
+        new_h = max_logo_h
+    logo_img = logo_img.resize((new_w, new_h), Image.LANCZOS)
     logo_w, logo_h = logo_img.size
 
-    # Force logo placement to top-right corner always per user request
     pad = _LOGO_EDGE_PADDING
+    # Tight wipe only around the logo — never eat into the headline (was ~30%×13%).
+    wipe_w = min(logo_w + pad * 2, int(canvas_width * 0.14))
+    wipe_h = min(logo_h + pad * 2, int(canvas_height * 0.08))
+    wipe_box = (canvas_width - wipe_w, 0, canvas_width, wipe_h)
+    fill = _sample_corner_fill(base_img, canvas_width, canvas_height)
+    ImageDraw.Draw(base_img).rectangle(wipe_box, fill=fill)
 
-    # Determine coordinates for the logo icon (top-right)
     x = canvas_width - logo_w - pad
     y = pad
-
-    # Paste logo icon with alpha channel as mask
     base_img.paste(logo_img, (x, y), logo_img)
 
     out = BytesIO()
@@ -198,9 +212,16 @@ class DalleService:
                 "n": 1,
             }
             if is_gpt_image:
+                # "high" allocates more diffusion steps → sharper letter edges / fewer artifacts
                 kwargs["quality"] = "high"
             else:
-                kwargs["quality"] = "standard"
+                kwargs["quality"] = "hd"
+            logger.info(
+                "dalle.generate_params",
+                model=self.model,
+                size=dalle_size,
+                quality=kwargs.get("quality"),
+            )
             response = await self.client.images.generate(**kwargs)
         except Exception as e:
             logger.error(

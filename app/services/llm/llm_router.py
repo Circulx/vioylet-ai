@@ -12,6 +12,7 @@ class LLMRouter:
         "l4_strategic_reasoning",
         "l5_concept_engine",
         "l7_copy_engine",
+        "l7c_content_prep",
         "l10_evaluation",
         "repair",
     }

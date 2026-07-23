@@ -36,6 +36,7 @@ import type {
     ChatAssistantStructuredPayload,
     ChatMessageResponse,
     ChatSessionResponse,
+    CreativeBlueprintResponse,
     GenerationDecision,
     KnowledgeAssetResponse,
     StudioPanelSelection,
@@ -43,6 +44,10 @@ import type {
 } from "@/lib/api/contracts";
 import { buildBrandChatHref, buildBrandSharingHref, resolveBrandByRouteKey } from "@/lib/brand-routing";
 import { useBrandUsage, useBrands } from "@/hooks/useBrands";
+import { usePipeline } from "@/hooks/usePipeline";
+import ChatPipelinePanel, {
+    type ChatPipelineState,
+} from "@/components/chat/ChatPipelinePanel";
 import {
     useChatMessages,
     useChatSessions,
@@ -85,14 +90,20 @@ const actionOptionById = Object.fromEntries(actionOptions.map((action) => [actio
     (typeof actionOptions)[number]
 >;
 
-const platformOptions: Platform[] = ["instagram", "linkedin"];
-const chatPlatformOptions: Platform[] = ["instagram", "linkedin", "x"];
+const platformOptions: Platform[] = ["linkedin", "instagram", "x"];
+const chatPlatformOptions: Platform[] = ["linkedin", "instagram", "x"];
 const platformLabels: Record<Platform, string> = {
     instagram: "Instagram",
     linkedin: "LinkedIn",
     x: "X",
     youtube_thumbnail: "YouTube",
 };
+const formatOptions: Array<{ value: FormatMode; label: string; enabled: boolean }> = [
+    { value: "static", label: "Static", enabled: true },
+    { value: "carousel", label: "Carousel", enabled: true },
+    { value: "infographic", label: "Infographic", enabled: true },
+    { value: "video", label: "Video", enabled: false },
+];
 const fileTypeOptions: FileType[] = ["doc", "pdf", "jpg", "png"];
 const campaignGoalOptions = [
     "Brand Awareness",
@@ -113,11 +124,55 @@ const campaignObjectiveOptions = [
     "Event Promotion",
     "Thought Leadership",
 ];
+
+/** Correct export dimensions by format + platform (matches pipeline L8 sizes). */
+const sizeOptionsByFormatPlatform: Record<
+    Exclude<FormatMode, "video">,
+    Partial<Record<Platform, Array<{ label: string; width: number; height: number }>>>
+> = {
+    static: {
+        linkedin: [
+            { label: "1.91:1 · 1200×627", width: 1200, height: 627 },
+            { label: "1:1 · 1080×1080", width: 1080, height: 1080 },
+        ],
+        instagram: [
+            { label: "1:1 · 1080×1080", width: 1080, height: 1080 },
+            { label: "4:5 · 1080×1350", width: 1080, height: 1350 },
+            { label: "9:16 · 1080×1920", width: 1080, height: 1920 },
+        ],
+        x: [
+            { label: "16:9 · 1200×675", width: 1200, height: 675 },
+            { label: "1:1 · 1080×1080", width: 1080, height: 1080 },
+        ],
+    },
+    carousel: {
+        linkedin: [{ label: "1:1 · 1080×1080", width: 1080, height: 1080 }],
+        instagram: [{ label: "1:1 · 1080×1080", width: 1080, height: 1080 }],
+        x: [{ label: "1:1 · 1080×1080", width: 1080, height: 1080 }],
+    },
+    infographic: {
+        linkedin: [{ label: "4:5 · 1080×1350", width: 1080, height: 1350 }],
+        instagram: [{ label: "4:5 · 1080×1350", width: 1080, height: 1350 }],
+        x: [{ label: "4:5 · 1080×1350", width: 1080, height: 1350 }],
+    },
+};
+
+function resolveSizeOptions(format: FormatMode, platform: Platform) {
+    const fmt = format === "video" ? "static" : format;
+    const byFormat = sizeOptionsByFormatPlatform[fmt];
+    return (
+        byFormat[platform] ||
+        byFormat.linkedin ||
+        [{ label: "1:1 · 1080×1080", width: 1080, height: 1080 }]
+    );
+}
+
+/** Alias for action-form platform resets */
 const sizeOptionsByPlatform: Record<Platform, Array<{ label: string; width: number; height: number }>> = {
-    instagram: [{ label: "1:1", width: 1080, height: 1080 }, { label: "9:16", width: 1080, height: 1920 }, { label: "4:5", width: 1080, height: 1350 }, { label: "16:9", width: 1200, height: 675 }],
-    linkedin: [{ label: "1:1", width: 1080, height: 1080 }, { label: "9:16", width: 1080, height: 1920 }, { label: "4:5", width: 1080, height: 1350 }, { label: "16:9", width: 1200, height: 675 }],
-    x: [{ label: "1:1", width: 1080, height: 1080 }, { label: "16:9", width: 1600, height: 900 }],
-    youtube_thumbnail: [{ label: "16:9", width: 1280, height: 720 }],
+    instagram: resolveSizeOptions("static", "instagram"),
+    linkedin: resolveSizeOptions("static", "linkedin"),
+    x: resolveSizeOptions("static", "x"),
+    youtube_thumbnail: [{ label: "16:9 · 1280×720", width: 1280, height: 720 }],
 };
 
 const MAX_COMPOSER_HEIGHT = 220;
@@ -745,12 +800,23 @@ function StudioPanel({
     onToggle?: () => void;
     className?: string;
 }) {
-    const sizeOptions = sizeOptionsByPlatform[platform];
+    const sizeOptions = resolveSizeOptions(format, platform);
+
+    const applyFormat = (next: FormatMode) => {
+        if (next === "video") return;
+        setFormat(next);
+        setSizeLabel(resolveSizeOptions(next, platform)[0].label);
+    };
+
+    const applyPlatform = (next: Platform) => {
+        setPlatform(next);
+        setSizeLabel(resolveSizeOptions(format, next)[0].label);
+    };
 
     return (
         <aside className={`w-full relative min-h-[calc(100vh-64px)] overflow-y-auto space-y-6 border-l border-[#E5E7F0] bg-white px-5 ${className || ""} thin-scrollbar`}>
             {/* Header */}
-            <div className="sticky top-0 flex items-center justify-between py-5 bg-white">
+            <div className="sticky top-0 flex items-center justify-between py-5 bg-white z-10">
                 <h3 className="text-lg font-bold text-[#121212]">Studio</h3>
                 <Button
                     type="button"
@@ -759,27 +825,21 @@ function StudioPanel({
                     className={`flex h-10 w-10 items-center justify-center text-[#121212]`}
                 >
                     <Image src="/actions_icons/toggle.svg" alt="Close panel" width={16} height={16} className="h-4 w-4" />
-                    {/* <PanelRightClose className="h-4 w-4" /> */}
                 </Button>
             </div>
 
             <div className="space-y-3">
                 <p className="text-base font-medium text-[#121212]">Format</p>
                 <div className="grid grid-cols-2 gap-2">
-                    {[
-                        { value: "static", label: "Static", enabled: true },
-                        { value: "carousel", label: "Carousel", enabled: true },
-                        { value: "infographic", label: "Infographic", enabled: true },
-                        { value: "video", label: "Video", enabled: false },
-                    ].map((option) => (
+                    {formatOptions.map((option) => (
                         <Button
                             variant={"ghost"}
                             key={option.value}
                             type="button"
                             disabled={!option.enabled}
-                            onClick={() => option.enabled && setFormat(option.value as FormatMode)}
+                            onClick={() => option.enabled && applyFormat(option.value)}
                             className={`min-w-0 rounded-none p-6 text-center text-sm font-medium ${format === option.value
-                                ? "bg-[#EBEBEB] text-[#919191]"
+                                ? "bg-[#EBEBEB] text-[#121212]"
                                 : option.enabled
                                     ? "bg-[#F9F9F9] text-[#8D8D95]"
                                     : "cursor-not-allowed bg-[#FAFAFB] text-[#B8B8BE]"
@@ -792,16 +852,13 @@ function StudioPanel({
             </div>
 
             <div className="space-y-3">
-                <p className="text-base font-medium text-[#121212]">Size</p>
+                <p className="text-base font-medium text-[#121212]">Platform</p>
                 <div className="flex gap-1 border-b border-[#D1D3DA]">
                     {platformOptions.map((option) => (
                         <Button
                             variant={"ghost"}
                             key={option}
-                            onClick={() => {
-                                setPlatform(option);
-                                setSizeLabel(sizeOptionsByPlatform[option][0].label);
-                            }}
+                            onClick={() => applyPlatform(option)}
                             className={`flex flex-1 rounded-none border-b-2 p-5 text-base font-normal ${platform === option ? "border-b-primary text-[#121212]" : "border-transparent text-[#393939]"
                                 }`}
                         >
@@ -809,14 +866,15 @@ function StudioPanel({
                         </Button>
                     ))}
                 </div>
-                <div className="grid grid-cols-2 gap-2">
+                <p className="text-sm font-medium text-[#121212]">Size</p>
+                <div className="grid grid-cols-1 gap-2">
                     {sizeOptions.map((option) => (
                         <Button
                             variant={"ghost"}
                             key={option.label}
                             type="button"
                             onClick={() => setSizeLabel(option.label)}
-                            className={`p-6 rounded-none text-center text-sm font-medium text-[#919191] ${sizeLabel === option.label ? "bg-[#EBEBEB]" : "bg-[#F9F9F9]"
+                            className={`p-4 rounded-none text-left text-sm font-medium text-[#919191] ${sizeLabel === option.label ? "bg-[#EBEBEB] text-[#121212]" : "bg-[#F9F9F9]"
                                 }`}
                         >
                             {option.label}
@@ -886,6 +944,9 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
     const sendMessage = useSendChatMessage(brandId);
     const cancelChatGeneration = useCancelChatGeneration(brandId);
     const toneCheck = useToneCheck(brandId);
+    const { runPipeline, approveBlueprint, rejectBlueprint, isApproving } = usePipeline();
+
+    const [pipelineUi, setPipelineUi] = useState<ChatPipelineState>({ status: "idle" });
 
     const [selectedAction, setSelectedAction] = useState<ActionMode>("none");
     const [workspacePrompt, setWorkspacePrompt] = useState("");
@@ -898,11 +959,11 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
     const [repurposeTarget, setRepurposeTarget] = useState("");
     const [alignmentContent, setAlignmentContent] = useState("");
     const [composerDraft, setComposerDraft] = useState("");
-    const [studioPlatform, setStudioPlatform] = useState<Platform>("instagram");
+    const [studioPlatform, setStudioPlatform] = useState<Platform>("linkedin");
     const [actionPlatform, setActionPlatform] = useState<Platform | "">("");
     const [studioFormat, setStudioFormat] = useState<FormatMode>("static");
     const [studioFileType, setStudioFileType] = useState<FileType>("png");
-    const [studioSizeLabel, setStudioSizeLabel] = useState("1:1");
+    const [studioSizeLabel, setStudioSizeLabel] = useState("1.91:1 · 1200×627");
     const [campaignGoal, setCampaignGoal] = useState("");
     const [attachedAssets, setAttachedAssets] = useState<KnowledgeAssetResponse[]>([]);
     const [selectedTemplateId, setSelectedTemplateId] = useState("");
@@ -920,11 +981,12 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
     const messageElementRefs = useRef(new Map<string, HTMLDivElement>());
     const activeGenerationControllerRef = useRef<AbortController | null>(null);
     const activeGenerationSessionRef = useRef<string>("");
+    const pipelineInFlightRef = useRef(false);
 
-    const sizeOption = useMemo(
-        () => sizeOptionsByPlatform[studioPlatform].find((entry) => entry.label === studioSizeLabel) || sizeOptionsByPlatform[studioPlatform][0],
-        [studioPlatform, studioSizeLabel],
-    );
+    const sizeOption = useMemo(() => {
+        const options = resolveSizeOptions(studioFormat, studioPlatform);
+        return options.find((entry) => entry.label === studioSizeLabel) || options[0];
+    }, [studioFormat, studioPlatform, studioSizeLabel]);
     const studioPanel = useMemo<StudioPanelSelection>(
         () => ({
             format: studioFormat === "video" ? "static" : studioFormat,
@@ -936,7 +998,12 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
     );
     const brandLifecycle = brand?.lifecycle_state || "draft";
     const canGenerateInWorkspace = true;
-    const isGeneratingMessage = createSession.isPending || sendMessage.isPending;
+    const pipelineBusy =
+        pipelineUi.status === "running" ||
+        pipelineUi.status === "generating" ||
+        runPipeline.isPending ||
+        approveBlueprint.isPending;
+    const isGeneratingMessage = createSession.isPending || sendMessage.isPending || pipelineBusy;
     const recommendationPrompt = useMemo(() => {
         if (selectedAction === "idea") {
             return [campaignFocus, campaignAudience, campaignObjective || campaignGoal, workspacePrompt]
@@ -982,7 +1049,9 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
         [selectedTemplateId, templateRecommendations],
     );
     const selectedTemplateLabel = selectedTemplate?.name || selectedTemplateName;
-    const hasConversation = Boolean((messages || []).length);
+    const hasConversation =
+        Boolean((messages || []).length) ||
+        (pipelineUi.status !== "idle" && pipelineUi.status !== "cancelled");
     const allocationPercent = brandUsage?.capacity_percent ?? 0;
     const usedWithinAllocationPercent = brandUsage?.usage_percent ?? 0;
     const usageRemainingPercent = Math.max(
@@ -1148,6 +1217,9 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
 
     const extractApiError = (error: unknown, fallback: string) => {
         if (axios.isAxiosError(error)) {
+            if (error.code === "ECONNABORTED" || /timeout/i.test(String(error.message || ""))) {
+                return "Timed out waiting for the pipeline (10 min). Content prep + image gen can take a few minutes — try again once.";
+            }
             return String(error.response?.data?.detail || error.response?.data?.message || error.message || fallback);
         }
         if (error instanceof Error) {
@@ -1185,16 +1257,91 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
     };
 
     const dispatchGeneration = async (message: string) => {
-        if (isGeneratingMessage) {
+        if (
+            pipelineInFlightRef.current ||
+            isGeneratingMessage ||
+            runPipeline.isPending ||
+            approveBlueprint.isPending
+        ) {
             return;
         }
         if (!message.trim()) {
             setWorkspaceError("Enter a prompt before sending.");
             return;
         }
+        pipelineInFlightRef.current = true;
         try {
             setWorkspaceError("");
             setGenerationProgressIndex(0);
+            await ensureSession();
+
+            // Creative formats use Violyt Intelligence Pipeline in chat (blueprint → AI-baked text image).
+            if (studioFormat !== "video") {
+                const pipelinePlatform =
+                    studioPlatform === "x" ? "twitter" : studioPlatform === "youtube_thumbnail" ? "linkedin" : studioPlatform;
+                const pipelineFormat =
+                    studioFormat === "carousel" || studioFormat === "infographic" ? studioFormat : "static";
+
+                setPipelineUi({
+                    status: "running",
+                    prompt: message.trim(),
+                    format: pipelineFormat,
+                    blueprint: null,
+                    imageUrls: [],
+                    error: null,
+                });
+                setSelectedAction("none");
+                setComposerDraft("");
+                setWorkspacePrompt((current) => (current.trim() === message.trim() ? "" : current));
+                setAttachedAssets([]);
+                setAttachmentError("");
+
+                const phase1 = await runPipeline.mutateAsync({
+                    brand_id: brandId,
+                    user_prompt: message.trim(),
+                    platform: pipelinePlatform as "linkedin" | "instagram" | "twitter",
+                    format: pipelineFormat,
+                });
+
+                if (phase1.status === "awaiting_blueprint_approval" && phase1.creative_blueprint) {
+                    setPipelineUi({
+                        status: "awaiting_blueprint_approval",
+                        runId: phase1.run_id || undefined,
+                        prompt: message.trim(),
+                        format: pipelineFormat,
+                        blueprint: phase1.creative_blueprint,
+                        imageUrls: [],
+                        error: null,
+                    });
+                    return;
+                }
+
+                if (phase1.status === "failed") {
+                    setPipelineUi({
+                        status: "failed",
+                        prompt: message.trim(),
+                        format: pipelineFormat,
+                        error: phase1.error || "Pipeline failed before blueprint approval.",
+                    });
+                    return;
+                }
+
+                // Unexpected complete without approve gate — still show images if present
+                const urls =
+                    phase1.final_output?.asset_urls?.filter(Boolean) ||
+                    (phase1.final_output?.asset_url ? [phase1.final_output.asset_url] : []);
+                setPipelineUi({
+                    status: urls.length ? "complete" : "failed",
+                    runId: phase1.run_id || undefined,
+                    prompt: message.trim(),
+                    format: pipelineFormat,
+                    blueprint: phase1.creative_blueprint,
+                    imageUrls: urls,
+                    error: urls.length ? null : "No image returned from pipeline.",
+                });
+                return;
+            }
+
             const sessionId = await ensureSession();
             const controller = new AbortController();
             activeGenerationControllerRef.current = controller;
@@ -1204,7 +1351,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                 data: {
                     message,
                     studio_panel: studioPanel,
-                    generate_image: studioFormat !== "video",
+                    generate_image: false,
                     template_id: selectedTemplateId || undefined,
                     reference_asset_ids: attachedAssets.map((asset) => asset.id),
                 },
@@ -1219,11 +1366,69 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
             if (isRequestCanceled(error)) {
                 return;
             }
-            setWorkspaceError(extractApiError(error, "Unable to start the workspace session right now."));
+            const detail = extractApiError(error, "Unable to start generation right now.");
+            setWorkspaceError(detail);
+            setPipelineUi((current) =>
+                current.status === "running" || current.status === "generating"
+                    ? { ...current, status: "failed", error: detail }
+                    : current,
+            );
         } finally {
+            pipelineInFlightRef.current = false;
             activeGenerationControllerRef.current = null;
             activeGenerationSessionRef.current = "";
         }
+    };
+
+    const handleApproveBlueprint = async (edited: CreativeBlueprintResponse) => {
+        if (!pipelineUi.runId) return;
+        try {
+            setPipelineUi((current) => ({ ...current, status: "generating", blueprint: edited, error: null }));
+            const phase2 = await approveBlueprint.mutateAsync({
+                run_id: pipelineUi.runId,
+                creative_blueprint: edited,
+            });
+            const urls =
+                phase2.final_output?.asset_urls?.filter(Boolean) ||
+                (phase2.final_output?.asset_url ? [phase2.final_output.asset_url] : []);
+            if (phase2.status === "failed" || !urls.length) {
+                setPipelineUi((current) => ({
+                    ...current,
+                    status: "failed",
+                    error: phase2.error || "Image generation failed after approval.",
+                }));
+                return;
+            }
+            setPipelineUi((current) => ({
+                ...current,
+                status: "complete",
+                blueprint: phase2.creative_blueprint || edited,
+                imageUrls: urls,
+                error: null,
+            }));
+        } catch (error) {
+            const detail = extractApiError(
+                error,
+                "Could not approve blueprint. If the server restarted mid-run, start a new prompt.",
+            );
+            setPipelineUi((current) => ({
+                ...current,
+                status: "failed",
+                error: detail,
+            }));
+            setWorkspaceError(detail);
+        }
+    };
+
+    const handleCancelBlueprint = async () => {
+        if (pipelineUi.runId) {
+            try {
+                await rejectBlueprint.mutateAsync({ run_id: pipelineUi.runId });
+            } catch {
+                // ignore cancel errors
+            }
+        }
+        setPipelineUi({ status: "idle" });
     };
 
     const handleReferenceUpload = async (files: FileList | null) => {
@@ -1423,6 +1628,15 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                                     (message.structured_payload as ChatAssistantStructuredPayload)?.image_generation_requested
                                                     ? (message.structured_payload as ChatAssistantStructuredPayload).image_generation_status
                                                     : null;
+                                            // Hide stale old-chat image failures — pipeline UI owns creative generation now.
+                                            const text = String(message.message_text || "");
+                                            if (
+                                                message.role === "assistant" &&
+                                                !previewAssets.length &&
+                                                /couldn.?t generate the visual this time/i.test(text)
+                                            ) {
+                                                return null;
+                                            }
                                             return (
                                                 <div
                                                     key={message.id}
@@ -1457,24 +1671,59 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                                 </div>
                                             );
                                         })}
-                                        {isGeneratingMessage ? (
-                                            <div className="mr-auto max-w-[86%]">
-                                                <div className="bg-[#F6F6F7] px-5 py-4 text-[#222222]">
-                                                    <div className="space-y-4">
-                                                        <GenerationPreviewPlaceholder
-                                                            width={studioPanel.size?.width ?? 1080}
-                                                            height={studioPanel.size?.height ?? 1080}
-                                                        />
-                                                        <div className="flex items-center gap-3">
-                                                            <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                                                            <p className="min-w-0 text-sm font-medium text-slate-700">
-                                                                <span className="block truncate">{activeGenerationStatusLine}</span>
-                                                            </p>
-                                                        </div>
-                                                    </div>
+                                        {pipelineUi.prompt &&
+                                        pipelineUi.status !== "idle" &&
+                                        pipelineUi.status !== "cancelled" &&
+                                        !orderedMessages.some(
+                                            (m) =>
+                                                m.role === "user" &&
+                                                String(m.message_text || "").trim() === pipelineUi.prompt?.trim(),
+                                        ) ? (
+                                            <div className={`ml-auto w-fit max-w-[70%] ${isStudioOpen ? "px-3" : "pr-10 pl-3"}`}>
+                                                <div className="bg-[#F4F4F4] p-3 text-base text-[#353030]">
+                                                    <p className="whitespace-pre-wrap">{pipelineUi.prompt}</p>
                                                 </div>
                                             </div>
                                         ) : null}
+                                        <ChatPipelinePanel
+                                            state={pipelineUi}
+                                            isApproving={isApproving}
+                                            onApprove={(edited) => void handleApproveBlueprint(edited)}
+                                            onCancel={() => void handleCancelBlueprint()}
+                                            onImagesChange={(urls, fields, imageIndex) => {
+                                                setPipelineUi((current) => {
+                                                    const nextBlueprint = current.blueprint
+                                                        ? { ...current.blueprint }
+                                                        : null;
+                                                    if (nextBlueprint && fields) {
+                                                        if (
+                                                            current.format === "carousel" &&
+                                                            nextBlueprint.slides?.length &&
+                                                            typeof imageIndex === "number"
+                                                        ) {
+                                                            const slides = [...nextBlueprint.slides];
+                                                            const slide = { ...slides[imageIndex] };
+                                                            slide.headline = fields.headline;
+                                                            slide.supporting_line = fields.supporting_line;
+                                                            slide.body = fields.body;
+                                                            slide.cta = fields.cta;
+                                                            slides[imageIndex] = slide;
+                                                            nextBlueprint.slides = slides;
+                                                        } else {
+                                                            nextBlueprint.headline = fields.headline;
+                                                            nextBlueprint.supporting_line = fields.supporting_line;
+                                                            nextBlueprint.body = fields.body;
+                                                            nextBlueprint.cta = fields.cta;
+                                                        }
+                                                    }
+                                                    return {
+                                                        ...current,
+                                                        imageUrls: urls,
+                                                        blueprint: nextBlueprint,
+                                                    };
+                                                });
+                                            }}
+                                        />
                                         <div ref={messageBottomRef} />
                                     </div>
 
@@ -1501,6 +1750,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                                 ))}
                                             </div>
                                         ) : null}
+                                        {!pipelineBusy ? (
                                         <div className="mb-3">
                                             <TemplateRecommendationRail
                                                 recommendations={templateRecommendations}
@@ -1509,12 +1759,18 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                                 onSelect={handleTemplateSelection}
                                             />
                                         </div>
-                                        {selectedTemplateLabel ? (
+                                        ) : null}
+                                        {selectedTemplateLabel && !pipelineBusy ? (
                                             <p className="mb-3 text-xs text-slate-500">
                                                 Pinned template: <span className="font-medium text-slate-700">{selectedTemplateLabel}</span>. We&apos;ll follow this visual direction unless auto mode is safer.
                                             </p>
                                         ) : null}
                                         {attachmentError ? <p className="mb-2 text-sm text-red-500">{attachmentError}</p> : null}
+                                        {pipelineBusy ? (
+                                            <p className="mb-2 text-center text-xs text-[#6A6E8B]">
+                                                Pipeline in progress — Approve or Cancel on the blueprint card. Composer unlocks when done.
+                                            </p>
+                                        ) : (
                                         <SurfaceCard className={`flex items-end gap-3 border border-[#E1E4ED] bg-white px-3 pb-2 shadow-[0_14px_28px_-24px_rgba(15,23,42,0.45)]`}>
                                             <button
                                                 type="button"
@@ -1548,29 +1804,55 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                                 )}
                                             </button>
                                         </SurfaceCard>
+                                        )}
                                     </div>
                                     <p className="pt-4 text-center text-sm text-[#A0A0A7]">Violyt suggestions may need review. Verify accuracy before use.</p>
                                 </div>
                                 {isStudioOpen ? (
-                                    <StudioPanel
-                                        platform={studioPlatform}
-                                        setPlatform={setStudioPlatform}
-                                        format={studioFormat}
-                                        setFormat={setStudioFormat}
-                                        fileType={studioFileType}
-                                        setFileType={setStudioFileType}
-                                        sizeLabel={studioSizeLabel}
-                                        setSizeLabel={setStudioSizeLabel}
-                                        campaignGoal={campaignGoal}
-                                        setCampaignGoal={setCampaignGoal}
-                                        onToggle={() => setIsStudioOpen(false)}
-                                        className="hidden xl:block"
-                                    />
+                                    <>
+                                        <StudioPanel
+                                            platform={studioPlatform}
+                                            setPlatform={setStudioPlatform}
+                                            format={studioFormat}
+                                            setFormat={setStudioFormat}
+                                            fileType={studioFileType}
+                                            setFileType={setStudioFileType}
+                                            sizeLabel={studioSizeLabel}
+                                            setSizeLabel={setStudioSizeLabel}
+                                            campaignGoal={campaignGoal}
+                                            setCampaignGoal={setCampaignGoal}
+                                            onToggle={() => setIsStudioOpen(false)}
+                                            className="hidden xl:block"
+                                        />
+                                        {/* Mobile / tablet studio drawer */}
+                                        <div className="xl:hidden fixed inset-0 z-40 flex justify-end bg-black/30" onClick={() => setIsStudioOpen(false)}>
+                                            <div
+                                                className="h-full w-[min(100%,320px)] bg-white shadow-xl"
+                                                onClick={(e) => e.stopPropagation()}
+                                            >
+                                                <StudioPanel
+                                                    platform={studioPlatform}
+                                                    setPlatform={setStudioPlatform}
+                                                    format={studioFormat}
+                                                    setFormat={setStudioFormat}
+                                                    fileType={studioFileType}
+                                                    setFileType={setStudioFileType}
+                                                    sizeLabel={studioSizeLabel}
+                                                    setSizeLabel={setStudioSizeLabel}
+                                                    campaignGoal={campaignGoal}
+                                                    setCampaignGoal={setCampaignGoal}
+                                                    onToggle={() => setIsStudioOpen(false)}
+                                                    className="min-h-full border-l-0"
+                                                />
+                                            </div>
+                                        </div>
+                                    </>
                                 ) : null}
                             </div>
                         </div>
                     ) : (
-                        <div className="w-full mx-auto min-h-[calc(100vh-100px-68px)] overflow-y-auto">
+                        <div className={`grid min-h-[calc(100vh-100px-68px)] ${isStudioOpen ? "xl:grid-cols-[minmax(0,1fr)_296px]" : "xl:grid-cols-1"}`}>
+                            <div className="min-h-0 w-full overflow-y-auto">
                             {/* Header */}
                             <div className="flex h-[61px] py-10 items-center justify-between border-b border-[#E5E5EA] bg-white">
                                 <div className="w-full flex items-center justify-between gap-3 px-4">
@@ -1589,27 +1871,16 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                     />
                                 </div>
 
-                                <div className="flex items-center gap-4">
-                                    {hasConversation ? (
-                                        <div className="relative hidden md:block">
-                                            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#77759A]" />
-                                            <Input
-                                                placeholder="Search"
-                                                className="h-9 w-[214px] rounded-none border-[#E1E3EC] bg-blue pl-10 text-sm text-[#77759A] shadow-none focus-visible:ring-0"
-                                            />
-                                        </div>
-                                    ) : null}
-                                    {hasConversation ? (
-                                        <Button
-                                            type="button"
-                                            variant={"ghost"}
-                                            onClick={() => setIsStudioOpen((current) => !current)}
-                                            className={`flex h-10 w-10 items-center justify-center text-[#121212] ${isStudioOpen && 'hidden'}`}
-                                            aria-label={isStudioOpen ? "Hide Studio" : "Show Studio"}
-                                        >
-                                            {!isStudioOpen && <Image src="/actions_icons/toggle.svg" alt="Close panel" width={16} height={16} className="h-4 w-4" />}
-                                        </Button>
-                                    ) : null}
+                                <div className="flex items-center gap-4 px-4">
+                                    <Button
+                                        type="button"
+                                        variant={"ghost"}
+                                        onClick={() => setIsStudioOpen((current) => !current)}
+                                        className={`flex h-10 w-10 items-center justify-center text-[#121212] ${isStudioOpen && "hidden"}`}
+                                        aria-label={isStudioOpen ? "Hide Studio" : "Show Studio"}
+                                    >
+                                        {!isStudioOpen && <Image src="/actions_icons/toggle.svg" alt="Open studio" width={16} height={16} className="h-4 w-4" />}
+                                    </Button>
                                 </div>
                             </div>
                             {!canGenerateInWorkspace ? (
@@ -1617,7 +1888,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                     This Brand Space is currently <span className="font-medium capitalize">{brandLifecycle}</span>. Finish activation before generating content or images in the workspace.
                                 </div>
                             ) : null}
-                            <div className="max-w-5xl mx-auto flex flex-col items-center px-4 pt-[8vh]">
+                            <div className="mx-auto flex w-full max-w-3xl flex-col items-center px-4 pt-[8vh]">
                                 <div className="flex items-center gap-5">
                                     <Image src="/logo.svg" alt="Violyt Icon" width={40} height={40} className="" />
                                     <h2 className="font-dmSans text-2xl md:text-3xl xl:text-4xl font-medium tracking-normal text-[#121212]">Greeting message</h2>
@@ -1632,6 +1903,9 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                         onChange={(event) => setWorkspacePrompt(event.target.value)}
                                         onKeyDown={handlePromptKeyDown}
                                     />
+                                    <p className="mt-3 text-xs text-[#8A8A8A]">
+                                        Set Format / Platform / Size in the Studio panel on the right.
+                                    </p>
                                     <div className="mt-3 flex items-center justify-between">
                                         <button
                                             type="button"
@@ -1812,7 +2086,9 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                                             setActionPlatform(platformValue);
                                                             if (platformValue) {
                                                                 setStudioPlatform(platformValue);
-                                                                setStudioSizeLabel(sizeOptionsByPlatform[platformValue][0].label);
+                                                                setStudioSizeLabel(
+                                                                    resolveSizeOptions(studioFormat, platformValue)[0].label
+                                                                );
                                                             }
                                                         }}
                                                         placeholder="Select platform"
@@ -1897,6 +2173,46 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                 ) : null}
 
                             </div>
+                            </div>
+                            {isStudioOpen ? (
+                                <>
+                                    <StudioPanel
+                                        platform={studioPlatform}
+                                        setPlatform={setStudioPlatform}
+                                        format={studioFormat}
+                                        setFormat={setStudioFormat}
+                                        fileType={studioFileType}
+                                        setFileType={setStudioFileType}
+                                        sizeLabel={studioSizeLabel}
+                                        setSizeLabel={setStudioSizeLabel}
+                                        campaignGoal={campaignGoal}
+                                        setCampaignGoal={setCampaignGoal}
+                                        onToggle={() => setIsStudioOpen(false)}
+                                        className="hidden xl:block"
+                                    />
+                                    <div className="xl:hidden fixed inset-0 z-40 flex justify-end bg-black/30" onClick={() => setIsStudioOpen(false)}>
+                                        <div
+                                            className="h-full w-[min(100%,320px)] bg-white shadow-xl"
+                                            onClick={(e) => e.stopPropagation()}
+                                        >
+                                            <StudioPanel
+                                                platform={studioPlatform}
+                                                setPlatform={setStudioPlatform}
+                                                format={studioFormat}
+                                                setFormat={setStudioFormat}
+                                                fileType={studioFileType}
+                                                setFileType={setStudioFileType}
+                                                sizeLabel={studioSizeLabel}
+                                                setSizeLabel={setStudioSizeLabel}
+                                                campaignGoal={campaignGoal}
+                                                setCampaignGoal={setCampaignGoal}
+                                                onToggle={() => setIsStudioOpen(false)}
+                                                className="min-h-full border-l-0"
+                                            />
+                                        </div>
+                                    </div>
+                                </>
+                            ) : null}
                         </div>
                     )}
                 </div>

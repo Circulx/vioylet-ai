@@ -5,6 +5,8 @@ import { apiOrigin } from "@/lib/env";
 export const apiClient = axios.create({
   baseURL: apiOrigin,
   withCredentials: false,
+  // Pipeline phase-1/2 can take several minutes (multi-layer LLM + image gen).
+  timeout: 600_000,
 });
 
 apiClient.interceptors.request.use((config) => {

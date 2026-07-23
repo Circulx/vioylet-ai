@@ -49,9 +49,9 @@ class Settings(BaseSettings):
     vector_store_provider: str = "faiss"
     vector_store_base_path: str = str(BASE_DIR / "vector_store")
     embedding_model: str = "text-embedding-3-small"
-    llm_model: str = "gpt-4.1-mini"
-    tone_model: str = "gpt-4.1-mini"
-    vision_model: str = "gpt-4.1-mini"
+    llm_model: str = "gpt-4o-mini"
+    tone_model: str = "gpt-4o-mini"
+    vision_model: str = "gpt-4o-mini"
     image_model: str = "gpt-image-1-mini"
     anthropic_model: str = "claude-sonnet-4-6"
     anthropic_fallback_model: str = "claude-opus-4-5"
@@ -63,7 +63,7 @@ class Settings(BaseSettings):
     live_research_max_results_per_query: int = 3
     live_research_enabled: bool = True
     live_research_search_backend: str = "openai"
-    live_research_search_model: str = "gpt-4.1-mini"
+    live_research_search_model: str = "gpt-4o-mini"
     live_research_search_context_size: str = "medium"
 
     openai_api_key: str | None = None

@@ -1149,6 +1149,16 @@ class TenantService:
         await self.session.refresh(tenant)
         return tenant
 
+    async def remove_logo(self, tenant_id: UUID) -> Tenant:
+        # Removes the persisted tenant logo while leaving all other tenant fields unchanged.
+        tenant = await self.get_tenant(tenant_id)
+        if tenant.logo_asset_path:
+            self.storage.delete(tenant.logo_asset_path)
+            tenant.logo_asset_path = None
+            await self.session.commit()
+            await self.session.refresh(tenant)
+        return tenant
+
     async def _primary_user_role_code(self, user_id: UUID) -> str | None:
         role_codes: set[str] = set()
         for user_role in await self.user_roles.list_for_user(user_id):

@@ -365,7 +365,7 @@ export function mapBrandOverviewToForm(overview: BrandOverviewResponse): BrandFo
     brandMood: String(visualIdentity.brand_mood || ""),
     visualStyle: String(visualIdentity.visual_style || ""),
     logoPlacements: Array.isArray(visualIdentity.logo_placements)
-      ? visualIdentity.logo_placements.map((item) => String(item))
+      ? visualIdentity.logo_placements.slice(0, 1).map((item) => String(item))
       : visualIdentity.logo_placement
         ? [String(visualIdentity.logo_placement)]
         : [],
@@ -495,7 +495,10 @@ function normalizeBrandSelections(form: BrandFormState) {
     sentenceLength: sanitizeOption(SENTENCE_LENGTH_OPTIONS, form.voiceTone.sentenceLength),
     perspective: sanitizeOption(PERSPECTIVE_OPTIONS, form.voiceTone.perspective),
     selectedAudiences: sanitizeOptionArray(AUDIENCE_OPTIONS, form.targetAudience.selectedAudiences),
-    logoPlacements: sanitizeOptionArray(LOGO_PLACEMENT_OPTIONS, form.visualIdentity.logoPlacements),
+    logoPlacements: sanitizeOptionArray(
+      LOGO_PLACEMENT_OPTIONS,
+      form.visualIdentity.logoPlacements,
+    ).slice(0, 1),
     location: sanitizeOption(LOCATION_OPTIONS, form.targetAudience.location),
     educationLevel: sanitizeOption(EDUCATION_LEVEL_OPTIONS, form.targetAudience.educationLevel),
     employmentStatus: sanitizeOption(EMPLOYMENT_STATUS_OPTIONS, form.targetAudience.employmentStatus),

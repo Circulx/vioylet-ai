@@ -43,6 +43,15 @@ export interface InAppNotificationUnreadCountResponse {
   unread_count: number;
 }
 
+export interface BrandSpaceHistoryResponse {
+  id: UUID;
+  tenant_id: UUID;
+  brand_space_id: UUID;
+  activity_type: string;
+  message: string;
+  performed_by?: UUID | null;
+  created_at: string;
+}
 export interface UiUser {
   id: UUID;
   tenantId?: UUID;
@@ -611,6 +620,28 @@ export interface ReviewDetailResponse {
     author_user_id?: UUID;
     created_at: string;
   }>;
+}
+
+export interface ReviewUserSummary {
+  id: UUID;
+  full_name: string;
+  email: string;
+  role_codes: string[];
+}
+
+export interface ReviewParticipantResponse extends ReviewUserSummary {
+  access_role: string;
+  is_owner: boolean;
+}
+
+export interface ReviewShareAccessResponse {
+  owner?: ReviewParticipantResponse | null;
+  participants: ReviewParticipantResponse[];
+  mentionable_users: ReviewUserSummary[];
+}
+
+export interface ReviewShareAccessUpdateRequest {
+  user_ids: UUID[];
 }
 
 export interface RenderResponse {

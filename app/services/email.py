@@ -492,6 +492,63 @@ class EmailService:
         )
         return self._send_email(recipient_email, subject, text_body, html_body)
 
+    def send_review_mention_notification_email(
+        self,
+        recipient_email: str,
+        recipient_name: str | None,
+        sharer_name: str,
+        review_link: str,
+        post_title: str | None = None,
+    ) -> EmailDeliveryResult:
+        title_label = post_title or "Shared image"
+        greeting_name = recipient_name or recipient_email
+        subject = f"You were mentioned on {title_label}"
+        escaped_greeting_name = escape(greeting_name)
+        escaped_sharer_name = escape(sharer_name)
+        escaped_title_label = escape(title_label)
+        escaped_review_link = escape(review_link)
+        text_body = (
+            f"Hello {greeting_name},\n\n"
+            f"{sharer_name} mentioned you on {title_label}.\n\n"
+            f"Open the review thread:\n{review_link}"
+        )
+        html_body = (
+            f"<p>Hello {escaped_greeting_name},</p>"
+            f"<p><strong>{escaped_sharer_name}</strong> mentioned you on "
+            f"<strong>{escaped_title_label}</strong>.</p>"
+            f'<p><a href="{escaped_review_link}" style="display:inline-block;padding:12px 20px;'
+            "background:#3C2F8F;color:#ffffff;text-decoration:none;border-radius:8px;"
+            '">Open Review Thread</a></p>'
+            f"<p>If the button does not work, open this link:</p><p>{escaped_review_link}</p>"
+        )
+        return self._send_email(recipient_email, subject, text_body, html_body)
+
+    def send_review_approved_notification_email(
+        self,
+        recipient_email: str,
+        reviewer_name: str,
+        review_link: str,
+        post_title: str | None = None,
+    ) -> EmailDeliveryResult:
+        title_label = post_title or "Shared image"
+        subject = f"{title_label} was approved"
+        escaped_reviewer_name = escape(reviewer_name)
+        escaped_title_label = escape(title_label)
+        escaped_review_link = escape(review_link)
+        text_body = (
+            f"{reviewer_name} approved {title_label}.\n\n"
+            f"Open the review thread:\n{review_link}"
+        )
+        html_body = (
+            f"<p><strong>{escaped_reviewer_name}</strong> approved "
+            f"<strong>{escaped_title_label}</strong>.</p>"
+            f'<p><a href="{escaped_review_link}" style="display:inline-block;padding:12px 20px;'
+            "background:#3C2F8F;color:#ffffff;text-decoration:none;border-radius:8px;"
+            '">Open Review Thread</a></p>'
+            f"<p>If the button does not work, open this link:</p><p>{escaped_review_link}</p>"
+        )
+        return self._send_email(recipient_email, subject, text_body, html_body)
+
     def send_brand_space_updated_email(
         self,
         recipient_email: str,

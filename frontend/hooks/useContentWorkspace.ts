@@ -1,7 +1,7 @@
 import { InfiniteData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { API } from "@/lib/api/endpoints";
 import { request } from "@/lib/api/request";
-import type { ChatEnhancePromptRequest, ChatMessageResponse, ChatSessionResponse, ChatSessionUpdateRequest, ImageEditApplyRequest, ImageEditStateRequest, StudioPanelSelection } from "@/lib/api/contracts";
+import type { ChatEnhancePromptRequest, ChatMessageResponse, ChatSessionResponse, ChatSessionUpdateRequest, ImageEditApplyRequest, ImageEditStateRequest, ReviewShareAccessUpdateRequest, StudioPanelSelection } from "@/lib/api/contracts";
 
 const CHAT_MESSAGES_PAGE_SIZE = 10;
 
@@ -299,6 +299,28 @@ export const useReviewDetail = (token: string) =>
     enabled: Boolean(token),
     queryFn: () => request(API.REVIEW.DETAIL, { pathParams: token }),
   });
+
+export const useReviewShareAccess = (token: string, enabled = true) =>
+  useQuery({
+    queryKey: ["review", token, "share-access"],
+    enabled: Boolean(token) && enabled,
+    queryFn: () => request(API.REVIEW.SHARE_ACCESS, { pathParams: token }),
+  });
+
+export const useUpdateReviewShareAccess = (token: string) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: ReviewShareAccessUpdateRequest) =>
+      request(API.REVIEW.UPDATE_SHARE_ACCESS, {
+        pathParams: token,
+        data,
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["review", token, "share-access"] });
+      await queryClient.invalidateQueries({ queryKey: ["review", token] });
+    },
+  });
+};
 
 export const useAddReviewComment = (token: string) => {
   const queryClient = useQueryClient();

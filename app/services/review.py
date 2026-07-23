@@ -14,9 +14,9 @@ from app.core.exceptions import LifecycleError
 from app.core.exceptions import NotFoundError
 from app.models.brand import BrandSpaceMember
 from app.repositories.content import ContentRepository
-from app.models.collaboration import ReviewComment, ReviewLink
+from app.models.collaboration import ReviewComment, ReviewLink, ReviewLinkParticipant
 from app.models.tenant import Role, User, UserRole
-from app.repositories.collaboration import ReviewCommentRepository, ReviewLinkRepository
+from app.repositories.collaboration import ReviewCommentRepository, ReviewLinkParticipantRepository, ReviewLinkRepository
 from app.services.email import EmailService
 from app.services.notification import InAppNotificationService
 
@@ -31,6 +31,7 @@ class ReviewService:
         self.session = session
         self.links = ReviewLinkRepository(session)
         self.comments = ReviewCommentRepository(session)
+        self.participants = ReviewLinkParticipantRepository(session)
         self.contents = ContentRepository(session)
         self.email = EmailService()
 
@@ -69,6 +70,89 @@ class ReviewService:
             raise NotFoundError("Review link not found")
         comments = await self.comments.list_for_link(link.id)
         return link, comments
+
+    async def can_access_link(
+        self,
+        link: ReviewLink,
+        user_id: UUID | None,
+        role_codes: set[str] | None = None,
+    ) -> bool:
+        if not user_id:
+            return False
+        user = await self._get_active_user(user_id)
+        if not user:
+            return False
+        normalized_roles = role_codes or await self._get_user_role_codes(user_id)
+        if RoleCode.SUPER_ADMIN in normalized_roles:
+            return False
+        if user.id == link.created_by:
+            return True
+        if user.tenant_id != link.tenant_id:
+            return False
+        if RoleCode.TENANT_ADMIN in normalized_roles:
+            return True
+        participant = await self.participants.get_for_link_user(link.id, user.id)
+        return participant is not None
+
+    async def list_share_access(
+        self,
+        link: ReviewLink,
+    ) -> tuple[User | None, list[tuple[ReviewLinkParticipant, User]], list[User], dict[UUID, set[str]]]:
+        owner = await self._get_active_user(link.created_by)
+        participants = await self.participants.list_for_link(link.id)
+        participant_pairs: list[tuple[ReviewLinkParticipant, User]] = []
+        for participant in participants:
+            user = await self._get_active_user(participant.user_id)
+            if user and user.tenant_id == link.tenant_id:
+                participant_pairs.append((participant, user))
+        mentionable_users = await self._list_active_tenant_users(link.tenant_id)
+        user_ids = {user.id for user in mentionable_users}
+        if owner:
+            user_ids.add(owner.id)
+        user_ids.update(user.id for _, user in participant_pairs)
+        role_codes_by_user = await self._role_codes_by_user_ids(user_ids)
+        return owner, participant_pairs, mentionable_users, role_codes_by_user
+
+    async def grant_share_access(
+        self,
+        review_link_id: UUID,
+        user_ids: list[UUID],
+        mentioned_by: UUID,
+    ) -> list[User]:
+        link = await self.links.get(review_link_id)
+        if not link:
+            raise NotFoundError("Review link not found")
+        unique_user_ids = [user_id for user_id in dict.fromkeys(user_ids) if user_id != link.created_by]
+        if not unique_user_ids:
+            return []
+        users = await self._list_active_users_by_ids(link.tenant_id, unique_user_ids)
+        new_users: list[User] = []
+        for user in users:
+            existing = await self.participants.get_for_link_user(link.id, user.id)
+            if existing:
+                continue
+            await self.participants.add(
+                ReviewLinkParticipant(
+                    tenant_id=link.tenant_id,
+                    brand_space_id=link.brand_space_id,
+                    review_link_id=link.id,
+                    user_id=user.id,
+                    mentioned_by=mentioned_by,
+                    access_role="viewer",
+                )
+            )
+            new_users.append(user)
+        await self.session.commit()
+        if new_users:
+            try:
+                await self._send_mention_notifications(link, new_users, mentioned_by)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Review mention notification failed for review_link_id=%s: %s",
+                    link.id,
+                    exc,
+                )
+        return new_users
 
     async def add_comment(
         self,
@@ -134,7 +218,7 @@ class ReviewService:
             )
 
     async def _send_comment_notifications(self, link: ReviewLink, comment: ReviewComment) -> None:
-        recipients = await self._comment_notification_recipients(link)
+        recipients = await self._comment_notification_recipients(link, exclude_user_id=comment.author_user_id)
         if not recipients:
             return
         commenter_name = await self._commenter_name(comment)
@@ -156,7 +240,7 @@ class ReviewService:
             )
 
     async def _create_comment_in_app_notifications(self, link: ReviewLink, comment: ReviewComment) -> None:
-        recipients = await self._comment_notification_recipients(link)
+        recipients = await self._comment_notification_recipients(link, exclude_user_id=comment.author_user_id)
         if not recipients:
             return
         commenter_name = await self._commenter_name(comment)
@@ -186,7 +270,7 @@ class ReviewService:
         link: ReviewLink,
         reviewer_user_id: UUID | None = None,
     ) -> None:
-        recipients = await self._comment_notification_recipients(link)
+        recipients = await self._comment_notification_recipients(link, exclude_user_id=reviewer_user_id)
         if not recipients:
             return
         reviewer_name = await self._reviewer_name(reviewer_user_id)
@@ -203,6 +287,67 @@ class ReviewService:
                 },
             )
 
+    async def _send_mention_notifications(
+        self,
+        link: ReviewLink,
+        recipients: list[User],
+        mentioned_by: UUID,
+    ) -> None:
+        sharer_name = await self._reviewer_name(mentioned_by)
+        content = await self.contents.get_scoped(
+            link.content_version_id,
+            link.tenant_id,
+            link.brand_space_id,
+        )
+        post_title = link.title or (content.title if content else None)
+        review_url = self.email.build_review_link(link.token)
+        notification_service = InAppNotificationService(self.session)
+        for recipient in recipients:
+            await notification_service.create(
+                recipient_user_id=recipient.id,
+                tenant_id=recipient.tenant_id,
+                title="Review Mention",
+                message=f"{sharer_name} mentioned you on {post_title or 'a shared image'}.",
+                metadata={
+                    "event": "review_mention_added",
+                    "review_link_id": str(link.id),
+                },
+            )
+            await asyncio.to_thread(
+                self.email.send_review_mention_notification_email,
+                recipient.email,
+                recipient.full_name,
+                sharer_name,
+                review_url,
+                post_title,
+            )
+        await self.session.commit()
+
+    async def _send_review_approved_email_notifications(
+        self,
+        link: ReviewLink,
+        reviewer_user_id: UUID | None = None,
+    ) -> None:
+        recipients = await self._comment_notification_recipients(link, exclude_user_id=reviewer_user_id)
+        if not recipients:
+            return
+        reviewer_name = await self._reviewer_name(reviewer_user_id)
+        content = await self.contents.get_scoped(
+            link.content_version_id,
+            link.tenant_id,
+            link.brand_space_id,
+        )
+        post_title = link.title or (content.title if content else None)
+        review_url = self.email.build_review_link(link.token)
+        for recipient in recipients:
+            await asyncio.to_thread(
+                self.email.send_review_approved_notification_email,
+                recipient.email,
+                reviewer_name,
+                review_url,
+                post_title,
+            )
+
     async def _reviewer_name(self, reviewer_user_id: UUID | None) -> str:
         if reviewer_user_id:
             reviewer = await self._get_active_user(reviewer_user_id)
@@ -210,16 +355,23 @@ class ReviewService:
                 return reviewer.full_name or reviewer.email
         return "Reviewer"
 
-    async def _comment_notification_recipients(self, link: ReviewLink) -> list[User]:
+    async def _comment_notification_recipients(
+        self,
+        link: ReviewLink,
+        exclude_user_id: UUID | None = None,
+    ) -> list[User]:
+        users: list[User] = []
         sharer = await self._get_active_user(link.created_by)
-        if not sharer:
-            return []
-        role_codes = await self._get_notification_role_codes(sharer.id, link.brand_space_id)
-        if RoleCode.TENANT_ADMIN in role_codes or RoleCode.TENANT_USER in role_codes:
-            return self._dedupe_email_recipients([sharer])
-        if RoleCode.BRAND_USER in role_codes:
-            return self._dedupe_email_recipients([sharer])
-        return self._dedupe_email_recipients([sharer])
+        if sharer:
+            users.append(sharer)
+        users.extend(await self._list_active_users_by_role(link.tenant_id, RoleCode.TENANT_ADMIN))
+        for participant in await self.participants.list_for_link(link.id):
+            participant_user = await self._get_active_user(participant.user_id)
+            if participant_user:
+                users.append(participant_user)
+        if exclude_user_id:
+            users = [user for user in users if user.id != exclude_user_id]
+        return self._dedupe_email_recipients(users)
 
     async def _commenter_name(self, comment: ReviewComment) -> str:
         if comment.author_user_id:
@@ -281,6 +433,44 @@ class ReviewService:
             .distinct()
         )
         return list(result.scalars().all())
+
+    async def _list_active_tenant_users(self, tenant_id: UUID) -> list[User]:
+        result = await self.session.execute(
+            select(User)
+            .where(
+                User.tenant_id == tenant_id,
+                User.is_active.is_(True),
+            )
+            .order_by(User.full_name.asc(), User.email.asc())
+        )
+        return list(result.scalars().all())
+
+    async def _list_active_users_by_ids(self, tenant_id: UUID, user_ids: list[UUID]) -> list[User]:
+        if not user_ids:
+            return []
+        result = await self.session.execute(
+            select(User)
+            .where(
+                User.tenant_id == tenant_id,
+                User.is_active.is_(True),
+                User.id.in_(user_ids),
+            )
+            .order_by(User.full_name.asc(), User.email.asc())
+        )
+        return list(result.scalars().all())
+
+    async def _role_codes_by_user_ids(self, user_ids: set[UUID]) -> dict[UUID, set[str]]:
+        if not user_ids:
+            return {}
+        result = await self.session.execute(
+            select(UserRole.user_id, Role.code)
+            .join(Role, Role.id == UserRole.role_id)
+            .where(UserRole.user_id.in_(user_ids))
+        )
+        role_codes_by_user: dict[UUID, set[str]] = {}
+        for user_id, role_code in result.all():
+            role_codes_by_user.setdefault(user_id, set()).add(role_code)
+        return role_codes_by_user
 
     async def _list_active_super_users_for_brand(
         self,
@@ -352,5 +542,13 @@ class ReviewService:
         link.status = status
         if status == ReviewStatus.APPROVED and not was_approved:
             await self._create_review_approved_in_app_notifications(link, reviewer_user_id)
+            try:
+                await self._send_review_approved_email_notifications(link, reviewer_user_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Review approval email notification failed for review_link_id=%s: %s",
+                    link.id,
+                    exc,
+                )
         await self.session.commit()
         return link

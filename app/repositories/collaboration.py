@@ -9,10 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.collaboration import (
     AnalyticsSnapshot,
+    BrandSpaceHistory,
     InAppNotification,
     JobRecord,
     ReviewComment,
     ReviewLink,
+    ReviewLinkParticipant,
     SocialConnection,
     UsageConsumption,
     UsageLimit,
@@ -75,6 +77,32 @@ class ReviewCommentRepository(Repository[ReviewComment]):
         return list(result.scalars().all())
 
 
+class ReviewLinkParticipantRepository(Repository[ReviewLinkParticipant]):
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session, ReviewLinkParticipant)
+
+    async def list_for_link(self, review_link_id: UUID) -> list[ReviewLinkParticipant]:
+        result = await self.session.execute(
+            select(ReviewLinkParticipant)
+            .where(ReviewLinkParticipant.review_link_id == review_link_id)
+            .order_by(ReviewLinkParticipant.created_at.asc())
+        )
+        return list(result.scalars().all())
+
+    async def get_for_link_user(
+        self,
+        review_link_id: UUID,
+        user_id: UUID,
+    ) -> ReviewLinkParticipant | None:
+        result = await self.session.execute(
+            select(ReviewLinkParticipant).where(
+                ReviewLinkParticipant.review_link_id == review_link_id,
+                ReviewLinkParticipant.user_id == user_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+
 class InAppNotificationRepository(Repository[InAppNotification]):
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(session, InAppNotification)
@@ -119,6 +147,23 @@ class InAppNotificationRepository(Repository[InAppNotification]):
             return False
         await self.delete(notification)
         return True
+
+
+class BrandSpaceHistoryRepository(Repository[BrandSpaceHistory]):
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session, BrandSpaceHistory)
+
+    async def list_for_brand(self, tenant_id: UUID, brand_space_id: UUID, limit: int = 100) -> list[BrandSpaceHistory]:
+        result = await self.session.execute(
+            select(BrandSpaceHistory)
+            .where(
+                BrandSpaceHistory.tenant_id == tenant_id,
+                BrandSpaceHistory.brand_space_id == brand_space_id,
+            )
+            .order_by(BrandSpaceHistory.created_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
 
 
 class SocialConnectionRepository(Repository[SocialConnection]):

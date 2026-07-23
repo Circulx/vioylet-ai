@@ -246,17 +246,6 @@ class BrandResponse(APIModel):
     updated_at: datetime
 
 
-class BrandSpaceHistoryResponse(APIModel):
-    # Response contract for Brand Space activity history entries.
-    id: UUID
-    tenant_id: UUID
-    brand_space_id: UUID
-    activity_type: str
-    message: str
-    performed_by: UUID | None = None
-    created_at: datetime
-
-
 class BrandUsageMetricResponse(APIModel):
     # Response contract for brand usage metric; routes serialize service or ORM results into this frontend-
     # facing shape.

@@ -18,7 +18,6 @@ from app.schemas.brand import (
     BrandFinalizeRequest,
     BrandOverviewResponse,
     BrandResponse,
-    BrandSpaceHistoryResponse,
     BrandSectionUpsertRequest,
     BrandSectionsUpsertRequest,
     BrandUpdateRequest,
@@ -112,21 +111,6 @@ async def get_brand_usage(
         raise HTTPException(status_code=403, detail="Forbidden")
     payload = await BrandSpaceService(session).get_usage_summary(principal.tenant_id, brand_id)
     return BrandUsageResponse.model_validate(payload)
-
-
-@router.get("/{brand_id}/history", response_model=list[BrandSpaceHistoryResponse])
-async def brand_history(
-    brand_id: UUID,
-    principal: CurrentPrincipal = Depends(get_current_principal),
-    session: AsyncSession = Depends(get_db_session),
-) -> list[BrandSpaceHistoryResponse]:
-    # Serves Brand Space activity history for users who can access the current Brand Space.
-    forbid_super_admin_brand_access(principal)
-    assert_brand_access(principal, brand_id)
-    if not principal.tenant_id:
-        raise HTTPException(status_code=403, detail="Forbidden")
-    history_entries = await BrandSpaceService(session).list_history(principal.tenant_id, brand_id)
-    return [BrandSpaceHistoryResponse.model_validate(item) for item in history_entries]
 
 
 @router.put("/{brand_id}", response_model=BrandResponse)

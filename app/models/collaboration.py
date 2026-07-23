@@ -70,20 +70,6 @@ class InAppNotification(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     metadata_json: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
 
 
-class BrandSpaceHistory(UUIDPrimaryKeyMixin, TenantScopedMixin, TimestampMixin, Base):
-    __tablename__ = "brand_space_history"
-
-    brand_space_id: Mapped[UUID] = mapped_column(
-        ForeignKey("brand_spaces.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    activity_type: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
-    message: Mapped[str] = mapped_column(Text, nullable=False)
-    performed_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
-    metadata_json: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
-
-
 class SocialConnection(UUIDPrimaryKeyMixin, TenantScopedMixin, BrandScopedMixin, TimestampMixin, Base):
     __tablename__ = "social_connections"
     __table_args__ = (UniqueConstraint("brand_space_id", "platform", name="uq_brand_platform_connection"),)

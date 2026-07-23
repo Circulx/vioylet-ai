@@ -29,6 +29,7 @@ from app.models.brand import (
 from app.models.collaboration import (
     AnalyticsSnapshot,
     BrandCapacityAlertState,
+    BrandSpaceHistory,
     InAppNotification,
     JobRecord,
     ReviewComment,
@@ -55,6 +56,7 @@ __all__ = [
     "BrandLogoAsset",
     "BrandLogoMetadata",
     "BrandSpace",
+    "BrandSpaceHistory",
     "BrandSpaceMember",
     "ChatMessage",
     "ColorPaletteEntry",

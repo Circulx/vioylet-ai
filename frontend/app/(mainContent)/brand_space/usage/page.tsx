@@ -46,7 +46,7 @@ export default function BrandUsageAllocationPage() {
 
   const initialRows = useMemo<UsageRow[]>(() => {
     const configuredTargets = (tenant?.metadata_json?.brand_usage_targets as Record<string, number> | undefined) ?? {};
-    const activeBrands = (brands || []).filter((brand) => brand.lifecycle_state !== "archived" && brand.lifecycle_state !== "deleted");
+    const activeBrands = (brands || []).filter((brand) => brand.lifecycle_state === "active");
     if (!activeBrands.length) {
       return [];
     }
@@ -250,7 +250,7 @@ export default function BrandUsageAllocationPage() {
             discardAllocationIncrease();
           }}
         >
-          <AlertDialogContent>
+          <AlertDialogContent className="rounded-none">
             <AlertDialogHeader>
               <AlertDialogTitle>Increase Capacity Allocation?</AlertDialogTitle>
               <AlertDialogDescription>

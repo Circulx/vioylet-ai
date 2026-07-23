@@ -8,7 +8,6 @@ import { Input } from "@/components/ui/input";
 import {
     AddMoreButton,
     AdditionalColorRow,
-    CheckboxList,
     ColorHexInput,
     FontPickerField,
     FileUploadField,
@@ -18,6 +17,8 @@ import {
     FormSubsection,
     StyledInput,
 } from "./FormFields";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Label } from "@/components/ui/label";
 import { useGoogleFonts } from "@/hooks/useGoogleFonts";
 import { stripFileExtension } from "@/lib/file-utils";
 import { LOGO_PLACEMENT_OPTIONS } from "@/lib/brand-space-options";
@@ -46,13 +47,6 @@ const VisualIdentity = ({ form, setForm, onRemoveUpload, onSelectColorPaletteUpl
         key: TKey,
         value: (typeof form.visualIdentity)[TKey],
     ) => updateBrandFormSection(setForm, "visualIdentity", key, value);
-
-    const toggleLogoPlacement = (value: string) => {
-        const nextValues = form.visualIdentity.logoPlacements.includes(value)
-            ? form.visualIdentity.logoPlacements.filter((item) => item !== value)
-            : [...form.visualIdentity.logoPlacements, value];
-        updateField("logoPlacements", nextValues);
-    };
 
     const addUploads = (key: "colorPaletteUploads", files: FileList | null) => {
         if (!files?.length) {
@@ -117,12 +111,18 @@ const VisualIdentity = ({ form, setForm, onRemoveUpload, onSelectColorPaletteUpl
                             />
                         </FormField>
 
-                        <FormField label="Logo Placement" description="Select allowed logo placements" required>
-                            <CheckboxList
-                                options={LOGO_PLACEMENT_OPTIONS}
-                                values={form.visualIdentity.logoPlacements}
-                                onToggle={toggleLogoPlacement}
-                            />
+                        <FormField label="Logo Placement" description="Select one logo placement" required>
+                            <RadioGroup
+                                value={form.visualIdentity.logoPlacements[0] || ""}
+                                onValueChange={(value) => updateField("logoPlacements", [value])}
+                            >
+                                {LOGO_PLACEMENT_OPTIONS.map((option) => (
+                                    <Label key={option} className="flex items-center gap-3 text-base text-slate-700">
+                                        <RadioGroupItem value={option} />
+                                        <span>{option}</span>
+                                    </Label>
+                                ))}
+                            </RadioGroup>
                         </FormField>
                 </div>
 

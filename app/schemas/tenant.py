@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
 from pydantic import EmailStr, Field, field_validator
 
 from app.schemas.common import APIModel
+
+
+PhoneNumber = Annotated[str, Field(pattern=r"^\d{10}$")]
 
 
 class TenantUsageLimitUpdate(APIModel):
@@ -26,11 +29,11 @@ class TenantCreateRequest(APIModel):
     name: str
     slug: str
     contact_email: EmailStr
-    contact_number: str | None = None
+    contact_number: PhoneNumber | None = None
     address: str | None = None
     admin_full_name: str
     admin_email: EmailStr
-    admin_phone_number: str | None = None
+    admin_phone_number: PhoneNumber | None = None
     usage_limits: TenantUsageLimitUpdate
     metadata_json: dict[str, Any] = Field(default_factory=dict)
 
@@ -41,11 +44,11 @@ class TenantUpdateRequest(APIModel):
     name: str | None = None
     slug: str | None = None
     contact_email: EmailStr | None = None
-    contact_number: str | None = None
+    contact_number: PhoneNumber | None = None
     address: str | None = None
     admin_full_name: str | None = None
     admin_email: EmailStr | None = None
-    admin_phone_number: str | None = None
+    admin_phone_number: PhoneNumber | None = None
     usage_limits: TenantUsageLimitUpdate | None = None
     metadata_json: dict[str, Any] | None = None
     is_active: bool | None = None

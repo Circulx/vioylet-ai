@@ -120,6 +120,21 @@ export const useUploadTenantLogo = () => {
   });
 };
 
+export const useRemoveTenantLogo = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) =>
+      request(API.TENANTS.REMOVE_LOGO, {
+        pathParams: id,
+      }),
+    onSuccess: async (_, id) => {
+      await queryClient.invalidateQueries({ queryKey: ["tenants"] });
+      await queryClient.invalidateQueries({ queryKey: ["tenant", id] });
+    },
+  });
+};
+
 export const useUpdateTenantUser = (tenantId: string, userId: string) => {
   const queryClient = useQueryClient();
 

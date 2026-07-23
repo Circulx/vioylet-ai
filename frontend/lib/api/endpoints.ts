@@ -75,6 +75,7 @@ export const API = {
     DELETE: { method: "DELETE", url: (tenantId: string) => `/api/v1/tenants/${tenantId}` } as ApiEndpoint<void, { message: string }>,
     UPDATE_BRAND_USAGE_TARGETS: { method: "PUT", url: (tenantId: string) => `/api/v1/tenants/${tenantId}/brand-usage-targets` } as ApiEndpoint<{ brand_usage_targets: Record<string, number> }, { brand_usage_targets: Record<string, number> }>,
     UPLOAD_LOGO: { method: "POST", url: (tenantId: string) => `/api/v1/tenants/${tenantId}/logo` } as ApiEndpoint<TenantLogoUploadRequest, TenantSummaryResponse>,
+    REMOVE_LOGO: { method: "DELETE", url: (tenantId: string) => `/api/v1/tenants/${tenantId}/logo` } as ApiEndpoint<void, TenantSummaryResponse>,
     USERS: { method: "GET", url: (tenantId: string) => `/api/v1/tenants/${tenantId}/users` } as ApiEndpoint<void, TenantUserResponse[]>,
     BRAND_SPACES: { method: "GET", url: (tenantId: string) => `/api/v1/tenants/${tenantId}/brand-spaces` } as ApiEndpoint<void, TenantBrandSpaceSummaryResponse[]>,
     CREATE_USER: { method: "POST", url: (tenantId: string) => `/api/v1/tenants/${tenantId}/users` } as ApiEndpoint<unknown, TenantUserResponse>,

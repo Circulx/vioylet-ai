@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUp, Copy, Download, Facebook, FileText, Image as ImageIcon, Instagram, Linkedin, SendHorizontal, Share2, X } from "lucide-react";
+import { ArrowUp, Copy, Download, FileText, Image as ImageIcon, Search, SendHorizontal, Share2, X } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import type { KeyboardEvent } from "react";
@@ -12,8 +12,8 @@ import { resolveBrandByRouteKey } from "@/lib/brand-routing";
 import { apiOrigin } from "@/lib/env";
 import { useBrands } from "@/hooks/useBrands";
 import { useProfile } from "@/hooks/useAuthProfile";
-import { useAddReviewComment, useContentHistory, useCreateShareLink, useReviewDetail, useUpdateReviewStatus } from "@/hooks/useContentWorkspace";
-import type { AssetReference } from "@/lib/api/contracts";
+import { useAddReviewComment, useContentHistory, useCreateShareLink, useReviewDetail, useReviewShareAccess, useUpdateReviewShareAccess, useUpdateReviewStatus } from "@/hooks/useContentWorkspace";
+import type { AssetReference, ReviewUserSummary } from "@/lib/api/contracts";
 import { getAccessToken } from "@/lib/api/session";
 import { coerceGenerationDecision, formatGenerationMode, getGenerationDecisionReasons, getGenerationDecisionTemplate } from "@/lib/generation-decision";
 import Image from "next/image";
@@ -350,6 +350,8 @@ export default function ShareReviewScreen({
     const [welcomeName, setWelcomeName] = useState("");
     const [modalMode, setModalMode] = useState<ModalMode>("none");
     const [copied, setCopied] = useState(false);
+    const [shareSearch, setShareSearch] = useState("");
+    const [selectedMentionIds, setSelectedMentionIds] = useState<string[]>([]);
     const [activePreviewIndex, setActivePreviewIndex] = useState(0);
     const [hasAuthToken] = useState(() => Boolean(getAccessToken()));
 
@@ -366,12 +368,14 @@ export default function ShareReviewScreen({
     const latestContent = history?.[0];
     const createLink = useCreateShareLink(brandId);
     const review = useReviewDetail(reviewToken);
+    const isAuthenticatedReviewer = Boolean(profile.data);
+    const isTenantAdminViewer = Boolean(profile.data?.role_codes?.includes("tenant_admin"));
+    const shareAccess = useReviewShareAccess(reviewToken, modalMode === "share" && isTenantAdminViewer);
+    const updateShareAccess = useUpdateReviewShareAccess(reviewToken);
     const addComment = useAddReviewComment(reviewToken);
     const updateReviewStatus = useUpdateReviewStatus(reviewToken);
 
     const reviewContent = review.data?.content;
-    const isAuthenticatedReviewer = Boolean(profile.data);
-    const isTenantAdminViewer = Boolean(profile.data?.role_codes?.includes("tenant_admin"));
     const isApproved = review.data?.link.status === "approved";
     const displayBrandName = brand?.name || reviewContent?.brand_name || "Brand Name";
     const effectiveTitle = brand?.name || reviewContent?.brand_name || reviewContent?.title || "Violyt";
@@ -385,6 +389,32 @@ export default function ShareReviewScreen({
     const appOrigin = typeof window !== "undefined" ? window.location.origin : "http://localhost:3000";
     const shareUrl = reviewToken ? `${appOrigin}/review/${reviewToken}` : "";
     const accessGrantorName = review.data?.link.created_by_name?.trim() || "Violyt";
+    const existingShareUserIds = useMemo(() => {
+        const ids = new Set<string>();
+        if (shareAccess.data?.owner?.id) {
+            ids.add(shareAccess.data.owner.id);
+        }
+        for (const participant of shareAccess.data?.participants || []) {
+            ids.add(participant.id);
+        }
+        return ids;
+    }, [shareAccess.data]);
+    const selectedMentionUsers = useMemo(
+        () => (shareAccess.data?.mentionable_users || []).filter((user) => selectedMentionIds.includes(user.id)),
+        [selectedMentionIds, shareAccess.data?.mentionable_users],
+    );
+    const mentionSuggestions = useMemo(() => {
+        const query = shareSearch.trim().toLowerCase();
+        return (shareAccess.data?.mentionable_users || [])
+            .filter((user) => !existingShareUserIds.has(user.id) && !selectedMentionIds.includes(user.id))
+            .filter((user) => {
+                if (!query) {
+                    return true;
+                }
+                return `${user.full_name} ${user.email}`.toLowerCase().includes(query);
+            })
+            .slice(0, 6);
+    }, [existingShareUserIds, selectedMentionIds, shareAccess.data?.mentionable_users, shareSearch]);
     const showReviewLinkSuccessToast = () => {
         toast({
             title: "Review link created successfully.",
@@ -498,28 +528,30 @@ export default function ShareReviewScreen({
         window.setTimeout(() => setCopied(false), 1500);
     };
 
+    const handleSelectMentionUser = (user: ReviewUserSummary) => {
+        setSelectedMentionIds((current) => current.includes(user.id) ? current : [...current, user.id]);
+        setShareSearch("");
+    };
+
+    const handleRemoveMentionUser = (userId: string) => {
+        setSelectedMentionIds((current) => current.filter((id) => id !== userId));
+    };
+
+    const handleDoneShare = async () => {
+        if (selectedMentionIds.length) {
+            await updateShareAccess.mutateAsync({ user_ids: selectedMentionIds });
+            toast({
+                title: "Review access updated.",
+                variant: "success",
+            });
+        }
+        setSelectedMentionIds([]);
+        setShareSearch("");
+        setModalMode("none");
+    };
+
     const handleShareReviewPage = async () => {
-        if (!shareUrl) {
-            return;
-        }
-        const shareData: ShareData = {
-            title: `${displayBrandName} Review`,
-            text: `Review ${displayBrandName} preview and comments`,
-            url: shareUrl,
-        };
-        try {
-            if (navigator.share) {
-                await navigator.share(shareData);
-                showReviewLinkSuccessToast();
-                return;
-            }
-            await handleCopyLink();
-        } catch (error) {
-            if (error instanceof DOMException && error.name === "AbortError") {
-                return;
-            }
-            await handleCopyLink();
-        }
+        setModalMode("share");
     };
 
     const exportCandidates = [
@@ -527,31 +559,6 @@ export default function ShareReviewScreen({
         { label: "JPG", icon: ImageIcon, url: resolveAssetUrl(candidateAssets.find((asset) => resolveAssetByExtension(asset.storage_path, ".jpg") || resolveAssetByExtension(asset.storage_path, ".jpeg"))?.storage_path) || previewUrl },
         { label: "PNG", icon: ImageIcon, url: resolveAssetUrl(candidateAssets.find((asset) => resolveAssetByExtension(asset.storage_path, ".png"))?.storage_path) || previewUrl },
     ];
-
-    const openShareWindow = (url: string) => {
-        window.open(url, "_blank", "noopener,noreferrer,width=720,height=720");
-    };
-
-    const handleSocialShare = async (network: "instagram" | "facebook" | "linkedin") => {
-        if (!shareUrl && !activePreviewUrl) {
-            return;
-        }
-        const target = shareUrl || activePreviewUrl || "";
-        if (network === "instagram") {
-            if (navigator.share && activePreviewUrl) {
-                await navigator.share({ title: effectiveTitle, text: `${effectiveTitle} review`, url: target });
-                return;
-            }
-            await navigator.clipboard.writeText(target);
-            openShareWindow("https://www.instagram.com/");
-            return;
-        }
-        if (network === "facebook") {
-            openShareWindow(`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(target)}`);
-            return;
-        }
-        openShareWindow(`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(target)}`);
-    };
 
     const renderCommentThread = (item: (typeof comments)[number], options?: { paragraphClassName?: string }) => {
         const replyValue = replyDrafts[item.id] || "";
@@ -634,6 +641,161 @@ export default function ShareReviewScreen({
         </div>
     );
 
+    const renderUserAvatar = (name: string, colorSeed: string) => (
+        <span
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-base font-semibold text-white"
+            style={{ backgroundColor: stableCommentColor(colorSeed) }}
+        >
+            {(name || "U").slice(0, 1).toUpperCase()}
+        </span>
+    );
+
+    const displayUserName = (user: ReviewUserSummary) => user.full_name?.trim() || user.email;
+
+    const renderShareModal = () => {
+        if (modalMode === "none") {
+            return null;
+        }
+        return (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#121212]/75 px-4">
+                <div className={`relative w-full bg-white shadow-2xl ${modalMode === "share" ? "max-w-[560px]" : "max-w-[466px]"}`}>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setModalMode("none");
+                            setShareSearch("");
+                            setSelectedMentionIds([]);
+                        }}
+                        className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full text-[#121212] hover:bg-[#F2F2F4]"
+                        aria-label="Close"
+                    >
+                        <X className="h-5 w-5" />
+                    </button>
+
+                    {modalMode === "share" ? (
+                        <div className="space-y-5 p-6">
+                            <div className="flex items-center gap-3 pr-10">
+                                <Share2 className="h-5 w-5 text-primary" />
+                                <h2 className="truncate text-[22px] font-semibold text-[#202124]">Share '{effectiveTitle}'</h2>
+                            </div>
+
+                            <div className="relative">
+                                <div className="flex min-h-[48px] flex-wrap items-center gap-2 border border-primary px-3 py-2">
+                                    {selectedMentionUsers.map((user) => (
+                                        <span key={user.id} className="flex items-center gap-2 rounded-full bg-[#EFEFF8] py-1 pl-2 pr-1 text-sm text-[#252837]">
+                                            {displayUserName(user)}
+                                            <button
+                                                type="button"
+                                                onClick={() => handleRemoveMentionUser(user.id)}
+                                                className="flex h-5 w-5 items-center justify-center rounded-full hover:bg-white"
+                                                aria-label={`Remove ${displayUserName(user)}`}
+                                            >
+                                                <X className="h-3 w-3" />
+                                            </button>
+                                        </span>
+                                    ))}
+                                    <div className="flex min-w-[180px] flex-1 items-center gap-2">
+                                        <Search className="h-4 w-4 text-[#777777]" />
+                                        <Input
+                                            value={shareSearch}
+                                            onChange={(event) => setShareSearch(event.target.value)}
+                                            placeholder="Add people"
+                                            className="h-8 border-none bg-transparent px-0 text-sm shadow-none focus-visible:ring-0"
+                                        />
+                                    </div>
+                                </div>
+                                {mentionSuggestions.length ? (
+                                    <div className="absolute left-0 right-0 top-[calc(100%+4px)] z-10 max-h-56 overflow-y-auto border border-[#E0E3ED] bg-white shadow-xl">
+                                        {mentionSuggestions.map((user) => (
+                                            <button
+                                                key={user.id}
+                                                type="button"
+                                                onClick={() => handleSelectMentionUser(user)}
+                                                className="flex w-full items-center gap-3 px-3 py-3 text-left hover:bg-[#F6F6FA]"
+                                            >
+                                                {renderUserAvatar(displayUserName(user), user.email)}
+                                                <span className="min-w-0">
+                                                    <span className="block truncate text-sm font-semibold text-[#252837]">{displayUserName(user)}</span>
+                                                    <span className="block truncate text-xs text-[#777777]">{user.email}</span>
+                                                </span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                ) : null}
+                            </div>
+
+                            <div className="space-y-3 pt-1">
+                                <p className="text-base font-semibold text-[#252837]">People with access</p>
+                                <div className="space-y-3">
+                                    {shareAccess.isLoading ? (
+                                        <p className="py-3 text-sm text-[#777777]">Loading users...</p>
+                                    ) : null}
+                                    {shareAccess.data?.owner ? (
+                                        <div className="flex items-center gap-3">
+                                            {renderUserAvatar(displayUserName(shareAccess.data.owner), shareAccess.data.owner.email)}
+                                            <div className="min-w-0 flex-1">
+                                                <p className="truncate text-sm font-semibold text-[#252837]">{displayUserName(shareAccess.data.owner)} (owner)</p>
+                                                <p className="truncate text-xs text-[#777777]">{shareAccess.data.owner.email}</p>
+                                            </div>
+                                            <span className="text-sm font-medium text-[#777777]">Owner</span>
+                                        </div>
+                                    ) : null}
+                                    {(shareAccess.data?.participants || []).map((participant) => (
+                                        <div key={participant.id} className="flex items-center gap-3">
+                                            {renderUserAvatar(displayUserName(participant), participant.email)}
+                                            <div className="min-w-0 flex-1">
+                                                <p className="truncate text-sm font-semibold text-[#252837]">{displayUserName(participant)}</p>
+                                                <p className="truncate text-xs text-[#777777]">{participant.email}</p>
+                                            </div>
+                                            <span className="text-sm font-medium capitalize text-[#777777]">{participant.access_role}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="flex items-center justify-between border-t border-[#ECECF1] pt-5">
+                                <Button
+                                    type="button"
+                                    onClick={handleCopyLink}
+                                    variant="outline"
+                                    className="h-10 rounded-full border-[#CFCFD5] px-5 text-primary"
+                                >
+                                    <Copy className="mr-2 h-4 w-4" />
+                                    {copied ? "Copied" : "Copy link"}
+                                </Button>
+                                <Button
+                                    type="button"
+                                    onClick={() => void handleDoneShare()}
+                                    disabled={updateShareAccess.isPending || !isTenantAdminViewer}
+                                    className="h-10 rounded-full bg-primary px-7 text-white hover:bg-primary/90"
+                                >
+                                    {updateShareAccess.isPending ? "Sharing..." : "Done"}
+                                </Button>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="space-y-6 bg-[#F6F6F7] p-10">
+                            <h2 className="text-2xl font-semibold text-[#121212]">Save as</h2>
+                            <div className="bg-white px-6 shadow-[0_18px_36px_-28px_rgba(60,47,143,0.45)]">
+                                {exportCandidates.map((item) => (
+                                    <button
+                                        key={item.label}
+                                        type="button"
+                                        onClick={() => item.url && window.open(item.url, "_blank", "noopener,noreferrer")}
+                                        className="flex w-full items-center gap-4 border-b border-slate-100 py-4 text-left last:border-none"
+                                    >
+                                        <item.icon className="h-5 w-5 text-[#121212]" />
+                                        <span className="text-lg font-normal text-[#4B4B4B]">{item.label}</span>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+    };
+
     const renderExternalReviewPage = (showApprove: boolean) => (
         <div className="min-h-screen bg-white text-[#1D2130]">
             <header className="flex h-20 items-center border-b border-[#D9D9DF] px-9">
@@ -648,7 +810,7 @@ export default function ShareReviewScreen({
                 <div className="mb-5 flex items-center justify-between gap-5 pr-[10px]">
                     <h1 className="text-[32px] font-extrabold leading-none text-primary">{displayBrandName}</h1>
                     <div className="flex items-center gap-3">
-                        {isAuthenticatedReviewer ? (
+                        {showApprove ? (
                             <Button
                                 type="button"
                                 onClick={() => void handleShareReviewPage()}
@@ -739,6 +901,7 @@ export default function ShareReviewScreen({
                     Violyt suggestions may need review. Verify accuracy before use.
                 </p>
             </main>
+            {renderShareModal()}
         </div>
     );
     if (externalMode && !reviewToken) {
@@ -761,8 +924,15 @@ export default function ShareReviewScreen({
         return (
             <div className="flex min-h-screen items-center justify-center bg-white px-6 text-center">
                 <div>
-                    <h1 className="text-2xl font-semibold text-primary">Review unavailable</h1>
-                    <p className="mt-3 text-sm text-[#777777]">We could not load this review link. Please reopen it from Violyt and try again.</p>
+                    <h1 className="text-2xl font-semibold text-primary">Review access required</h1>
+                    <p className="mt-3 text-sm text-[#777777]">
+                        Only people mentioned on this review can open it.
+                    </p>
+                    {!hasAuthToken ? (
+                        <Link href={`/auth/login?redirect=${encodeURIComponent(`/review/${reviewToken}`)}`} className="mt-5 inline-flex h-10 items-center justify-center rounded-[4px] bg-primary px-6 text-sm font-semibold text-white">
+                            Login
+                        </Link>
+                    ) : null}
                 </div>
             </div>
         );
@@ -881,85 +1051,7 @@ export default function ShareReviewScreen({
 
             <p className="w-full absolute bottom-0 pb-1 mx-auto text-center text-sm text-[#A0A0A7]">Violyt suggestions may need review. Verify accuracy before use.</p>
 
-            {modalMode !== "none" ? (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#121212]/75 px-4">
-                    <div className={`relative w-full bg-white p-8 shadow-2xl ${modalMode === "share" ? "max-w-[466px]" : "max-w-[466px]"}`}>
-                        <div className="absolute right-3 top-3">
-                            <button type="button" onClick={() => setModalMode("none")} className="flex h-7 w-7 items-center justify-center rounded-full bg-[#F7F7F8] text-[#121212]">
-                                <X className="h-4 w-4" />
-                            </button>
-                        </div>
-
-                        {modalMode === "share" ? (
-                            <div className="space-y-4 bg-[#F6F6F7] p-4">
-                                <h2 className="text-2xl font-semibold text-[#121212]">Share</h2>
-                                {activePreviewUrl ? (
-                                    <div className="relative">
-                                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                                        <img src={activePreviewUrl} alt="Share preview" className="max-h-[260px] w-full object-cover" />
-                                        <button
-                                            type="button"
-                                            onClick={() => activePreviewUrl && window.open(activePreviewUrl, "_blank", "noopener,noreferrer")}
-                                            className="absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-full bg-white text-[#121212] shadow"
-                                        >
-                                            <Download className="h-5 w-5" />
-                                        </button>
-                                    </div>
-                                ) : null}
-                                <div className="flex justify-center">
-                                    <Button onClick={handleCopyLink} className="h-10 rounded-none bg-primary px-8 text-lg hover:bg-primary/90">
-                                        <Copy className="mr-3 h-5 w-5" />
-                                        {copied ? "Copied" : "Copy Link"}
-                                    </Button>
-                                </div>
-                                <div className="border-t border-slate-200 pt-6 text-center">
-                                    <p className="text-lg font-medium text-[#121212]">Social Media</p>
-                                    <div className="mt-4 flex justify-center gap-5">
-                                        <button
-                                            type="button"
-                                            onClick={() => void handleSocialShare("instagram")}
-                                            className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-primary shadow-sm"
-                                        >
-                                            <Instagram className="h-5 w-5" />
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={() => void handleSocialShare("facebook")}
-                                            className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-primary shadow-sm"
-                                        >
-                                            <Facebook className="h-5 w-5" />
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={() => void handleSocialShare("linkedin")}
-                                            className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-primary shadow-sm"
-                                        >
-                                            <Linkedin className="h-5 w-5" />
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        ) : (
-                            <div className="space-y-6 bg-[#F6F6F7] p-10">
-                                <h2 className="text-2xl font-semibold text-[#121212]">Save as</h2>
-                                <div className="bg-white px-6 shadow-[0_18px_36px_-28px_rgba(60,47,143,0.45)]">
-                                    {exportCandidates.map((item) => (
-                                        <button
-                                            key={item.label}
-                                            type="button"
-                                            onClick={() => item.url && window.open(item.url, "_blank", "noopener,noreferrer")}
-                                            className="flex w-full items-center gap-4 border-b border-slate-100 py-4 text-left last:border-none"
-                                        >
-                                            <item.icon className="h-5 w-5 text-[#121212]" />
-                                            <span className="text-lg font-normal text-[#4B4B4B]">{item.label}</span>
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            ) : null}
+            {renderShareModal()}
         </div>
     );
 }

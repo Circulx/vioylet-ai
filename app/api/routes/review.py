@@ -2,7 +2,8 @@
 import re
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import CurrentPrincipal, assert_brand_access, assert_tenant_access, get_current_principal, get_brand_scope_header, require_brand_scope, require_roles
@@ -11,7 +12,7 @@ from app.core.security import decode_token
 from app.db.session import AsyncSessionLocal, get_db_session
 from app.models.brand import BrandSpace
 from app.models.content import ContentVersion, GeneratedAsset
-from app.models.tenant import User
+from app.models.tenant import Role, User, UserRole
 from app.repositories.content import AssetRepository, ChatMessageRepository, ContentRepository
 from app.schemas.common import AssetReference
 from app.schemas.review import (
@@ -20,6 +21,10 @@ from app.schemas.review import (
     ReviewDetailContent,
     ReviewDetailResponse,
     ReviewLinkResponse,
+    ReviewParticipantResponse,
+    ReviewShareAccessResponse,
+    ReviewShareAccessUpdateRequest,
+    ReviewUserSummary,
     ReviewStatusUpdateRequest,
     ShareLinkCreateRequest,
 )
@@ -55,7 +60,50 @@ async def _optional_principal_from_authorization(
     user = await session.get(User, user_id)
     if not user or not user.is_active:
         return None
-    return CurrentPrincipal(user_id=user.id, tenant_id=user.tenant_id, email=user.email)
+    role_result = await session.execute(
+        select(Role.code)
+        .join(UserRole, UserRole.role_id == Role.id)
+        .where(UserRole.user_id == user.id)
+    )
+    return CurrentPrincipal(
+        user_id=user.id,
+        tenant_id=user.tenant_id,
+        email=user.email,
+        role_codes=set(role_result.scalars().all()),
+    )
+
+
+def _review_access_denied() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="You need to be mentioned on this review to access it.",
+    )
+
+
+def _review_user_summary(user: User, role_codes: set[str] | None = None) -> ReviewUserSummary:
+    return ReviewUserSummary(
+        id=user.id,
+        full_name=user.full_name,
+        email=user.email,
+        role_codes=sorted(role_codes or set()),
+    )
+
+
+def _review_participant_summary(
+    user: User,
+    role_codes: set[str] | None = None,
+    *,
+    access_role: str = "viewer",
+    is_owner: bool = False,
+) -> ReviewParticipantResponse:
+    return ReviewParticipantResponse(
+        id=user.id,
+        full_name=user.full_name,
+        email=user.email,
+        role_codes=sorted(role_codes or set()),
+        access_role=access_role,
+        is_owner=is_owner,
+    )
 
 
 def _asset_reference_from_payload(asset: object, delivery: AssetDeliveryService) -> AssetReference | None:
@@ -256,10 +304,22 @@ async def create_share_link(
 
 
 @router.get("/{token}", response_model=ReviewDetailResponse)
-async def get_review(token: str, session: AsyncSession = Depends(get_db_session)) -> dict:
+async def get_review(
+    token: str,
+    authorization: str | None = Header(default=None),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
     # Serves the review detail lookup endpoint; it uses FastAPI dependencies, delegates work to services, and
     # returns the response schema.
-    link, comments = await ReviewService(session).get_by_token(token)
+    service = ReviewService(session)
+    link, comments = await service.get_by_token(token)
+    principal = await _optional_principal_from_authorization(authorization, session)
+    if not await service.can_access_link(
+        link,
+        principal.user_id if principal else None,
+        principal.role_codes if principal else None,
+    ):
+        raise _review_access_denied()
     creator = await session.get(User, link.created_by)
     brand_space = await session.get(BrandSpace, link.brand_space_id)
     content = await ContentRepository(session).get_scoped(link.content_version_id, link.tenant_id, link.brand_space_id)
@@ -317,6 +377,74 @@ async def get_review(token: str, session: AsyncSession = Depends(get_db_session)
     )
 
 
+@router.get("/{token}/share-access", response_model=ReviewShareAccessResponse)
+async def get_review_share_access(
+    token: str,
+    principal: CurrentPrincipal = Depends(require_roles(RoleCode.TENANT_ADMIN)),
+    session: AsyncSession = Depends(get_db_session),
+) -> ReviewShareAccessResponse:
+    service = ReviewService(session)
+    link, _ = await service.get_by_token(token)
+    assert_tenant_access(principal, link.tenant_id)
+    assert_brand_access(principal, link.brand_space_id)
+    owner, participants, mentionable_users, role_codes_by_user = await service.list_share_access(link)
+    return ReviewShareAccessResponse(
+        owner=_review_participant_summary(
+            owner,
+            role_codes_by_user.get(owner.id, set()),
+            access_role="owner",
+            is_owner=True,
+        ) if owner else None,
+        participants=[
+            _review_participant_summary(
+                user,
+                role_codes_by_user.get(user.id, set()),
+                access_role=participant.access_role,
+            )
+            for participant, user in participants
+        ],
+        mentionable_users=[
+            _review_user_summary(user, role_codes_by_user.get(user.id, set()))
+            for user in mentionable_users
+        ],
+    )
+
+
+@router.post("/{token}/share-access", response_model=ReviewShareAccessResponse)
+async def update_review_share_access(
+    token: str,
+    payload: ReviewShareAccessUpdateRequest,
+    principal: CurrentPrincipal = Depends(require_roles(RoleCode.TENANT_ADMIN)),
+    session: AsyncSession = Depends(get_db_session),
+) -> ReviewShareAccessResponse:
+    service = ReviewService(session)
+    link, _ = await service.get_by_token(token)
+    assert_tenant_access(principal, link.tenant_id)
+    assert_brand_access(principal, link.brand_space_id)
+    await service.grant_share_access(link.id, payload.user_ids, principal.user_id)
+    owner, participants, mentionable_users, role_codes_by_user = await service.list_share_access(link)
+    return ReviewShareAccessResponse(
+        owner=_review_participant_summary(
+            owner,
+            role_codes_by_user.get(owner.id, set()),
+            access_role="owner",
+            is_owner=True,
+        ) if owner else None,
+        participants=[
+            _review_participant_summary(
+                user,
+                role_codes_by_user.get(user.id, set()),
+                access_role=participant.access_role,
+            )
+            for participant, user in participants
+        ],
+        mentionable_users=[
+            _review_user_summary(user, role_codes_by_user.get(user.id, set()))
+            for user in mentionable_users
+        ],
+    )
+
+
 @router.post("/{token}/comment", response_model=ReviewCommentResponse)
 async def add_comment(
     token: str,
@@ -330,6 +458,12 @@ async def add_comment(
     service = ReviewService(session)
     link, _ = await service.get_by_token(token)
     principal = await _optional_principal_from_authorization(authorization, session)
+    if not await service.can_access_link(
+        link,
+        principal.user_id if principal else None,
+        principal.role_codes if principal else None,
+    ):
+        raise _review_access_denied()
     comment = await service.add_comment(
         link.id,
         link.tenant_id,

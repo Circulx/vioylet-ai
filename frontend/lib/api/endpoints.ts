@@ -24,6 +24,8 @@ import type {
   RenderResponse,
   ReviewDetailResponse,
   ReviewLinkResponse,
+  ReviewShareAccessResponse,
+  ReviewShareAccessUpdateRequest,
   ResolvedBrandContextResponse,
   TenantLogoUploadRequest,
   TenantBrandSpaceSummaryResponse,
@@ -144,6 +146,8 @@ export const API = {
   REVIEW: {
     CREATE_LINK: { method: "POST", url: "/api/v1/review/share-link" } as ApiEndpoint<unknown, ReviewLinkResponse>,
     DETAIL: { method: "GET", url: (token: string) => `/api/v1/review/${token}` } as ApiEndpoint<void, ReviewDetailResponse>,
+    SHARE_ACCESS: { method: "GET", url: (token: string) => `/api/v1/review/${token}/share-access` } as ApiEndpoint<void, ReviewShareAccessResponse>,
+    UPDATE_SHARE_ACCESS: { method: "POST", url: (token: string) => `/api/v1/review/${token}/share-access` } as ApiEndpoint<ReviewShareAccessUpdateRequest, ReviewShareAccessResponse>,
     ADD_COMMENT: { method: "POST", url: (token: string) => `/api/v1/review/${token}/comment` } as ApiEndpoint<unknown, ReviewDetailResponse["comments"][number]>,
     UPDATE_STATUS: { method: "POST", url: (token: string) => `/api/v1/review/${token}/status` } as ApiEndpoint<{ status: string }, ReviewLinkResponse>,
   },

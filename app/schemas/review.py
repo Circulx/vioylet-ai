@@ -31,6 +31,10 @@ class ReviewStatusUpdateRequest(APIModel):
     status: str
 
 
+class ReviewShareAccessUpdateRequest(APIModel):
+    user_ids: list[UUID] = Field(default_factory=list)
+
+
 class ReviewLinkResponse(APIModel):
     # Response contract for review link; routes serialize service or ORM results into this frontend-facing
     # shape.
@@ -71,3 +75,21 @@ class ReviewDetailResponse(APIModel):
     link: ReviewLinkResponse
     content: ReviewDetailContent | None = None
     comments: list[ReviewCommentResponse] = Field(default_factory=list)
+
+
+class ReviewUserSummary(APIModel):
+    id: UUID
+    full_name: str
+    email: str
+    role_codes: list[str] = Field(default_factory=list)
+
+
+class ReviewParticipantResponse(ReviewUserSummary):
+    access_role: str = "viewer"
+    is_owner: bool = False
+
+
+class ReviewShareAccessResponse(APIModel):
+    owner: ReviewParticipantResponse | None = None
+    participants: list[ReviewParticipantResponse] = Field(default_factory=list)
+    mentionable_users: list[ReviewUserSummary] = Field(default_factory=list)

@@ -613,6 +613,28 @@ export interface ReviewDetailResponse {
   }>;
 }
 
+export interface ReviewUserSummary {
+  id: UUID;
+  full_name: string;
+  email: string;
+  role_codes: string[];
+}
+
+export interface ReviewParticipantResponse extends ReviewUserSummary {
+  access_role: string;
+  is_owner: boolean;
+}
+
+export interface ReviewShareAccessResponse {
+  owner?: ReviewParticipantResponse | null;
+  participants: ReviewParticipantResponse[];
+  mentionable_users: ReviewUserSummary[];
+}
+
+export interface ReviewShareAccessUpdateRequest {
+  user_ids: UUID[];
+}
+
 export interface RenderResponse {
   content_version_id: UUID;
   preview_asset?: AssetReference;

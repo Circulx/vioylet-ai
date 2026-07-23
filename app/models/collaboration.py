@@ -32,6 +32,18 @@ class ReviewLink(UUIDPrimaryKeyMixin, TenantScopedMixin, BrandScopedMixin, Times
     expires_at: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
 
+class ReviewLinkParticipant(UUIDPrimaryKeyMixin, TenantScopedMixin, BrandScopedMixin, TimestampMixin, Base):
+    __tablename__ = "review_link_participants"
+    __table_args__ = (
+        UniqueConstraint("review_link_id", "user_id", name="uq_review_link_participant_user"),
+    )
+
+    review_link_id: Mapped[UUID] = mapped_column(ForeignKey("review_links.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    mentioned_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    access_role: Mapped[str] = mapped_column(String(50), default="viewer", nullable=False)
+
+
 class ReviewComment(UUIDPrimaryKeyMixin, TenantScopedMixin, BrandScopedMixin, TimestampMixin, Base):
     __tablename__ = "review_comments"
 

@@ -13,6 +13,7 @@ from app.models.collaboration import (
     JobRecord,
     ReviewComment,
     ReviewLink,
+    ReviewLinkParticipant,
     SocialConnection,
     UsageConsumption,
     UsageLimit,
@@ -73,6 +74,32 @@ class ReviewCommentRepository(Repository[ReviewComment]):
             .order_by(ReviewComment.created_at.asc())
         )
         return list(result.scalars().all())
+
+
+class ReviewLinkParticipantRepository(Repository[ReviewLinkParticipant]):
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session, ReviewLinkParticipant)
+
+    async def list_for_link(self, review_link_id: UUID) -> list[ReviewLinkParticipant]:
+        result = await self.session.execute(
+            select(ReviewLinkParticipant)
+            .where(ReviewLinkParticipant.review_link_id == review_link_id)
+            .order_by(ReviewLinkParticipant.created_at.asc())
+        )
+        return list(result.scalars().all())
+
+    async def get_for_link_user(
+        self,
+        review_link_id: UUID,
+        user_id: UUID,
+    ) -> ReviewLinkParticipant | None:
+        result = await self.session.execute(
+            select(ReviewLinkParticipant).where(
+                ReviewLinkParticipant.review_link_id == review_link_id,
+                ReviewLinkParticipant.user_id == user_id,
+            )
+        )
+        return result.scalar_one_or_none()
 
 
 class InAppNotificationRepository(Repository[InAppNotification]):

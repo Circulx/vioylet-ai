@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.collaboration import (
     AnalyticsSnapshot,
+    BrandSpaceHistory,
     InAppNotification,
     JobRecord,
     ReviewComment,
@@ -146,6 +147,23 @@ class InAppNotificationRepository(Repository[InAppNotification]):
             return False
         await self.delete(notification)
         return True
+
+
+class BrandSpaceHistoryRepository(Repository[BrandSpaceHistory]):
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session, BrandSpaceHistory)
+
+    async def list_for_brand(self, tenant_id: UUID, brand_space_id: UUID, limit: int = 100) -> list[BrandSpaceHistory]:
+        result = await self.session.execute(
+            select(BrandSpaceHistory)
+            .where(
+                BrandSpaceHistory.tenant_id == tenant_id,
+                BrandSpaceHistory.brand_space_id == brand_space_id,
+            )
+            .order_by(BrandSpaceHistory.created_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
 
 
 class SocialConnectionRepository(Repository[SocialConnection]):

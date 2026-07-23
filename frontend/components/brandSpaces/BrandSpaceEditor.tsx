@@ -1775,14 +1775,14 @@ export default function BrandSpaceEditor({
                         </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
-                        <AlertDialogCancel className="rounded-none">No</AlertDialogCancel>
+                        <AlertDialogCancel className="w-22 h-12 rounded-none">No</AlertDialogCancel>
                         <AlertDialogAction
                             onClick={(event) => {
                                 event.preventDefault();
                                 setEditConfirmationOpen(false);
                                 void handleSubmit("save");
                             }}
-                            className="rounded-none bg-[#FF6D5E] text-white hover:bg-[#FF6D5E]/90"
+                            className="w-22 h-12 rounded-none bg-primary/72 text-white hover:bg-primary/90"
                             disabled={isSubmitting}
                         >
                             Yes

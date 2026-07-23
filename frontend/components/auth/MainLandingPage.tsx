@@ -1,4 +1,9 @@
+"use client"
+
+import { useEffect } from "react";
+import { useRBAC } from "@/hooks/useRBAC";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 
 export const metadata = {
   title: "Login - Violyt",
@@ -6,6 +11,22 @@ export const metadata = {
 };
 
 export default function MainAuthLandingPage({ children }: { children: React.ReactNode }) {
+    const { user, isPending } = useRBAC();
+    const router = useRouter();
+
+    useEffect(() => {
+        if (isPending || !user) {
+            return;
+        }
+
+        if (user.role === "PLATFORM_OWNER") {
+            router.replace("/tenants");
+            return;
+        }else{
+            router.replace("/brand_space");
+        }
+    }, [isPending, user, router]);
+
   return (
     <div className="min-h-screen bg-white md:grid md:grid-cols-2">
       <div className="relative hidden min-h-screen overflow-hidden md:flex md:flex-col md:justify-between">

@@ -166,8 +166,8 @@ export function NotificationDrawer({ children }: { children: ReactNode }) {
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex min-w-0 flex-1 items-center gap-2">
                     {notification.unread ? <span className="h-2 w-2 shrink-0 rounded-full bg-primary" aria-label="Unread" /> : null}
-                    <h1 className="truncate text-lg text-primary font-medium">{notification.title}</h1>
-                    <span className="shrink-0 text-sm text-gray-400">{formatNotificationTimestamp(notification.createdAt)}</span>
+                    <h1 className="truncate text-base font-manrope text-primary font-medium" title={notification.title}>{notification.title}</h1>
+                    <span className="shrink-0 text-xs text-gray-400">{formatNotificationTimestamp(notification.createdAt)}</span>
                   </div>
                   <button
                     type="button"

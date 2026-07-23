@@ -4,7 +4,7 @@ import { ROLE_PERMISSIONS } from "@/lib/permissions";
 import type { Action, Module } from "@/types/rbac.types";
 
 export function useRBAC() {
-  const { data: user } = useGetMe();
+  const { data: user, isPending } = useGetMe();
 
   function canAccessModule(module: Module) {
     if (!user) return false;
@@ -20,6 +20,7 @@ export function useRBAC() {
 
   return {
     user,
+    isPending,
     can,
     canAccessModule,
   };

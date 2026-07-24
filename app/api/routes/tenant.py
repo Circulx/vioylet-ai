@@ -94,6 +94,21 @@ async def upload_tenant_logo(
     return TenantSummaryResponse.model_validate(summary)
 
 
+@router.delete("/{tenant_id}/logo", response_model=TenantSummaryResponse)
+async def remove_tenant_logo(
+    tenant_id: UUID,
+    _: CurrentPrincipal = Depends(require_roles(RoleCode.SUPER_ADMIN, RoleCode.TENANT_ADMIN)),
+    principal: CurrentPrincipal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db_session),
+) -> TenantSummaryResponse:
+    # Removes only the tenant logo and preserves the remaining tenant configuration.
+    assert_tenant_access(principal, tenant_id)
+    service = TenantService(session)
+    await service.remove_logo(tenant_id)
+    summary = await service.get_tenant_summary(tenant_id)
+    return TenantSummaryResponse.model_validate(summary)
+
+
 @router.put("/{tenant_id}", response_model=TenantSummaryResponse)
 async def update_tenant(
     tenant_id: UUID,
@@ -326,7 +341,9 @@ async def update_usage_limits(
 @router.get("/{tenant_id}/usage-summary", response_model=TenantUsageSummary)
 async def get_usage_summary(
     tenant_id: UUID,
-    _: CurrentPrincipal = Depends(require_roles(RoleCode.SUPER_ADMIN, RoleCode.TENANT_ADMIN)),
+    _: CurrentPrincipal = Depends(
+        require_roles(RoleCode.SUPER_ADMIN, RoleCode.TENANT_ADMIN, RoleCode.TENANT_USER)
+    ),
     principal: CurrentPrincipal = Depends(get_current_principal),
     session: AsyncSession = Depends(get_db_session),
 ) -> TenantUsageSummary:

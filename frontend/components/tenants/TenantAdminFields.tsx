@@ -41,6 +41,8 @@ export default function TenantAdminFields({ form, setForm, errors, clearError }:
 
       <Field
         id="admin-phone"
+        digitsOnly
+        maxLength={10}
         label="Contact Number"
         value={form.phone || ""}
         placeholder="Enter contact number"
@@ -60,6 +62,8 @@ function Field({
   value,
   placeholder,
   error,
+  digitsOnly = false,
+  maxLength,
   onChange,
 }: {
   id: string;
@@ -67,6 +71,8 @@ function Field({
   value: string;
   placeholder: string;
   error?: string;
+  digitsOnly?: boolean;
+  maxLength?: number;
   onChange: (value: string) => void;
 }) {
   return (
@@ -76,10 +82,13 @@ function Field({
       </Label>
       <Input
         id={id}
+        type={digitsOnly ? "tel" : "text"}
+        inputMode={digitsOnly ? "numeric" : undefined}
+        maxLength={maxLength}
         value={value}
         placeholder={placeholder}
         className="h-12 rounded-[10px] border-none bg-input-field px-4 text-sm text-[#2F3342] placeholder:text-[#A7A7A7] focus-visible:ring-2 focus-visible:ring-primary/20"
-        onChange={(event) => onChange(event.target.value)}
+        onChange={(event) => onChange(digitsOnly ? event.target.value.replace(/\D/g, "") : event.target.value)}
       />
       {error ? <p className="text-sm text-red-500">{error}</p> : null}
     </div>

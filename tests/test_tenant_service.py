@@ -134,7 +134,7 @@ async def test_update_tenant_persists_metadata_and_active_flag():
         is_active=False,
         admin_full_name="Updated Admin",
         admin_email="updated@acme.com",
-        admin_phone_number="+91 9999999999",
+        admin_phone_number="9999999999",
     )
 
     updated = await service.update_tenant(tenant.id, payload)
@@ -144,7 +144,7 @@ async def test_update_tenant_persists_metadata_and_active_flag():
     assert tenant.metadata_json == {"usage_window": {"start_month": "January", "end_month": "December"}}
     assert admin.full_name == "Updated Admin"
     assert admin.email == "updated@acme.com"
-    assert admin.phone_number == "+91 9999999999"
+    assert admin.phone_number == "9999999999"
     assert session.commits == 1
     assert session.refreshed == [tenant]
 
@@ -195,6 +195,39 @@ async def test_upload_logo_replaces_existing_storage_path():
     assert tenant.logo_asset_path.endswith("/tenant-logo.png")
     assert session.commits == 1
     assert session.refreshed == [tenant]
+
+
+async def test_remove_logo_deletes_storage_and_clears_tenant_path():
+    session = DummySession()
+    service = TenantService(session)
+    tenant = build_tenant(logo_asset_path="tenant-1/global/tenant-assets/logo.png")
+    storage = DummyStorage()
+    service.get_tenant = AsyncMock(return_value=tenant)
+    service.storage = storage
+
+    updated = await service.remove_logo(tenant.id)
+
+    assert updated is tenant
+    assert storage.deleted == ["tenant-1/global/tenant-assets/logo.png"]
+    assert tenant.logo_asset_path is None
+    assert session.commits == 1
+    assert session.refreshed == [tenant]
+
+
+async def test_remove_logo_is_noop_when_tenant_has_no_logo():
+    session = DummySession()
+    service = TenantService(session)
+    tenant = build_tenant(logo_asset_path=None)
+    storage = DummyStorage()
+    service.get_tenant = AsyncMock(return_value=tenant)
+    service.storage = storage
+
+    updated = await service.remove_logo(tenant.id)
+
+    assert updated is tenant
+    assert storage.deleted == []
+    assert session.commits == 0
+    assert session.refreshed == []
 
 
 async def test_get_tenant_summary_includes_primary_admin_and_last_activity():
@@ -311,11 +344,11 @@ async def test_create_tenant_rejects_duplicate_slug():
         name="Jiraaf",
         slug="jiraaf",
         contact_email="team@jiraaf.com",
-        contact_number="+91 9876543210",
+        contact_number="9876543210",
         address="Bengaluru",
         admin_full_name="Jiraaf Admin",
         admin_email="admin@jiraaf.com",
-        admin_phone_number="+91 9000000002",
+        admin_phone_number="9000000002",
         usage_limits=TenantUsageLimitUpdate(
             max_users=10,
             max_brand_spaces=5,
@@ -1380,11 +1413,11 @@ async def test_create_tenant_returns_email_delivery_status():
         name="Jiraaf",
         slug="jiraaf-new",
         contact_email="team@jiraaf.com",
-        contact_number="+91 9876543210",
+        contact_number="9876543210",
         address="Bengaluru",
         admin_full_name="Jiraaf Admin",
         admin_email="admin@jiraaf.com",
-        admin_phone_number="+91 9000000002",
+        admin_phone_number="9000000002",
         usage_limits=TenantUsageLimitUpdate(
             max_users=10,
             max_brand_spaces=5,

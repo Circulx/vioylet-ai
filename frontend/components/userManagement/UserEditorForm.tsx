@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { isAxiosError } from "axios";
 import { useMemo, useState } from "react";
@@ -62,6 +62,9 @@ function getMutationErrorMessage(error: unknown, mode: UserEditorFormProps["mode
         : "We could not save the changes right now.";
 }
 
+function normalizeContactNumber(value: string) {
+    return value.replace(/\D/g, "").slice(0, 10);
+}
 export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
     const router = useRouter();
     const { data: brands } = useBrands();
@@ -152,6 +155,8 @@ export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
         }
         if (!resolvedForm.contactNumber.trim()) {
             nextErrors.contactNumber = "Contact number is required.";
+        } else if (!/^\d{10}$/.test(resolvedForm.contactNumber)) {
+            nextErrors.contactNumber = "Contact number must be exactly 10 digits.";
         }
         if (showBrandAssignment && resolvedForm.selectedBrands.length === 0) {
             nextErrors.selectedBrands = "Assign at least one brand space for a brand user.";
@@ -352,10 +357,12 @@ export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
                             <FormField label="Contact Number" required error={errors.contactNumber}>
                                 <StyledInput
                                     placeholder="Enter contact number"
+                                    inputMode="numeric"
+                                    maxLength={10}
                                     value={resolvedForm.contactNumber}
                                     onChange={(event) => {
                                         setErrors((current) => ({ ...current, contactNumber: undefined }));
-                                        updateForm({ contactNumber: event.target.value });
+                                        updateForm({ contactNumber: normalizeContactNumber(event.target.value) });
                                     }}
                                 />
                             </FormField>

@@ -1,6 +1,6 @@
-"use client";
+﻿"use client";
 
-import { CalendarDays } from "lucide-react";
+import { CalendarDays, ChevronDown, HelpCircle, HelpCircleIcon } from "lucide-react";
 import { PlatformPageTitle, SectionCard } from "@/components/platformOwner/PlatformOwnerPrimitives";
 import { useBrands } from "@/hooks/useBrands";
 import { useGetMe } from "@/hooks/useUser";
@@ -15,10 +15,15 @@ import {
     ProgressRow,
 } from "../Premitives";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
 import { Button } from "../ui/button";
 import { useId, useMemo, useState } from "react";
 import { buildUsageWindowRows, usagePercentage } from "@/lib/platform-owner";
 import { CartesianGrid, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import Link from "next/link";
+import Image from "next/image";
+import { tenantDashboardFaqs } from "@/lib/faqs";
 
 function toPercent(value?: number, max?: number) {
     if (!max || max <= 0) {
@@ -325,6 +330,21 @@ function BrandUsagePieTooltip({
     );
 }
 
+function DashboardFaqItem({ question, answer }: { question: string; answer: string }) {
+    const [open, setOpen] = useState(false);
+
+    return (
+        <Collapsible open={open} onOpenChange={setOpen} className="border-b border-[#E5E7F0] last:border-b-0">
+            <CollapsibleTrigger className="flex w-full items-center justify-between gap-4 py-4 text-left">
+                <span className="text-[15px] font-semibold text-[#252837]">{question}</span>
+                <ChevronDown className={`h-5 w-5 shrink-0 text-primary transition-transform ${open ? "rotate-180" : ""}`} />
+            </CollapsibleTrigger>
+            <CollapsibleContent className="pb-4 pr-8 text-sm leading-6 text-[#5F6472]">
+                {answer}
+            </CollapsibleContent>
+        </Collapsible>
+    );
+}
 export default function TenantAdminDashboard() {
     const { data: currentUser } = useGetMe();
     const { data: tenant } = useGetTenantData(currentUser?.tenantId ?? "");
@@ -340,6 +360,7 @@ export default function TenantAdminDashboard() {
     const [brandOcrUsageEndMonth, setBrandOcrUsageEndMonth] = useState("");
     const [brandAiUsageStartMonth, setBrandAiUsageStartMonth] = useState("");
     const [brandAiUsageEndMonth, setBrandAiUsageEndMonth] = useState("");
+    const [helpDialogOpen, setHelpDialogOpen] = useState(false);
 
 
     const totalCapacity = Math.round(
@@ -651,8 +672,34 @@ export default function TenantAdminDashboard() {
     return (
         <div className="container">
             <div className="space-y-6">
-                <PlatformPageTitle title="Dashboard"></PlatformPageTitle>
-                <SectionCard title="Monthly Usage"
+                <PlatformPageTitle
+                    title={`${tenant?.name}'s Dashboard`}
+                    action={
+                        <Button
+                            type="button"
+                            onClick={() => setHelpDialogOpen(true)}
+                            className="h-12 rounded-none bg-primary/10 text-black px-5 text-[15px] font-medium hover:bg-primary/17"
+                        >
+                            <Image src={"actions_icons/info_circle.svg"} alt="info" width={16} height={16} />
+                            Help
+                        </Button>
+                    }
+                />
+                <Dialog open={helpDialogOpen} onOpenChange={setHelpDialogOpen}>
+                    <DialogContent className="max-h-[84vh] w-full max-w-[620px] overflow-y-auto rounded-none border-0 bg-white p-0 shadow-[0_24px_90px_-28px_rgba(15,23,42,0.45)]">
+                        <DialogHeader className="border-b border-[#E5E7F0] px-6 py-5 text-left">
+                            <DialogTitle className="text-[24px] font-bold leading-tight text-primary">Frequently Asked Questions</DialogTitle>
+                            <DialogDescription className="text-sm text-[#5F6472]">
+                                Quick answers for tenant dashboard usage, capacity, and reporting.
+                            </DialogDescription>
+                        </DialogHeader>
+                        <div className="px-6 py-2">
+                            {tenantDashboardFaqs.map((faq) => (
+                                <DashboardFaqItem key={faq.id} question={faq.question} answer={faq.answer} />
+                            ))}
+                        </div>
+                    </DialogContent>
+                </Dialog>                <SectionCard title="Monthly Usage"
                     toolbar={
                         <Popover>
                             <PopoverTrigger asChild>

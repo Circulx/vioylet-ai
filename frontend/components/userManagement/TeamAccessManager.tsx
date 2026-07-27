@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { MoreVertical, Search, X } from "lucide-react";
+import { MoreVertical, Search } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
     AlertDialog,
@@ -353,10 +353,6 @@ export default function TeamAccessManager() {
                 </SectionCard>
                 <AlertDialog open={Boolean(pendingDeactivateUser)} onOpenChange={(open) => !open && setPendingDeactivateUser(null)}>
                     <AlertDialogContent className="max-w-[420px] rounded-none border-0 bg-white p-6 shadow-[0_20px_80px_-24px_rgba(15,23,42,0.35)]">
-                        <AlertDialogCancel className="absolute right-4 top-4 flex h-6 w-6 items-center justify-center rounded-full border-0 bg-transparent p-0 text-lg leading-none text-slate-500 shadow-none hover:bg-slate-100 hover:text-slate-900 focus-visible:ring-0">
-                            <X className="h-4 w-4" />
-                            <span className="sr-only">Close</span>
-                        </AlertDialogCancel>
                         <AlertDialogHeader>
                             <AlertDialogTitle>Are you sure you want to deactivate this user?</AlertDialogTitle>
                             <AlertDialogDescription>

@@ -215,7 +215,7 @@ export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
                             (savedUser.role_codes.includes("tenant_user") || savedUser.role_codes.includes("brand_user")));
                     if (shouldShowProfileUpdateToast) {
                         toast({
-                            title: "Your profile has been updated successfully.",
+                            title: "profile has been updated successfully.",
                             variant: "success",
                         });
                     }

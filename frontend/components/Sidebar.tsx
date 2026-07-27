@@ -48,6 +48,7 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
 } from "./ui/alert-dialog";
+import { Tooltips } from "./Tooltip";
 
 export default function Sidebar() {
     const { isSidebarOpen, toggleSidebar } = useSidebar();
@@ -118,6 +119,7 @@ export default function Sidebar() {
                             (item.href && item.href !== "/brand_space" ? path.startsWith(`${item.href}/`) : false);
                         const icon = activeItem ? `/sidebar/${iconName}-white.svg` : `/sidebar/${iconName}.svg`;
                         const isBrandSpacesItem = item.href === "/brand_space";
+                        const itemLabel = isBrandSpacesItem && user?.role !== "PLATFORM_OWNER" ? "Brand Space" : item.name;
 
                         return (
                             <div key={item.id} className={`w-full ${isSidebarOpen && "pl-1.5 pr-3 py-1.5"}`}>
@@ -130,8 +132,8 @@ export default function Sidebar() {
                                             !isSidebarOpen && "justify-center px-3",
                                         )}
                                     >
-                                        <Image src={icon} width={20} height={20} alt={item.name} className="h-5 w-5" />
-                                        <span className={cn("text-[16px]", isBrandSpacesItem && "min-w-0 flex-1", !isSidebarOpen && "hidden")}>{item.name}</span>
+                                        <Image src={icon} width={20} height={20} alt={itemLabel} className="h-5 w-5" />
+                                        <span className={cn("text-[16px]", isBrandSpacesItem && "min-w-0 flex-1", !isSidebarOpen && "hidden")}>{itemLabel}</span>
                                         {isBrandSpacesItem && isSidebarOpen && isWorkspacePath ? (
                                             <ChevronDown className="h-4 w-4 shrink-0 text-current" />
                                         ) : null}
@@ -182,20 +184,23 @@ export default function Sidebar() {
                 </div>
 
                 <div className="shrink-0 pt-2">
-                    <Link
-                        href="/profile"
-                        className={cn(
-                            "flex items-center gap-3 rounded-[10px] px-3 py-2 transition hover:bg-[#EFF1F8]",
-                            !isSidebarOpen && "justify-center px-2",
-                        )}
-                    >
-                        <span className={cn("flex items-center justify-center rounded-full bg-[#52B2CF] font-medium text-white", !isSidebarOpen ? "h-8 w-8 text-sm" : "h-[38px] w-[38px] text-base")}>
-                            {user?.name?.[0] || "P"}
-                        </span>
-                        <span className={cn("text-[15px] font-medium text-[#2F3342]", !isSidebarOpen && "hidden")}>
-                            {user?.name || "Indo Sakura"}
-                        </span>
-                    </Link>
+                    <Tooltips content="My Profile">
+                        <Link
+                            href="/profile"
+                            aria-label="My Profile"
+                            className={cn(
+                                "flex items-center gap-3 rounded-[10px] px-3 py-2 transition hover:bg-[#EFF1F8]",
+                                !isSidebarOpen && "justify-center px-2",
+                            )}
+                        >
+                            <span className={cn("flex items-center justify-center rounded-full bg-[#52B2CF] font-medium text-white", !isSidebarOpen ? "h-8 w-8 text-sm" : "h-[38px] w-[38px] text-base")}>
+                                {user?.name?.[0] || "P"}
+                            </span>
+                            <span className={cn("text-[15px] font-medium text-[#2F3342]", !isSidebarOpen && "hidden")}>
+                                {user?.name || "Indo Sakura"}
+                            </span>
+                        </Link>
+                    </Tooltips>
                 </div>
             </nav>
         </aside>

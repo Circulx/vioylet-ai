@@ -746,7 +746,7 @@ export default function TenantAdminDashboard() {
 
                 </SectionCard>
                 <div className="grid gap-4 md:grid-cols-2">
-                    <MiniMetric label="Brand Spaces" value={selectedUsageMetrics.brandSpacesUsed} helper={`${selectedUsageMetrics.brandSpacesLimit}`} compact icon="/tenants/brand_spaces.svg" />
+                    <MiniMetric label="Brand Space" value={selectedUsageMetrics.brandSpacesUsed} helper={`${selectedUsageMetrics.brandSpacesLimit}`} compact icon="/tenants/brand_spaces.svg" />
                     <MiniMetric label="Users" value={selectedUsageMetrics.usersUsed} helper={`${selectedUsageMetrics.usersLimit}`} compact icon="/tenants/users.svg" />
                 </div>
 

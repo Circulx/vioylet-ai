@@ -65,7 +65,7 @@ export default function OwnerProfile() {
         <>
             <div className="w-full px-5 py-5">
                 <div className="w-full max-w-[1014px] space-y-5">
-                    <PlatformPageTitle title="Profile" />
+                    <PlatformPageTitle title="My Profile" />
 
                     <div className="font-manrope grid gap-4 lg:grid-cols-[1fr_50%]">
                         <OwnerSectionCard>
@@ -134,7 +134,7 @@ export default function OwnerProfile() {
 
             <Dialog open={editOpen} onOpenChange={setEditOpen}>
                 <DialogContent className="font-dmSans max-w-lg rounded-2xl border-0 px-8 py-8 shadow-[0_20px_80px_-24px_rgba(15,23,42,0.25)]">
-                    <DialogTitle className="text-2xl font-semibold text-[#111827]">Edit Profile</DialogTitle>
+                    <DialogTitle className="text-2xl font-semibold text-[#111827]">Edit My Profile</DialogTitle>
                     <div className="space-y-4">
                         {/* <h2 className="text-3xl font-semibold text-[#111827]"></h2> */}
                         <Label className="text-gray-500">Full name</Label>

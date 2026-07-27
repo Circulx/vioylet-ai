@@ -162,7 +162,7 @@ export default function BrandSpacePage() {
         <div className="w-full px-4 py-6">
             <div className="space-y-6">
                 <PlatformPageTitle
-                    title="My Brand Spaces"
+                    title="My Brand Space"
                     action={
                         <div className="flex gap-4">
                             {isAdmin && (
@@ -194,7 +194,7 @@ export default function BrandSpacePage() {
                 <div className="flex items-center justify-between gap-4">
                     <UserPlatformTabSwitcher
                         tabs={[
-                            { id: "brand_spaces", label: "Your Space" },
+                            { id: "brand_spaces", label: "Your Studio" },
                             { id: "archive", label: "Archive" },
                         ]}
                         active={activeTab}
@@ -205,16 +205,16 @@ export default function BrandSpacePage() {
             </div>
                 <SectionCard className="border-none p-0" >
                     {isLoading ? (
-                        <div className="py-10 text-sm text-slate-500">Loading brand spaces...</div>
+                        <div className="py-10 text-sm text-slate-500">Loading Brand Space...</div>
                     ) : visibleSpaces.length === 0 ? (
                         <div className="w-full mx-auto flex items-center justify-center py-10 text-sm text-slate-500">
                             {activeTab === "brand_spaces"
-                                ? "No Brand Spaces yet. Start by creating a new Brand Space."
-                                : "No archived Brand Spaces yet."}
+                                ? "No Brand Space yet. Start by creating a new Brand Space."
+                                : "No archived Brand Space yet."}
                         </div>
                     ) : filteredVisibleSpaces.length === 0 ? (
                         <div className="w-full mx-auto flex items-center justify-center py-10 text-sm text-slate-500">
-                            No Brand Spaces match your search.
+                            No Brand Space matches your search.
                         </div>
                     ) : (
                         <BrandSpaces

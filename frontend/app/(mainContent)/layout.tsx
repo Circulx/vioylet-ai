@@ -37,7 +37,9 @@ export default function ContentLayout({
   return (
     <div className="flex min-h-screen w-full gap-2 bg-white p-2">
       <Sidebar />
-      <div className="relative min-h-[calc(100vh-16px)] flex-1 overflow-y-auto">{children}</div>
+      <div className="relative min-h-[calc(100vh-16px)] flex-1 overflow-y-auto">
+        {children}
+      </div>
     </div>
   );
 }

@@ -88,7 +88,7 @@ export default function UserOverview({ userId }: { userId: string }) {
 
         {isBrandUser ? (
           <section className="space-y-3 mt-6">
-            <h1 className="pb-4">Brand Spaces Assigned</h1>
+            <h1 className="pb-4">Brand Space Assigned</h1>
             <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6 border p-4">
               {user.brandAssignments.map((brand) => (
                 <Link

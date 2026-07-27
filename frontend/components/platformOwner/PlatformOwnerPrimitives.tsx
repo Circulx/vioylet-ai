@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "../ui/button";
 import Image from "next/image";
 import Link from "next/link";
+import { AppBackButton } from "@/components/common/AppBackButton";
 
 export function PlatformPageTitle({
     title,
@@ -20,7 +21,10 @@ export function PlatformPageTitle({
     return (
         <div className="space-y-6">
             <div className="flex items-start justify-between gap-4">
-                <h1 className="font-dmSans text-[32px] font-bold leading-none text-primary">{title}</h1>
+                <div className="flex flex-wrap items-center gap-3">
+                    <AppBackButton />
+                    <h1 className="font-dmSans text-[32px] font-bold leading-none text-primary">{title}</h1>
+                </div>
                 {action}
             </div>
             {children}

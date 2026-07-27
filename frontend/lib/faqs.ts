@@ -19,9 +19,9 @@ export const tenantDashboardFaqs: TenantDashboardFaq[] = [
   },
   {
     id: "brand-spaces",
-    question: "What does Brand Spaces usage show?",
+    question: "What does Brand Space usage show?",
     answer:
-      "Brand Spaces usage shows how many brand spaces are currently allocated compared with the tenant limit set by the platform owner.",
+      "Brand Space usage shows how many brand spaces are currently allocated compared with the tenant limit set by the platform owner.",
   },
   {
     id: "user-count",

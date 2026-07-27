@@ -111,7 +111,7 @@ export default function TenantAdminProfile() {
             },
             {
                 onSuccess: () => {
-                    setFeedback("Profile updated successfully.");
+                    setFeedback("My Profile has been updated successfully.");
                     setEditingField(null);
                 },
                 onError: () => {
@@ -182,7 +182,7 @@ export default function TenantAdminProfile() {
         <>
             <div className="w-full px-4 py-6">
                 <div className="mx-auto space-y-4">
-                    <PlatformPageTitle title={`${account.fullName}'s Profile`} />
+                    <PlatformPageTitle title="My Profile" />
 
                     {feedback ? <p className="text-sm text-emerald-600">{feedback}</p> : null}
                     {error ? <p className="text-sm text-red-500">{error}</p> : null}
@@ -202,6 +202,11 @@ export default function TenantAdminProfile() {
                         <ProfileSectionCard className="flex-1 border shadow-[0_4px_10px_0_rgba(0,0,0,0.10)] px-5">
                             <div className="space-y-1">
                                 <h1 className="text-base font-medium py-3">Usage Detail</h1>
+                                <MetricRow label="Users" value={toPercent(usageDetails.consumption.users, usageDetails.limits.max_users)} />
+                                <MetricRow
+                                    label="Brand Space"
+                                    value={toPercent(usageDetails.consumption.brand_spaces, usageDetails.limits.max_brand_spaces)}
+                                />
                                 <MetricRow label="Total Capacity" value={aggregatePercent(usageDetails)} />
                                 <MetricRow
                                     label="Content"
@@ -223,11 +228,6 @@ export default function TenantAdminProfile() {
                                     label="OCR"
                                     child
                                     value={toPercent(usageDetails.consumption.ocr_pages, usageDetails.limits.max_ocr_pages)}
-                                />
-                                <MetricRow label="Users" value={toPercent(usageDetails.consumption.users, usageDetails.limits.max_users)} />
-                                <MetricRow
-                                    label="Brand Spaces"
-                                    value={toPercent(usageDetails.consumption.brand_spaces, usageDetails.limits.max_brand_spaces)}
                                 />
                             </div>
                         </ProfileSectionCard>
@@ -293,7 +293,7 @@ export default function TenantAdminProfile() {
             <Dialog open={editingField !== null} onOpenChange={(open) => (!open ? setEditingField(null) : null)}>
                 <DialogContent className="max-w-lg font-dmSans rounded-2xl border-0 p-8 shadow-[0_20px_80px_-24px_rgba(15,23,42,0.25)]">
                     <DialogHeader>
-                        <DialogTitle className="text-3xl text-slate-900">Update Profile Detail</DialogTitle>
+                        <DialogTitle className="text-3xl text-slate-900">Update My Profile Detail</DialogTitle>
                         <DialogDescription className="text-sm text-slate-500">
                             Save the updated account information shown in the profile screen.
                         </DialogDescription>

@@ -3,7 +3,7 @@
 import { isAxiosError } from "axios";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { UserMinus, X } from "lucide-react";
+import { UserMinus } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -457,33 +457,25 @@ export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
             </AlertDialog>
 
             <AlertDialog open={deactivateConfirmOpen} onOpenChange={setDeactivateConfirmOpen}>
-                <AlertDialogContent className="w-[432px] max-w-[calc(100vw-32px)] gap-0 rounded-[4px] border-0 bg-white px-0 pb-[60px] pt-[60px] shadow-none">
-                    <AlertDialogCancel className="absolute right-4 top-3 flex h-6 w-6 items-center justify-center rounded-full border-0 bg-[#F5F2F2] p-0 text-sm leading-none text-black hover:bg-[#F5F2F2] focus-visible:outline-none focus-visible:ring-0">
-                        <X className="h-4 w-4" />
-                        <span className="sr-only">Close</span>
-                    </AlertDialogCancel>
-                    <AlertDialogHeader className="flex items-center justify-center gap-1 text-center">
-                        <AlertDialogTitle className="max-w-[360px] text-[30px] font-semibold leading-9 tracking-normal text-black">
-                            Are you sure you want to deactivate this user?
-                        </AlertDialogTitle>
-                        <AlertDialogDescription className="max-w-[360px] text-[18px] leading-6 text-black">
+                <AlertDialogContent className="max-w-[420px] rounded-none border-0 bg-white p-6 shadow-[0_20px_80px_-24px_rgba(15,23,42,0.35)]">
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Are you sure you want to deactivate this user?</AlertDialogTitle>
+                        <AlertDialogDescription>
                             This user will no longer be able to access Violyt until their account is reactivated.
                         </AlertDialogDescription>
                     </AlertDialogHeader>
-                    <AlertDialogFooter className="mx-auto mt-[25px] flex w-[306px] !flex-row items-center justify-center gap-[26px]">
+                    <AlertDialogFooter>
+                        <AlertDialogCancel className="rounded-none">Cancel</AlertDialogCancel>
                         <AlertDialogAction
-                            className="h-11 w-[140px] rounded-none bg-primary/72 p-0 text-base text-white hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-0"
-                            disabled={deactivateUser.isPending}
                             onClick={(event) => {
                                 event.preventDefault();
                                 void confirmDeactivateUser();
                             }}
+                            className="rounded-none bg-[#FF6D5E] text-white hover:bg-[#FF6D5E]/90"
+                            disabled={deactivateUser.isPending}
                         >
                             {deactivateUser.isPending ? "Deactivating..." : "Confirm"}
                         </AlertDialogAction>
-                        <AlertDialogCancel className="h-11 w-[140px] rounded-none border border-black bg-white p-0 text-base text-black hover:bg-white focus-visible:outline-none focus-visible:ring-0">
-                            Cancel
-                        </AlertDialogCancel>
                     </AlertDialogFooter>
                 </AlertDialogContent>
             </AlertDialog>

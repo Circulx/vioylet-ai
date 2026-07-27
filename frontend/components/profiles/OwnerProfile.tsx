@@ -50,10 +50,12 @@ export default function OwnerProfile() {
             ? "Two-factor authentication has been successfully enabled for your account."
             : "Two-factor authentication has been disabled for your account.";
 
-        addInAppNotification(user.id, {
-            title: "Security Update",
-            message,
-        });
+        if (notifications) {
+            addInAppNotification(user.id, {
+                title: "Security Update",
+                message,
+            });
+        }
         toast({
             title: "Security Update",
             description: message,

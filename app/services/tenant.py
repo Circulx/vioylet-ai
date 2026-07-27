@@ -623,6 +623,7 @@ class TenantService:
             "last_login_at": user.last_login_at,
             "activation_link_sent_count": activation_link_sent_count,
             "activation_link_attempts_left": self._activation_link_attempts_left(activation_link_sent_count),
+            "notifications_enabled": (user.metadata_json or {}).get("notifications_enabled", True) is not False,
         }
 
     async def _activation_link_sent_count(self, user_id: UUID) -> int:

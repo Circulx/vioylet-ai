@@ -127,7 +127,8 @@ export default function BrandUsageAllocationPage() {
     const recipients = new Set<string>();
     if (
       currentUser?.tenantId === tenantId &&
-      (currentUser?.role === "TENANT_ADMIN" || currentUser?.role === "TENANT_USER")
+      (currentUser?.role === "TENANT_ADMIN" || currentUser?.role === "TENANT_USER") &&
+      currentUser.notificationsEnabled !== false
     ) {
       recipients.add(currentUser.id);
     }
@@ -135,12 +136,15 @@ export default function BrandUsageAllocationPage() {
       if (!user.is_active || user.tenant_id !== tenantId) {
         continue;
       }
-      if (user.role_codes.includes("tenant_admin") || user.role_codes.includes("tenant_user")) {
+      if (
+        (user.role_codes.includes("tenant_admin") || user.role_codes.includes("tenant_user")) &&
+        user.notifications_enabled !== false
+      ) {
         recipients.add(user.id);
       }
     }
     return Array.from(recipients);
-  }, [currentUser?.id, currentUser?.role, currentUser?.tenantId, tenantId, tenantUsers]);
+  }, [currentUser, tenantId, tenantUsers]);
 
   const notifyCapacityUsageUpdated = (brandUsageTargets: Record<string, number>) => {
     if (!(currentUser?.role === "TENANT_ADMIN" || currentUser?.role === "TENANT_USER")) {

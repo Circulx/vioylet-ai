@@ -25,6 +25,7 @@ import {
 import { Button } from "./ui/button";
 import { NotificationDrawer } from "./NotificationDrawer";
 import { useInAppNotifications } from "@/hooks/useInAppNotifications";
+import { useNotificationSound } from "@/hooks/useNotificationSound";
 import { API } from "@/lib/api/endpoints";
 import { request } from "@/lib/api/request";
 import { NOTIFICATION_REFETCH_INTERVAL_MS } from "@/lib/notification-queries";
@@ -53,7 +54,7 @@ export default function Sidebar() {
     const { isSidebarOpen, toggleSidebar } = useSidebar();
     const { user, canAccessModule } = useRBAC();
     const { notifications: localNotifications } = useInAppNotifications(user?.id);
-    const { data: unreadNotificationCountData } = useQuery({
+    const { data: unreadNotificationCountData, isFetched: hasFetchedUnreadNotificationCount } = useQuery({
         queryKey: ["notifications", user?.id, "unread-count"],
         enabled: Boolean(user?.id),
         queryFn: () => request(API.NOTIFICATIONS.UNREAD_COUNT),
@@ -75,10 +76,12 @@ export default function Sidebar() {
 
     const filteredSidebarItems = sidebarItems.filter((item) => (user ? canAccessModule(item.module) : false));
     const isPlatformOwner = user?.role === "PLATFORM_OWNER";
-    const unreadNotificationCount =
-        (unreadNotificationCountData?.unread_count || 0) +
-        localNotifications.filter((notification) => notification.unread).length;
+    const serverUnreadNotificationCount = unreadNotificationCountData?.unread_count || 0;
+    const localUnreadNotificationCount = localNotifications.filter((notification) => notification.unread).length;
+    const unreadNotificationCount = serverUnreadNotificationCount + localUnreadNotificationCount;
     const unreadNotificationLabel = unreadNotificationCount > 99 ? "99+" : String(unreadNotificationCount);
+    useNotificationSound(localUnreadNotificationCount, user?.notificationsEnabled !== false);
+    useNotificationSound(serverUnreadNotificationCount, user?.notificationsEnabled !== false, hasFetchedUnreadNotificationCount);
 
     return (
         <aside

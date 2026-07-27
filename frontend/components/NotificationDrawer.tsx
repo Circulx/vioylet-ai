@@ -20,6 +20,10 @@ import { useInAppNotifications } from "@/hooks/useInAppNotifications"
 import { ReactNode, useState } from "react"
 import { X } from "lucide-react"
 
+function getNotificationKey(source: "server" | "local", id: string) {
+  return `${source}-${id}`
+}
+
 function formatNotificationTimestamp(value: string) {
   const timestamp = new Date(value).getTime()
   if (Number.isNaN(timestamp)) {
@@ -47,6 +51,7 @@ export function NotificationDrawer({ children }: { children: ReactNode }) {
   const { data: user } = useGetMe()
   const queryClient = useQueryClient()
   const [open, setOpen] = useState(false)
+  const [highlightedUnreadKeys, setHighlightedUnreadKeys] = useState<Set<string>>(new Set())
   const {
     notifications: localNotifications,
     remove: removeLocalNotification,
@@ -142,7 +147,15 @@ export function NotificationDrawer({ children }: { children: ReactNode }) {
       open={open}
       onOpenChange={(nextOpen) => {
         setOpen(nextOpen)
-        if (nextOpen && user?.id) {
+        if (!nextOpen) {
+          setHighlightedUnreadKeys(new Set())
+          return
+        }
+        const unreadKeys = notifications
+          .filter((notification) => notification.unread)
+          .map((notification) => getNotificationKey(notification.source, notification.id))
+        setHighlightedUnreadKeys(new Set(unreadKeys))
+        if (user?.id) {
           markLocalNotificationsRead()
           markServerNotificationsRead.mutate()
           void refetchServerNotifications()
@@ -161,8 +174,14 @@ export function NotificationDrawer({ children }: { children: ReactNode }) {
         </SheetHeader>
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 pr-2 pb-2">
           {notifications.length ? (
-            notifications.map((notification) => (
-              <div key={`${notification.source}-${notification.id}`} className="rounded-[6px] border border-[#DCDCDC] bg-white p-4 shadow-sm">
+            notifications.map((notification) => {
+              const notificationKey = getNotificationKey(notification.source, notification.id)
+              const isVisuallyUnread = notification.unread || highlightedUnreadKeys.has(notificationKey)
+              return (
+                <div
+                  key={notificationKey}
+                  className={`rounded-[6px] border border-[#DCDCDC] p-4 shadow-sm ${isVisuallyUnread ? "bg-[#EEF0F6]" : "bg-white"}`}
+                >
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex min-w-0 flex-1 items-center gap-2">
                     {notification.unread ? <span className="h-2 w-2 shrink-0 rounded-full bg-primary" aria-label="Unread" /> : null}
@@ -179,8 +198,9 @@ export function NotificationDrawer({ children }: { children: ReactNode }) {
                   </button>
                 </div>
                 <p className="mt-2 text-sm leading-5 text-[#525252]">{notification.message}</p>
-              </div>
-            ))
+                </div>
+              )
+            })
           ) : (
             <p className="py-6 text-sm text-[#525252]">No notifications yet.</p>
           )}

@@ -39,7 +39,7 @@ const CoreBrandSignals = ({ form, setForm, onRemoveUpload }: BrandTabProps) => {
         <FormSection title="Brand Details" className="bg-[#E9E9E966] p-2 px-6 pb-6">
             <FileUploadCollection
                 label="Upload Brand Logo"
-                acceptedFormats="SVG, PNG, JPG"
+                acceptedFormats="SVG, PNG, JPG, PDF"
                 bgColor="bg-[#FFFFFF]"
                 items={logoItems}
                 onAdd={addLogos}

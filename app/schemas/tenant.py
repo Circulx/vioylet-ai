@@ -172,6 +172,7 @@ class TenantUserResponse(APIModel):
     last_login_at: datetime | None = None
     activation_link_sent_count: int = 0
     activation_link_attempts_left: int = 0
+    notifications_enabled: bool = True
 
 
 class ActivationEmailStatus(APIModel):

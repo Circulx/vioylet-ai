@@ -28,6 +28,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/use-toast";
 import { SurfaceCard, UsageRing } from "@/components/common/DesignPrimitives";
+import { AppBackButton } from "@/components/common/AppBackButton";
 import type {
     AssetReference,
     ChatAssistantStructuredPayload,
@@ -70,7 +71,7 @@ import { FormField } from "../brandSpaces/tabs/FormFields";
 import Image from "next/image";
 import { AUDIENCE_OPTIONS } from "@/lib/brand-space-options";
 import { Label } from "../ui/label";
-import { Tooltip } from "../ui/tooltip";
+import { Tooltips } from "../Tooltip";
 
 type WorkspaceChatProps = { brandKey: string };
 type Platform = "instagram" | "linkedin" | "x" | "youtube_thumbnail";
@@ -2494,17 +2495,21 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                     <div className="flex h-[61px] py-10 items-center justify-between border-b border-[#E5E5EA] bg-white">
                                         <div className="flex items-center justify-center gap-10 px-3">
                                             {/* <h1 className="font-dmSans text-3xl font-bold text-primary">{brand.name}</h1> */}
-                                            <div className="flex gap-2 relative">
-                                                <h1 className="font-dmSans text-3xl font-bold text-primary">{brand.name}</h1>
+                                            <div className="flex items-center gap-3">
+                                                <AppBackButton />
+                                                <div className="flex gap-2 relative">
+                                                    <h1 className="font-dmSans text-3xl font-bold text-primary">{brand.name}</h1>
 
-                                                <Link
-                                                    href={`/brand_space/${brandId}/edit`}
-                                                    title={`${brand.name} Brand Space`}
-                                                    aria-label={`${brand.name} Brand Space`}
-                                                    className="absolute -right-7 -top-1 text-sm text-[#121212] hover:underline"
-                                                >
-                                                    <Image src="/actions_icons/chat/redirect_link.svg" alt="Edit icon" width={19} height={19} className="inline-block mr-1" />
-                                                </Link>
+                                                    <Tooltips content="View Brand Space">
+                                                    <Link
+                                                        href={`/brand_space/${brandId}/edit`}
+                                                        aria-label="View Brand Space"
+                                                        className="absolute -right-7 -top-1 text-sm text-[#121212] hover:underline"
+                                                    >
+                                                        <Image src="/actions_icons/chat/redirect_link.svg" alt="View Brand Space" width={19} height={19} className="inline-block mr-1" />
+                                                    </Link>
+                                                </Tooltips>
+                                                </div>
                                             </div>
                                             <UsageRing
                                                 value={usageRemainingPercent}
@@ -2775,16 +2780,20 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                     {/* Header */}
                                     <div className="flex h-[61px] py-10 items-center justify-between border-b border-[#E5E5EA] bg-white">
                                         <div className="w-full flex items-center justify-between gap-3 px-4">
-                                            <div className="flex gap-2 relative">
-                                                <h1 className="font-dmSans text-3xl font-bold text-primary">{brand.name}</h1>
-                                                <Link
-                                                    href={`/brand_space/${brandId}/edit`}
-                                                    title={`${brand.name} Brand Space`}
-                                                    aria-label={`${brand.name} Brand Space`}
-                                                    className="absolute -right-7 -top-1 text-sm text-[#121212] hover:underline"
-                                                >
-                                                    <Image src="/actions_icons/chat/redirect_link.svg" alt="Edit icon" width={19} height={19} className="inline-block mr-1" />
-                                                </Link>
+                                            <div className="flex items-center gap-3">
+                                                <AppBackButton />
+                                                <div className="flex gap-2 relative">
+                                                    <h1 className="font-dmSans text-3xl font-bold text-primary">{brand.name}</h1>
+                                                    <Tooltips content="View Brand Space">
+                                                    <Link
+                                                        href={`/brand_space/${brandId}/edit`}
+                                                        aria-label="View Brand Space"
+                                                        className="absolute -right-7 -top-1 text-sm text-[#121212] hover:underline"
+                                                    >
+                                                        <Image src="/actions_icons/chat/redirect_link.svg" alt="View Brand Space" width={19} height={19} className="inline-block mr-1" />
+                                                    </Link>
+                                                </Tooltips>
+                                                </div>
                                             </div>
                                             <UsageRing
                                                 value={usageRemainingPercent}

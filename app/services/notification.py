@@ -54,7 +54,10 @@ class InAppNotificationService:
         message: str,
         tenant_id: UUID | None = None,
         metadata: dict | None = None,
-    ) -> InAppNotification:
+    ) -> InAppNotification | None:
+        if not await self._notifications_enabled_for_user(recipient_user_id):
+            return None
+
         notification = InAppNotification(
             recipient_user_id=recipient_user_id,
             tenant_id=tenant_id,
@@ -64,6 +67,12 @@ class InAppNotificationService:
             metadata_json=metadata or {},
         )
         return await self.notifications.add(notification)
+
+    async def _notifications_enabled_for_user(self, user_id: UUID) -> bool:
+        user = await self.session.get(User, user_id)
+        if not user or not user.is_active:
+            return False
+        return (user.metadata_json or {}).get("notifications_enabled", True) is not False
 
     async def create_usage_threshold_notifications(
         self,

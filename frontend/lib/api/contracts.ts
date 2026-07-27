@@ -175,6 +175,7 @@ export interface TenantUserResponse {
   activation_link_sent_count?: number;
   activation_link_attempts_left?: number;
   activation_email?: ActivationEmailStatus;
+  notifications_enabled?: boolean;
 }
 
 export interface TenantBrandSpaceSummaryResponse {

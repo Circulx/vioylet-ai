@@ -91,7 +91,7 @@ export default function EditTenantPage() {
     );
     toast({
       title: platformOwnerUpdatedAdminProfile
-        ? "Your profile has been updated successfully."
+        ? "profile has been updated successfully."
         : "Tenant details have been updated successfully.",
       variant: "success",
     });

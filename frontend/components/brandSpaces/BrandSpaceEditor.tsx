@@ -1607,7 +1607,7 @@ export default function BrandSpaceEditor({
                                     variant="outline"
                                     aria-label="History"
                                     title="History"
-                                    className="h-[50px] w-[50px] rounded-none border-primary/72 p-0 text-primary hover:bg-primary/5 hover:text-primary"
+                                    className="max-w-12 flex items-center justify-center rounded-none bg-primary/5 p-6 text-base hover:bg-primary/15"
                                 >
                                     <Clock3 className="h-5 w-5" />
                                 </Button>

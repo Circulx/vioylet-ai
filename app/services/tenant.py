@@ -665,14 +665,6 @@ class TenantService:
         role_code = await self._primary_user_role_code(user.id)
         tenant = await self.tenants.get(tenant_id)
         user.is_active = False
-        if was_active and actor_user_id and actor_user_id != user.id and actor_role_codes:
-            await InAppNotificationService(self.session).create_user_account_status_notification(
-                user,
-                recipient_user_id=actor_user_id,
-                actor_role_codes=actor_role_codes,
-                target_role_codes={role_code} if role_code else None,
-                is_active=False,
-            )
         await self.session.commit()
         if was_active:
             await self._dispatch_user_deactivation_emails(
@@ -1314,21 +1306,6 @@ class TenantService:
                 ],
                 actor_role_codes=actor_role_codes,
                 target_role_code=new_role_code,
-            )
-
-        if (
-            payload.is_active is not None
-            and payload.is_active != was_active
-            and actor_role_codes
-            and actor_user_id
-            and actor_user_id != user.id
-        ):
-            await InAppNotificationService(self.session).create_user_account_status_notification(
-                user,
-                recipient_user_id=actor_user_id,
-                actor_role_codes=actor_role_codes,
-                target_role_codes={new_role_code} if new_role_code else None,
-                is_active=payload.is_active,
             )
 
         await self.session.commit()

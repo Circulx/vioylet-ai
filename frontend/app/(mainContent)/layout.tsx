@@ -4,6 +4,8 @@ import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 import LoaderFullscreen from "@/components/LoaderFullscreen";
+import { FileSyncNotifier } from "@/components/FileSyncNotifier";
+import { WelcomeCelebrationOverlay } from "@/components/WelcomeCelebrationOverlay";
 import { useGetMe } from "@/hooks/useUser";
 import { canAccessPath, defaultPathForRole } from "@/lib/role-navigation";
 
@@ -40,6 +42,8 @@ export default function ContentLayout({
       <div className="relative min-h-[calc(100vh-16px)] flex-1 overflow-y-auto">
         {children}
       </div>
+      <FileSyncNotifier user={user} />
+      <WelcomeCelebrationOverlay user={user} />
     </div>
   );
 }

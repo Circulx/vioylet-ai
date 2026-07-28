@@ -1,4 +1,5 @@
 import {
+    AdvancedSectionTitle,
     CheckboxList,
     FileUploadCollection,
     FormField,
@@ -26,6 +27,27 @@ import {
     type BrandTabProps,
 } from "@/types/brand-space.types";
 
+function hasMissingAdvancedFields(form: BrandTabProps["form"]) {
+    const fields = [
+        form.targetAudience.goals,
+        form.targetAudience.motivations,
+        form.targetAudience.fearsAndPainPoints,
+        form.targetAudience.objections,
+        form.targetAudience.contentConsumptionBehavior,
+        form.targetAudience.audienceType,
+        form.targetAudience.location,
+        form.targetAudience.educationLevel,
+        form.targetAudience.employmentStatus,
+        form.targetAudience.professionalBackground,
+        form.targetAudience.householdSize,
+        form.targetAudience.languagePreference,
+        form.targetAudience.incomeLevel,
+        form.targetAudience.familyStatusOrLifeStage,
+        form.targetAudience.socioEconomicSegment,
+        form.targetAudience.digitalAccess,
+    ];
+    return fields.some((value) => !String(value || "").trim()) || form.targetAudience.audienceInsights.length === 0;
+}
 const TargetAudience = ({ form, setForm, onRemoveUpload }: BrandTabProps) => {
     const updateField = <TKey extends keyof typeof form.targetAudience>(
         key: TKey,
@@ -64,7 +86,7 @@ const TargetAudience = ({ form, setForm, onRemoveUpload }: BrandTabProps) => {
             </FormSubsection>
 
 
-            <FormSubsection title="Advanced" description="Optional fields to further refine your brand intelligence"
+            <FormSubsection title={<AdvancedSectionTitle showInfo={hasMissingAdvancedFields(form)} />} description="Optional fields to further refine your brand intelligence"
                 className="bg-[#E9E9E966] px-6 pb-6"
             >
                 <div className="grid gap-8 lg:grid-cols-2">

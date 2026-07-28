@@ -1151,6 +1151,11 @@ function GeneratedImageViewer({
                 );
                 return;
             }
+            if (displayImageAssets.length > 1) {
+                const selectedAsset = activeDisplayAsset || activeAsset;
+                await downloadAsset(selectedAsset, generatedDownloadFilename(sourcePrompt, selectedAsset));
+                return;
+            }
             const matchingExistingAssets = existingExportAssets.filter((asset) => assetMatchesFileType(asset, fileType));
             const exportedAssets = matchingExistingAssets.length || !contentVersionId ? matchingExistingAssets : await onExport(contentVersionId);
             const downloadableAssets = exportedAssets.filter((asset) => Boolean(asset.asset_url));

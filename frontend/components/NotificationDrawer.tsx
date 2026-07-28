@@ -17,11 +17,59 @@ import { request } from "@/lib/api/request"
 import { NOTIFICATION_REFETCH_INTERVAL_MS } from "@/lib/notification-queries"
 import { useGetMe } from "@/hooks/useUser"
 import { useInAppNotifications } from "@/hooks/useInAppNotifications"
-import { ReactNode, useState } from "react"
+import { ReactNode, useEffect, useState } from "react"
 import { X } from "lucide-react"
 
 function getNotificationKey(source: "server" | "local", id: string) {
   return `${source}-${id}`
+}
+
+const WELCOME_CELEBRATION_STORAGE_KEY = "violyt:celebrated-welcome-notifications"
+
+function isWelcomeNotification(title: string) {
+  return title.toLowerCase().includes("welcome to violyt")
+}
+
+function getNotificationIcon(title: string, message: string) {
+  const content = `${title} ${message}`.toLowerCase()
+
+  if (isWelcomeNotification(title)) return "\uD83C\uDF89"
+  if (content.includes("deactivated")) return "\u26D4"
+  if (content.includes("reactivated")) return "\uD83D\uDD04"
+  if (content.includes("activated")) return "\uD83D\uDC65"
+  if (content.includes("profile updated")) return "\uD83D\uDC64"
+  if (content.includes("password")) return "\uD83D\uDD10"
+  if (content.includes("two-factor") || content.includes("2fa") || content.includes("security update")) return "\uD83D\uDEE1\uFE0F"
+  if (content.includes("new comment") || content.includes("commented")) return "\uD83D\uDCE9"
+  if (content.includes("approved")) return "\u2705"
+  if (content.includes("published")) return "\uD83D\uDE80"
+  if (content.includes("updated")) return "\uD83D\uDCDD"
+  if (content.includes("assigned") || content.includes("access removed")) return "\uD83D\uDCE6"
+  if (content.includes("capacity") || content.includes("usage")) return "\uD83D\uDCCA"
+  if (content.includes("warning") || content.includes("exhausted") || content.includes("limit")) return "\u26A0\uFE0F"
+
+  return "\u2139\uFE0F"
+}
+
+function readCelebratedWelcomeKeys(userId?: string) {
+  if (typeof window === "undefined" || !userId) {
+    return new Set<string>()
+  }
+
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(`${WELCOME_CELEBRATION_STORAGE_KEY}:${userId}`) || "[]")
+    return new Set(Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [])
+  } catch {
+    return new Set<string>()
+  }
+}
+
+function writeCelebratedWelcomeKeys(userId: string, keys: Set<string>) {
+  if (typeof window === "undefined") {
+    return
+  }
+
+  window.localStorage.setItem(`${WELCOME_CELEBRATION_STORAGE_KEY}:${userId}`, JSON.stringify([...keys]))
 }
 
 function formatNotificationTimestamp(value: string) {
@@ -52,6 +100,7 @@ export function NotificationDrawer({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient()
   const [open, setOpen] = useState(false)
   const [highlightedUnreadKeys, setHighlightedUnreadKeys] = useState<Set<string>>(new Set())
+  const [celebratingWelcomeKeys, setCelebratingWelcomeKeys] = useState<Set<string>>(new Set())
   const {
     notifications: localNotifications,
     remove: removeLocalNotification,
@@ -142,6 +191,18 @@ export function NotificationDrawer({ children }: { children: ReactNode }) {
     deleteServerNotification.mutate(notification.id)
   }
 
+  useEffect(() => {
+    if (!celebratingWelcomeKeys.size) {
+      return
+    }
+
+    const timeout = window.setTimeout(() => {
+      setCelebratingWelcomeKeys(new Set())
+    }, 3600)
+
+    return () => window.clearTimeout(timeout)
+  }, [celebratingWelcomeKeys])
+
   return (
     <Sheet
       open={open}
@@ -155,6 +216,16 @@ export function NotificationDrawer({ children }: { children: ReactNode }) {
           .filter((notification) => notification.unread)
           .map((notification) => getNotificationKey(notification.source, notification.id))
         setHighlightedUnreadKeys(new Set(unreadKeys))
+        const celebratedWelcomeKeys = readCelebratedWelcomeKeys(user?.id)
+        const welcomeKeysToCelebrate = notifications
+          .filter((notification) => notification.unread && isWelcomeNotification(notification.title))
+          .map((notification) => getNotificationKey(notification.source, notification.id))
+          .filter((notificationKey) => !celebratedWelcomeKeys.has(notificationKey))
+        if (welcomeKeysToCelebrate.length && user?.id) {
+          const nextCelebratedWelcomeKeys = new Set([...celebratedWelcomeKeys, ...welcomeKeysToCelebrate])
+          writeCelebratedWelcomeKeys(user.id, nextCelebratedWelcomeKeys)
+          setCelebratingWelcomeKeys(new Set(welcomeKeysToCelebrate))
+        }
         if (user?.id) {
           markLocalNotificationsRead()
           markServerNotificationsRead.mutate()
@@ -177,27 +248,46 @@ export function NotificationDrawer({ children }: { children: ReactNode }) {
             notifications.map((notification) => {
               const notificationKey = getNotificationKey(notification.source, notification.id)
               const isVisuallyUnread = notification.unread || highlightedUnreadKeys.has(notificationKey)
+              const isWelcome = isWelcomeNotification(notification.title)
+              const isCelebratingWelcome = celebratingWelcomeKeys.has(notificationKey)
+              const notificationIcon = getNotificationIcon(notification.title, notification.message)
+              const displayTitle = isWelcome ? "Welcome to Violyt!" : notification.title
+              const displayMessage = isWelcome
+                ? "Welcome to Violyt! Your account has been activated successfully. We're excited to have you on board."
+                : notification.message
               return (
                 <div
                   key={notificationKey}
-                  className={`rounded-[6px] border border-[#DCDCDC] p-4 shadow-sm ${isVisuallyUnread ? "bg-[#EEF0F6]" : "bg-white"}`}
+                  className={`relative overflow-hidden rounded-[6px] border border-[#DCDCDC] p-4 shadow-sm ${isVisuallyUnread ? "bg-[#EEF0F6]" : "bg-white"} ${isCelebratingWelcome ? "notification-welcome-celebration" : ""}`}
                 >
+                {isCelebratingWelcome ? (
+                  <div className="pointer-events-none absolute inset-0" aria-hidden="true">
+                    <span className="notification-confetti notification-confetti-a">{"\u2726"}</span>
+                    <span className="notification-confetti notification-confetti-b">{"\u2022"}</span>
+                    <span className="notification-confetti notification-confetti-c">{"\u2727"}</span>
+                    <span className="notification-confetti notification-confetti-d">{"\u2726"}</span>
+                  </div>
+                ) : null}
                 <div className="flex items-start justify-between gap-3">
-                  <div className="flex min-w-0 flex-1 items-center gap-2">
-                    {notification.unread ? <span className="h-2 w-2 shrink-0 rounded-full bg-primary" aria-label="Unread" /> : null}
-                    <h1 className="truncate text-base font-manrope text-primary font-medium" title={notification.title}>{notification.title}</h1>
-                    <span className="shrink-0 text-xs text-gray-400">{formatNotificationTimestamp(notification.createdAt)}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                      <div className="flex min-w-0 flex-1 items-start gap-2">
+                        {notification.unread ? <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-primary" aria-label="Unread" /> : null}
+                        <h1 className="min-w-0 whitespace-normal break-words text-base font-manrope text-primary font-medium" title={displayTitle}>{notificationIcon} {displayTitle}</h1>
+                      </div>
+                      <span className="shrink-0 text-xs text-gray-400">{formatNotificationTimestamp(notification.createdAt)}</span>
+                    </div>
                   </div>
                   <button
                     type="button"
                     className="flex h-6 w-6 shrink-0 items-center justify-center rounded-xs text-[#525252] transition hover:bg-slate-100 hover:text-slate-900"
-                    aria-label={`Remove ${notification.title} notification`}
+                    aria-label={`Remove ${displayTitle} notification`}
                     onClick={() => handleDismissNotification(notification)}
                   >
                     <X className="h-4 w-4" />
                   </button>
                 </div>
-                <p className="mt-2 text-sm leading-5 text-[#525252]">{notification.message}</p>
+                <p className="mt-2 text-sm leading-5 text-[#525252]">{displayMessage}</p>
                 </div>
               )
             })

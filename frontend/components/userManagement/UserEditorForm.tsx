@@ -471,7 +471,7 @@ export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
                                 event.preventDefault();
                                 void confirmDeactivateUser();
                             }}
-                            className="rounded-none bg-[#FF6D5E] text-white hover:bg-[#FF6D5E]/90"
+                            className="rounded-none bg-primary text-white hover:bg-primary/90"
                             disabled={deactivateUser.isPending}
                         >
                             {deactivateUser.isPending ? "Deactivating..." : "Confirm"}

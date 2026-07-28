@@ -38,6 +38,7 @@ import {
 } from "@/components/ui/collapsible";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageHeading } from "@/components/common/DesignPrimitives";
+import { InformationTip } from "@/components/InformationTip";
 import { BrandSpaceHistoryDrawer } from "@/components/brandSpaces/BrandSpaceHistoryDrawer";
 import type { BrandAttachmentResponse, BrandResponse, ValidationSummaryResponse } from "@/lib/api/contracts";
 import { API } from "@/lib/api/endpoints";
@@ -367,6 +368,19 @@ function applyExtractedVisualIdentityData(
     return changed ? { ...form, visualIdentity } : form;
 }
 
+function FileProcessingStatusTipContent() {
+    return (
+        <div className="space-y-2 text-left">
+            <p className="font-medium text-[#6F6F6F]">File Processing Status</p>
+            <p>These statuses indicate the current state of files uploaded to this Brand Space.</p>
+            <div className="space-y-1">
+                <p><span className="font-medium text-[#6F6F6F]">Ready:</span> Files have been uploaded successfully and are waiting to be processed.</p>
+                <p><span className="font-medium text-[#6F6F6F]">Processing:</span> Files are currently being processed. During this stage, Violyt extracts and analyzes the content to make it available for use.</p>
+                <p><span className="font-medium text-[#6F6F6F]">Synced:</span> File processing has been completed successfully, and the content is fully synchronized with the Brand Space. These files are now available for content generation and other Brand Space features.</p>
+            </div>
+        </div>
+    );
+}
 function UploadStatusPanel({
     items,
     isSubmitting,
@@ -433,6 +447,7 @@ function UploadStatusPanel({
                         >
                             {isOpen ? "View less" : "View more"}
                         </button>
+                        <InformationTip content={<FileProcessingStatusTipContent />} />
                     </div>
                 </div>
                 <CollapsibleContent className="flex flex-col gap-2">

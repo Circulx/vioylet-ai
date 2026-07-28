@@ -35,6 +35,24 @@ import { Label } from "@/components/ui/label";
 import { InformationTip } from "@/components/InformationTip";
 import Image from "next/image";
 
+function AdvancedFieldsTipContent() {
+    return (
+        <div className="space-y-2 text-left">
+            <p className="font-medium text-[#6F6F6F]">Advanced Fields</p>
+            <p>For the best results, we recommend completing all Advanced fields. Providing more details helps Violyt generate more accurate, personalized, and higher-quality content.</p>
+        </div>
+    );
+}
+
+export function AdvancedSectionTitle({ showInfo }: { showInfo: boolean }) {
+    return (
+        <span className="inline-flex items-center">
+            <span>Advanced</span>
+            {showInfo ? <InformationTip content={<AdvancedFieldsTipContent />} /> : null}
+        </span>
+    );
+}
+
 type FormFieldProps = {
     label?: string;
     required?: boolean;

@@ -399,12 +399,48 @@ export default function ChatPipelinePanel({
               </p>
             ) : null}
           </div>
+          {(state.blueprint?.layout_type || state.blueprint?.layout_archetype) && (
+            <p className="text-[11px] text-emerald-800/90">
+              Layout:{" "}
+              <span className="font-semibold">
+                {state.blueprint.layout_type || state.blueprint.layout_archetype}
+              </span>
+              {state.blueprint.source_footer
+                ? ` · ${state.blueprint.source_footer}`
+                : ""}
+            </p>
+          )}
           <ImageCarousel
             urls={completeUrls}
             formatLabel={state.format}
             blueprint={state.blueprint}
             onImagesChange={onImagesChange}
           />
+          {(state.blueprint?.sources?.length ?? 0) > 0 ? (
+            <div className="rounded-lg border border-emerald-100 bg-white/70 p-3 space-y-1">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-800">
+                Sources
+              </p>
+              <ul className="space-y-1">
+                {(state.blueprint?.sources || []).map((src, i) => (
+                  <li key={`${src.url}-${i}`} className="text-xs text-slate-700 break-all">
+                    {src.url ? (
+                      <a
+                        href={src.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-emerald-800 underline underline-offset-2 hover:text-emerald-950"
+                      >
+                        {src.title || src.url}
+                      </a>
+                    ) : (
+                      src.title || "—"
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
         </SurfaceCard>
       ) : null}
 

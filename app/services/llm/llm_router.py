@@ -7,12 +7,12 @@ from app.services.llm.openai_service import OpenAIService
 class LLMRouter:
     """Assigns the right model service per layer according to the blueprint."""
 
+    # Keep Claude for strategy layers; use OpenAI for copy/blueprint to avoid
+    # Claude adaptive-thinking timeouts (RetryError / APITimeoutError).
     CLAUDE_LAYERS = {
         "l2_brand_intelligence",
         "l4_strategic_reasoning",
         "l5_concept_engine",
-        "l7_copy_engine",
-        "l7c_content_prep",
         "l10_evaluation",
         "repair",
     }

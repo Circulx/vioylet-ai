@@ -44,6 +44,7 @@ class ViolytState(TypedDict):
     visual_reasoning: NotRequired[Optional[VisualReasoningOutput]]
     scene_graph: NotRequired[Optional[SceneGraphOutput]]
     evaluation: NotRequired[Optional[EvaluationOutput]]
+    live_research: NotRequired[Optional[dict]]
 
     # ── Control fields ─────────────────────────────────────────
     repair_count: NotRequired[int]

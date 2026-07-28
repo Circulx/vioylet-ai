@@ -22,13 +22,13 @@ from app.graph.state import ViolytState
 
 logger = get_logger(__name__)
 
-# ── Limits for image-safe text ──────────────────────────────────────────────
-MAX_HEADLINE_CHARS = 80
-MAX_SUPPORTING_LINE_CHARS = 120
-MAX_BODY_CHARS = 300
-MAX_CTA_CHARS = 50
-MAX_SLIDE_HEADLINE_CHARS = 60
-MAX_SLIDE_BODY_CHARS = 200
+# ── Limits for image-safe text (Jiraaf sample style: numbers > paragraphs) ──
+MAX_HEADLINE_CHARS = 64
+MAX_SUPPORTING_LINE_CHARS = 90
+MAX_BODY_CHARS = 100
+MAX_CTA_CHARS = 36
+MAX_SLIDE_HEADLINE_CHARS = 50
+MAX_SLIDE_BODY_CHARS = 90
 
 # ── Common misspellings in AI output ────────────────────────────────────────
 COMMON_FIXES: dict[str, str] = {
@@ -47,6 +47,7 @@ COMMON_FIXES: dict[str, str] = {
     "recomend": "recommend",
     "guarentee": "guarantee",
     "garauntee": "guarantee",
+    "guarantsed": "guaranteed",
     "maintainance": "maintenance",
     "performence": "performance",
     "consistant": "consistent",
@@ -73,6 +74,22 @@ COMMON_FIXES: dict[str, str] = {
     "untill": "until",
     "wierd": "weird",
     "yeild": "yield",
+    "yeilds": "yields",
+    "yizids": "yields",
+    "investmet": "investment",
+    "agroach": "approach",
+    "grewth": "growth",
+    "meximize": "maximize",
+    "rcturns": "returns",
+    "liquildity": "liquidity",
+    "eunjoy": "enjoy",
+    "riisk": "risk",
+    "notlon": "notion",
+    "belew": "below",
+    "bresking": "breaking",
+    "penaity": "penalty",
+    "inerast": "interest",
+    "intrate": "interest",
 }
 
 # ── AI filler / generic phrases to strip ────────────────────────────────────

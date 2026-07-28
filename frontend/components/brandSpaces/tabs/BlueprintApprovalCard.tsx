@@ -64,7 +64,8 @@ export default function BlueprintApprovalCard({
           <div>
             <h4 className="font-bold text-amber-950 text-sm">L7c: Creative Blueprint — Approval Required</h4>
             <p className="text-[10px] text-amber-700 font-medium">
-              Review &amp; edit headings, storyline, and CTA — copy is spell-checked; the same text is baked into the AI image (brand logo from Brand Space, not AI)
+              Every LLM mistake is auto-checked &amp; fixed first (names, typos, teasers, layout, sources).
+              You review the cleaned draft — same text bakes into the AI image (Brand Space logo only)
             </p>
           </div>
         </div>
@@ -72,6 +73,54 @@ export default function BlueprintApprovalCard({
           {fmt}
         </span>
       </div>
+
+      {(draft.layout_type || draft.layout_archetype) && (
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="rounded-md bg-white border border-amber-100 px-2 py-1 font-semibold text-amber-900">
+            Layout: {draft.layout_type || draft.layout_archetype}
+          </span>
+          {draft.source_footer ? (
+            <span className="rounded-md bg-white border border-amber-100 px-2 py-1 text-slate-700">
+              {draft.source_footer}
+            </span>
+          ) : null}
+        </div>
+      )}
+
+      {(draft.sources?.length ?? 0) > 0 && (
+        <div className="bg-white/90 rounded-lg border border-amber-100 p-3 space-y-1">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-amber-700">Sources</p>
+          <ul className="space-y-1">
+            {(draft.sources || []).map((src, i) => (
+              <li key={`${src.url}-${i}`} className="text-xs text-slate-700 break-all">
+                {src.url ? (
+                  <a
+                    href={src.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-amber-800 underline underline-offset-2 hover:text-amber-950"
+                  >
+                    {src.title || src.url}
+                  </a>
+                ) : (
+                  src.title || "—"
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {(draft.missing_critical?.length ?? 0) > 0 && (
+        <div className="rounded-lg border border-amber-300 bg-amber-100/60 p-3 text-xs text-amber-950">
+          <p className="font-bold uppercase text-[9px] mb-1">Quality notes</p>
+          <ul className="list-disc pl-4 space-y-0.5">
+            {(draft.missing_critical || []).map((m) => (
+              <li key={m}>{m}</li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
         <div className="bg-white/80 rounded-lg border border-amber-100 p-3">
@@ -187,25 +236,19 @@ export default function BlueprintApprovalCard({
         </div>
       )}
 
-      {fmt === "infographic" && (
+      {(fmt === "infographic" ||
+        fmt === "static" ||
+        draft.layout_type === "static_hub_facts" ||
+        draft.layout_type === "static_ranking") &&
+        (draft.sections?.length ?? 0) > 0 && (
         <div className="space-y-3">
-          <Field
-            label="Infographic title"
-            value={draft.title || draft.headline || ""}
-            onChange={(v) => setDraft((d) => ({ ...d, title: v, headline: v }))}
-          />
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {fmt === "infographic" && (
             <Field
-              label="Problem"
-              value={draft.problem_statement || ""}
-              onChange={(v) => setDraft((d) => ({ ...d, problem_statement: v }))}
+              label="Infographic title"
+              value={draft.title || draft.headline || ""}
+              onChange={(v) => setDraft((d) => ({ ...d, title: v, headline: v }))}
             />
-            <Field
-              label="Solution"
-              value={draft.solution_statement || ""}
-              onChange={(v) => setDraft((d) => ({ ...d, solution_statement: v }))}
-            />
-          </div>
+          )}
           {(draft.sections || []).map((sec, idx) => (
             <div key={`${sec.section_label}-${idx}`} className="bg-white rounded-xl border border-amber-100 p-4 space-y-2">
               <Field
@@ -233,6 +276,23 @@ export default function BlueprintApprovalCard({
                 rows={1}
               />
               <Field
+                label="Includes / facts (one per line)"
+                value={(sec.includes || []).join("\n")}
+                onChange={(v) =>
+                  setDraft((d) => {
+                    const sections = [...(d.sections || [])];
+                    sections[idx] = {
+                      ...sections[idx],
+                      includes: v
+                        .split("\n")
+                        .map((line) => line.trim())
+                        .filter(Boolean),
+                    };
+                    return { ...d, sections };
+                  })
+                }
+              />
+              <Field
                 label="Body"
                 value={sec.body || ""}
                 onChange={(v) =>
@@ -245,6 +305,23 @@ export default function BlueprintApprovalCard({
               />
             </div>
           ))}
+        </div>
+      )}
+
+      {fmt === "infographic" && (
+        <div className="space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <Field
+              label="Problem"
+              value={draft.problem_statement || ""}
+              onChange={(v) => setDraft((d) => ({ ...d, problem_statement: v }))}
+            />
+            <Field
+              label="Solution"
+              value={draft.solution_statement || ""}
+              onChange={(v) => setDraft((d) => ({ ...d, solution_statement: v }))}
+            />
+          </div>
           <Field
             label="Customer quote"
             value={draft.customer_quote || ""}

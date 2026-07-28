@@ -53,14 +53,17 @@ class Settings(BaseSettings):
     tone_model: str = "gpt-4o-mini"
     vision_model: str = "gpt-4o-mini"
     image_model: str = "gpt-image-1-mini"
+    # gpt-image quality: low | medium | high — high can hang many minutes
+    image_quality: str = "high"
+    image_generation_timeout_seconds: float = 180.0
     anthropic_model: str = "claude-sonnet-4-6"
     anthropic_fallback_model: str = "claude-opus-4-5"
     content_format_guide_path: str | None = None
     brave_search_api_key: str | None = None
     brave_search_api_base: str = "https://api.search.brave.com/res/v1/web/search"
-    live_research_timeout_seconds: float = 8.0
+    live_research_timeout_seconds: float = 25.0
     live_research_max_queries: int = 3
-    live_research_max_results_per_query: int = 3
+    live_research_max_results_per_query: int = 4
     live_research_enabled: bool = True
     live_research_search_backend: str = "openai"
     live_research_search_model: str = "gpt-4o-mini"
@@ -68,6 +71,8 @@ class Settings(BaseSettings):
 
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
+    # Per-request LLM HTTP timeout (seconds). Claude adaptive thinking can be slow.
+    llm_request_timeout_seconds: float = 180.0
     pinecone_api_key: str | None = None
     pinecone_index_name: str = "brandlove"
     google_application_credentials: str | None = None

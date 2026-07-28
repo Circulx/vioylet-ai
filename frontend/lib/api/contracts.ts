@@ -852,11 +852,14 @@ export interface CreativeBlueprintResponse {
   visual_hierarchy?: string[];
   text_density?: string;
   layout_archetype?: string;
+  layout_type?: string;
   overlay_zones?: OverlayZoneResponse[];
   brand_alignment_notes?: string[];
   validation_checklist?: string[];
   missing_critical?: string[];
   claim_safety_notes?: string[];
+  sources?: { title?: string; url?: string }[];
+  source_footer?: string;
 }
 
 export interface PipelineApproveRequest {

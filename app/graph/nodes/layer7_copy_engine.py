@@ -5,6 +5,7 @@ from app.core.logging import get_logger
 from app.graph.models.layer7_models import CopyOutput
 from app.graph.state import ViolytState
 from app.prompts.layer7_copy_engine import CopyEnginePromptBuilder
+from app.prompts.jiraaf_layout import classify_layout, needs_live_research
 from app.services.live_research import LiveResearchService
 from app.services.llm.llm_router import LLMRouter
 
@@ -65,10 +66,10 @@ async def layer7_copy_engine(state: ViolytState) -> dict:
         "visual_angle": recommended.visual_angle,
     }
 
-    # For data-rich formats, fetch the latest verified facts via live web search so
-    # infographic/carousel content reflects current, specific numbers instead of generic filler.
+    # Live web research for news/data/top-N/rates (Jiraaf sourced creatives)
+    layout = classify_layout(user_prompt, fmt)
     live_research: dict = {}
-    if fmt in ("infographic", "carousel"):
+    if needs_live_research(user_prompt, layout.layout_type):
         try:
             knowledge_brief = [
                 {"content": chunk.content_summary, "source": chunk.source}
@@ -77,25 +78,35 @@ async def layer7_copy_engine(state: ViolytState) -> dict:
             research_query = f"{user_prompt} {recommended.core_idea} {brand_intelligence.brand_core.brand_name}".strip()
             live_research = _live_research.gather_sync(
                 prompt=research_query,
-                studio_panel={"format": fmt, "platform_preset": platform},
+                studio_panel={"format": fmt or layout.suggested_format, "platform_preset": platform},
                 compiled_context={"knowledge_brief": knowledge_brief},
             ) or {}
             logger.info(
                 "copy_engine.live_research",
                 status=live_research.get("status"),
                 fact_count=len(live_research.get("verified_facts", [])),
+                source_count=len(live_research.get("sources", [])),
+                search_hits=live_research.get("search_hits"),
+                layout=layout.layout_type,
+                summary_preview=(live_research.get("summary") or "")[:160],
             )
         except Exception as e:
             logger.warning(f"copy_engine.live_research_failed: {e}")
             live_research = {}
 
-    system = _prompt_builder.build_system(format_name=fmt)
+    system = _prompt_builder.build_system(
+        format_name=fmt,
+        user_prompt=user_prompt,
+        layout_type=layout.layout_type,
+    )
     user = _prompt_builder.build_user(
         brand_intelligence=brand_intelligence,
         format_plan=format_plan,
         concept=concept_dict,
         format_name=fmt,
         live_research=live_research,
+        user_prompt=user_prompt,
+        layout_type=layout.layout_type,
     )
 
     service = _router.get_service("l7_copy_engine")
@@ -146,6 +157,7 @@ async def layer7_copy_engine(state: ViolytState) -> dict:
 
     return {
         "copy": output,
+        "live_research": live_research or {},
         "layer_latencies": {"l7_copy_engine": metadata["latency_ms"]},
         "token_usage": {
             "l7_copy_engine": {

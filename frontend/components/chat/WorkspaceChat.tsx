@@ -146,8 +146,8 @@ const sizeOptionsByFormatPlatform: Record<
         ],
     },
     carousel: {
-        linkedin: [{ label: "1:1 · 1080×1080", width: 1080, height: 1080 }],
-        instagram: [{ label: "1:1 · 1080×1080", width: 1080, height: 1080 }],
+        linkedin: [{ label: "4:5 · 1080×1350", width: 1080, height: 1350 }],
+        instagram: [{ label: "4:5 · 1080×1350", width: 1080, height: 1350 }],
         x: [{ label: "1:1 · 1080×1080", width: 1080, height: 1080 }],
     },
     infographic: {

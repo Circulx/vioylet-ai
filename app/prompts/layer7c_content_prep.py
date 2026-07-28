@@ -7,81 +7,136 @@ from app.graph.models.layer3_models import CampaignBriefOutput
 from app.graph.models.layer6_models import FormatPlanOutput
 from app.graph.models.layer7_models import CopyOutput
 from app.prompts.base import BasePromptBuilder
+from app.prompts.brand_copy_tone import (
+    BANK_PENALTY_SAMPLE_RULES,
+    SIMPLIFIED_CREATIVE_TONE_RULES,
+    SOURCE_FOOTER_RULE,
+)
 
 
 class ContentPrepPromptBuilder(BasePromptBuilder):
     """Layer 7c — Prompt Intelligence → Creative Blueprint."""
 
-    PROMPT_VERSION = "1.0"
+    PROMPT_VERSION = "1.3-jiraaf-layout"
 
     def build_system(self, format_name: str = "static", **kwargs: Any) -> str:
+        layout_type = str(kwargs.get("layout_type") or "carousel_story")
+        hub = layout_type == "static_hub_facts"
+        ranking = layout_type == "static_ranking"
+        story = layout_type == "carousel_story"
+
+        layout_block = ""
+        if story and format_name == "carousel":
+            layout_block = """
+LAYOUT = carousel_story (LOCKED STANDARD — same every time):
+- 5–6 slides: hook → define → how it works → investor implication → nuance/watch-out → CTA
+- DEPTH: each slide must teach a concrete insight from live research (mechanism / number / condition).
+  Reject vague slogans ("Connect the Dots", "bonds like stocks") unless the body explains the mechanism.
+- Each slide: unique headline + supporting_line + body (≤22 words, deeper than basics) + chip_labels[3]
+- chip_labels = exactly 3 ONE-WORD labels that explain THAT slide (e.g. Coupons, Principal, Maturity).
+  Never multi-word chips that truncate to Steady/Plan/Less.
+- story_flow = one short beat per slide
+- TOPIC LOCK: user topic only — no FDI/FX/capital-control drift
+- Perfect spelling
+"""
+        elif hub:
+            layout_block = """
+LAYOUT = static_hub_facts (LOCKED):
+- headline like "Bank's Penalty Rates and Key Rules" (not a teaser question alone)
+- sections[] with 4–5 REAL entity cards (banks) + short ₹/% includes
+- body=""; customer_quote=""; NO fake testimonials replacing data
+"""
+        elif story:
+            layout_block = """
+LAYOUT = education poster (LOCKED — carousel_story on static/infographic):
+- User asked WHY / useful / benefits / explain — NOT a country comparison.
+- headline = topic claim; supporting_line = one short why line
+- sections[] = 3–5 BENEFIT/REASON cards (Capital Preservation, Regular Income, etc.)
+- FORBIDDEN: invent India/USA/Germany/Japan tables, flags, FDI ranks, or % comparison boards
+  unless the user explicitly asked to compare/rank countries
+- body often short or empty; cta short
+"""
+        elif ranking:
+            from app.prompts.jiraaf_layout import is_trade_data_board, requested_rank_count
+
+            user_p = str(kwargs.get("user_prompt") or "")
+            if is_trade_data_board(user_p):
+                layout_block = """
+LAYOUT = trade deficit DATA BOARD (LOCKED — match Jiraaf India–Russia sample):
+- headline = punchy data claim (13x / deficit growth) from research — not bond slogans
+- supporting_line = one factual subtitle
+- sections[] YEAR rows: label=FY, includes=["Export: USD …B","Import: USD …B"], stat=balance
+- Extra sections: top import categories India buys (fuels/oils/fertilisers) with USD amounts
+- source_footer = Ministry of Commerce / research domain
+- FORBIDDEN: Capital Preservation, Regular Income, FD, Liquidity Management, bond cards
+"""
+            else:
+                rank_n = requested_rank_count(user_p)
+                count_line = (
+                    f"- sections[] MUST have EXACTLY {rank_n} ranked rows (user asked for top {rank_n}) — never stop at 5"
+                    if rank_n
+                    else "- sections[] MUST include ALL entities the user asked to rank/compare — never silently truncate to 5"
+                )
+                layout_block = f"""
+LAYOUT = static_ranking (LOCKED):
+- Ranked sections: Name | % | amount — almost no paragraphs
+{count_line}
+- Fill sections[] OR dense stat_highlights with ALL requested entities
+- Include Source footer domains when research available
+"""
+
         return f"""You are Violyt's Content Prep Intelligence (Prompt Intelligence orchestrator).
 
 Users are marketers, founders, HR teams, agencies, and SMEs — not prompt engineers.
 Never expect perfect prompts. Infer intent, audience, structure, tone, CTA, and visual hierarchy.
 Ask nothing that Brand Space or prior layers already provide.
 
+{SIMPLIFIED_CREATIVE_TONE_RULES}
+{BANK_PENALTY_SAMPLE_RULES if hub else ""}
+{SOURCE_FOOTER_RULE}
+
 PRIMARY JOB
 Transform Layer 7 validated copy + brand/brief/format context into a Creative Blueprint
 that a non-technical user can review and approve BEFORE any artwork is generated.
+REWRITE heavy / textbook / teaser L7 wording into sample-style creatives.
+Set layout_type="{layout_type}" and layout_archetype="{layout_type}".
+
+{layout_block}
 
 PIPELINE STAGES (run internally, then emit ONE CreativeBlueprint JSON):
-1. Intent Detection — awareness, engagement, education, lead gen, employer branding,
-   product launch, recruitment, celebration, event, thought leadership, brand building,
-   case study, sales enablement, announcement, campaign, customer education, PR, internal.
-   If multiple, pick the strongest.
+1. Intent Detection
 2. Output Detection — respect the selected format: {format_name}
-3. Platform Detection — use provided platform; default intelligently if weak.
-4. Audience Detection — infer from brief/brand; never invent conflicting audiences.
-5. Topic Understanding — primary/secondary topics, keywords, pain points, claims.
-6. Brand Intelligence Injection — tone, voice, positioning, messaging pillars, compliance.
-7. Marketing Intelligence — hook, storytelling pattern, psychological triggers, CTA, hierarchy.
-8. Design Intelligence — visual hierarchy, text density, layout archetype, overlay zones.
+3. Platform Detection
+4. Audience Detection
+5. Topic Understanding
+6. Brand Intelligence Injection
+7. Marketing Intelligence
+8. Design Intelligence — layout_archetype = {layout_type}
 9. AI Planning — Creative Blueprint ONLY (no image generation).
 
 CONTENT RULES
-- No generic marketing clichés, motivational fluff, or empty buzzwords.
-- Prefer insights, evidence, hierarchy, and storytelling.
-- Visual-first: prefer timelines, comparisons, stats, process, quote blocks over paragraphs.
-- Brand protection: align tone/claims; note claim risks in claim_safety_notes.
-- Structure copy for AI image baking: short punchy headlines, clear section labels, readable body.
-- SPELLING & GRAMMAR: every string must be publication-ready English — zero typos.
-  (A separate proofreader still runs, but you must not emit misspellings.)
+- No teaser ads when the user asked for concrete rates/rules/top-N data.
+- Education / why / benefits: sections[] = reason cards — NEVER invent country comparison tables.
+- Data layouts only: sections[] with real bank/country names + short ₹/% facts when user asked for ranks/rules.
+- Visual-first: education benefit cards OR hub+fact cards OR ranking rows OR carousel story — not paragraphs.
+- SPELLING & GRAMMAR: publication-ready English — zero typos.
+- If live research sources exist, fill sources:[{{title,url}}] and source_footer like "Source: domain.com".
 
-MUST FILL (every format)
-- hook: one sharp opening line
-- story_flow: 3–5 beats (beginning → conflict → insight → proof → CTA)
-- headline (primary heading) + supporting_line (subheading) + body + cta
-- visual_hierarchy: ordered list of what the eye should read first
-- messaging_pillars: 2–4 pillars
+MUST FILL
+- hook + story_flow + headline + supporting_line + body + cta (body often empty for data posts)
+- layout_type + sources + source_footer when stats present
 
-TEXT LOCK FOR IMAGE MODEL
-After approval, the SAME strings (headline, supporting_line, sections, stats, CTA, etc.)
-are baked into the AI image pixel-for-pixel. Write final creative-ready copy — not drafts.
-
-FORMAT-SPECIFIC REQUIREMENTS
-- static: headline, supporting_line, body, cta, labels; story_flow of 3–5 beats.
-- carousel: slides[] (one per slide from L7/L6), each with role hook|insight|proof|cta|supporting;
-  each slide needs: headline (question/claim), supporting_line (answer), body (callout insight),
-  and for insight slides populate proof_points with EXACTLY 3 short bottom-card labels.
-  story_flow must narrate the deck. Keep copy educational and deep — not sparse slogans.
-- infographic: title/headline as curiosity hook; supporting_line as intro paragraph;
-  sections[] as 3–5 structured rows each with section_label (+ optional stat/%), includes[] bullets,
-  body ("why it matters"), icon_hint for ultra-3D metaphor;
-  process_steps or proof_points as 3–4 objective-strip labels;
-  cta as navy banner sentence; customer_quote can hold the amber NOTE text;
-  story_flow: Hook → Explain → Breakdown → Objective → Note.
+FORMAT-SPECIFIC
+- static hub: headline + sections[4–5] fact cards; body=""; no fake testimonial
+- static ranking: ranked sections — row count = user's top-N (e.g. top 10 → 10 rows, not 5)
+- education poster (static/infographic story): 3–5 benefit/reason cards — no country ranks
+- carousel story: 4–7 short slides
 
 OUTPUT
-Return a single JSON object matching CreativeBlueprint. Every required string field must be non-empty
-when format needs it. missing_critical only when impossible to infer from inputs.
+Return a single JSON object matching CreativeBlueprint.
 
-KEEP OUTPUT COMPACT (critical for latency):
-- story_flow: max 5 short beats
-- messaging_pillars: max 4
-- overlay_zones: optional (legacy); prefer filling structured fields above
-- validation_checklist / brand_alignment_notes: max 4 items each
-- Do not repeat the same copy in multiple long narrative fields
+KEEP OUTPUT COMPACT.
+If L7 returned a teaser, REWRITE it into the sample hub/data/story structure before locking text.
 """
 
     def build_user(
@@ -96,6 +151,8 @@ KEEP OUTPUT COMPACT (critical for latency):
         copy: CopyOutput,
         **kwargs: Any,
     ) -> str:
+        layout_type = str(kwargs.get("layout_type") or "carousel_story")
+        live_research = kwargs.get("live_research") or {}
         brand = brand_intelligence.brand_core
         behavior = brand_intelligence.communication_behavior
         audience = brand_intelligence.audience_model
@@ -142,11 +199,28 @@ CAMPAIGN BRIEF (L3):
             else:
                 slide_plan.append(str(sp))
 
+        research_block = ""
+        verified = live_research.get("verified_facts") or []
+        if verified or live_research.get("summary"):
+            facts_str = "\n".join(
+                f"- {f.get('label','')}: {f.get('value','')}"
+                + (f" | {f.get('source_url','')}" if f.get("source_url") else "")
+                for f in verified
+            )
+            research_block = f"""
+LIVE RESEARCH (use facts; attach source URLs into sources[]):
+Summary: {live_research.get('summary') or 'N/A'}
+Verified:
+{facts_str or 'none'}
+Do NOT invent numbers if research is empty — flag missing_critical instead.
+"""
+
         return f"""USER PROMPT:
 {user_prompt}
 
 PLATFORM: {platform}
 FORMAT: {format_name}
+LAYOUT_TYPE (LOCKED): {layout_type}
 
 BRAND (L2):
 - Name: {brand.brand_name}
@@ -164,7 +238,7 @@ BRAND (L2):
 FORMAT PLAN (L6) slide_plan:
 {slide_plan}
 
-VALIDATED COPY (L7/L7b):
+VALIDATED COPY (L7/L7b) — SIMPLIFY IF HEAVY:
 - headline: {copy.headline}
 - supporting_line: {copy.supporting_line}
 - body: {copy.body}
@@ -180,8 +254,15 @@ VALIDATED COPY (L7/L7b):
 - customer_quote: {copy.customer_quote}
 - customer_name: {copy.customer_name}
 - process_steps: {copy.process_steps}
-
-Produce the Creative Blueprint JSON now. Enrich and structure for {format_name}; do not invent
-contradictory brand claims. Prefer L7 wording when strong; tighten hierarchy, headings, and
-subheadings so the image model can bake this exact text into the final creative.
+{research_block}
+Produce the Creative Blueprint JSON for {format_name} with layout_type={layout_type}.
+Prefer L7 facts/numbers, but REWRITE to Jiraaf SAMPLE tone:
+short headlines, ranked/hub numbers OR carousel story beats — almost no paragraphs.
+Currency: India retail → ₹; rates → %; Japan commits → ¥; DPIIT FDI → USD labeled clearly.
+Countries/flags/banks must be real and matched. Totals must add up.
+Brand accents must include orange #FFA400 with navy #003975.
+If L7 looks like "What Are Your FD Penalty Rates?" teaser, replace with
+"Bank's Penalty Rates and Key Rules" + 5 bank sections.
+For rankings: if the user asked for top-N, keep EXACTLY that many section rows (top 10 → 10, not 5).
+Lock final short strings for image baking. Fill sources + source_footer when research URLs exist.
 """

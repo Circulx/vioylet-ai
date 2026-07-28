@@ -21,15 +21,17 @@ class OpenAIService:
     def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
         settings = get_settings()
         self._api_key = api_key or settings.openai_api_key
-        self._model = model or "gpt-4o"
+        self._model = model or settings.llm_model or "gpt-4o-mini"
         self._client: AsyncOpenAI | None = None
         if self._api_key:
-            self._client = AsyncOpenAI(api_key=self._api_key)
+            timeout = float(getattr(settings, "llm_request_timeout_seconds", 180.0) or 180.0)
+            self._client = AsyncOpenAI(api_key=self._api_key, timeout=timeout)
 
     @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
+        stop=stop_after_attempt(2),
+        wait=wait_exponential(multiplier=1, min=2, max=8),
         retry=retry_if_exception_type((OpenAIError,)),
+        reraise=True,
     )
     async def complete_structured(
         self,
@@ -92,9 +94,10 @@ class OpenAIService:
         return parsed, metadata
 
     @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
+        stop=stop_after_attempt(2),
+        wait=wait_exponential(multiplier=1, min=2, max=8),
         retry=retry_if_exception_type((OpenAIError,)),
+        reraise=True,
     )
     async def complete_text(
         self,

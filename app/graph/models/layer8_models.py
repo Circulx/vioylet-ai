@@ -152,9 +152,9 @@ class VisualReasoningOutput(BaseModel):
         "hero_scene",
         "data_grid",
     ] = "hero_scene"
-    visual_style: str = "Premium corporate educational creative with ultra-glossy 3D icons"
+    visual_style: str = "Premium corporate educational creative with soft matte clay-3D icons"
     composition_logic: str = "Top-down educational hierarchy with hero visual and structured content blocks"
-    focal_point: str = "Central ultra-premium 3D icon cluster"
+    focal_point: str = "Central soft matte clay-3D icon cluster"
     negative_space_plan: str = "Generous margins; keep logo-safe top-right corner clear"
     color_behavior: str = "Navy typography on light cool background with orange/gold accents"
     logo_zone_instruction: str = "Top-right corner with ~32px padding, keep clear for logo compositing"
@@ -182,14 +182,14 @@ class VisualReasoningOutput(BaseModel):
             )
         if not out.get("visual_style"):
             out["visual_style"] = out.get("style") or out.get("art_style") or (
-                "Premium corporate educational creative with ultra-glossy 3D icons"
+                "Premium corporate educational creative with soft matte clay-3D icons"
             )
         if not out.get("composition_logic"):
             out["composition_logic"] = out.get("composition") or out.get("layout") or (
                 "Top-down educational hierarchy with hero visual and structured content blocks"
             )
         if not out.get("focal_point"):
-            out["focal_point"] = out.get("focus") or "Central ultra-premium 3D icon cluster"
+            out["focal_point"] = out.get("focus") or "Central soft matte clay-3D icon cluster"
         if not out.get("negative_space_plan"):
             out["negative_space_plan"] = out.get("negative_space") or (
                 "Generous margins; keep logo-safe top-right corner clear"

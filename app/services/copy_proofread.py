@@ -207,14 +207,18 @@ async def proofread_blueprint(
 
 
 NO_AI_LOGO_RULE = (
-    "\n\nABSOLUTE LOGO RULE (NON-NEGOTIABLE):\n"
-    "- Do NOT draw any logo, wordmark, brand mark, giraffe, stamp, or watermark.\n"
-    "- NEVER write the brand name as text anywhere on the image "
-    "(no Jiraaf / JIRAAF / Cognixia letters) — especially NOT in the top-right.\n"
-    "- Leave only a SMALL top-right pocket empty (~12% width × ~7% height) for the "
-    "real Brand Space logo icon (composited later). Do NOT reserve a large empty band.\n"
-    "- Keep the FULL headline readable in the top-center / top-left. Never truncate, "
-    "crowd, or clip headline letters because of the logo corner.\n"
+    "\n\nABSOLUTE BRAND / WATERMARK BAN (NON-NEGOTIABLE — READ TWICE):\n"
+    "- Do NOT invent ANY watermark, stamp, seal, ghost logo, translucent brand shape, "
+    "giant letter mark, monogram, or faded brand silhouette in the background.\n"
+    "- Do NOT invent giraffe / stylized J marks as decoration.\n"
+    "- Do NOT invent brand marketing lines like \"Follow Jiraaf…\", \"Follow JIRAAF for more…\", "
+    "or any brand-name CTA — leave brand presence to the real logo only.\n"
+    "- NEVER invent brand-name text anywhere except what is already inside the Brand Space logo "
+    "file (composited later). Leave a clean top-right pocket empty for that real logo.\n"
+    "- The real Brand Space logo may include icon + Jiraaf wordmark — that is OK when composited. "
+    "You still must NOT redraw it or add extra Jiraaf text elsewhere.\n"
+    "- Keep the FULL headline clear — never clip it for a logo band.\n"
+    "- Background stays clean ice-blue / soft white — no orange ghost marks behind content.\n"
 )
 
 SPELLING_ACCURACY_RULE = (
@@ -223,14 +227,28 @@ SPELLING_ACCURACY_RULE = (
     "Copy letter-by-letter. Do not invent, truncate, hyphenate, or remix words.\n"
     "2) FONT — Bold clean sans-serif / block lettering only. Sharp edges, even spacing, "
     "no decorative or serif display fonts that blur letters.\n"
-    "3) CONTRAST — Dark navy (#1B2A4A) text on a light background (#E8F2FA or #F7F8FA). "
+    "3) CONTRAST — Dark navy (#003975) text on ice-blue (#E8F0F8) or white cards. "
     "Never light-on-light or busy-background text.\n"
     "4) SHORT + CLEAR — Prefer short headlines and short bullets. Dense paragraphs cause "
-    "spelling errors — keep body to a few short sentences max.\n"
-    "5) NO GIBBERISH — Never output broken tokens like t4%, ESPY blonds, Ruesla, "
-    "Comparataive, cyycle, Curcendy, Alreac, Indianentities.\n"
-    "6) NO WATERMARKS / black blobs / stamp marks / brand-name text in corners.\n"
+    "spelling errors — keep each card to at most 2 short lines (≤10 words each).\n"
+    "5) NO GIBBERISH — Never output broken tokens or hyphenated junk "
+    "(bresking, penaity, guarantsed, sub-ject, gawmwaas).\n"
+    "6) NO WATERMARKS / black blobs / stamp marks / brand-name text / giant J marks.\n"
     "7) FULL HEADLINE — Never cut the headline with \"...\". Fit the complete quoted headline.\n"
+    "8) CURRENCY — India retail: use ₹ only. Never £. Never invent extra card sentences.\n"
+)
+
+HUB_CARD_ICON_RULE = (
+    "\n\nHUB / FACT-CARD ICON RULE (NON-NEGOTIABLE):\n"
+    "- Every fact card MUST include a LARGE ULTRA-PREMIUM clay-3D icon "
+    "(high-detail studio render, subtle gloss, strong shadows — not flat clipart, not low-poly).\n"
+    "- For bank penalty hubs: 5 cards = 5 DIFFERENT premium 3D icons "
+    "(e.g. classical bank, vault door, gold coin stack, shield, debit-card stack) "
+    "placed above or beside each bank name.\n"
+    "- Do NOT leave cards as text-only. Do NOT draw official trademark bank logos "
+    "(Axis/SBI/HDFC/ICICI/PNB logo marks) — AI garbles trademarks. "
+    "Use clear premium 3D icons + the exact bank NAME as typography.\n"
+    "- Center hub also needs a strong ULTRA-PREMIUM clay-3D bank/building icon.\n"
 )
 
 # Kept as alias for older imports

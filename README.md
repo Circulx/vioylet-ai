@@ -97,3 +97,6 @@ TypeScript request/response contracts are available in [contracts/frontend-api.t
 - The backend regression suite passes locally.
 - The frontend lint suite passes locally.
 - Frontend production build on this machine is blocked only by the local Node runtime version, which is why the Docker frontend image uses Node 20.
+
+# vioylet-ai
+

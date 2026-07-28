@@ -34,6 +34,8 @@ from app.schemas.pipeline import (
 )
 from app.services.copy_proofread import proofread_blueprint
 from app.services.image_text_edit import apply_text_edits
+from app.services.blueprint_quality import finalize_blueprint_for_card
+from app.prompts.jiraaf_layout import classify_layout
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -63,6 +65,7 @@ def _hydrate_state(raw: dict) -> ViolytState:
         "retrieval_log": raw.get("retrieval_log"),
         "repair_instructions": raw.get("repair_instructions"),
         "final_output": raw.get("final_output"),
+        "live_research": raw.get("live_research") or {},
     }
 
     mapping = [
@@ -152,6 +155,25 @@ async def run_pipeline(request: PipelineRunRequest) -> PipelineRunResponse:
         "repair_count": 0,
     }
 
+    # Intent router: pick layout + format from the prompt.
+    # Strong data intents (trade / rank / hub) OVERRIDE a wrong format click
+    # so the user does NOT need to rewrite the prompt.
+    fmt_in = str(request.format or "").strip().lower()
+    layout = classify_layout(request.user_prompt, fmt_in or None)
+    if (
+        not fmt_in
+        or fmt_in == "auto"
+        or layout.reason.startswith("intent_")
+    ):
+        initial_state["format"] = layout.suggested_format
+        logger.info(
+            "pipeline.run.layout_routed",
+            layout=layout.layout_type,
+            format=layout.suggested_format,
+            reason=layout.reason,
+            user_format=fmt_in or "auto",
+        )
+
     try:
         graph = build_phase1_graph().compile()
         final_state = await graph.ainvoke(initial_state)
@@ -205,6 +227,21 @@ async def approve_blueprint(request: PipelineApproveRequest) -> PipelineRunRespo
             logger.info("pipeline.approve.proofread_ok")
         except Exception as exc:
             logger.warning("pipeline.approve.proofread_failed", error=str(exc))
+        user_prompt = str(raw.get("user_prompt", ""))
+        fmt = str(raw.get("format", bp.format or "static"))
+        layout = classify_layout(user_prompt, fmt)
+        bp = finalize_blueprint_for_card(
+            bp,
+            layout_type=layout.layout_type,
+            user_prompt=user_prompt,
+            live_research=raw.get("live_research") or {},
+        )
+        if bp.missing_critical:
+            logger.warning(
+                "pipeline.approve.blueprint_quality_flags",
+                missing=bp.missing_critical,
+                layout=layout.layout_type,
+            )
         raw["creative_blueprint"] = bp.model_dump()
 
     if not raw.get("creative_blueprint"):
@@ -215,6 +252,15 @@ async def approve_blueprint(request: PipelineApproveRequest) -> PipelineRunRespo
         try:
             bp = CreativeBlueprint.model_validate(raw["creative_blueprint"])
             bp = await proofread_blueprint(bp, use_llm=False)
+            user_prompt = str(raw.get("user_prompt", ""))
+            fmt = str(raw.get("format", bp.format or "static"))
+            layout = classify_layout(user_prompt, fmt)
+            bp = finalize_blueprint_for_card(
+                bp,
+                layout_type=layout.layout_type,
+                user_prompt=user_prompt,
+                live_research=raw.get("live_research") or {},
+            )
             raw["creative_blueprint"] = bp.model_dump()
         except Exception as exc:
             logger.warning("pipeline.approve.checkpoint_proofread_failed", error=str(exc))

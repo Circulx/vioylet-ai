@@ -1,0 +1,325 @@
+from __future__ import annotations
+
+"""Classify creative layout intent from user prompt + selected format.
+
+╔══════════════════════════════════════════════════════════════════╗
+║  PROMPT → LAYOUT ROUTER (you should NOT rewrite prompts)        ║
+╠══════════════════════════════════════════════════════════════════╣
+║  Your prompt about…              → Layout              → Format ║
+║  ─────────────────────────────────────────────────────────────  ║
+║  Trade deficit / export-import   → static_ranking      → info   ║
+║    (India–Russia dual-bar table)   (trade data board)           ║
+║  Top-N / FDI / country ranks     → static_ranking      → info   ║
+║  Bank penalties / key rules      → static_hub_facts    → static ║
+║  Why / how / benefits / myths    → carousel_story      → carousel║
+║    OR education poster if format=infographic/static             ║
+╚══════════════════════════════════════════════════════════════════╝
+
+Strong data intents (trade / rank / hub) OVERRIDE a mistaken carousel click.
+"""
+
+from dataclasses import dataclass
+from typing import Literal
+
+LayoutType = Literal["carousel_story", "static_hub_facts", "static_ranking"]
+
+_HUB_KEYS = (
+    "penalty",
+    "penalties",
+    "key rules",
+    "top 5 bank",
+    "top five bank",
+    "top 5 banks",
+    "premature withdrawal",
+    "fd penalty",
+    "fixed deposit penalty",
+)
+
+_RANK_KEYS = (
+    "fdi",
+    "inflow",
+    "inflows",
+    "top countries",
+    "country-wise",
+    "ranking",
+    "rank ",
+    "vs other countries",
+    "compare india",
+    "inflation rate",
+    "top 10",
+    "top ten",
+    "top 5 countries",
+    "top five countries",
+)
+
+# Bilateral / trade-deficit data boards (Jiraaf "India Buys 13x More From Russia" sample)
+_DATA_BOARD_KEYS = (
+    "trade deficit",
+    "trade balance",
+    "bilateral trade",
+    "exports to",
+    "imports from",
+    "export vs import",
+    "import vs export",
+    "buys more from",
+    "trade between",
+    "analysing the trade",
+    "analyzing the trade",
+    "analyse the trade",
+    "analyze the trade",
+    "infographic analysing",
+    "infographic analyzing",
+    "india and russia",
+    "india-russia",
+    "india – russia",
+    "india russia",
+)
+
+_STORY_KEYS = (
+    "explain",
+    "what is",
+    "what are",
+    "why ",
+    "why liquidity",
+    "liquidity",
+    "useful",
+    "predictable",
+    "benefits",
+    "benefit",
+    "reasons",
+    "checklist",
+    "anatomy",
+    "journey",
+    "step-by-step",
+    "step by step",
+    "how ",
+    "fallac",
+    "fire",
+    "capital control",
+    "debenture",
+    "ncd",
+    "convertible",
+    "inflation lie",
+    "myth",
+    "swipe",
+    "carousel",
+    "summit",
+    "story",
+    "sweeping",
+    "auto-sweep",
+    "auto sweep",
+    "income",
+    "bonds are",
+    "bond appreciation",
+)
+
+
+@dataclass(frozen=True)
+class LayoutDecision:
+    layout_type: LayoutType
+    suggested_format: Literal["static", "carousel", "infographic"]
+    reason: str
+
+
+def is_trade_data_board(user_prompt: str) -> bool:
+    """True for India–Russia style trade deficit / export-import data tables."""
+    text = (user_prompt or "").lower()
+    if any(k in text for k in _DATA_BOARD_KEYS):
+        # "india russia summit" without trade/deficit → not a data board
+        if any(k in text for k in ("india and russia", "india-russia", "india – russia", "india russia")):
+            if not any(
+                k in text
+                for k in (
+                    "trade",
+                    "deficit",
+                    "export",
+                    "import",
+                    "balance",
+                    "buys",
+                    "analys",
+                )
+            ):
+                return False
+        return True
+    if ("deficit" in text or "trade" in text) and (
+        "analys" in text or "export" in text or "import" in text or "russia" in text
+    ):
+        return True
+    return False
+
+
+def _prefer_data_format(
+    selected: str,
+    *,
+    default: Literal["static", "infographic"] = "infographic",
+) -> Literal["static", "carousel", "infographic"]:
+    """Keep static/infographic if user picked them; else force data-friendly format."""
+    if selected in ("static", "infographic"):
+        return selected  # type: ignore[return-value]
+    return default
+
+
+def classify_layout(
+    user_prompt: str,
+    selected_format: str | None = None,
+) -> LayoutDecision:
+    """Pick layout from prompt intent. Strong data intents beat a wrong format click."""
+    text = (user_prompt or "").lower()
+    fmt = (selected_format or "").strip().lower()
+    if fmt not in ("static", "carousel", "infographic"):
+        fmt = ""
+
+    is_hub = any(k in text for k in _HUB_KEYS)
+    is_trade = is_trade_data_board(user_prompt)
+    is_rank = any(k in text for k in _RANK_KEYS) or is_trade
+    is_story = any(k in text for k in _STORY_KEYS)
+    if is_trade or is_hub or (is_rank and not is_story):
+        # Data / hub boards never become education posters
+        is_story = False
+
+    # ── Strong intents first (do NOT require the user to rewrite the prompt) ──
+    if is_hub:
+        out = _prefer_data_format(fmt, default="static")
+        return LayoutDecision("static_hub_facts", out, "intent_hub_facts")
+    if is_trade:
+        out = _prefer_data_format(fmt, default="infographic")
+        return LayoutDecision("static_ranking", out, "intent_trade_data_board")
+    if is_rank:
+        out = _prefer_data_format(fmt, default="infographic")
+        return LayoutDecision("static_ranking", out, "intent_ranking_board")
+
+    # ── Explicit format for education / story ──
+    if fmt == "carousel":
+        return LayoutDecision("carousel_story", "carousel", "user_selected_carousel")
+    if fmt == "infographic":
+        if is_story:
+            return LayoutDecision("carousel_story", "infographic", "infographic_education_poster")
+        return LayoutDecision("carousel_story", "infographic", "infographic_default_poster")
+    if fmt == "static":
+        if is_story:
+            return LayoutDecision("carousel_story", "static", "static_single_story_poster")
+        return LayoutDecision("carousel_story", "static", "static_default_poster")
+
+    # ── No format selected ──
+    if is_story:
+        return LayoutDecision("carousel_story", "carousel", "auto_carousel_story")
+    return LayoutDecision("carousel_story", "carousel", "auto_carousel_story")
+
+
+def layout_cheat_sheet() -> str:
+    """Human-readable routing table for UI / docs."""
+    return (
+        "Trade deficit / export-import -> data board (infographic)\n"
+        "Top-N / FDI / country ranks -> ranking board (infographic)\n"
+        "Bank penalties / key rules -> hub + fact cards (static)\n"
+        "Why / how / benefits / myths -> carousel story (or education poster if static/infographic)\n"
+        "You do NOT need to rewrite the prompt - intent picks the layout."
+    )
+
+
+def requested_rank_count(
+    user_prompt: str,
+    *,
+    default: int | None = None,
+    max_n: int = 15,
+) -> int | None:
+    """Parse user-requested top-N (e.g. 'top 10 ranking') — never hardcode 5/10.
+
+    Returns None when the prompt does not state a count (caller keeps existing rows).
+    """
+    import re
+
+    text = (user_prompt or "").lower()
+    if not text:
+        return default
+
+    word_nums = {
+        "three": 3,
+        "four": 4,
+        "five": 5,
+        "six": 6,
+        "seven": 7,
+        "eight": 8,
+        "nine": 9,
+        "ten": 10,
+        "eleven": 11,
+        "twelve": 12,
+        "fifteen": 15,
+        "twenty": 20,
+    }
+
+    patterns = (
+        r"\btop[\s\-]?(\d{1,2})\b",
+        r"\btop[\s\-]+(ten|twelve|fifteen|twenty|eleven|five|six|seven|eight|nine|three|four)\b",
+        r"\b(\d{1,2})\s*(?:country|countries|nation|nations|bank|banks|item|items|row|rows|rankings?)\b",
+        r"\brank(?:ing|ed)?\s+(?:the\s+)?(?:top\s+)?(\d{1,2})\b",
+        r"\brank(?:ing|ed)?\s+(?:the\s+)?(?:top\s+)?(ten|twelve|fifteen|twenty|five|six|seven|eight|nine)\b",
+    )
+    for pat in patterns:
+        m = re.search(pat, text)
+        if not m:
+            continue
+        raw = m.group(1)
+        n = word_nums.get(raw) if raw.isalpha() else int(raw)
+        if n is None:
+            continue
+        return min(max(int(n), 1), max_n)
+    return default
+
+
+def needs_live_research(user_prompt: str, layout_type: LayoutType | None = None) -> bool:
+    """News/data/top-N/rates prompts should always research."""
+    text = (user_prompt or "").lower()
+    if layout_type in ("static_hub_facts", "static_ranking"):
+        return True
+    if is_trade_data_board(user_prompt):
+        return True
+    keys = (
+        "latest",
+        "current",
+        "today",
+        "news",
+        "rate",
+        "rates",
+        "fdi",
+        "inflation",
+        "penalty",
+        "top ",
+        "summit",
+        "invest",
+        "inflow",
+        "2024",
+        "2025",
+        "2026",
+        "japan",
+        "bank",
+        "trade deficit",
+        "trade balance",
+        "export",
+        "import",
+        "russia",
+    )
+    return any(k in text for k in keys)
+
+
+def source_domains_for_footer(sources: list[dict], limit: int = 2) -> list[str]:
+    """Compact domains for image footer (Source: dpiit.gov.in)."""
+    from urllib.parse import urlparse
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for src in sources or []:
+        url = str(src.get("url") or src.get("source_url") or "").strip()
+        if not url:
+            continue
+        try:
+            host = urlparse(url).netloc.lower().removeprefix("www.")
+        except Exception:
+            continue
+        if not host or host in seen:
+            continue
+        seen.add(host)
+        out.append(host)
+        if len(out) >= limit:
+            break
+    return out

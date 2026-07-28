@@ -42,7 +42,8 @@ class ClaudeService:
         self._fallback_model = fallback_model or settings.anthropic_fallback_model
         self._client: anthropic.AsyncAnthropic | None = None
         if self._api_key:
-            self._client = anthropic.AsyncAnthropic(api_key=self._api_key)
+            timeout = float(getattr(settings, "llm_request_timeout_seconds", 180.0) or 180.0)
+            self._client = anthropic.AsyncAnthropic(api_key=self._api_key, timeout=timeout)
 
     # ── JSON extraction ───────────────────────────────────────────────────────
 
@@ -146,9 +147,12 @@ class ClaudeService:
     # ── Core API call (retriable) ─────────────────────────────────────────────
 
     @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
-        retry=retry_if_exception_type((anthropic.APITimeoutError, anthropic.InternalServerError, TruncatedOutputError, ValidationError)),
+        stop=stop_after_attempt(2),
+        wait=wait_exponential(multiplier=1, min=2, max=8),
+        retry=retry_if_exception_type(
+            (anthropic.InternalServerError, TruncatedOutputError, ValidationError)
+        ),
+        reraise=True,
     )
     async def _call(
         self,

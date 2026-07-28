@@ -91,7 +91,7 @@ CAROUSEL FORMAT:
             return """\
 INFOGRAPHIC FORMAT:
 - Information hierarchy: title → data/insights → context → CTA
-- Typically 4-6 sections
+- Section count follows the user request (top 10 → 10 rows; top 5 → 5). Do NOT default to 4–6 when a larger N is asked.
 - Each section presents one data point or insight visually
 - slide_plan entries represent sections, not slides
 - Typical roles: header | data_point | comparison | context | cta"""

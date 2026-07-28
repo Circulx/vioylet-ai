@@ -530,7 +530,14 @@ class LiveResearchService:
         # instead of low-level shaping.
         try:
             return await asyncio.to_thread(self._openai_web_search_sync, query)
-        except Exception:
+        except Exception as exc:
+            from app.core.logging import get_logger
+
+            get_logger(__name__).warning(
+                "live_research.openai_web_search_failed",
+                error=str(exc),
+                query=self._normalize_text(query, limit=120),
+            )
             return []
 
     async def _search_web(self, client: httpx.AsyncClient, query: str) -> list[dict[str, str]]:
@@ -699,32 +706,66 @@ class LiveResearchService:
                 }
         timeout = httpx.Timeout(self.settings.live_research_timeout_seconds)
         raw_sources: list[dict[str, str]] = []
+        search_hits: list[dict[str, str]] = []
+        fetch_errors = 0
         try:
             async with httpx.AsyncClient(timeout=timeout, headers={"User-Agent": "ViolytResearch/1.0"}) as client:
                 discovered_urls = list(prompt_urls)
                 for query in plan.get("queries", []):
-                    for result in await self._search_web(client, query):
+                    hits = await self._search_web(client, query)
+                    search_hits.extend(hits)
+                    for result in hits:
                         url = result.get("url")
                         if url and url not in discovered_urls:
                             discovered_urls.append(url)
-                for url in discovered_urls[: max(4, self.settings.live_research_max_results_per_query * self.settings.live_research_max_queries)]:
+                for url in discovered_urls[
+                    : max(4, self.settings.live_research_max_results_per_query * self.settings.live_research_max_queries)
+                ]:
                     fetched = await self._fetch_url_text(client, url)
                     if fetched:
                         raw_sources.append(fetched)
-        except Exception:
+                    else:
+                        fetch_errors += 1
+        except Exception as exc:
+            from app.core.logging import get_logger
+
+            get_logger(__name__).warning("live_research.fetch_loop_failed", error=str(exc))
             raw_sources = []
+
+        # If page fetch fails (common behind bot walls), still keep search snippets so we have SOMETHING.
+        if not raw_sources and search_hits:
+            for hit in search_hits[: max(4, self.settings.live_research_max_results_per_query)]:
+                snippet = self._normalize_text(hit.get("snippet"), limit=600)
+                url = self._normalize_text(hit.get("url"), limit=400)
+                title = self._normalize_text(hit.get("title"), limit=180) or url
+                if url and snippet:
+                    raw_sources.append({"url": url, "title": title, "content": snippet})
+
+        from app.core.logging import get_logger
+
+        get_logger(__name__).info(
+            "live_research.search_stats",
+            search_hits=len(search_hits),
+            fetched_pages=len(raw_sources),
+            fetch_errors=fetch_errors,
+            queries=len(plan.get("queries") or []),
+        )
+
         if not raw_sources:
             return {
                 "status": "unavailable",
                 "summary": (
-                    "Live research was requested but no external search results or fetchable source URLs were available. "
-                    "Use retrieved knowledge conservatively and require verification for current values."
+                    "Web search ran but returned no usable results or fetchable pages. "
+                    "Check OPENAI web_search access / network, or paste a source URL in the prompt."
                 ),
+                "verified_facts": [],
                 "sources": [],
                 "queries": plan.get("queries", []),
                 "facts_to_verify": plan.get("facts_to_verify", []),
                 "verified_fact_limit": verified_fact_limit,
                 "provider_usage": list(self.last_usage_events),
+                "search_hits": 0,
+                "fetch_errors": fetch_errors,
             }
         synthesis_fallback = {
             "summary": self._normalize_text(
@@ -773,6 +814,27 @@ class LiveResearchService:
             (synthesis or {}).get("verified_facts"),
             limit=verified_fact_limit,
         )
+        # If synthesizer returned empty facts but we have sources, seed facts from snippets
+        if not verified_facts and raw_sources:
+            seeded: list[dict[str, str]] = []
+            for source in raw_sources[:verified_fact_limit]:
+                content = self._normalize_text(source.get("content"), limit=220)
+                if not content:
+                    continue
+                seeded.append(
+                    {
+                        "label": self._normalize_text(source.get("title"), limit=120) or "Web fact",
+                        "value": content,
+                        "source_title": self._normalize_text(source.get("title"), limit=160),
+                        "source_url": self._normalize_text(source.get("url"), limit=400),
+                    }
+                )
+            verified_facts = seeded
+            if not summary:
+                summary = self._normalize_text(
+                    "Live web search found source material; verify numbers against bank/official sites.",
+                    limit=400,
+                )
         sources = [
             {
                 "title": self._normalize_text(source.get("title"), limit=180),
@@ -805,4 +867,6 @@ class LiveResearchService:
             "preferred_sources": plan.get("preferred_sources", []),
             "verified_fact_limit": verified_fact_limit,
             "provider_usage": list(self.last_usage_events),
+            "search_hits": len(search_hits),
+            "fetch_errors": fetch_errors,
         }

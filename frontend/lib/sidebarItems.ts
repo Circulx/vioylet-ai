@@ -39,10 +39,4 @@ export const sidebarItems: SidebarItemProps[] = [
     icon: "/user_management",
     module: "USER_MANAGEMENT",
   },
-  {
-    id: 6,
-    name: "Notification",
-    icon: "/notification",
-    module: "NOTIFICATION",
-  },
 ];

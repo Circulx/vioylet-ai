@@ -19,9 +19,8 @@ import {
 } from "@/components/platformOwner/PlatformOwnerPrimitives";
 import { useBrands } from "@/hooks/useBrands";
 import { useGetMe } from "@/hooks/useUser";
-import { useGetTenantData, useGetTenantUsers } from "@/hooks/tenantAdmins/useGetTenants";
+import { useGetTenantData } from "@/hooks/tenantAdmins/useGetTenants";
 import { useUpdateBrandUsageTargets } from "@/hooks/tenantAdmins/useUpdateTenant";
-import { addInAppNotificationForRecipients } from "@/hooks/useInAppNotifications";
 
 type UsageRow = {
   id: string;
@@ -40,7 +39,6 @@ export default function BrandUsageAllocationPage() {
   const { data: currentUser } = useGetMe();
   const tenantId = currentUser?.tenantId ?? "";
   const { data: tenant } = useGetTenantData(tenantId);
-  const { data: tenantUsers } = useGetTenantUsers(currentUser?.role === "TENANT_ADMIN" ? tenantId : "");
   const { data: brands } = useBrands();
   const updateBrandUsageTargets = useUpdateBrandUsageTargets();
 
@@ -123,40 +121,6 @@ export default function BrandUsageAllocationPage() {
     [rows],
   );
   const hasChanges = rows.length > 0 && currentAllocationKey !== savedAllocationKey;
-  const notificationRecipientIds = useMemo(() => {
-    const recipients = new Set<string>();
-    if (
-      currentUser?.tenantId === tenantId &&
-      (currentUser?.role === "TENANT_ADMIN" || currentUser?.role === "TENANT_USER") &&
-      currentUser.notificationsEnabled !== false
-    ) {
-      recipients.add(currentUser.id);
-    }
-    for (const user of tenantUsers || []) {
-      if (!user.is_active || user.tenant_id !== tenantId) {
-        continue;
-      }
-      if (
-        (user.role_codes.includes("tenant_admin") || user.role_codes.includes("tenant_user")) &&
-        user.notifications_enabled !== false
-      ) {
-        recipients.add(user.id);
-      }
-    }
-    return Array.from(recipients);
-  }, [currentUser, tenantId, tenantUsers]);
-
-  const notifyCapacityUsageUpdated = (brandUsageTargets: Record<string, number>) => {
-    if (!(currentUser?.role === "TENANT_ADMIN" || currentUser?.role === "TENANT_USER")) {
-      return;
-    }
-    const totalAllocation = Object.values(brandUsageTargets).reduce((sum, value) => sum + Number(value || 0), 0);
-    addInAppNotificationForRecipients(notificationRecipientIds, {
-      title: "Capacity Usage Updated",
-      message: `Brand capacity allocations have been updated. The total allocation is now ${totalAllocation}%. Review the latest allocations in Capacity Usage.`,
-    });
-  };
-
   return (
     <div className="container">
       <div className="mx-auto space-y-6">
@@ -187,9 +151,8 @@ export default function BrandUsageAllocationPage() {
                     brandUsageTargets: Object.fromEntries(rows.map((row) => [row.id, row.value])),
                   },
                   {
-                    onSuccess: (response) => {
+                    onSuccess: () => {
                       setFeedback("Usage allocation saved successfully.");
-                      notifyCapacityUsageUpdated(response.brand_usage_targets);
                     },
                     onError: () => setError("Unable to save usage allocation right now."),
                     onSettled: () => {

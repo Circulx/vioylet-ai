@@ -18,7 +18,7 @@ from app.models.collaboration import ReviewComment, ReviewLink, ReviewLinkPartic
 from app.models.tenant import Role, User, UserRole
 from app.repositories.collaboration import ReviewCommentRepository, ReviewLinkParticipantRepository, ReviewLinkRepository
 from app.services.email import EmailService
-from app.services.notification import InAppNotificationService
+from app.services.notification import InAppNotificationService, email_notifications_enabled
 
 
 logger = logging.getLogger(__name__)
@@ -252,14 +252,6 @@ class ReviewService:
         if not link or not comment:
             return
         try:
-            await self._create_comment_in_app_notifications(link, comment)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "Review comment in-app notification failed for review_link_id=%s: %s",
-                review_link_id,
-                exc,
-            )
-        try:
             await self._send_comment_notifications(link, comment)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
@@ -281,6 +273,8 @@ class ReviewService:
         post_title = link.title or (content.title if content else None)
         review_url = self.email.build_review_link(link.token)
         for recipient in recipients:
+            if not email_notifications_enabled(recipient):
+                continue
             await asyncio.to_thread(
                 self.email.send_review_comment_notification_email,
                 recipient.email,
@@ -352,18 +346,9 @@ class ReviewService:
         )
         post_title = link.title or (content.title if content else None)
         review_url = self.email.build_review_link(link.token)
-        notification_service = InAppNotificationService(self.session)
         for recipient in recipients:
-            await notification_service.create(
-                recipient_user_id=recipient.id,
-                tenant_id=recipient.tenant_id,
-                title="Review Mention",
-                message=f"{sharer_name} mentioned you on {post_title or 'a shared image'}.",
-                metadata={
-                    "event": "review_mention_added",
-                    "review_link_id": str(link.id),
-                },
-            )
+            if not email_notifications_enabled(recipient):
+                continue
             await asyncio.to_thread(
                 self.email.send_review_mention_notification_email,
                 recipient.email,
@@ -387,18 +372,9 @@ class ReviewService:
             link.brand_space_id,
         )
         post_title = link.title or (content.title if content else None)
-        notification_service = InAppNotificationService(self.session)
         for recipient in recipients:
-            await notification_service.create(
-                recipient_user_id=recipient.id,
-                tenant_id=recipient.tenant_id,
-                title="Review Access Removed",
-                message=f"{remover_name} removed your access to {post_title or 'a shared image'}.",
-                metadata={
-                    "event": "review_access_removed",
-                    "review_link_id": str(link.id),
-                },
-            )
+            if not email_notifications_enabled(recipient):
+                continue
             await asyncio.to_thread(
                 self.email.send_review_access_removed_notification_email,
                 recipient.email,
@@ -425,6 +401,8 @@ class ReviewService:
         post_title = link.title or (content.title if content else None)
         review_url = self.email.build_review_link(link.token)
         for recipient in recipients:
+            if not email_notifications_enabled(recipient):
+                continue
             await asyncio.to_thread(
                 self.email.send_review_approved_notification_email,
                 recipient.email,
@@ -640,7 +618,6 @@ class ReviewService:
         was_approved = link.status == ReviewStatus.APPROVED
         link.status = status
         if status == ReviewStatus.APPROVED and not was_approved:
-            await self._create_review_approved_in_app_notifications(link, reviewer_user_id)
             try:
                 await self._send_review_approved_email_notifications(link, reviewer_user_id)
             except Exception as exc:  # noqa: BLE001

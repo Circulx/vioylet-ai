@@ -31,7 +31,7 @@ from app.services.brand_summary_memory import BrandSummaryMemoryService
 from app.services.brand_capacity import BrandCapacityAllocationService
 from app.services.data_validation import DataValidatorService
 from app.services.email import EmailService
-from app.services.notification import InAppNotificationService
+from app.services.notification import InAppNotificationService, email_notifications_enabled
 from app.services.usage import UsageLimitService
 from app.utils.text import slugify
 
@@ -702,6 +702,7 @@ class BrandSpaceService:
         email_tasks = [
             (recipient.email, recipient.full_name, brand.name)
             for recipient in await self._brand_space_update_email_recipients(brand.tenant_id, brand.id, actor_user_id)
+            if email_notifications_enabled(recipient)
         ]
         if not email_tasks:
             return False

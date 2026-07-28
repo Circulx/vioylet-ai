@@ -30,7 +30,7 @@ from app.schemas.auth import (
     TwoFactorSetupResponse,
 )
 from app.services.email import EmailService
-from app.services.notification import InAppNotificationService
+from app.services.notification import InAppNotificationService, email_notifications_enabled
 
 
 class AuthService:
@@ -203,6 +203,8 @@ class AuthService:
         # Restricts 2FA security email notices to the Platform Owner performing the action.
         if RoleCode.SUPER_ADMIN.value not in {str(role_code) for role_code in (actor_role_codes or set())}:
             return
+        if not email_notifications_enabled(user):
+            return
         override_email = (self.email.settings.platform_owner_two_factor_email_recipient or "").strip()
         recipient_email = override_email or user.email
         self.email.send_two_factor_security_email(recipient_email, user.full_name, enabled=enabled)
@@ -315,7 +317,6 @@ class AuthService:
         if not verify_password(current_password, user.hashed_password):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is invalid")
         user.hashed_password = hash_password(new_password)
-        await InAppNotificationService(self.session).create_password_changed_notification(user)
         await self.session.commit()
         self._send_password_changed_confirmation_email(user, actor_role_codes)
         return PasswordResetResponse(message="Password updated successfully.")

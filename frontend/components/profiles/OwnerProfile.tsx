@@ -12,6 +12,7 @@ import Setup2faForm from "@/components/auth/Setup2faForm";
 import { useLogout } from "@/hooks/useLogout";
 import { useProfile, useTwoFactorStatus, useUpdateProfile } from "@/hooks/useAuthProfile";
 import { useRBAC } from "@/hooks/useRBAC";
+import { addInAppNotification } from "@/hooks/useInAppNotifications";
 import { toast } from "@/components/ui/use-toast";
 import { DialogTitle } from "@radix-ui/react-dialog";
 import { Label } from "../ui/label";
@@ -49,6 +50,12 @@ export default function OwnerProfile() {
             ? "Two-factor authentication has been successfully enabled for your account."
             : "Two-factor authentication has been disabled for your account.";
 
+        if (notifications) {
+            addInAppNotification(user.id, {
+                title: "Security Update",
+                message,
+            });
+        }
         toast({
             title: "Security Update",
             description: message,
@@ -96,8 +103,8 @@ export default function OwnerProfile() {
                     </div>
 
                     <SettingRow
-                        title="Email Notifications"
-                        description="Enable or disable alerts and updates by email"
+                        title="Notifications"
+                        description="Enable or disable alerts and updates"
                         trailing={
                             <Switch
                                 checked={notifications}

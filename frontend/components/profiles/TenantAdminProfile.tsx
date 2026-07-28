@@ -126,10 +126,10 @@ export default function TenantAdminProfile() {
         updateProfile.mutate(
             { notifications_enabled: checked },
             {
-                onSuccess: () => setFeedback("Email notification preference updated."),
+                onSuccess: () => setFeedback("Notification preference updated."),
                 onError: () => {
                     setNotificationsOverride(null);
-                    setError("Unable to update email notification preference right now.");
+                    setError("Unable to update notification preference right now.");
                 },
             },
         );
@@ -234,8 +234,8 @@ export default function TenantAdminProfile() {
                     </div>
 
                     <SettingsRow
-                        title="Email Notifications"
-                        description="Enable or disable alerts and updates by email"
+                        title="Notifications"
+                        description="Enable or disable alerts and updates"
                         trailing={<Switch checked={notifications} onCheckedChange={handleNotificationToggle} />}
                     />
 

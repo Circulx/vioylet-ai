@@ -48,23 +48,6 @@ class EmailService:
         base_url = self.settings.frontend_base_url.rstrip("/")
         return f"{base_url}/review/{quote(token, safe='')}"
 
-    def send_notification_email(
-        self,
-        recipient_email: str,
-        recipient_name: str | None,
-        title: str,
-        message: str,
-    ) -> EmailDeliveryResult:
-        """Send a generic product notification by email."""
-        greeting_name = recipient_name or recipient_email
-        subject = f"Violyt: {title}"
-        text_body = f"Hello {greeting_name},\n\n{message}"
-        html_body = (
-            f"<p>Hello {escape(greeting_name)},</p>"
-            f"<p>{escape(message).replace(chr(10), '<br>')}</p>"
-        )
-        return self._send_email(recipient_email, subject, text_body, html_body)
-
     def send_activation_email(
         self,
         recipient_email: str,

@@ -9,11 +9,6 @@ from app.core.enums import RoleCode
 from app.models.collaboration import InAppNotification
 from app.models.tenant import Role, Tenant, User, UserRole
 from app.repositories.collaboration import InAppNotificationRepository
-from app.services.email import EmailDeliveryResult, EmailService
-
-
-def email_notifications_enabled(user: User) -> bool:
-    return (user.metadata_json or {}).get("notifications_enabled", True) is not False
 
 
 class InAppNotificationService:
@@ -50,7 +45,6 @@ class InAppNotificationService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
         self.notifications = InAppNotificationRepository(session)
-        self.email = EmailService()
 
     async def create(
         self,
@@ -60,15 +54,25 @@ class InAppNotificationService:
         message: str,
         tenant_id: UUID | None = None,
         metadata: dict | None = None,
-    ) -> EmailDeliveryResult | None:
-        user = await self.session.get(User, recipient_user_id)
-        if not user or not user.is_active or not self._email_notifications_enabled(user):
+    ) -> InAppNotification | None:
+        if not await self._notifications_enabled_for_user(recipient_user_id):
             return None
-        return self.email.send_notification_email(user.email, user.full_name, title, message)
 
-    @staticmethod
-    def _email_notifications_enabled(user: User) -> bool:
-        return email_notifications_enabled(user)
+        notification = InAppNotification(
+            recipient_user_id=recipient_user_id,
+            tenant_id=tenant_id,
+            title=title,
+            message=message,
+            is_read=False,
+            metadata_json=metadata or {},
+        )
+        return await self.notifications.add(notification)
+
+    async def _notifications_enabled_for_user(self, user_id: UUID) -> bool:
+        user = await self.session.get(User, user_id)
+        if not user or not user.is_active:
+            return False
+        return (user.metadata_json or {}).get("notifications_enabled", True) is not False
 
     async def create_usage_threshold_notifications(
         self,

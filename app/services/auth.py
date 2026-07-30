@@ -49,7 +49,7 @@ class AuthService:
     TWO_FACTOR_FAILED_ATTEMPTS_KEY = "two_factor_failed_attempts"
     TWO_FACTOR_LOCKED_UNTIL_KEY = "two_factor_locked_until"
     TWO_FACTOR_MAX_FAILED_ATTEMPTS = 5
-    TWO_FACTOR_LOCKOUT_MINUTES = 2
+    TWO_FACTOR_LOCKOUT_MINUTES = 30
     TWO_FACTOR_LOCKOUT_MESSAGE = (
         "Too many incorrect verification attempts. Your account has been temporarily locked. "
         "Please try again after 30 minutes."

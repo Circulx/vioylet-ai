@@ -16,7 +16,11 @@ function normalizeUser(payload: CurrentUserResponse): UiUser {
     brandSpaceIds: payload.assigned_brand_space_ids,
     phone: typeof payload.extra?.phone_number === "string" ? payload.extra.phone_number : undefined,
     notificationsEnabled:
-      typeof payload.extra?.notifications_enabled === "boolean" ? payload.extra.notifications_enabled : true,
+      typeof payload.extra?.in_app_notifications_enabled === "boolean"
+        ? payload.extra.in_app_notifications_enabled
+        : typeof payload.extra?.notifications_enabled === "boolean"
+          ? payload.extra.notifications_enabled
+          : true,
     twoFactorEnabled:
       typeof payload.extra?.two_factor_enabled === "boolean" ? payload.extra.two_factor_enabled : false,
   };

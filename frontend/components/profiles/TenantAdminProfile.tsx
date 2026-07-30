@@ -6,7 +6,6 @@ import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { PencilLine } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
 import {
     AlertDialog,
     AlertDialogAction,
@@ -31,6 +30,7 @@ import { Progress } from "../ui/progress";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 import { toast } from "@/components/ui/use-toast";
+import { NotificationPreferenceControls } from "@/components/profiles/NotificationPreferenceControls";
 
 type EditableField = "full_name" | "email" | "phone_number" | null;
 
@@ -63,7 +63,8 @@ export default function TenantAdminProfile() {
     const deleteProfile = useDeleteProfile();
     const usageTenantId = user?.tenantId ?? "";
     const { data: usageSummary } = useGetTenantUsageSummary(usageTenantId);
-    const [notificationsOverride, setNotificationsOverride] = useState<boolean | null>(null);
+    const [emailNotificationsOverride, setEmailNotificationsOverride] = useState<boolean | null>(null);
+    const [inAppNotificationsOverride, setInAppNotificationsOverride] = useState<boolean | null>(null);
     const [editingField, setEditingField] = useState<EditableField>(null);
     const [editValue, setEditValue] = useState("");
     const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
@@ -75,7 +76,17 @@ export default function TenantAdminProfile() {
     });
     const [feedback, setFeedback] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
-    const notifications = notificationsOverride ?? (profile?.extra?.notifications_enabled === false ? false : true);
+    const legacyNotificationsEnabled = profile?.extra?.notifications_enabled !== false;
+    const emailNotificationsEnabled =
+        emailNotificationsOverride ??
+        (typeof profile?.extra?.email_notifications_enabled === "boolean"
+            ? profile.extra.email_notifications_enabled
+            : legacyNotificationsEnabled);
+    const inAppNotificationsEnabled =
+        inAppNotificationsOverride ??
+        (typeof profile?.extra?.in_app_notifications_enabled === "boolean"
+            ? profile.extra.in_app_notifications_enabled
+            : legacyNotificationsEnabled);
     const usageDetails = usageSummary ?? ZERO_USAGE_SUMMARY;
 
     const account = useMemo(
@@ -121,25 +132,51 @@ export default function TenantAdminProfile() {
         );
     };
 
-    const handleNotificationToggle = (checked: boolean) => {
-        setNotificationsOverride(checked);
+    const handleEmailNotificationToggle = (checked: boolean) => {
+        setEmailNotificationsOverride(checked);
         updateProfile.mutate(
-            { notifications_enabled: checked },
+            { email_notifications_enabled: checked },
             {
-                onSuccess: () => setFeedback("Notification preference updated."),
+                onSuccess: () => setFeedback("Email notification preference updated."),
                 onError: () => {
-                    setNotificationsOverride(null);
-                    setError("Unable to update notification preference right now.");
+                    setEmailNotificationsOverride(null);
+                    setError("Unable to update email notification preference right now.");
                 },
             },
         );
     };
 
+    const handleInAppNotificationToggle = (checked: boolean) => {
+        setInAppNotificationsOverride(checked);
+        updateProfile.mutate(
+            { in_app_notifications_enabled: checked },
+            {
+                onSuccess: () => setFeedback("In-app notification preference updated."),
+                onError: () => {
+                    setInAppNotificationsOverride(null);
+                    setError("Unable to update in-app notification preference right now.");
+                },
+            },
+        );
+    };
+
+    const openPasswordDialog = () => {
+        setError(null);
+        setFeedback(null);
+        setPasswordForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
+        setPasswordDialogOpen(true);
+    };
+
     const handlePasswordSave = () => {
+        if (changePassword.isPending) {
+            return;
+        }
         if (passwordForm.newPassword !== passwordForm.confirmPassword) {
             setError("New password and confirm password must match.");
             return;
         }
+        setError(null);
+        setFeedback(null);
         changePassword.mutate(
             {
                 current_password: passwordForm.currentPassword,
@@ -233,11 +270,15 @@ export default function TenantAdminProfile() {
                         </ProfileSectionCard>
                     </div>
 
-                    <SettingsRow
-                        title="Notifications"
-                        description="Enable or disable alerts and updates"
-                        trailing={<Switch checked={notifications} onCheckedChange={handleNotificationToggle} />}
-                    />
+                    <ProfileSectionCard className="border px-5 py-4 shadow-[0px_4px_10px_0px_rgba(0,0,0,0.05)]">
+                        <NotificationPreferenceControls
+                            emailEnabled={emailNotificationsEnabled}
+                            inAppEnabled={inAppNotificationsEnabled}
+                            disabled={updateProfile.isPending}
+                            onEmailChange={handleEmailNotificationToggle}
+                            onInAppChange={handleInAppNotificationToggle}
+                        />
+                    </ProfileSectionCard>
 
                     <SettingsRow
                         title="Privacy Policy"
@@ -255,7 +296,7 @@ export default function TenantAdminProfile() {
                         title="Change password"
                         description="Update your account password to keep your account secure."
                         trailing={
-                            <Button variant={"ghost"} type="button" className="text-primary" onClick={() => setPasswordDialogOpen(true)}>
+                            <Button variant={"ghost"} type="button" className="text-primary" onClick={openPasswordDialog}>
                                 <Image src="/actions_icons/pencil.svg" alt="edit icon" width={16} height={16} className="font-semibold" />
                             </Button>
                         }
@@ -312,7 +353,7 @@ export default function TenantAdminProfile() {
                 </DialogContent>
             </Dialog>
 
-            <Dialog open={passwordDialogOpen} onOpenChange={setPasswordDialogOpen}>
+            <Dialog open={passwordDialogOpen} onOpenChange={(open) => !changePassword.isPending && setPasswordDialogOpen(open)}>
                 <DialogContent className="font-dmSans max-w-xl rounded-2xl border-0 p-8 shadow-[0_20px_80px_-24px_rgba(15,23,42,0.25)]">
                     <DialogHeader>
                         <DialogTitle className="text-2xl text-slate-900">Change Password</DialogTitle>
@@ -341,11 +382,15 @@ export default function TenantAdminProfile() {
                         />
                     </div>
                     <DialogFooter className="flex items-center justify-center mx-auto gap-3">
-                        <Button variant="outline" className="rounded-none p-5" onClick={() => setPasswordDialogOpen(false)}>
+                        <Button variant="outline" className="rounded-none p-5" onClick={() => setPasswordDialogOpen(false)} disabled={changePassword.isPending}>
                             Cancel
                         </Button>
-                        <Button className="rounded-none bg-primary/72 p-5 hover:bg-primary/90" onClick={handlePasswordSave}>
-                            Save
+                        <Button
+                            className="rounded-none bg-primary/72 p-5 hover:bg-primary/90"
+                            onClick={handlePasswordSave}
+                            disabled={changePassword.isPending}
+                        >
+                            {changePassword.isPending ? "Saving..." : "Save"}
                         </Button>
                     </DialogFooter>
                 </DialogContent>

@@ -32,6 +32,7 @@ from app.services.brand_capacity import BrandCapacityAllocationService
 from app.services.data_validation import DataValidatorService
 from app.services.email import EmailService
 from app.services.notification import InAppNotificationService
+from app.services.notification_preferences import email_notifications_enabled
 from app.services.usage import UsageLimitService
 from app.utils.text import slugify
 
@@ -693,6 +694,8 @@ class BrandSpaceService:
             email = (user.email or "").strip()
             email_key = email.lower()
             if not email_key or email_key in seen_emails:
+                continue
+            if not email_notifications_enabled(getattr(user, "metadata_json", None)):
                 continue
             seen_emails.add(email_key)
             recipients.append(user)

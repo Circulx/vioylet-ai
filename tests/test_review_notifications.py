@@ -232,3 +232,19 @@ def test_review_comment_notification_email_includes_comment_context() -> None:
     assert "Campaign Review" in text_body
     assert "https://app.example.com/review/token" in text_body
     assert html_body
+
+@pytest.mark.asyncio
+async def test_comment_email_skips_recipient_with_email_notifications_disabled() -> None:
+    service = ReviewService(DummySession())  # type: ignore[arg-type]
+    link = build_link()
+    comment = SimpleNamespace(author_user_id=uuid4(), body="Please review", id=uuid4())
+    recipient = build_user(metadata_json={"email_notifications_enabled": False})
+    service._comment_notification_recipients = AsyncMock(return_value=[recipient])
+    service._commenter_name = AsyncMock(return_value="Reviewer")
+    service.contents = SimpleNamespace(get_scoped=AsyncMock(return_value=SimpleNamespace(title="Campaign")))
+    service.email.build_review_link = Mock(return_value="https://example.test/review")
+    service.email.send_review_comment_notification_email = Mock()
+
+    await service._send_comment_notifications(link, comment)
+
+    service.email.send_review_comment_notification_email.assert_not_called()

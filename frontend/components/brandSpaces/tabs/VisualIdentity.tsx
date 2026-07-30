@@ -418,7 +418,7 @@ function VisualMetadataUploadField({
                 <p className="text-sm text-slate-500">Formats accepted: {METADATA_UPLOAD_FORMATS}</p>
             </div>
 
-            <div className="flex flex-wrap gap-4">
+            <div className="flex flex-wrap gap-4 max-h-[300px] overflow-y-auto">
                 {items.map((item) => (
                     <VisualMetadataUploadedFileCard key={item.id} item={item} onRemove={() => onRemove(item.id)} />
                 ))}

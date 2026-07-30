@@ -5,7 +5,6 @@ import { useMemo, useState } from "react";
 import { Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
-import { Switch } from "@/components/ui/switch";
 import { StyledInput } from "@/components/brandSpaces/tabs/FormFields";
 import { OwnerSectionCard, PlatformPageTitle, SectionCard } from "@/components/platformOwner/PlatformOwnerPrimitives";
 import Setup2faForm from "@/components/auth/Setup2faForm";
@@ -17,6 +16,7 @@ import { toast } from "@/components/ui/use-toast";
 import { DialogTitle } from "@radix-ui/react-dialog";
 import { Label } from "../ui/label";
 import Image from "next/image";
+import { NotificationPreferenceControls } from "@/components/profiles/NotificationPreferenceControls";
 
 export default function OwnerProfile() {
     const { user } = useRBAC();
@@ -24,7 +24,8 @@ export default function OwnerProfile() {
     const { data: profile } = useProfile();
     const { data: twoFactorStatus } = useTwoFactorStatus();
     const updateProfile = useUpdateProfile();
-    const [notificationsOverride, setNotificationsOverride] = useState<boolean | null>(null);
+    const [emailNotificationsOverride, setEmailNotificationsOverride] = useState<boolean | null>(null);
+    const [inAppNotificationsOverride, setInAppNotificationsOverride] = useState<boolean | null>(null);
     const [editOpen, setEditOpen] = useState(false);
     const [twoFactorOpen, setTwoFactorOpen] = useState(false);
     const [form, setForm] = useState({ fullName: "", email: "", phoneNumber: "" });
@@ -41,7 +42,17 @@ export default function OwnerProfile() {
         [profile?.email, profile?.extra, profile?.full_name, user?.email, user?.name, user?.phone],
     );
 
-    const notifications = notificationsOverride ?? (profile?.extra?.notifications_enabled === false ? false : true);
+    const legacyNotificationsEnabled = profile?.extra?.notifications_enabled !== false;
+    const emailNotificationsEnabled =
+        emailNotificationsOverride ??
+        (typeof profile?.extra?.email_notifications_enabled === "boolean"
+            ? profile.extra.email_notifications_enabled
+            : legacyNotificationsEnabled);
+    const inAppNotificationsEnabled =
+        inAppNotificationsOverride ??
+        (typeof profile?.extra?.in_app_notifications_enabled === "boolean"
+            ? profile.extra.in_app_notifications_enabled
+            : legacyNotificationsEnabled);
     const handleTwoFactorNotification = (enabled: boolean) => {
         if (user?.role !== "PLATFORM_OWNER" || !user.id) {
             return;
@@ -50,7 +61,7 @@ export default function OwnerProfile() {
             ? "Two-factor authentication has been successfully enabled for your account."
             : "Two-factor authentication has been disabled for your account.";
 
-        if (notifications) {
+        if (inAppNotificationsEnabled) {
             addInAppNotification(user.id, {
                 title: "Security Update",
                 message,
@@ -102,19 +113,43 @@ export default function OwnerProfile() {
                         </OwnerSectionCard>
                     </div>
 
-                    <SettingRow
-                        title="Notifications"
-                        description="Enable or disable alerts and updates"
-                        trailing={
-                            <Switch
-                                checked={notifications}
-                                onCheckedChange={(checked) => {
-                                    setNotificationsOverride(checked);
-                                    updateProfile.mutate({ notifications_enabled: checked });
-                                }}
-                            />
-                        }
-                    />
+                    <OwnerSectionCard className="border px-4 py-4 shadow-[0px_4px_10px_0px_rgba(0,0,0,0.05)]">
+                        <NotificationPreferenceControls
+                            emailEnabled={emailNotificationsEnabled}
+                            inAppEnabled={inAppNotificationsEnabled}
+                            disabled={updateProfile.isPending}
+                            onEmailChange={(checked) => {
+                                setEmailNotificationsOverride(checked);
+                                updateProfile.mutate(
+                                    { email_notifications_enabled: checked },
+                                    {
+                                        onError: () => {
+                                            setEmailNotificationsOverride(null);
+                                            toast({
+                                                title: "Unable to update email notification preference.",
+                                                variant: "destructive",
+                                            });
+                                        },
+                                    },
+                                );
+                            }}
+                            onInAppChange={(checked) => {
+                                setInAppNotificationsOverride(checked);
+                                updateProfile.mutate(
+                                    { in_app_notifications_enabled: checked },
+                                    {
+                                        onError: () => {
+                                            setInAppNotificationsOverride(null);
+                                            toast({
+                                                title: "Unable to update in-app notification preference.",
+                                                variant: "destructive",
+                                            });
+                                        },
+                                    },
+                                );
+                            }}
+                        />
+                    </OwnerSectionCard>
 
                     <SettingRow
                         title="Privacy Policy"

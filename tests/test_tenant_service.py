@@ -19,6 +19,7 @@ from app.schemas.tenant import (
     TenantUpdateRequest,
     TenantUsageLimitUpdate,
     TenantUserCreateRequest,
+    TenantUserUpdateRequest,
 )
 from app.services.email import EmailDeliveryResult, EmailService
 from app.services.auth import AuthService
@@ -610,6 +611,7 @@ async def test_profile_change_password_sends_confirmation_email_to_requesting_sc
         email="member@violyt.ai",
         full_name="Team Member",
         hashed_password=hash_password("OldPass123!"),
+        metadata_json={"email_notifications_enabled": False},
     )
     service.users.get = AsyncMock(return_value=user)
     service.email.send_password_changed_confirmation_email = Mock(
@@ -898,7 +900,7 @@ async def test_user_deactivation_emails_follow_tenant_admin_recipient_rules():
     service.email.settings = SimpleNamespace(platform_owner_two_factor_email_recipient=None)
     actor = build_user(email="tenant-admin@violyt.ai", full_name="Tenant Admin")
     owner = build_user(email="owner@violyt.ai", full_name="Platform Owner")
-    user = build_user(email="member@violyt.ai", full_name="Team Member")
+    user = build_user(email="member@violyt.ai", full_name="Team Member", metadata_json={"email_notifications_enabled": False})
     tenant = build_tenant(name="Acme")
     service.users.get = AsyncMock(return_value=actor)
     service._active_platform_owners = AsyncMock(return_value=[owner])
@@ -1019,7 +1021,7 @@ async def test_account_status_platform_owner_email_uses_configured_recipient_for
         platform_owner_two_factor_email_recipient="shruthimerine271@gmail.com"
     )
     actor = build_user(email="tenant-admin@violyt.ai", full_name="Tenant Admin")
-    user = build_user(email="member@violyt.ai", full_name="Team Member")
+    user = build_user(email="member@violyt.ai", full_name="Team Member", metadata_json={"email_notifications_enabled": False})
     tenant = build_tenant(name="Acme")
     service.users.get = AsyncMock(return_value=actor)
     service._active_platform_owners = AsyncMock()
@@ -1205,7 +1207,7 @@ async def test_user_reactivation_emails_follow_tenant_admin_recipient_rules():
     service.email.settings = SimpleNamespace(platform_owner_two_factor_email_recipient=None)
     actor = build_user(email="tenant-admin@violyt.ai", full_name="Tenant Admin")
     owner = build_user(email="owner@violyt.ai", full_name="Platform Owner")
-    user = build_user(email="member@violyt.ai", full_name="Team Member")
+    user = build_user(email="member@violyt.ai", full_name="Team Member", metadata_json={"email_notifications_enabled": False})
     tenant = build_tenant(name="Acme")
     service.users.get = AsyncMock(return_value=actor)
     service._active_platform_owners = AsyncMock(return_value=[owner])
@@ -1326,7 +1328,7 @@ async def test_reactivation_platform_owner_email_uses_configured_recipient_for_t
         platform_owner_two_factor_email_recipient="shruthimerine271@gmail.com"
     )
     actor = build_user(email="tenant-admin@violyt.ai", full_name="Tenant Admin")
-    user = build_user(email="member@violyt.ai", full_name="Team Member")
+    user = build_user(email="member@violyt.ai", full_name="Team Member", metadata_json={"email_notifications_enabled": False})
     tenant = build_tenant(name="Acme")
     service.users.get = AsyncMock(return_value=actor)
     service._active_platform_owners = AsyncMock()
@@ -1444,7 +1446,7 @@ async def test_resend_activation_link_refreshes_token_and_sends_email():
     session = DummySession()
     service = TenantService(session)
     tenant_id = uuid4()
-    user = build_user(tenant_id=tenant_id)
+    user = build_user(tenant_id=tenant_id, metadata_json={"email_notifications_enabled": False})
     service.users.get = AsyncMock(return_value=user)
     service.tokens.add = AsyncMock()
     session.scalar.return_value = 1
@@ -1477,7 +1479,7 @@ async def test_resend_activation_link_notifies_admin_with_total_attempts():
     session = DummySession()
     service = TenantService(session)
     tenant_id = uuid4()
-    user = build_user(tenant_id=tenant_id)
+    user = build_user(tenant_id=tenant_id, metadata_json={"email_notifications_enabled": False})
     service.users.get = AsyncMock(return_value=user)
     service.tokens.add = AsyncMock()
     session.scalar.return_value = 3
@@ -1541,3 +1543,82 @@ async def test_resend_activation_link_rejects_already_activated_user():
         await service.resend_activation_link(tenant_id, user.id)
 
     assert session.commits == 0
+
+
+async def test_deactivate_user_rejects_pending_user():
+    session = DummySession()
+    service = TenantService(session)
+    tenant_id = uuid4()
+    user = build_user(tenant_id=tenant_id, is_active=True, is_activated=False)
+    service.users.get = AsyncMock(return_value=user)
+
+    with pytest.raises(LifecycleError, match="before account activation"):
+        await service.deactivate_user(tenant_id, user.id)
+
+    assert user.is_active is True
+    assert session.commits == 0
+
+
+async def test_update_tenant_user_rejects_pending_user_account_status_change():
+    session = DummySession()
+    service = TenantService(session)
+    tenant_id = uuid4()
+    user = build_user(tenant_id=tenant_id, is_active=False, is_activated=False)
+    service.users.get = AsyncMock(return_value=user)
+
+    with pytest.raises(LifecycleError, match="before activation"):
+        await service.update_tenant_user(
+            tenant_id,
+            user.id,
+            TenantUserUpdateRequest(is_active=True),
+        )
+
+    assert user.is_active is False
+    assert session.commits == 0
+
+
+async def test_update_profile_persists_notification_channels_independently():
+    session = DummySession()
+    service = AuthService(session)
+    user = build_user(metadata_json={"notifications_enabled": True})
+    service.users.get = AsyncMock(return_value=user)
+
+    updated = await service.update_profile(
+        user.id,
+        None,
+        None,
+        None,
+        None,
+        email_notifications_preference=False,
+        in_app_notifications_preference=True,
+    )
+
+    assert updated.metadata_json["notifications_enabled"] is True
+    assert updated.metadata_json["email_notifications_enabled"] is False
+    assert updated.metadata_json["in_app_notifications_enabled"] is True
+    assert session.commits == 1
+    assert session.refreshed == [user]
+
+async def test_password_reset_request_sends_email_when_email_notifications_are_disabled():
+    session = DummySession()
+    service = AuthService(session)
+    user = build_user(
+        email="member@violyt.ai",
+        full_name="Team Member",
+        metadata_json={"email_notifications_enabled": False},
+    )
+    service.users.get_by_email = AsyncMock(return_value=user)
+    service.tokens.add = AsyncMock()
+    service.email.send_password_reset_email = Mock(
+        return_value=EmailDeliveryResult(
+            attempted=True,
+            delivered=True,
+            recipient_email=user.email,
+        )
+    )
+
+    response = await service.forgot_password(user.email)
+
+    assert response.message == "If the email exists, a reset link has been sent."
+    service.email.send_password_reset_email.assert_called_once_with(user.email, user.full_name, ANY)
+    assert session.commits == 1

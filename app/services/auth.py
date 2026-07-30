@@ -31,6 +31,7 @@ from app.schemas.auth import (
 )
 from app.services.email import EmailService
 from app.services.notification import InAppNotificationService
+from app.services.notification_preferences import email_notifications_enabled, in_app_notifications_enabled
 
 
 class AuthService:
@@ -270,6 +271,8 @@ class AuthService:
         email: str | None,
         phone_number: str | None,
         notifications_enabled: bool | None,
+        email_notifications_preference: bool | None = None,
+        in_app_notifications_preference: bool | None = None,
     ):
         # Runs the profile service flow and persists the resulting state before returning it to the route or
         # worker.
@@ -293,6 +296,16 @@ class AuthService:
             user.metadata_json = {
                 **(user.metadata_json or {}),
                 "notifications_enabled": notifications_enabled,
+            }
+        if email_notifications_preference is not None:
+            user.metadata_json = {
+                **(user.metadata_json or {}),
+                "email_notifications_enabled": email_notifications_preference,
+            }
+        if in_app_notifications_preference is not None:
+            user.metadata_json = {
+                **(user.metadata_json or {}),
+                "in_app_notifications_enabled": in_app_notifications_preference,
             }
         if profile_changed:
             await InAppNotificationService(self.session).create_own_profile_updated_notification(user)
@@ -361,6 +374,8 @@ class AuthService:
             extra={
                 "phone_number": user.phone_number,
                 "notifications_enabled": (user.metadata_json or {}).get("notifications_enabled", True),
+                "email_notifications_enabled": email_notifications_enabled(getattr(user, "metadata_json", None)),
+                "in_app_notifications_enabled": in_app_notifications_enabled(getattr(user, "metadata_json", None)),
                 "two_factor_enabled": self.is_two_factor_enabled(user),
             },
         )

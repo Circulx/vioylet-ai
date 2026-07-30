@@ -15,7 +15,7 @@ export const useProfile = (enabled = true) =>
 export const useUpdateProfile = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data: { full_name?: string; email?: string; phone_number?: string; notifications_enabled?: boolean }) =>
+    mutationFn: (data: { full_name?: string; email?: string; phone_number?: string; notifications_enabled?: boolean; email_notifications_enabled?: boolean; in_app_notifications_enabled?: boolean }) =>
       request(API.AUTH.UPDATE_PROFILE, { data }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["auth", "profile"] });

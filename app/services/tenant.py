@@ -22,6 +22,8 @@ from app.models.tenant import ActivationToken, Role, Tenant, User, UserRole
 from app.repositories.brand import BrandMemberRepository, BrandSpaceRepository
 from app.repositories.collaboration import UsageLimitRepository
 from app.repositories.tenant import ActivationTokenRepository, RoleRepository, TenantRepository, UserRepository, UserRoleRepository
+from app.services.notification_preferences import in_app_notifications_enabled
+
 from app.schemas.tenant import (
     TenantCreateRequest,
     TenantLogoUploadRequest,
@@ -623,7 +625,7 @@ class TenantService:
             "last_login_at": user.last_login_at,
             "activation_link_sent_count": activation_link_sent_count,
             "activation_link_attempts_left": self._activation_link_attempts_left(activation_link_sent_count),
-            "notifications_enabled": (user.metadata_json or {}).get("notifications_enabled", True) is not False,
+            "notifications_enabled": in_app_notifications_enabled(getattr(user, "metadata_json", None)),
         }
 
     async def _activation_link_sent_count(self, user_id: UUID) -> int:
@@ -661,6 +663,8 @@ class TenantService:
         user = await self.users.get(user_id)
         if not user or user.tenant_id != tenant_id:
             raise NotFoundError("User not found")
+        if not user.is_activated:
+            raise LifecycleError("Pending users cannot be deactivated before account activation.")
         was_active = user.is_active
         role_code = await self._primary_user_role_code(user.id)
         tenant = await self.tenants.get(tenant_id)
@@ -1196,6 +1200,12 @@ class TenantService:
         user = await self.users.get(user_id)
         if not user or user.tenant_id != tenant_id:
             raise NotFoundError("User not found")
+        if (
+            payload.is_active is not None
+            and payload.is_active != user.is_active
+            and not user.is_activated
+        ):
+            raise LifecycleError("Pending users cannot change account status before activation.")
         old_role_code = await self._primary_user_role_code(user.id)
         old_brand_space_ids = await self.brand_members.list_brand_ids_for_user(user.id)
         was_active = user.is_active

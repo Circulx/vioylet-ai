@@ -561,12 +561,14 @@ function UserActionMenu({
                 >
                     Edit
                 </DropdownMenuItem>
-                <DropdownMenuItem
-                    className="rounded-none border-t border-[#E8E8E8] px-6 py-3 text-base text-[#666666] focus:bg-[#F7F7FB] focus:text-[#2F3342]"
-                    onClick={handleStatusAction}
-                >
-                    {row.isActive ? "Deactivate" : "Reactivate"}
-                </DropdownMenuItem>
+                {!row.isPendingActivation ? (
+                    <DropdownMenuItem
+                        className="rounded-none border-t border-[#E8E8E8] px-6 py-3 text-base text-[#666666] focus:bg-[#F7F7FB] focus:text-[#2F3342]"
+                        onClick={handleStatusAction}
+                    >
+                        {row.isActive ? "Deactivate" : "Reactivate"}
+                    </DropdownMenuItem>
+                ) : null}
             </DropdownMenuContent>
         </DropdownMenu>
     );

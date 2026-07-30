@@ -9,6 +9,7 @@ from app.core.enums import RoleCode
 from app.models.collaboration import InAppNotification
 from app.models.tenant import Role, Tenant, User, UserRole
 from app.repositories.collaboration import InAppNotificationRepository
+from app.services.notification_preferences import in_app_notifications_enabled
 
 
 class InAppNotificationService:
@@ -72,7 +73,7 @@ class InAppNotificationService:
         user = await self.session.get(User, user_id)
         if not user or not user.is_active:
             return False
-        return (user.metadata_json or {}).get("notifications_enabled", True) is not False
+        return in_app_notifications_enabled(getattr(user, "metadata_json", None))
 
     async def create_usage_threshold_notifications(
         self,

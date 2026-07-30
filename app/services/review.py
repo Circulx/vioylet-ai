@@ -19,6 +19,7 @@ from app.models.tenant import Role, User, UserRole
 from app.repositories.collaboration import ReviewCommentRepository, ReviewLinkParticipantRepository, ReviewLinkRepository
 from app.services.email import EmailService
 from app.services.notification import InAppNotificationService
+from app.services.notification_preferences import email_notifications_enabled
 
 
 logger = logging.getLogger(__name__)
@@ -281,6 +282,8 @@ class ReviewService:
         post_title = link.title or (content.title if content else None)
         review_url = self.email.build_review_link(link.token)
         for recipient in recipients:
+            if not email_notifications_enabled(getattr(recipient, "metadata_json", None)):
+                continue
             await asyncio.to_thread(
                 self.email.send_review_comment_notification_email,
                 recipient.email,
@@ -364,14 +367,15 @@ class ReviewService:
                     "review_link_id": str(link.id),
                 },
             )
-            await asyncio.to_thread(
-                self.email.send_review_mention_notification_email,
-                recipient.email,
-                recipient.full_name,
-                sharer_name,
-                review_url,
-                post_title,
-            )
+            if email_notifications_enabled(getattr(recipient, "metadata_json", None)):
+                await asyncio.to_thread(
+                    self.email.send_review_mention_notification_email,
+                    recipient.email,
+                    recipient.full_name,
+                    sharer_name,
+                    review_url,
+                    post_title,
+                )
         await self.session.commit()
 
     async def _send_access_removed_notifications(
@@ -399,13 +403,14 @@ class ReviewService:
                     "review_link_id": str(link.id),
                 },
             )
-            await asyncio.to_thread(
-                self.email.send_review_access_removed_notification_email,
-                recipient.email,
-                recipient.full_name,
-                remover_name,
-                post_title,
-            )
+            if email_notifications_enabled(getattr(recipient, "metadata_json", None)):
+                await asyncio.to_thread(
+                    self.email.send_review_access_removed_notification_email,
+                    recipient.email,
+                    recipient.full_name,
+                    remover_name,
+                    post_title,
+                )
         await self.session.commit()
 
     async def _send_review_approved_email_notifications(
@@ -425,6 +430,8 @@ class ReviewService:
         post_title = link.title or (content.title if content else None)
         review_url = self.email.build_review_link(link.token)
         for recipient in recipients:
+            if not email_notifications_enabled(getattr(recipient, "metadata_json", None)):
+                continue
             await asyncio.to_thread(
                 self.email.send_review_approved_notification_email,
                 recipient.email,

@@ -228,11 +228,18 @@ async def test_published_brand_space_update_email_recipients_include_all_super_u
     )
     brand_user = build_user(id=uuid4(), tenant_id=tenant_id, email="brand@violyt.ai", full_name="Brand User")
     duplicate_brand_user = build_user(id=uuid4(), tenant_id=tenant_id, email="BRAND@violyt.ai", full_name="Duplicate")
+    email_disabled_user = build_user(
+        id=uuid4(),
+        tenant_id=tenant_id,
+        email="disabled@violyt.ai",
+        full_name="Email Disabled",
+        metadata_json={"email_notifications_enabled": False},
+    )
     session.execute = AsyncMock(
         side_effect=[
             ScalarResult([actor]),
             ScalarResult([assigned_super_user, tenant_super_user]),
-            ScalarResult([brand_user, duplicate_brand_user]),
+            ScalarResult([brand_user, duplicate_brand_user, email_disabled_user]),
         ]
     )
 

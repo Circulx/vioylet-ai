@@ -22,6 +22,7 @@ from app.schemas.auth import (
 )
 from app.schemas.common import MessageResponse
 from app.services.auth import AuthService
+from app.services.notification_preferences import email_notifications_enabled, in_app_notifications_enabled
 
 
 router = APIRouter()
@@ -104,6 +105,8 @@ async def update_profile(
         payload.email,
         payload.phone_number,
         payload.notifications_enabled,
+        payload.email_notifications_enabled,
+        payload.in_app_notifications_enabled,
     )
     return CurrentUserResponse(
         user_id=principal.user_id,
@@ -115,6 +118,8 @@ async def update_profile(
         extra={
             "phone_number": user.phone_number,
             "notifications_enabled": (user.metadata_json or {}).get("notifications_enabled", True),
+            "email_notifications_enabled": email_notifications_enabled(getattr(user, "metadata_json", None)),
+            "in_app_notifications_enabled": in_app_notifications_enabled(getattr(user, "metadata_json", None)),
             "two_factor_enabled": AuthService(session).is_two_factor_enabled(user),
         },
     )

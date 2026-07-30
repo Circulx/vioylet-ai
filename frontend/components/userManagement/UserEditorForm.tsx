@@ -129,7 +129,12 @@ export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
     const liveUserId = getTenantUserRequestId(liveUser);
     const isSelfEdit = mode === "edit" && Boolean(currentUser?.id) && liveUserId === currentUser?.id;
     const isTenantAdminUser = liveUser?.role_codes.includes("tenant_admin") || resolvedForm.roleCode === "tenant_admin";
-    const canChangeAccountStatus = mode === "edit" && Boolean(saveUserId) && Boolean(liveUser) && !isTenantAdminUser && !isSelfEdit;
+    const canChangeAccountStatus =
+        mode === "edit" &&
+        Boolean(saveUserId) &&
+        Boolean(liveUser?.is_activated) &&
+        !isTenantAdminUser &&
+        !isSelfEdit;
     const accountStatusMutationPending = deactivateUser.isPending || reactivateUser.isPending;
 
     const updateForm = (patch: Partial<UserEditorState>) => {

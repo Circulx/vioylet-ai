@@ -58,7 +58,7 @@ export const API = {
     FORGOT_PASSWORD: { method: "POST", url: "/api/v1/auth/forgot-password" } as ApiEndpoint<{ email: string }, { message: string; reset_token?: string }>,
     RESET_PASSWORD: { method: "POST", url: "/api/v1/auth/reset-password" } as ApiEndpoint<{ token: string; password: string }, TokenPairResponse>,
     PROFILE: { method: "GET", url: "/api/v1/auth/profile" } as ApiEndpoint<void, CurrentUserResponse>,
-    UPDATE_PROFILE: { method: "PUT", url: "/api/v1/auth/profile" } as ApiEndpoint<{ full_name?: string; email?: string; phone_number?: string; notifications_enabled?: boolean }, CurrentUserResponse>,
+    UPDATE_PROFILE: { method: "PUT", url: "/api/v1/auth/profile" } as ApiEndpoint<{ full_name?: string; email?: string; phone_number?: string; notifications_enabled?: boolean; email_notifications_enabled?: boolean; in_app_notifications_enabled?: boolean }, CurrentUserResponse>,
     CHANGE_PASSWORD: { method: "POST", url: "/api/v1/auth/change-password" } as ApiEndpoint<{ current_password: string; new_password: string }, { message: string }>,
     DELETE_PROFILE: { method: "DELETE", url: "/api/v1/auth/profile" } as ApiEndpoint<void, { message: string }>,
     TWO_FACTOR_STATUS: { method: "GET", url: "/api/v1/auth/2fa/status" } as ApiEndpoint<void, TwoFactorSetupResponse>,

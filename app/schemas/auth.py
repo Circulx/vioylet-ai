@@ -55,6 +55,8 @@ class ProfileUpdateRequest(APIModel):
     email: EmailStr | None = None
     phone_number: str | None = None
     notifications_enabled: bool | None = None
+    email_notifications_enabled: bool | None = None
+    in_app_notifications_enabled: bool | None = None
 
 
 class TokenPairResponse(APIModel):

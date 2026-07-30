@@ -10,6 +10,7 @@ import { getTwoFactorEmail, getTwoFactorTicket } from "@/lib/api/session";
 import type { CurrentUserResponse } from "@/lib/api/contracts";
 import { API } from "@/lib/api/endpoints";
 import { request } from "@/lib/api/request";
+import { getApiErrorMessage } from "@/lib/api/error-message";
 import { roleFromRoleCodes, safeAppRedirectForRole } from "@/lib/role-navigation";
 import { useVerifyTwoFactor } from "@/hooks/useAuthProfile";
 
@@ -24,8 +25,17 @@ const Verify2faForm = () => {
   const verifyTwoFactor = useVerifyTwoFactor();
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
+  const [isLocked, setIsLocked] = useState(false);
   const ticket = getTwoFactorTicket();
   const email = getTwoFactorEmail();
+
+  const focusOtpInput = () => {
+    window.requestAnimationFrame(() => {
+      const otpElement = document.getElementById("two-factor-code");
+      const focusTarget = otpElement instanceof HTMLInputElement ? otpElement : otpElement?.querySelector("input");
+      focusTarget?.focus();
+    });
+  };
 
   const handleVerify = async () => {
     if (!ticket) {
@@ -36,6 +46,7 @@ const Verify2faForm = () => {
       setError("Enter the 6 digit authenticator code.");
       return;
     }
+    setError("");
     verifyTwoFactor.mutate(
       { ticket, code },
       {
@@ -44,8 +55,15 @@ const Verify2faForm = () => {
           window.sessionStorage.removeItem(LOGIN_REDIRECT_KEY);
           router.replace(await resolvePostLoginRedirect(redirectTo));
         },
-        onError: () => {
-          setError("Invalid verification code. Please try again.");
+        onError: (error) => {
+          const message = getApiErrorMessage(error, "Invalid verification code. Please try again.");
+          setError(message);
+          const locked = message.toLowerCase().includes("temporarily locked");
+          setIsLocked(locked);
+          setCode("");
+          if (!locked) {
+            focusOtpInput();
+          }
         },
       },
     );
@@ -56,7 +74,7 @@ const Verify2faForm = () => {
       {email ? <p className="text-sm text-gray-500">Verifying access for {email}</p> : null}
 
       <Field className="my-4 mb-5 w-fit">
-        <InputOTP value={code} onChange={setCode} id="two-factor-code" maxLength={6} pattern={REGEXP_ONLY_DIGITS}>
+        <InputOTP value={code} onChange={setCode} id="two-factor-code" maxLength={6} pattern={REGEXP_ONLY_DIGITS} disabled={isLocked || verifyTwoFactor.isPending}>
           <InputOTPGroup className="gap-3">
             <InputOTPSlot index={0} />
             <InputOTPSlot index={1} />
@@ -73,6 +91,7 @@ const Verify2faForm = () => {
       <Button
         type="button"
         onClick={handleVerify}
+        disabled={isLocked || verifyTwoFactor.isPending}
         className="w-full rounded-none bg-[#5A4BB0] py-5 text-base font-semibold hover:bg-[#4A3C98]"
       >
         {verifyTwoFactor.isPending ? "Verifying..." : "Verify"}

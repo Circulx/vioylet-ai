@@ -154,6 +154,75 @@ class EmailService:
         )
         return self._send_email(recipient_email, subject, text_body, html_body)
 
+    def send_platform_owner_login_attempt_email(
+        self,
+        recipient_email: str,
+        *,
+        successful: bool,
+        attempted_at: datetime,
+        ip_address: str | None = None,
+        device_info: str | None = None,
+    ) -> EmailDeliveryResult:
+        attempted_at_utc = attempted_at.astimezone(timezone.utc)
+        date_time_label = attempted_at_utc.strftime("%d/%m/%Y %H:%M UTC")
+        status_label = "Successful" if successful else "Failed"
+        ip_label = ip_address or "Unavailable"
+        device_label = device_info or "Unavailable"
+        subject = "Platform Owner Login Successful" if successful else "Platform Owner Login Attempt Failed"
+        escaped_date_time = escape(date_time_label)
+        escaped_status = escape(status_label)
+        escaped_ip = escape(ip_label)
+        escaped_device = escape(device_label)
+        if successful:
+            text_body = (
+                "Hello Platform Owner,\n\n"
+                "Your Platform Owner account was successfully accessed.\n\n"
+                "Login Details:\n"
+                f"- Status: {status_label}\n"
+                f"- Date & Time: {date_time_label}\n"
+                f"- IP Address: {ip_label}\n"
+                f"- Browser/Device: {device_label}\n\n"
+                "If this was you, no further action is required.\n\n"
+                "If you do not recognize this login, please change your password immediately and review your account security settings."
+            )
+            html_body = (
+                "<p>Hello Platform Owner,</p>"
+                "<p>Your Platform Owner account was successfully accessed.</p>"
+                "<p>Login Details:</p>"
+                "<ul>"
+                f"<li><strong>Status:</strong> {escaped_status}</li>"
+                f"<li><strong>Date &amp; Time:</strong> {escaped_date_time}</li>"
+                f"<li><strong>IP Address:</strong> {escaped_ip}</li>"
+                f"<li><strong>Browser/Device:</strong> {escaped_device}</li>"
+                "</ul>"
+                "<p>If this was you, no further action is required.</p>"
+                "<p>If you do not recognize this login, please change your password immediately and review your account security settings.</p>"
+            )
+        else:
+            text_body = (
+                "Hello Platform Owner,\n\n"
+                "A failed login attempt was detected for your Platform Owner account.\n\n"
+                "Attempt Details:\n"
+                f"- Status: {status_label}\n"
+                f"- Date & Time: {date_time_label}\n"
+                f"- IP Address: {ip_label}\n"
+                f"- Browser/Device: {device_label}\n\n"
+                "If this was not you, we recommend reviewing your account security."
+            )
+            html_body = (
+                "<p>Hello Platform Owner,</p>"
+                "<p>A failed login attempt was detected for your Platform Owner account.</p>"
+                "<p>Attempt Details:</p>"
+                "<ul>"
+                f"<li><strong>Status:</strong> {escaped_status}</li>"
+                f"<li><strong>Date &amp; Time:</strong> {escaped_date_time}</li>"
+                f"<li><strong>IP Address:</strong> {escaped_ip}</li>"
+                f"<li><strong>Browser/Device:</strong> {escaped_device}</li>"
+                "</ul>"
+                "<p>If this was not you, we recommend reviewing your account security.</p>"
+            )
+        return self._send_email(recipient_email, subject, text_body, html_body)
+
     def send_password_changed_confirmation_email(
         self,
         recipient_email: str,

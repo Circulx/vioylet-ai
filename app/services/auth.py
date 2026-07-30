@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import asyncio
+import logging
 import secrets
 from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import RoleCode
@@ -20,7 +23,7 @@ from app.core.security import (
     verify_password,
     verify_totp_code,
 )
-from app.models.tenant import ActivationToken
+from app.models.tenant import ActivationToken, Role, UserRole
 from app.repositories.tenant import ActivationTokenRepository, UserRepository, UserRoleRepository
 from app.schemas.auth import (
     CurrentUserResponse,
@@ -34,12 +37,23 @@ from app.services.notification import InAppNotificationService
 from app.services.notification_preferences import email_notifications_enabled, in_app_notifications_enabled
 
 
+logger = logging.getLogger(__name__)
+
+
 class AuthService:
     # Business layer for auth; routes and workers pass validated inputs here and receive domain results back.
     TWO_FACTOR_ENABLED_KEY = "two_factor_enabled"
     TWO_FACTOR_SECRET_KEY = "two_factor_secret"
     TWO_FACTOR_PENDING_SECRET_KEY = "two_factor_pending_secret"
     TWO_FACTOR_VERIFIED_AT_KEY = "two_factor_verified_at"
+    TWO_FACTOR_FAILED_ATTEMPTS_KEY = "two_factor_failed_attempts"
+    TWO_FACTOR_LOCKED_UNTIL_KEY = "two_factor_locked_until"
+    TWO_FACTOR_MAX_FAILED_ATTEMPTS = 5
+    TWO_FACTOR_LOCKOUT_MINUTES = 2
+    TWO_FACTOR_LOCKOUT_MESSAGE = (
+        "Too many incorrect verification attempts. Your account has been temporarily locked. "
+        "Please try again after 30 minutes."
+    )
 
     def __init__(self, session: AsyncSession) -> None:
         # Wires the repositories and helper services this workflow reuses across its public methods.
@@ -49,12 +63,27 @@ class AuthService:
         self.tokens = ActivationTokenRepository(session)
         self.email = EmailService()
 
-    async def login(self, email: str, password: str) -> TokenPairResponse | TwoFactorChallengeResponse:
+    async def login(
+        self,
+        email: str,
+        password: str,
+        *,
+        ip_address: str | None = None,
+        device_info: str | None = None,
+    ) -> TokenPairResponse | TwoFactorChallengeResponse:
         # Runs the login service flow by coordinating repositories, validators, and integrations, then returns
         # domain data.
         user = await self.users.get_by_email(email)
         if not user or not user.hashed_password or not verify_password(password, user.hashed_password):
+            if await self._is_platform_owner_login_attempt(email, user):
+                self._dispatch_platform_owner_login_attempt_email(
+                    user,
+                    successful=False,
+                    ip_address=ip_address,
+                    device_info=device_info,
+                )
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+        is_platform_owner = await self._is_platform_owner(user.id)
         if not user.is_active:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User is inactive")
         if self.is_two_factor_enabled(user):
@@ -67,9 +96,24 @@ class AuthService:
                 },
             )
             return TwoFactorChallengeResponse(two_factor_ticket=ticket, email=user.email)
-        return await self._complete_login(user)
+        response = await self._complete_login(user)
+        if is_platform_owner:
+            self._dispatch_platform_owner_login_attempt_email(
+                user,
+                successful=True,
+                ip_address=ip_address,
+                device_info=device_info,
+            )
+        return response
 
-    async def verify_two_factor_login(self, ticket: str, code: str) -> TokenPairResponse:
+    async def verify_two_factor_login(
+        self,
+        ticket: str,
+        code: str,
+        *,
+        ip_address: str | None = None,
+        device_info: str | None = None,
+    ) -> TokenPairResponse:
         # Runs the two factor login service flow by coordinating repositories, validators, and integrations,
         # then returns domain data.
         try:
@@ -82,10 +126,25 @@ class AuthService:
         user = await self.users.get(user_id)
         if not user or not user.is_active:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        is_platform_owner = await self._is_platform_owner(user.id)
+        if is_platform_owner:
+            await self._enforce_two_factor_lockout(user)
         secret = self.get_two_factor_secret(user)
         if not secret or not verify_totp_code(secret, code):
+            if is_platform_owner:
+                await self._record_two_factor_failure(user)
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid verification code")
-        return await self._complete_login(user)
+        if is_platform_owner:
+            self._clear_two_factor_lockout(user)
+        response = await self._complete_login(user)
+        if is_platform_owner:
+            self._dispatch_platform_owner_login_attempt_email(
+                user,
+                successful=True,
+                ip_address=ip_address,
+                device_info=device_info,
+            )
+        return response
 
     async def refresh_access_token(self, refresh_token: str) -> TokenPairResponse:
         # Runs the refresh access token service flow by coordinating repositories, validators, and integrations,
@@ -194,6 +253,67 @@ class AuthService:
         self._send_platform_owner_two_factor_email(user, enabled=False, actor_role_codes=actor_role_codes)
         return TwoFactorSetupResponse(enabled=False, pending_setup=False)
 
+    async def _is_platform_owner_login_attempt(self, email: str, user) -> bool:
+        if user:
+            return await self._is_platform_owner(user.id)
+        normalized_email = (email or "").strip().lower()
+        platform_owner_emails = {
+            (self.email.settings.platform_owner_two_factor_email_recipient or "").strip().lower(),
+            (self.email.settings.demo_owner_email or "").strip().lower(),
+        }
+        platform_owner_emails.discard("")
+        return normalized_email in platform_owner_emails
+
+    def _platform_owner_login_attempt_recipient(self, user) -> str | None:
+        override_email = (self.email.settings.platform_owner_two_factor_email_recipient or "").strip()
+        if override_email:
+            return override_email
+        if user and getattr(user, "email", None):
+            return user.email
+        return (self.email.settings.demo_owner_email or "").strip() or None
+
+    def _dispatch_platform_owner_login_attempt_email(
+        self,
+        user,
+        *,
+        successful: bool,
+        ip_address: str | None,
+        device_info: str | None,
+    ) -> None:
+        recipient_email = self._platform_owner_login_attempt_recipient(user)
+        if not recipient_email:
+            return
+        attempted_at = datetime.now(timezone.utc)
+        asyncio.create_task(
+            asyncio.to_thread(
+                self._send_platform_owner_login_attempt_email,
+                recipient_email,
+                successful,
+                attempted_at,
+                ip_address,
+                device_info,
+            )
+        )
+
+    def _send_platform_owner_login_attempt_email(
+        self,
+        recipient_email: str,
+        successful: bool,
+        attempted_at: datetime,
+        ip_address: str | None,
+        device_info: str | None,
+    ) -> None:
+        try:
+            self.email.send_platform_owner_login_attempt_email(
+                recipient_email,
+                successful=successful,
+                attempted_at=attempted_at,
+                ip_address=ip_address,
+                device_info=device_info,
+            )
+        except Exception:
+            logger.exception("Failed to send Platform Owner login attempt email.")
+
     def _send_platform_owner_two_factor_email(
         self,
         user,
@@ -207,6 +327,72 @@ class AuthService:
         override_email = (self.email.settings.platform_owner_two_factor_email_recipient or "").strip()
         recipient_email = override_email or user.email
         self.email.send_two_factor_security_email(recipient_email, user.full_name, enabled=enabled)
+
+    async def _is_platform_owner(self, user_id: UUID) -> bool:
+        result = await self.session.execute(
+            select(Role.code)
+            .join(UserRole, UserRole.role_id == Role.id)
+            .where(UserRole.user_id == user_id)
+        )
+        return RoleCode.SUPER_ADMIN.value in {str(code) for code in result.scalars().all()}
+
+    @classmethod
+    def _parse_two_factor_lockout_until(cls, value: object) -> datetime | None:
+        if not isinstance(value, str) or not value.strip():
+            return None
+        try:
+            locked_until = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        if locked_until.tzinfo is None:
+            locked_until = locked_until.replace(tzinfo=timezone.utc)
+        return locked_until
+
+    @classmethod
+    def _two_factor_lockout_detail(cls) -> str:
+        return cls.TWO_FACTOR_LOCKOUT_MESSAGE
+
+    async def _enforce_two_factor_lockout(self, user) -> None:
+        metadata = dict(user.metadata_json or {})
+        locked_until = self._parse_two_factor_lockout_until(metadata.get(self.TWO_FACTOR_LOCKED_UNTIL_KEY))
+        now = datetime.now(timezone.utc)
+        if locked_until and locked_until > now:
+            raise HTTPException(
+                status_code=status.HTTP_423_LOCKED,
+                detail=self._two_factor_lockout_detail(),
+            )
+        if locked_until and locked_until <= now:
+            metadata.pop(self.TWO_FACTOR_FAILED_ATTEMPTS_KEY, None)
+            metadata.pop(self.TWO_FACTOR_LOCKED_UNTIL_KEY, None)
+            user.metadata_json = metadata
+            await self.session.commit()
+            await self.session.refresh(user)
+
+    async def _record_two_factor_failure(self, user) -> None:
+        metadata = dict(user.metadata_json or {})
+        try:
+            failed_attempts = int(metadata.get(self.TWO_FACTOR_FAILED_ATTEMPTS_KEY) or 0) + 1
+        except (TypeError, ValueError):
+            failed_attempts = 1
+        metadata[self.TWO_FACTOR_FAILED_ATTEMPTS_KEY] = failed_attempts
+        if failed_attempts >= self.TWO_FACTOR_MAX_FAILED_ATTEMPTS:
+            metadata[self.TWO_FACTOR_LOCKED_UNTIL_KEY] = (
+                datetime.now(timezone.utc) + timedelta(minutes=self.TWO_FACTOR_LOCKOUT_MINUTES)
+            ).isoformat()
+            user.metadata_json = metadata
+            await self.session.commit()
+            raise HTTPException(
+                status_code=status.HTTP_423_LOCKED,
+                detail=self._two_factor_lockout_detail(),
+            )
+        user.metadata_json = metadata
+        await self.session.commit()
+
+    def _clear_two_factor_lockout(self, user) -> None:
+        metadata = dict(user.metadata_json or {})
+        metadata.pop(self.TWO_FACTOR_FAILED_ATTEMPTS_KEY, None)
+        metadata.pop(self.TWO_FACTOR_LOCKED_UNTIL_KEY, None)
+        user.metadata_json = metadata
 
     async def _complete_login(self, user) -> TokenPairResponse:
         # Internal helper for complete login; it keeps the public service method focused on orchestration

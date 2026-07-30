@@ -16,6 +16,7 @@ import {
     FormSection,
     FormSubsection,
     StyledInput,
+    StyledTextarea,
 } from "./FormFields";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
@@ -95,7 +96,7 @@ const VisualIdentity = ({ form, setForm, onRemoveUpload, onSelectColorPaletteUpl
             <div className="grid gap-8 lg:grid-cols-2">
                 <div className="space-y-5 max-w-md">
                         <FormField label="Brand Mood">
-                            <StyledInput
+                            <StyledTextarea
                                 className="bg-section-input-field"
                                 placeholder="Overall mood the brand conveys"
                                 value={form.visualIdentity.brandMood}
@@ -103,7 +104,7 @@ const VisualIdentity = ({ form, setForm, onRemoveUpload, onSelectColorPaletteUpl
                             />
                         </FormField>
                         <FormField label="Visual Style">
-                            <StyledInput
+                            <StyledTextarea
                                 className="bg-section-input-field"
                                 placeholder="Visual style the brand uses"
                                 value={form.visualIdentity.visualStyle}
@@ -419,10 +420,6 @@ function VisualMetadataUploadField({
             </div>
 
             <div className="flex flex-wrap gap-4 max-h-[300px] overflow-y-auto">
-                {items.map((item) => (
-                    <VisualMetadataUploadedFileCard key={item.id} item={item} onRemove={() => onRemove(item.id)} />
-                ))}
-
                 <Button
                     type="button"
                     onClick={() => setIsOpen(true)}
@@ -431,6 +428,9 @@ function VisualMetadataUploadField({
                     <UploadCloud className="mb-2 h-4 w-4" />
                     Upload
                 </Button>
+                {items.map((item) => (
+                    <VisualMetadataUploadedFileCard key={item.id} item={item} onRemove={() => onRemove(item.id)} />
+                ))}
             </div>
 
             <Dialog open={isOpen} onOpenChange={handleOpenChange}>

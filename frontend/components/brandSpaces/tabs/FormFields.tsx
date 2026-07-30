@@ -385,9 +385,7 @@ export function FileUploadField({
                     event.currentTarget.value = "";
                 }}
             />
-            {item ? (
-                <UploadedFileCard item={item} onRemove={onRemove} />
-            ) : (
+            <div className="flex flex-wrap gap-4">
                 <Button
                     type="button"
                     onClick={() => inputRef.current?.click()}
@@ -396,7 +394,8 @@ export function FileUploadField({
                     <Upload className="mb-2 h-4 w-4" />
                     <span className="text-sm">{uploadLabel}</span>
                 </Button>
-            )}
+                {item ? <UploadedFileCard item={item} onRemove={onRemove} /> : null}
+            </div>
         </div>
     );
 }
@@ -417,7 +416,6 @@ export function FileUploadCollection({
 }: UploadCollectionProps) {
     const inputRef = useRef<HTMLInputElement | null>(null);
     const inputId = useId();
-    const canAddMore = multiple || items.length === 0;
 
     return (
         <div className={cn("space-y-3", className)}>
@@ -440,6 +438,26 @@ export function FileUploadCollection({
                 }}
             />
             <div className="flex flex-wrap gap-4">
+                <Button
+                    type="button"
+                    onClick={() => inputRef.current?.click()}
+                    className={cn(`flex h-20 w-60 flex-col items-center justify-center rounded-xl border-2 border-dashed border-[#E5E4E4] ${bgColor || 'bg-[#F6F6F6]'} text-sm text-slate-600 transition hover:border-primary/40 hover:bg-slate-50`)}
+                >
+                    <Upload className="mb-2 h-4 w-4" />
+                    Upload
+                    {tags?.length ? (
+                        <div className="mt-3 flex flex-wrap justify-center gap-1">
+                            {tags.map((tag) => (
+                                <span
+                                    key={tag}
+                                    className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] text-slate-500"
+                                >
+                                    {tag}
+                                </span>
+                            ))}
+                        </div>
+                    ) : null}
+                </Button>
                 {items.map((item) => (
                     <UploadedFileCard
                         key={item.id}
@@ -449,28 +467,6 @@ export function FileUploadCollection({
                         onRemove={() => onRemove(item.id)}
                     />
                 ))}
-                {canAddMore ? (
-                    <Button
-                        type="button"
-                        onClick={() => inputRef.current?.click()}
-                        className={cn(`flex h-20 w-60 flex-col items-center justify-center rounded-xl border-2 border-dashed border-[#E5E4E4] ${bgColor || 'bg-[#F6F6F6]'} text-sm text-slate-600 transition hover:border-primary/40 hover:bg-slate-50`)}
-                    >
-                        <Upload className="mb-2 h-4 w-4" />
-                        Upload
-                        {tags?.length ? (
-                            <div className="mt-3 flex flex-wrap justify-center gap-1">
-                                {tags.map((tag) => (
-                                    <span
-                                        key={tag}
-                                        className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] text-slate-500"
-                                    >
-                                        {tag}
-                                    </span>
-                                ))}
-                            </div>
-                        ) : null}
-                    </Button>
-                ) : null}
             </div>
         </div>
     );

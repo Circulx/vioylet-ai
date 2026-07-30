@@ -27,7 +27,7 @@ services:
       timeout: 5s
       retries: 20
       start_period: 10s
-
+ 
   worker:
     image: violyt-backend:local
     env_file:
@@ -50,7 +50,7 @@ services:
       - ./storage:/app/storage
       - ./vector_store:/app/vector_store
     command: ["python", "scripts/run_worker.py"]
-
+ 
   frontend:
     image: violyt-frontend:local
     environment:
@@ -60,11 +60,12 @@ services:
       NEXT_PUBLIC_MOCK_ROLE: TENANT_ADMIN
       NEXT_PUBLIC_DEMO_OWNER_EMAIL: ${NEXT_PUBLIC_DEMO_OWNER_EMAIL:-owner@violyt.ai}
       NEXT_PUBLIC_DEMO_OWNER_PASSWORD: ${NEXT_PUBLIC_DEMO_OWNER_PASSWORD:-DemoPass123!}
+      GOOGLE_FONTS_API_KEY: ${GOOGLE_FONTS_API_KEY:-}
     ports:
       - "3001:3000"
     depends_on:
       - api
-
+ 
   postgres:
     image: pgvector/pgvector:pg16
     environment:
@@ -78,7 +79,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
-
+ 
 volumes:
   postgres_data:
     name: violyt_postgres_data

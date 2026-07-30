@@ -855,7 +855,7 @@ function DateWindowControl({
             <PopoverContent
                 align="end"
                 sideOffset={6}
-                className="w-[350px] rounded-[10px] border border-[#D5D8E8] bg-white p-5 text-[#2F3342] shadow-[0_18px_48px_-20px_rgba(15,23,42,0.35)]"
+                className="w-[min(440px,calc(100vw-32px))] rounded-[10px] border border-[#D5D8E8] bg-white p-5 text-[#2F3342] shadow-[0_18px_48px_-20px_rgba(15,23,42,0.35)]"
             >
                 <div className="space-y-5">
                     <div>
@@ -864,7 +864,7 @@ function DateWindowControl({
                             Choose the month range to display in the chart and table.
                         </p>
                     </div>
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid gap-4 sm:grid-cols-2">
                         <MonthField
                             label="Start Month"
                             value={normalized.start}
@@ -903,7 +903,7 @@ function MonthField({ label, value, onChange }: { label: string; value: string; 
                     min="2020-01"
                     max="2030-12"
                     onChange={(event) => onChange(event.target.value || value)}
-                    className="h-12 w-full rounded-[8px] border border-[#BDB5EF] bg-white px-4 text-sm text-[#344054] outline-none transition focus:border-primary focus:ring-1 focus:ring-primary"
+                    className="h-12 w-full min-w-[190px] rounded-[8px] border border-[#BDB5EF] bg-white px-4 text-sm text-[#344054] outline-none transition focus:border-primary focus:ring-1 focus:ring-primary"
                 />
                 {/* <CalendarDays className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#111827]" /> */}
             </span>

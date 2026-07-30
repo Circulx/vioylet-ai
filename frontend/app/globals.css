@@ -446,3 +446,114 @@
     opacity: 0.72;
   }
 }
+@keyframes violyt-notification-balloon-float {
+  0% {
+    opacity: 0;
+    transform: translateY(18px) scale(0.74);
+  }
+  16% {
+    opacity: 0.9;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-54px) scale(1.02);
+  }
+}
+
+@keyframes violyt-notification-warning-glow {
+  0%, 100% {
+    box-shadow: 0 1px 2px rgb(15 23 42 / 0.08);
+  }
+  35% {
+    box-shadow: 0 0 0 2px rgb(251 146 60 / 0.28), 0 12px 28px -18px rgb(234 88 12 / 0.42);
+  }
+}
+
+@keyframes violyt-notification-critical-glow {
+  0%, 100% {
+    box-shadow: 0 1px 2px rgb(15 23 42 / 0.08);
+  }
+  45% {
+    box-shadow: 0 0 0 2px rgb(248 113 113 / 0.36), 0 14px 32px -18px rgb(185 28 28 / 0.5);
+  }
+}
+
+@keyframes violyt-notification-warning-icon {
+  0%, 100% {
+    transform: translateX(0) scale(1);
+  }
+  18% {
+    transform: translateX(-1px) scale(1.06);
+  }
+  36% {
+    transform: translateX(1px) scale(1.06);
+  }
+  54% {
+    transform: translateX(0) scale(1.02);
+  }
+}
+
+.notification-celebration-card {
+  animation: violyt-welcome-card-pop 4.2s ease-out both;
+}
+
+.notification-usage-warning-card {
+  animation: violyt-notification-warning-glow 3.4s ease-in-out both;
+}
+
+.notification-usage-critical-card {
+  animation: violyt-notification-critical-glow 4.2s ease-in-out both;
+}
+
+.notification-warning-icon {
+  animation: violyt-notification-warning-icon 1.4s ease-in-out 2;
+  transform-origin: center;
+}
+
+.notification-critical-icon {
+  animation: violyt-notification-warning-icon 1.5s ease-in-out 3;
+  transform-origin: center;
+}
+
+.notification-balloon {
+  animation: violyt-notification-balloon-float 4s ease-out both;
+  border-radius: 999px 999px 850px 850px;
+  height: 18px;
+  position: absolute;
+  width: 14px;
+}
+
+.notification-balloon::after {
+  background: currentColor;
+  bottom: -10px;
+  content: "";
+  height: 10px;
+  left: 50%;
+  opacity: 0.45;
+  position: absolute;
+  transform: translateX(-50%);
+  width: 1px;
+}
+
+.notification-balloon-a {
+  background: #7a68bf;
+  color: #7a68bf;
+  left: 10%;
+  top: 64%;
+}
+
+.notification-balloon-b {
+  animation-delay: 220ms;
+  background: #52b6d0;
+  color: #52b6d0;
+  right: 14%;
+  top: 58%;
+}
+
+.notification-balloon-c {
+  animation-delay: 420ms;
+  background: #f4bf4f;
+  color: #f4bf4f;
+  left: 54%;
+  top: 72%;
+}

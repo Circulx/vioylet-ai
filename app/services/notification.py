@@ -434,7 +434,7 @@ class InAppNotificationService:
             if normalized_name
             else "A new Brand Space Draft has been created successfully."
         )
-        await self.create(
+        await self._create_brand_space_notification_for_tenant_admin_and_super_users(
             recipient_user_id=recipient_user_id,
             tenant_id=tenant_id,
             title="Brand Space Created",
@@ -459,7 +459,7 @@ class InAppNotificationService:
             if normalized_name
             else "A Brand Space has been published and is now available for use."
         )
-        await self.create(
+        await self._create_brand_space_notification_for_tenant_admin_and_super_users(
             recipient_user_id=recipient_user_id,
             tenant_id=tenant_id,
             title="Brand Space Published",
@@ -484,13 +484,39 @@ class InAppNotificationService:
             if normalized_name
             else "The Brand Space Draft has been deleted successfully."
         )
-        await self.create(
+        await self._create_brand_space_notification_for_tenant_admin_and_super_users(
             recipient_user_id=recipient_user_id,
             tenant_id=tenant_id,
             title="Brand Space Deleted",
             message=message,
             metadata={"event": "brand_space_deleted"},
         )
+
+    async def _create_brand_space_notification_for_tenant_admin_and_super_users(
+        self,
+        *,
+        recipient_user_id: UUID,
+        tenant_id: UUID,
+        title: str,
+        message: str,
+        metadata: dict | None = None,
+    ) -> None:
+        recipient_ids = [recipient_user_id]
+        seen_recipient_ids = {recipient_user_id}
+        for recipient in await self._active_users_by_role(RoleCode.TENANT_USER, tenant_id=tenant_id):
+            if recipient.id in seen_recipient_ids:
+                continue
+            seen_recipient_ids.add(recipient.id)
+            recipient_ids.append(recipient.id)
+
+        for user_id in recipient_ids:
+            await self.create(
+                recipient_user_id=user_id,
+                tenant_id=tenant_id,
+                title=title,
+                message=message,
+                metadata=metadata,
+            )
 
     async def create_brand_space_archived_notification(
         self,

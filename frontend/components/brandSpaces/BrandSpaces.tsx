@@ -103,7 +103,7 @@ export default function BrandSpaces({
                     <DropdownMenuItem asChild>
                       <Link href={buildBrandEditHref(item)}>
                           <Edit3Icon />
-                        Edit
+                        View/Edit Brand Space
                       </Link>
                     </DropdownMenuItem>
                   ) : null}

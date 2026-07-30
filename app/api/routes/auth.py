@@ -1,5 +1,5 @@
 # FastAPI route handlers live here; they validate request inputs, call services, and return response schemas.
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import CurrentPrincipal, get_current_principal
@@ -28,11 +28,26 @@ from app.services.notification_preferences import email_notifications_enabled, i
 router = APIRouter()
 
 
+def _login_request_context(request: Request) -> dict[str, str | None]:
+    forwarded_for = request.headers.get("x-forwarded-for")
+    ip_address = forwarded_for.split(",", 1)[0].strip() if forwarded_for else None
+    if not ip_address and request.client:
+        ip_address = request.client.host
+    return {
+        "ip_address": ip_address or None,
+        "device_info": request.headers.get("user-agent"),
+    }
+
+
 @router.post("/login", response_model=AuthLoginResponse)
-async def login(payload: LoginRequest, session: AsyncSession = Depends(get_db_session)) -> AuthLoginResponse:
+async def login(
+    payload: LoginRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+) -> AuthLoginResponse:
     # Serves the login endpoint; it uses FastAPI dependencies, delegates work to services, and returns the
     # response schema.
-    return await AuthService(session).login(payload.email, payload.password)
+    return await AuthService(session).login(payload.email, payload.password, **_login_request_context(request))
 
 
 @router.post("/activate", response_model=TokenPairResponse)
@@ -195,7 +210,11 @@ async def disable_two_factor(
 
 
 @router.post("/2fa/verify", response_model=TokenPairResponse)
-async def verify_two_factor(payload: TwoFactorVerifyRequest, session: AsyncSession = Depends(get_db_session)) -> TokenPairResponse:
+async def verify_two_factor(
+    payload: TwoFactorVerifyRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+) -> TokenPairResponse:
     # Serves the verify two factor endpoint; it uses FastAPI dependencies, delegates work to services, and
     # returns the response schema.
-    return await AuthService(session).verify_two_factor_login(payload.ticket, payload.code)
+    return await AuthService(session).verify_two_factor_login(payload.ticket, payload.code, **_login_request_context(request))

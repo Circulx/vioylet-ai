@@ -183,10 +183,6 @@ function KnowledgeUploadField({ label, items, onAddItems, onRemove }: KnowledgeU
       </div>
 
       <div className="flex flex-wrap gap-4">
-        {items.map((item) => (
-          <KnowledgeUploadedFileCard key={item.id} item={item} onRemove={() => onRemove(item.id)} />
-        ))}
-
         <Button
           type="button"
           onClick={() => setIsOpen(true)}
@@ -195,6 +191,9 @@ function KnowledgeUploadField({ label, items, onAddItems, onRemove }: KnowledgeU
           <UploadCloud className="mb-2 h-4 w-4" />
           Upload
         </Button>
+        {items.map((item) => (
+          <KnowledgeUploadedFileCard key={item.id} item={item} onRemove={() => onRemove(item.id)} />
+        ))}
       </div>
 
       <Dialog open={isOpen} onOpenChange={handleOpenChange}>

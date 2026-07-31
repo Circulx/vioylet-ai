@@ -14,9 +14,10 @@ import {
 type Setup2faFormProps = {
   compact?: boolean;
   onConfigured?: () => void;
+  onTwoFactorChanged?: (enabled: boolean) => void;
 };
 
-export default function Setup2faForm({ compact = false, onConfigured }: Setup2faFormProps) {
+export default function Setup2faForm({ compact = false, onConfigured, onTwoFactorChanged }: Setup2faFormProps) {
   const { data: status } = useTwoFactorStatus();
   const setupTwoFactor = useSetupTwoFactor();
   const enableTwoFactor = useEnableTwoFactor();
@@ -47,6 +48,7 @@ export default function Setup2faForm({ compact = false, onConfigured }: Setup2fa
       {
         onSuccess: () => {
           setCode("");
+          onTwoFactorChanged?.(true);
           onConfigured?.();
         },
       },
@@ -63,6 +65,7 @@ export default function Setup2faForm({ compact = false, onConfigured }: Setup2fa
         onSuccess: () => {
           setDisableCode("");
           setupTwoFactor.reset();
+          onTwoFactorChanged?.(false);
           onConfigured?.();
         },
       },

@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
-from app.schemas.brand import BrandSectionUpsertRequest, BrandUpdateRequest
+from app.core.enums import RoleCode
+from app.schemas.brand import BrandSectionUpsertRequest, BrandSectionsUpsertRequest, BrandUpdateRequest
 from app.services.brand import BrandSpaceService
+from app.services.email import EmailDeliveryResult, EmailService
 
 
 class DummySession:
@@ -19,6 +21,17 @@ class DummySession:
 
     async def refresh(self, instance: object) -> None:
         self.refreshed.append(instance)
+
+
+class ScalarResult:
+    def __init__(self, items: list[object]) -> None:
+        self.items = items
+
+    def scalars(self) -> "ScalarResult":
+        return self
+
+    def all(self) -> list[object]:
+        return self.items
 
 
 def build_brand(**overrides):
@@ -35,6 +48,18 @@ def build_brand(**overrides):
         "resolved_brand_context": {},
         "created_at": datetime.now(timezone.utc),
         "updated_at": datetime.now(timezone.utc),
+    }
+    payload.update(overrides)
+    return SimpleNamespace(**payload)
+
+
+def build_user(**overrides):
+    payload = {
+        "id": uuid4(),
+        "tenant_id": uuid4(),
+        "email": "user@violyt.ai",
+        "full_name": "User",
+        "is_active": True,
     }
     payload.update(overrides)
     return SimpleNamespace(**payload)
@@ -159,3 +184,112 @@ async def test_unpublish_brand_returns_to_draft() -> None:
 
     assert unpublished is brand
     assert brand.lifecycle_state == "draft"
+
+
+def test_brand_space_updated_email_matches_required_copy() -> None:
+    service = EmailService()
+    service._send_email = Mock(
+        return_value=EmailDeliveryResult(
+            attempted=True,
+            delivered=True,
+            recipient_email="member@violyt.ai",
+        )
+    )
+
+    service.send_brand_space_updated_email("member@violyt.ai", "Team Member", "Marketing Assets")
+
+    recipient_email, subject, text_body, html_body = service._send_email.call_args.args
+    assert recipient_email == "member@violyt.ai"
+    assert subject == "Brand Space Updated"
+    assert "Hello Team Member," in text_body
+    assert 'The Brand Space "Marketing Assets" has been updated.' in text_body
+    assert "latest changes will be applied to all future creative outputs" in text_body
+    assert "please sign in to Violyt" in text_body
+    assert 'The Brand Space "Marketing Assets" has been updated.' in html_body
+
+
+async def test_published_brand_space_update_email_recipients_include_all_super_users() -> None:
+    session = DummySession()
+    service = BrandSpaceService(session)
+    tenant_id = uuid4()
+    brand_id = uuid4()
+    actor = build_user(id=uuid4(), tenant_id=tenant_id, email="admin@violyt.ai", full_name="Tenant Admin")
+    assigned_super_user = build_user(
+        id=uuid4(),
+        tenant_id=tenant_id,
+        email="assigned-super@violyt.ai",
+        full_name="Assigned Super User",
+    )
+    tenant_super_user = build_user(
+        id=uuid4(),
+        tenant_id=tenant_id,
+        email="tenant-super@violyt.ai",
+        full_name="Tenant Super User",
+    )
+    brand_user = build_user(id=uuid4(), tenant_id=tenant_id, email="brand@violyt.ai", full_name="Brand User")
+    duplicate_brand_user = build_user(id=uuid4(), tenant_id=tenant_id, email="BRAND@violyt.ai", full_name="Duplicate")
+    email_disabled_user = build_user(
+        id=uuid4(),
+        tenant_id=tenant_id,
+        email="disabled@violyt.ai",
+        full_name="Email Disabled",
+        metadata_json={"email_notifications_enabled": False},
+    )
+    session.execute = AsyncMock(
+        side_effect=[
+            ScalarResult([actor]),
+            ScalarResult([assigned_super_user, tenant_super_user]),
+            ScalarResult([brand_user, duplicate_brand_user, email_disabled_user]),
+        ]
+    )
+
+    recipients = await service._brand_space_update_email_recipients(tenant_id, brand_id, actor.id)
+
+    assert [recipient.email for recipient in recipients] == [
+        "admin@violyt.ai",
+        "assigned-super@violyt.ai",
+        "tenant-super@violyt.ai",
+        "brand@violyt.ai",
+    ]
+
+
+async def test_upsert_sections_dispatches_email_for_published_brand_space_updated_by_tenant_admin() -> None:
+    session = DummySession()
+    service = BrandSpaceService(session)
+    brand = build_brand(lifecycle_state="active")
+    service.brands.get_scoped = AsyncMock(return_value=brand)
+    service.sections.list_current_sections = AsyncMock(return_value=[])
+    service.refresh_context = AsyncMock(return_value=brand)
+    service._dispatch_published_brand_space_updated_emails = AsyncMock()
+
+    updated = await service.upsert_sections(
+        brand.tenant_id,
+        brand.id,
+        BrandSectionsUpsertRequest(sections=[]),
+        uuid4(),
+        {RoleCode.TENANT_ADMIN.value},
+    )
+
+    assert updated is brand
+    assert session.commits == 1
+    service._dispatch_published_brand_space_updated_emails.assert_awaited_once()
+
+
+async def test_upsert_sections_skips_email_for_draft_brand_space() -> None:
+    session = DummySession()
+    service = BrandSpaceService(session)
+    brand = build_brand(lifecycle_state="draft")
+    service.brands.get_scoped = AsyncMock(return_value=brand)
+    service.sections.list_current_sections = AsyncMock(return_value=[])
+    service.refresh_context = AsyncMock(return_value=brand)
+    service._dispatch_published_brand_space_updated_emails = AsyncMock()
+
+    await service.upsert_sections(
+        brand.tenant_id,
+        brand.id,
+        BrandSectionsUpsertRequest(sections=[]),
+        uuid4(),
+        {RoleCode.TENANT_ADMIN.value},
+    )
+
+    service._dispatch_published_brand_space_updated_emails.assert_not_awaited()

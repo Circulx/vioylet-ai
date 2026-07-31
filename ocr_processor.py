@@ -331,6 +331,198 @@ class GoogleVisionOCRProcessor:
 
         return colors
 
+    @staticmethod
+    def _is_near_white_background_color(rgb: tuple[int, int, int]) -> bool:
+        min_channel = min(rgb)
+        max_channel = max(rgb)
+        return min_channel >= 235 and max_channel - min_channel <= 24
+
+    @staticmethod
+    def _rgb_distance(first: tuple[int, int, int], second: tuple[int, int, int]) -> float:
+        return sum((a - b) ** 2 for a, b in zip(first, second)) ** 0.5
+
+    def extract_exact_swatch_colors(
+        self,
+        image_bytes: bytes,
+        *,
+        min_pixel_fraction: float = 0.001,
+        max_colors: int = 10,
+    ) -> list[dict]:
+        exact_swatches = self._extract_exact_pixel_swatches(
+            image_bytes=image_bytes,
+            min_pixel_fraction=min_pixel_fraction,
+            max_colors=max_colors,
+        )
+        region_swatches = self._extract_region_swatch_colors(
+            image_bytes=image_bytes,
+            min_area_fraction=min_pixel_fraction,
+            max_colors=max_colors,
+        )
+        merged: list[dict] = []
+        selected_rgbs: list[tuple[int, int, int]] = []
+        for color in [*region_swatches, *exact_swatches]:
+            rgb = (
+                int(color.get("r", 0) or 0),
+                int(color.get("g", 0) or 0),
+                int(color.get("b", 0) or 0),
+            )
+            if any(self._rgb_distance(rgb, selected) < 12 for selected in selected_rgbs):
+                continue
+            selected_rgbs.append(rgb)
+            merged.append(color)
+            if len(merged) >= max_colors:
+                break
+        return merged
+
+    def _extract_exact_pixel_swatches(
+        self,
+        image_bytes: bytes,
+        *,
+        min_pixel_fraction: float,
+        max_colors: int,
+    ) -> list[dict]:
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+        if img is None:
+            return []
+
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        pixels = img_rgb.reshape(-1, 3)
+        unique, counts = np.unique(pixels, axis=0, return_counts=True)
+        sorted_idx = np.argsort(-counts)
+        total = max(len(pixels), 1)
+
+        swatches = []
+        selected_rgbs: list[tuple[int, int, int]] = []
+        for idx in sorted_idx:
+            count = int(counts[idx])
+            pixel_fraction = count / total
+            if pixel_fraction < min_pixel_fraction:
+                break
+
+            r, g, b = (int(value) for value in unique[idx])
+            rgb = (r, g, b)
+            if self._is_near_white_background_color(rgb):
+                continue
+            if any(self._rgb_distance(rgb, selected) < 12 for selected in selected_rgbs):
+                continue
+
+            selected_rgbs.append(rgb)
+            swatches.append(
+                {
+                    "r": r,
+                    "g": g,
+                    "b": b,
+                    "hex": self.rgb_to_hex(r, g, b),
+                    "color_name": self.get_color_name(r, g, b),
+                    "score": pixel_fraction,
+                    "pixel_fraction": pixel_fraction,
+                    "source": "exact_swatch_pixels",
+                }
+            )
+            if len(swatches) >= max_colors:
+                break
+
+        return swatches
+
+    def _extract_region_swatch_colors(
+        self,
+        image_bytes: bytes,
+        *,
+        min_area_fraction: float = 0.001,
+        max_colors: int = 10,
+    ) -> list[dict]:
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+        if img is None:
+            return []
+
+        height, width = img.shape[:2]
+        total_pixels = max(height * width, 1)
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        saturation = hsv[:, :, 1]
+        value = hsv[:, :, 2]
+        min_channel = img_rgb.min(axis=2)
+        max_channel = img_rgb.max(axis=2)
+
+        near_white = (min_channel >= 235) & ((max_channel - min_channel) <= 24)
+        colored_or_dark = (saturation >= 25) | (value <= 230)
+        mask = ((~near_white) & colored_or_dark).astype(np.uint8) * 255
+        kernel = np.ones((5, 5), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        candidates: list[dict] = []
+        for contour in contours:
+            area = float(cv2.contourArea(contour))
+            if area / total_pixels < min_area_fraction:
+                continue
+            x, y, w, h = cv2.boundingRect(contour)
+            if w < 12 or h < 12:
+                continue
+            rect_area = max(w * h, 1)
+            if area / rect_area < 0.35:
+                continue
+
+            component_mask = np.zeros((height, width), dtype=np.uint8)
+            cv2.drawContours(component_mask, [contour], -1, 255, thickness=cv2.FILLED)
+            component_pixels = img_rgb[component_mask > 0]
+            if len(component_pixels) == 0:
+                continue
+            component_near_white = (
+                (component_pixels.min(axis=1) >= 235)
+                & ((component_pixels.max(axis=1) - component_pixels.min(axis=1)) <= 24)
+            )
+            component_pixels = component_pixels[~component_near_white]
+            if len(component_pixels) == 0:
+                continue
+
+            quantized = (component_pixels // 4) * 4
+            unique, counts = np.unique(quantized, axis=0, return_counts=True)
+            dominant = unique[int(np.argmax(counts))]
+            close_pixels = component_pixels[
+                np.linalg.norm(component_pixels.astype(float) - dominant.astype(float), axis=1) < 18
+            ]
+            source_pixels = close_pixels if len(close_pixels) else component_pixels
+            r, g, b = (int(round(value)) for value in np.median(source_pixels, axis=0))
+            rgb = (r, g, b)
+            if self._is_near_white_background_color(rgb):
+                continue
+            pixel_fraction = len(component_pixels) / total_pixels
+            candidates.append(
+                {
+                    "r": r,
+                    "g": g,
+                    "b": b,
+                    "hex": self.rgb_to_hex(r, g, b),
+                    "color_name": self.get_color_name(r, g, b),
+                    "score": pixel_fraction,
+                    "pixel_fraction": pixel_fraction,
+                    "source": "region_swatch_pixels",
+                    "region": {"x": int(x), "y": int(y), "width": int(w), "height": int(h)},
+                }
+            )
+
+        candidates.sort(key=lambda item: float(item.get("pixel_fraction") or 0.0), reverse=True)
+        swatches: list[dict] = []
+        selected_rgbs: list[tuple[int, int, int]] = []
+        for color in candidates:
+            rgb = (
+                int(color.get("r", 0) or 0),
+                int(color.get("g", 0) or 0),
+                int(color.get("b", 0) or 0),
+            )
+            if any(self._rgb_distance(rgb, selected) < 18 for selected in selected_rgbs):
+                continue
+            selected_rgbs.append(rgb)
+            swatches.append(color)
+            if len(swatches) >= max_colors:
+                break
+        return swatches
+
     # -------------------------------------------------------
     # Extract ALL Colors (including white/rare colors)
     # -------------------------------------------------------
@@ -710,9 +902,11 @@ class GoogleVisionOCRProcessor:
             result["filename"] = filename
 
         # Get dominant colors for color_positions
-        dominant_colors = self.extract_dominant_colors(
+        vision_dominant_colors = self.extract_dominant_colors(
             image_bytes=image_bytes, client=client
         )
+        exact_swatch_colors = self.extract_exact_swatch_colors(image_bytes=image_bytes)
+        dominant_colors = exact_swatch_colors or vision_dominant_colors
 
         # Get color positions (bounding boxes)
         color_pos = self.find_color_positions(

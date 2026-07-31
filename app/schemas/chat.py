@@ -34,6 +34,16 @@ class ChatMessageCreateRequest(APIModel):
     generate_image: bool = True
 
 
+class ChatEnhancePromptRequest(APIModel):
+    # Placeholder contract for prompt enhancement. The current implementation is static and AI-free.
+    prompt: str = Field(min_length=1)
+    studio_panel: StudioPanelSelection | None = None
+
+
+class ChatEnhancePromptResponse(APIModel):
+    enhanced_prompt: str
+
+
 class ChatSessionResponse(APIModel):
     # Response contract for chat session; routes serialize service or ORM results into this frontend-facing
     # shape.

@@ -31,6 +31,27 @@ export interface CurrentUserResponse {
   extra: Record<string, unknown>;
 }
 
+export interface InAppNotificationResponse {
+  id: UUID;
+  title: string;
+  message: string;
+  created_at: string;
+  unread: boolean;
+}
+
+export interface InAppNotificationUnreadCountResponse {
+  unread_count: number;
+}
+
+export interface BrandSpaceHistoryResponse {
+  id: UUID;
+  tenant_id: UUID;
+  brand_space_id: UUID;
+  activity_type: string;
+  message: string;
+  performed_by?: UUID | null;
+  created_at: string;
+}
 export interface UiUser {
   id: UUID;
   tenantId?: UUID;
@@ -85,6 +106,11 @@ export interface TenantSummaryResponse {
   tenant_admin_name?: string;
   tenant_admin_email?: string;
   tenant_admin_phone_number?: string;
+  tenant_admin_user_id?: UUID | null;
+  tenant_admin_is_active?: boolean | null;
+  tenant_admin_is_activated?: boolean | null;
+  tenant_admin_activation_link_sent_count?: number;
+  tenant_admin_activation_link_attempts_left?: number;
   last_active_at?: string | null;
 }
 
@@ -99,12 +125,14 @@ export interface TenantCreateResponse {
   is_active: boolean;
   metadata_json: Record<string, unknown>;
   created_at: string;
-  activation_email: {
-    attempted: boolean;
-    delivered: boolean;
-    recipient_email: string;
-    reason?: string | null;
-  };
+  activation_email: ActivationEmailStatus;
+}
+
+export interface ActivationEmailStatus {
+  attempted: boolean;
+  delivered: boolean;
+  recipient_email: string;
+  reason?: string | null;
 }
 
 export interface TenantCreateRequest {
@@ -144,12 +172,10 @@ export interface TenantUserResponse {
   brand_space_ids: UUID[];
   created_at: string;
   last_login_at?: string | null;
-  activation_email?: {
-    attempted: boolean;
-    delivered: boolean;
-    recipient_email: string;
-    reason?: string | null;
-  };
+  activation_link_sent_count?: number;
+  activation_link_attempts_left?: number;
+  activation_email?: ActivationEmailStatus;
+  notifications_enabled?: boolean;
 }
 
 export interface TenantBrandSpaceSummaryResponse {
@@ -574,6 +600,14 @@ export interface ChatSendResponse {
   assistant_message: ChatMessageResponse;
 }
 
+export interface ChatEnhancePromptRequest {
+  prompt: string;
+  studio_panel?: StudioPanelSelection;
+}
+
+export interface ChatEnhancePromptResponse {
+  enhanced_prompt: string;
+}
 export interface ChatSessionCreateRequest {
   title?: string;
   studio_panel: StudioPanelSelection;
@@ -600,6 +634,7 @@ export interface ReviewLinkResponse {
   token: string;
   status: string;
   allow_external_comments: boolean;
+  created_by_name?: string | null;
 }
 
 export interface ReviewDetailResponse {
@@ -607,17 +642,45 @@ export interface ReviewDetailResponse {
   content?: {
     id: UUID;
     title?: string;
+    brand_name?: string | null;
     generated_payload: StructuredTextPayload;
     blueprint_payload: Record<string, unknown>;
     generation_decision?: GenerationDecision;
     assets: AssetReference[];
+    display_assets?: AssetReference[];
   };
   comments: Array<{
     id: UUID;
     body: string;
+    parent_comment_id?: UUID | null;
     external_author_name?: string;
     author_user_id?: UUID;
+    created_at: string;
   }>;
+}
+
+export interface ReviewUserSummary {
+  id: UUID;
+  full_name: string;
+  email: string;
+  role_codes: string[];
+}
+
+export interface ReviewParticipantResponse extends ReviewUserSummary {
+  access_role: string;
+  is_owner: boolean;
+}
+
+export interface ReviewShareAccessResponse {
+  owner?: ReviewParticipantResponse | null;
+  participants: ReviewParticipantResponse[];
+  mentionable_users: ReviewUserSummary[];
+}
+
+export interface ReviewShareAccessUpdateRequest {
+  user_ids: UUID[];
+  user_emails?: string[];
+  remove_user_ids?: UUID[];
 }
 
 export interface RenderResponse {
@@ -627,6 +690,33 @@ export interface RenderResponse {
   renderer_metadata: Record<string, unknown>;
 }
 
+
+export interface ImageEditVariant {
+  id: string;
+  label: string;
+  target: string;
+  instructions: string;
+  asset: AssetReference;
+  preview_style: Record<string, string>;
+  created_at: string;
+  is_original: boolean;
+}
+
+export interface ImageEditStateResponse {
+  content_version_id: UUID;
+  source_asset_id: UUID;
+  variants: ImageEditVariant[];
+}
+
+export interface ImageEditStateRequest {
+  content_version_id: UUID;
+  source_asset: AssetReference;
+}
+
+export interface ImageEditApplyRequest extends ImageEditStateRequest {
+  target?: string;
+  instructions: string;
+}
 export interface AnalyticsResponse {
   scope: string;
   tenant_id?: UUID;

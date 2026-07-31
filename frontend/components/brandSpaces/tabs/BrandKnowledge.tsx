@@ -183,10 +183,6 @@ function KnowledgeUploadField({ label, items, onAddItems, onRemove }: KnowledgeU
       </div>
 
       <div className="flex flex-wrap gap-4">
-        {items.map((item) => (
-          <KnowledgeUploadedFileCard key={item.id} item={item} onRemove={() => onRemove(item.id)} />
-        ))}
-
         <Button
           type="button"
           onClick={() => setIsOpen(true)}
@@ -195,6 +191,9 @@ function KnowledgeUploadField({ label, items, onAddItems, onRemove }: KnowledgeU
           <UploadCloud className="mb-2 h-4 w-4" />
           Upload
         </Button>
+        {items.map((item) => (
+          <KnowledgeUploadedFileCard key={item.id} item={item} onRemove={() => onRemove(item.id)} />
+        ))}
       </div>
 
       <Dialog open={isOpen} onOpenChange={handleOpenChange}>
@@ -311,13 +310,13 @@ function PendingUploadCard({
         </div>
       ) : (
         <div className="mt-5 space-y-2">
-          <p className="text-sm font-medium text-[#8191A7]">Metadata Tags</p>
+          <p className="text-sm font-medium text-[#8191A7]">Description</p>
           <Input
             value={upload.tagDraft}
             onChange={(event) => onTagChange(event.target.value)}
             onKeyDown={onTagKeyDown}
             onBlur={onTagBlur}
-            placeholder="Add metadata"
+            placeholder="Add description"
             className="h-12 rounded-xl border-[#DDE7F0] bg-[#F9FBFD] text-sm shadow-none"
           />
         </div>

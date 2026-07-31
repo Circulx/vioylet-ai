@@ -44,7 +44,7 @@ from app.ai.template_vision import TemplateVisionAnalyzer
 from app.core.config import get_settings
 from app.core.exceptions import GenerationFailureError
 from app.ai.tone_intelligence import ToneIntelligenceService
-from app.integrations.object_storage import LocalObjectStorage
+from app.integrations.object_storage import get_object_storage
 from app.services.content_planning import ContentPlanningService
 from app.services.generation_trace import GenerationTraceService
 from app.utils.input_access_tracking import InputAccessTracker
@@ -519,7 +519,7 @@ class AIOrchestratorService:
         self.brand_intelligence = BrandIntelligenceService()
         self.resolution = ContextResolutionService()
         self.trace = GenerationTraceService()
-        self.storage = LocalObjectStorage()
+        self.storage = get_object_storage()
         self.template_vision = TemplateVisionAnalyzer()
 
     def _fallback_creative_decision(

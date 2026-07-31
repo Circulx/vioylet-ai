@@ -8,7 +8,6 @@ import { Input } from "@/components/ui/input";
 import {
     AddMoreButton,
     AdditionalColorRow,
-    CheckboxList,
     ColorHexInput,
     FontPickerField,
     FileUploadField,
@@ -17,7 +16,10 @@ import {
     FormSection,
     FormSubsection,
     StyledInput,
+    StyledTextarea,
 } from "./FormFields";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Label } from "@/components/ui/label";
 import { useGoogleFonts } from "@/hooks/useGoogleFonts";
 import { stripFileExtension } from "@/lib/file-utils";
 import { LOGO_PLACEMENT_OPTIONS } from "@/lib/brand-space-options";
@@ -39,20 +41,13 @@ type VisualMetadataUpload = {
     tagDraft: string;
 };
 
-const VisualIdentity = ({ brandId, form, setForm, onRemoveUpload }: BrandTabProps) => {
+const VisualIdentity = ({ form, setForm, onRemoveUpload, onSelectColorPaletteUpload }: BrandTabProps) => {
     const googleFontsQuery = useGoogleFonts();
 
     const updateField = <TKey extends keyof typeof form.visualIdentity>(
         key: TKey,
         value: (typeof form.visualIdentity)[TKey],
     ) => updateBrandFormSection(setForm, "visualIdentity", key, value);
-
-    const toggleLogoPlacement = (value: string) => {
-        const nextValues = form.visualIdentity.logoPlacements.includes(value)
-            ? form.visualIdentity.logoPlacements.filter((item) => item !== value)
-            : [...form.visualIdentity.logoPlacements, value];
-        updateField("logoPlacements", nextValues);
-    };
 
     const addUploads = (key: "colorPaletteUploads", files: FileList | null) => {
         if (!files?.length) {
@@ -101,7 +96,7 @@ const VisualIdentity = ({ brandId, form, setForm, onRemoveUpload }: BrandTabProp
             <div className="grid gap-8 lg:grid-cols-2">
                 <div className="space-y-5 max-w-md">
                         <FormField label="Brand Mood">
-                            <StyledInput
+                            <StyledTextarea
                                 className="bg-section-input-field"
                                 placeholder="Overall mood the brand conveys"
                                 value={form.visualIdentity.brandMood}
@@ -109,7 +104,7 @@ const VisualIdentity = ({ brandId, form, setForm, onRemoveUpload }: BrandTabProp
                             />
                         </FormField>
                         <FormField label="Visual Style">
-                            <StyledInput
+                            <StyledTextarea
                                 className="bg-section-input-field"
                                 placeholder="Visual style the brand uses"
                                 value={form.visualIdentity.visualStyle}
@@ -117,12 +112,18 @@ const VisualIdentity = ({ brandId, form, setForm, onRemoveUpload }: BrandTabProp
                             />
                         </FormField>
 
-                        <FormField label="Logo Placement" description="Select allowed logo placements" required>
-                            <CheckboxList
-                                options={LOGO_PLACEMENT_OPTIONS}
-                                values={form.visualIdentity.logoPlacements}
-                                onToggle={toggleLogoPlacement}
-                            />
+                        <FormField label="Logo Placement" description="Select one logo placement" required>
+                            <RadioGroup
+                                value={form.visualIdentity.logoPlacements[0] || ""}
+                                onValueChange={(value) => updateField("logoPlacements", [value])}
+                            >
+                                {LOGO_PLACEMENT_OPTIONS.map((option) => (
+                                    <Label key={option} className="flex items-center gap-3 text-base text-slate-700">
+                                        <RadioGroupItem value={option} />
+                                        <span>{option}</span>
+                                    </Label>
+                                ))}
+                            </RadioGroup>
                         </FormField>
                 </div>
 
@@ -190,6 +191,8 @@ const VisualIdentity = ({ brandId, form, setForm, onRemoveUpload }: BrandTabProp
                         bgColor="bg-[#FFFFFF]"
                         items={form.visualIdentity.colorPaletteUploads}
                         onAdd={(files) => addUploads("colorPaletteUploads", files)}
+                        activeItemId={form.visualIdentity.activeColorPaletteUploadId}
+                        onSelect={onSelectColorPaletteUpload}
                         onRemove={(itemId) => {
                             if (onRemoveUpload) {
                                 void onRemoveUpload(itemId);
@@ -416,11 +419,7 @@ function VisualMetadataUploadField({
                 <p className="text-sm text-slate-500">Formats accepted: {METADATA_UPLOAD_FORMATS}</p>
             </div>
 
-            <div className="flex flex-wrap gap-4">
-                {items.map((item) => (
-                    <VisualMetadataUploadedFileCard key={item.id} item={item} onRemove={() => onRemove(item.id)} />
-                ))}
-
+            <div className="flex flex-wrap gap-4 max-h-[300px] overflow-y-auto">
                 <Button
                     type="button"
                     onClick={() => setIsOpen(true)}
@@ -429,6 +428,9 @@ function VisualMetadataUploadField({
                     <UploadCloud className="mb-2 h-4 w-4" />
                     Upload
                 </Button>
+                {items.map((item) => (
+                    <VisualMetadataUploadedFileCard key={item.id} item={item} onRemove={() => onRemove(item.id)} />
+                ))}
             </div>
 
             <Dialog open={isOpen} onOpenChange={handleOpenChange}>
@@ -544,13 +546,13 @@ function VisualPendingUploadCard({
                 </div>
             ) : (
                 <div className="mt-5 space-y-2">
-                    <p className="text-sm font-medium text-[#8191A7]">Metadata Tags</p>
+                    <p className="text-sm font-medium text-[#8191A7]">Description</p>
                     <Input
                         value={upload.tagDraft}
                         onChange={(event) => onTagChange(event.target.value)}
                         onKeyDown={onTagKeyDown}
                         onBlur={onTagBlur}
-                        placeholder="Add metadata"
+                        placeholder="Add description"
                         className="h-12 rounded-xl border-[#DDE7F0] bg-[#F9FBFD] text-sm shadow-none"
                     />
                 </div>

@@ -9,13 +9,15 @@ import re
 from uuid import UUID, uuid4
 
 from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.shared import Inches, Pt
 import numpy as np
 from PIL import Image, ImageColor, ImageDraw, ImageFont, ImageOps
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.contracts import GeneratedImageAsset, GenerationSceneGraph, RendererInput, RendererResponse, SceneGraphElement
 from app.core.config import get_settings
-from app.integrations.object_storage import LocalObjectStorage
+from app.integrations.object_storage import get_object_storage
 from app.utils.image_assets import open_image_asset
 from app.utils.palette_roles import derive_palette_roles
 
@@ -30,7 +32,7 @@ class RendererService:
     def __init__(self, session: AsyncSession) -> None:
         # Wires the repositories and helper services this workflow reuses across its public methods.
         self.session = session
-        self.storage = LocalObjectStorage()
+        self.storage = get_object_storage()
         self.settings = get_settings()
         self.payload: RendererInput | None = None
         self._active_font_candidates: list[Path] = []
@@ -3690,7 +3692,17 @@ class RendererService:
         # instead of low-level shaping.
         buffer = BytesIO()
         format_name = "PNG" if filename.lower().endswith(".png") else "JPEG"
-        image.save(buffer, format=format_name)
+        if format_name == "JPEG":
+            ImageOps.exif_transpose(image).convert("RGB").save(
+                buffer,
+                format=format_name,
+                quality=86,
+                optimize=True,
+                progressive=True,
+                subsampling=1,
+            )
+        else:
+            image.save(buffer, format=format_name, optimize=True)
         stored = self.storage.save_bytes(tenant_id, brand_space_id, "generated", filename, buffer.getvalue())
         return {
             "asset_id": uuid4(),
@@ -3706,21 +3718,82 @@ class RendererService:
         # Internal helper for image to pdf bytes; it keeps the public service method focused on orchestration
         # instead of low-level shaping.
         buffer = BytesIO()
-        image.save(buffer, format="PDF")
+        RendererService._optimized_export_image(image).save(buffer, format="PDF", quality=86, optimize=True)
         return buffer.getvalue()
+
+    @staticmethod
+    def _optimized_export_image(image: Image.Image, *, max_dimension: int = 1800) -> Image.Image:
+        optimized = ImageOps.exif_transpose(image).convert("RGB")
+        longest_edge = max(optimized.size)
+        if longest_edge > max_dimension:
+            scale = max_dimension / float(longest_edge)
+            optimized = optimized.resize(
+                (max(1, round(optimized.width * scale)), max(1, round(optimized.height * scale))),
+                Image.Resampling.LANCZOS,
+            )
+        return optimized
+
+    @classmethod
+    def _jpeg_export_buffer(cls, image: Image.Image, *, max_dimension: int = 1800) -> BytesIO:
+        buffer = BytesIO()
+        cls._optimized_export_image(image, max_dimension=max_dimension).save(
+            buffer,
+            format="JPEG",
+            quality=86,
+            optimize=True,
+            progressive=True,
+            subsampling=1,
+        )
+        buffer.seek(0)
+        return buffer
+
+    @staticmethod
+    def _prepare_export_document() -> Document:
+        document = Document()
+        for section in document.sections:
+            section.top_margin = Inches(0.35)
+            section.bottom_margin = Inches(0.35)
+            section.left_margin = Inches(0.35)
+            section.right_margin = Inches(0.35)
+        return document
+
+    @staticmethod
+    def _document_content_width_inches(document: Document) -> float:
+        section = document.sections[0]
+        content_width_emu = section.page_width - section.left_margin - section.right_margin
+        return max(1.0, float(content_width_emu) / 914400.0)
+
+    @staticmethod
+    def _document_content_height_inches(document: Document) -> float:
+        section = document.sections[0]
+        content_height_emu = section.page_height - section.top_margin - section.bottom_margin
+        return max(1.0, float(content_height_emu) / 914400.0)
+
+    @classmethod
+    def _append_export_image_to_document(cls, document: Document, image: Image.Image) -> None:
+        paragraph = document.add_paragraph()
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        paragraph.paragraph_format.space_before = Pt(0)
+        paragraph.paragraph_format.space_after = Pt(0)
+        paragraph.paragraph_format.line_spacing = 1
+        max_width = cls._document_content_width_inches(document)
+        max_height = cls._document_content_height_inches(document)
+        scale = min(max_width / max(float(image.width), 1.0), max_height / max(float(image.height), 1.0))
+        paragraph.add_run().add_picture(
+            cls._jpeg_export_buffer(image),
+            width=Inches(image.width * scale),
+            height=Inches(image.height * scale),
+        )
 
     def _document_export(self, payload: RendererInput, image: Image.Image):
         # Internal helper for document export; it keeps the public service method focused on orchestration
         # instead of low-level shaping.
-        document = Document()
+        document = self._prepare_export_document()
         document.add_heading(payload.text.headline, level=1)
         document.add_paragraph(payload.text.body)
         if payload.text.cta:
             document.add_paragraph(payload.text.cta)
-        temp = BytesIO()
-        image.save(temp, format="PNG")
-        temp.seek(0)
-        document.add_picture(temp)
+        self._append_export_image_to_document(document, image)
         buffer = BytesIO()
         document.save(buffer)
         buffer.seek(0)
@@ -3735,16 +3808,13 @@ class RendererService:
     def _document_export_multi(self, payload: RendererInput, pages: list[Image.Image]):
         # Internal helper for document export multi; it keeps the public service method focused on orchestration
         # instead of low-level shaping.
-        document = Document()
+        document = self._prepare_export_document()
         document.add_heading(payload.text.headline, level=1)
         document.add_paragraph(payload.text.body)
         if payload.text.cta:
             document.add_paragraph(payload.text.cta)
         for page in pages:
-            temp = BytesIO()
-            page.save(temp, format="PNG")
-            temp.seek(0)
-            document.add_picture(temp)
+            self._append_export_image_to_document(document, page)
         buffer = BytesIO()
         document.save(buffer)
         buffer.seek(0)
@@ -5191,9 +5261,9 @@ class RendererService:
         if not images:
             return b""
         buffer = BytesIO()
-        base = images[0].convert("RGB")
-        rest = [page.convert("RGB") for page in images[1:]]
-        base.save(buffer, format="PDF", save_all=True, append_images=rest)
+        base = RendererService._optimized_export_image(images[0])
+        rest = [RendererService._optimized_export_image(page) for page in images[1:]]
+        base.save(buffer, format="PDF", save_all=True, append_images=rest, quality=86, optimize=True)
         return buffer.getvalue()
 
     def _assess_render_quality(

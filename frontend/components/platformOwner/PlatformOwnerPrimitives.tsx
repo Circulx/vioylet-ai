@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "../ui/button";
 import Image from "next/image";
 import Link from "next/link";
+import { AppBackButton } from "@/components/common/AppBackButton";
 
 export function PlatformPageTitle({
     title,
@@ -20,7 +21,10 @@ export function PlatformPageTitle({
     return (
         <div className="space-y-6">
             <div className="flex items-start justify-between gap-4">
-                <h1 className="font-dmSans text-[32px] font-bold leading-none text-primary">{title}</h1>
+                <div className="flex flex-wrap items-center gap-3">
+                    <AppBackButton />
+                    <h1 className="font-dmSans text-[32px] font-bold leading-none text-primary">{title}</h1>
+                </div>
                 {action}
             </div>
             {children}
@@ -76,7 +80,7 @@ export function UserPlatformTabSwitcher({
                     type="button"
                     onClick={() => onChange(tab.id)}
                     className={cn(
-                        "h-12 w-28 min-w-24 px-4 rounded-none bg-white px-5 text-[15px] font-medium text-[#2F3342] transition",
+                        "h-12 min-w-24 px-4 rounded-none bg-white px-5 text-[15px] font-medium text-[#2F3342] transition",
                         active === tab.id ? "bg-[#EFEFEF70]" : "hover:bg-[#FAFAFD]",
                     )}
                 >
@@ -122,7 +126,7 @@ export function SectionCard({
                 toolbar ? "sm:flex-row sm:items-start sm:justify-between" : "items-start",
             )}>
                 <div className="min-w-0 flex flex-col items-start justify-center">
-                    <h2 className={cn`text-xl font-semibold text-black ${!toolbar ? 'py-4' : ''}`}>{title}</h2>
+                    <h2 className={cn`text-lg font-semibold text-black ${!toolbar ? 'py-4' : ''}`}>{title}</h2>
                     {description ? (
                         <p className="text-sm text-[#6B7280]">
                             {description}

@@ -171,3 +171,389 @@
 .thin-scrollbar::-webkit-scrollbar-thumb:hover {
   background: var(--ring);
 }
+
+@keyframes violyt-welcome-card-pop {
+  0% {
+    box-shadow: 0 1px 2px rgb(15 23 42 / 0.08);
+    transform: translateY(0) scale(1);
+  }
+  18% {
+    box-shadow: 0 14px 34px -20px rgb(60 47 143 / 0.45);
+    transform: translateY(-1px) scale(1.01);
+  }
+  100% {
+    box-shadow: 0 1px 2px rgb(15 23 42 / 0.08);
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes violyt-welcome-sheen {
+  0% {
+    opacity: 0;
+    transform: translateX(-35%) rotate(8deg);
+  }
+  25% {
+    opacity: 0.7;
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(35%) rotate(8deg);
+  }
+}
+
+@keyframes violyt-confetti-float {
+  0% {
+    opacity: 0;
+    transform: translateY(8px) scale(0.7) rotate(0deg);
+  }
+  18% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-28px) scale(1) rotate(24deg);
+  }
+}
+
+.notification-welcome-celebration {
+  animation: violyt-welcome-card-pop 3.2s ease-out both;
+}
+
+.notification-welcome-celebration::before {
+  animation: violyt-welcome-sheen 2.6s ease-out both;
+  background: linear-gradient(105deg, transparent 0%, rgb(255 255 255 / 0.65) 48%, transparent 72%);
+  content: "";
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+}
+
+.notification-confetti {
+  animation: violyt-confetti-float 2.8s ease-out both;
+  color: var(--primary);
+  font-size: 15px;
+  position: absolute;
+}
+
+.notification-confetti-a {
+  left: 14%;
+  top: 26%;
+}
+
+.notification-confetti-b {
+  animation-delay: 120ms;
+  left: 34%;
+  top: 18%;
+}
+
+.notification-confetti-c {
+  animation-delay: 220ms;
+  right: 24%;
+  top: 24%;
+}
+
+.notification-confetti-d {
+  animation-delay: 320ms;
+  right: 12%;
+  top: 42%;
+}
+
+@keyframes welcome-overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes welcome-card-rise {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 28px)) scale(0.96);
+  }
+  18% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.02);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+@keyframes welcome-overlay-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes welcome-firework-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.45);
+  }
+  22% {
+    opacity: 0.82;
+    transform: scale(1);
+  }
+  58% {
+    opacity: 0.38;
+    transform: scale(1.14);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.22);
+  }
+}
+
+@keyframes welcome-sparkle-field {
+  0%, 100% {
+    opacity: 0.18;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 0.42;
+    transform: translateY(-6px);
+  }
+}
+
+.welcome-celebration-overlay {
+  animation: welcome-overlay-in 320ms ease-out both;
+  inset: 0;
+  isolation: isolate;
+  overflow: hidden;
+  pointer-events: auto;
+  position: fixed;
+  z-index: 80;
+}
+
+.welcome-celebration-overlay[data-exiting="true"] {
+  animation: welcome-overlay-out 360ms ease-in both;
+}
+
+.welcome-celebration-backdrop {
+  backdrop-filter: blur(2px);
+  background: rgb(18 18 18 / 0.48);
+  inset: 0;
+  position: absolute;
+  z-index: -2;
+}
+
+.welcome-card {
+  animation: welcome-card-rise 900ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  background: linear-gradient(180deg, #ffffff 0%, #f7f6ff 100%);
+  border: 1px solid rgb(255 255 255 / 0.78);
+  box-shadow: 0 30px 90px -35px rgb(31 25 78 / 0.72);
+  left: 50%;
+  max-width: min(520px, calc(100vw - 32px));
+  padding: 36px 34px 32px;
+  position: absolute;
+  text-align: center;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 100%;
+  z-index: 3;
+}
+
+.welcome-card-icon {
+  filter: drop-shadow(0 10px 18px rgb(60 47 143 / 0.22));
+  font-size: 54px;
+  line-height: 1;
+  margin-bottom: 16px;
+}
+
+.welcome-card-title {
+  color: var(--primary);
+  font-family: var(--font-dmSans), var(--font-manrope), sans-serif;
+  font-size: clamp(32px, 5vw, 46px);
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1.08;
+}
+
+.welcome-card-message {
+  color: #363646;
+  font-size: clamp(15px, 2vw, 18px);
+  line-height: 1.65;
+  margin: 18px auto 0;
+  max-width: 430px;
+}
+
+.welcome-sparkles {
+  animation: welcome-sparkle-field 10s ease-in-out both;
+  background-image:
+    radial-gradient(circle, rgb(255 255 255 / 0.44) 0 1px, transparent 1.6px),
+    radial-gradient(circle, rgb(122 104 191 / 0.28) 0 1px, transparent 1.8px);
+  background-position: 12vw 18vh, 78vw 28vh;
+  background-size: 190px 170px, 240px 220px;
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+  z-index: -1;
+}
+
+.welcome-firework {
+  animation: welcome-firework-pop 2.4s ease-out both;
+  aspect-ratio: 1;
+  background:
+    radial-gradient(circle, rgb(255 255 255 / 0.92) 0 2px, transparent 2.6px),
+    repeating-conic-gradient(from 0deg, rgb(247 201 72 / 0.82) 0deg 6deg, transparent 6deg 18deg, rgb(82 182 208 / 0.72) 18deg 24deg, transparent 24deg 42deg);
+  border-radius: 999px;
+  filter: blur(0.25px) drop-shadow(0 0 14px rgb(255 255 255 / 0.28));
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
+  width: clamp(72px, 8vw, 112px);
+  z-index: 0;
+}
+
+.welcome-firework-a {
+  left: 9%;
+  top: 13%;
+}
+
+.welcome-firework-b {
+  animation-delay: 2.35s;
+  right: 10%;
+  top: 15%;
+  width: clamp(64px, 7vw, 96px);
+}
+
+.welcome-firework-c {
+  animation-delay: 5.2s;
+  bottom: 14%;
+  right: 16%;
+  width: clamp(62px, 7vw, 98px);
+}
+
+.welcome-firework-d {
+  animation-delay: 7.25s;
+  bottom: 16%;
+  left: 13%;
+  width: clamp(58px, 6vw, 86px);
+}
+
+@media (max-width: 768px) {
+  .welcome-card {
+    padding: 30px 22px 26px;
+  }
+
+  .welcome-firework {
+    opacity: 0.72;
+  }
+}
+@keyframes violyt-notification-balloon-float {
+  0% {
+    opacity: 0;
+    transform: translateY(18px) scale(0.74);
+  }
+  16% {
+    opacity: 0.9;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-54px) scale(1.02);
+  }
+}
+
+@keyframes violyt-notification-warning-glow {
+  0%, 100% {
+    box-shadow: 0 1px 2px rgb(15 23 42 / 0.08);
+  }
+  35% {
+    box-shadow: 0 0 0 2px rgb(251 146 60 / 0.28), 0 12px 28px -18px rgb(234 88 12 / 0.42);
+  }
+}
+
+@keyframes violyt-notification-critical-glow {
+  0%, 100% {
+    box-shadow: 0 1px 2px rgb(15 23 42 / 0.08);
+  }
+  45% {
+    box-shadow: 0 0 0 2px rgb(248 113 113 / 0.36), 0 14px 32px -18px rgb(185 28 28 / 0.5);
+  }
+}
+
+@keyframes violyt-notification-warning-icon {
+  0%, 100% {
+    transform: translateX(0) scale(1);
+  }
+  18% {
+    transform: translateX(-1px) scale(1.06);
+  }
+  36% {
+    transform: translateX(1px) scale(1.06);
+  }
+  54% {
+    transform: translateX(0) scale(1.02);
+  }
+}
+
+.notification-celebration-card {
+  animation: violyt-welcome-card-pop 4.2s ease-out both;
+}
+
+.notification-usage-warning-card {
+  animation: violyt-notification-warning-glow 3.4s ease-in-out both;
+}
+
+.notification-usage-critical-card {
+  animation: violyt-notification-critical-glow 4.2s ease-in-out both;
+}
+
+.notification-warning-icon {
+  animation: violyt-notification-warning-icon 1.4s ease-in-out 2;
+  transform-origin: center;
+}
+
+.notification-critical-icon {
+  animation: violyt-notification-warning-icon 1.5s ease-in-out 3;
+  transform-origin: center;
+}
+
+.notification-balloon {
+  animation: violyt-notification-balloon-float 4s ease-out both;
+  border-radius: 999px 999px 850px 850px;
+  height: 18px;
+  position: absolute;
+  width: 14px;
+}
+
+.notification-balloon::after {
+  background: currentColor;
+  bottom: -10px;
+  content: "";
+  height: 10px;
+  left: 50%;
+  opacity: 0.45;
+  position: absolute;
+  transform: translateX(-50%);
+  width: 1px;
+}
+
+.notification-balloon-a {
+  background: #7a68bf;
+  color: #7a68bf;
+  left: 10%;
+  top: 64%;
+}
+
+.notification-balloon-b {
+  animation-delay: 220ms;
+  background: #52b6d0;
+  color: #52b6d0;
+  right: 14%;
+  top: 58%;
+}
+
+.notification-balloon-c {
+  animation-delay: 420ms;
+  background: #f4bf4f;
+  color: #f4bf4f;
+  left: 54%;
+  top: 72%;
+}

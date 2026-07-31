@@ -4,14 +4,17 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.collaboration import (
     AnalyticsSnapshot,
+    BrandSpaceHistory,
+    InAppNotification,
     JobRecord,
     ReviewComment,
     ReviewLink,
+    ReviewLinkParticipant,
     SocialConnection,
     UsageConsumption,
     UsageLimit,
@@ -32,6 +35,28 @@ class ReviewLinkRepository(Repository[ReviewLink]):
         result = await self.session.execute(select(ReviewLink).where(ReviewLink.token == token))
         return result.scalar_one_or_none()
 
+    async def get_latest_for_content(
+        self,
+        tenant_id: UUID,
+        brand_space_id: UUID,
+        content_version_id: UUID,
+    ) -> ReviewLink | None:
+        # Reuses the review thread for the same generated content so comments remain attached across opens.
+        # If older duplicate links already exist, prefer the one that has comments instead of an empty token.
+        result = await self.session.execute(
+            select(ReviewLink)
+            .outerjoin(ReviewComment, ReviewComment.review_link_id == ReviewLink.id)
+            .where(
+                ReviewLink.tenant_id == tenant_id,
+                ReviewLink.brand_space_id == brand_space_id,
+                ReviewLink.content_version_id == content_version_id,
+            )
+            .group_by(ReviewLink.id)
+            .order_by(func.count(ReviewComment.id).desc(), ReviewLink.created_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
 
 class ReviewCommentRepository(Repository[ReviewComment]):
     # Data-access helper for review comment; services call this class instead of repeating SQLAlchemy filters
@@ -44,7 +69,115 @@ class ReviewCommentRepository(Repository[ReviewComment]):
     async def list_for_link(self, review_link_id: UUID) -> list[ReviewComment]:
         # Returns matching for link records with repository scope applied; services assemble responses from
         # these rows.
-        result = await self.session.execute(select(ReviewComment).where(ReviewComment.review_link_id == review_link_id))
+        result = await self.session.execute(
+            select(ReviewComment)
+            .where(ReviewComment.review_link_id == review_link_id)
+            .order_by(ReviewComment.created_at.asc())
+        )
+        return list(result.scalars().all())
+
+
+class ReviewLinkParticipantRepository(Repository[ReviewLinkParticipant]):
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session, ReviewLinkParticipant)
+
+    async def list_for_link(self, review_link_id: UUID) -> list[ReviewLinkParticipant]:
+        result = await self.session.execute(
+            select(ReviewLinkParticipant)
+            .where(ReviewLinkParticipant.review_link_id == review_link_id)
+            .order_by(ReviewLinkParticipant.created_at.asc())
+        )
+        return list(result.scalars().all())
+
+    async def get_for_link_user(
+        self,
+        review_link_id: UUID,
+        user_id: UUID,
+    ) -> ReviewLinkParticipant | None:
+        result = await self.session.execute(
+            select(ReviewLinkParticipant).where(
+                ReviewLinkParticipant.review_link_id == review_link_id,
+                ReviewLinkParticipant.user_id == user_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def list_for_link_users(
+        self,
+        review_link_id: UUID,
+        user_ids: list[UUID],
+    ) -> list[ReviewLinkParticipant]:
+        if not user_ids:
+            return []
+        result = await self.session.execute(
+            select(ReviewLinkParticipant).where(
+                ReviewLinkParticipant.review_link_id == review_link_id,
+                ReviewLinkParticipant.user_id.in_(user_ids),
+            )
+        )
+        return list(result.scalars().all())
+
+
+class InAppNotificationRepository(Repository[InAppNotification]):
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session, InAppNotification)
+
+    async def list_for_user(self, user_id: UUID, limit: int = 50) -> list[InAppNotification]:
+        result = await self.session.execute(
+            select(InAppNotification)
+            .where(InAppNotification.recipient_user_id == user_id)
+            .order_by(InAppNotification.created_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    async def count_unread_for_user(self, user_id: UUID) -> int:
+        result = await self.session.scalar(
+            select(func.count(InAppNotification.id)).where(
+                InAppNotification.recipient_user_id == user_id,
+                InAppNotification.is_read.is_(False),
+            )
+        )
+        return int(result or 0)
+
+    async def mark_all_read_for_user(self, user_id: UUID) -> int:
+        result = await self.session.execute(
+            update(InAppNotification)
+            .where(
+                InAppNotification.recipient_user_id == user_id,
+                InAppNotification.is_read.is_(False),
+            )
+            .values(is_read=True)
+        )
+        return int(result.rowcount or 0)
+
+    async def delete_for_user(self, user_id: UUID) -> None:
+        notifications = await self.list_for_user(user_id, limit=500)
+        for notification in notifications:
+            await self.delete(notification)
+
+    async def delete_one_for_user(self, user_id: UUID, notification_id: UUID) -> bool:
+        notification = await self.get(notification_id)
+        if not notification or notification.recipient_user_id != user_id:
+            return False
+        await self.delete(notification)
+        return True
+
+
+class BrandSpaceHistoryRepository(Repository[BrandSpaceHistory]):
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session, BrandSpaceHistory)
+
+    async def list_for_brand(self, tenant_id: UUID, brand_space_id: UUID, limit: int = 100) -> list[BrandSpaceHistory]:
+        result = await self.session.execute(
+            select(BrandSpaceHistory)
+            .where(
+                BrandSpaceHistory.tenant_id == tenant_id,
+                BrandSpaceHistory.brand_space_id == brand_space_id,
+            )
+            .order_by(BrandSpaceHistory.created_at.desc())
+            .limit(limit)
+        )
         return list(result.scalars().all())
 
 
@@ -108,6 +241,13 @@ class UsageLimitRepository(Repository[UsageLimit]):
         result = await self.session.execute(select(UsageLimit).where(UsageLimit.tenant_id == tenant_id))
         return result.scalar_one_or_none()
 
+    async def get_by_tenant_for_update(self, tenant_id: UUID) -> UsageLimit | None:
+        """Lock the tenant's limits row to serialize usage increments, including the first one."""
+        result = await self.session.execute(
+            select(UsageLimit).where(UsageLimit.tenant_id == tenant_id).with_for_update()
+        )
+        return result.scalar_one_or_none()
+
 
 class UsageConsumptionRepository(Repository[UsageConsumption]):
     # Data-access helper for usage consumption; services call this class instead of repeating SQLAlchemy filters
@@ -125,6 +265,24 @@ class UsageConsumptionRepository(Repository[UsageConsumption]):
                 UsageConsumption.metric_code == metric_code,
                 UsageConsumption.period_key == period_key,
             )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_metric_for_update(
+        self,
+        tenant_id: UUID,
+        metric_code: str,
+        period_key: str,
+    ) -> UsageConsumption | None:
+        """Return and lock a usage row so threshold crossings are evaluated once per transaction."""
+        result = await self.session.execute(
+            select(UsageConsumption)
+            .where(
+                UsageConsumption.tenant_id == tenant_id,
+                UsageConsumption.metric_code == metric_code,
+                UsageConsumption.period_key == period_key,
+            )
+            .with_for_update()
         )
         return result.scalar_one_or_none()
 

@@ -30,7 +30,7 @@ export default function UserOverview({ userId }: { userId: string }) {
         role: liveUser.role_codes.includes("tenant_admin")
           ? "Tenant Admin"
           : liveUser.role_codes.includes("tenant_user")
-            ? "Tenant User"
+            ? "Super User"
             : "Brand User",
         brandAssignments: liveUser.brand_space_ids.map((brandId) => {
           const brand = (brands || []).find((item) => item.id === brandId);
@@ -58,7 +58,7 @@ export default function UserOverview({ userId }: { userId: string }) {
     <div className="w-full px-4 py-6">
                 <div className="mx-auto ">
         <PlatformPageTitle
-          title={`${user.fullName || (isBrandUser ? "{Brand user name}" : "{Tenant User name}")} Overview`}
+          title={`${user.fullName || (isBrandUser ? "{Brand user name}" : "{Super User name}")} Overview`}
           action={
           <Button asChild className="rounded-none bg-primary/72 px-8 py-5 text-base hover:bg-primary/90">
             <Link href={`/user_management/${detailUserId}?edit=true`}>Edit</Link>
@@ -88,7 +88,7 @@ export default function UserOverview({ userId }: { userId: string }) {
 
         {isBrandUser ? (
           <section className="space-y-3 mt-6">
-            <h1 className="pb-4">Brand Spaces Assigned</h1>
+            <h1 className="pb-4">Brand Space Assigned</h1>
             <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6 border p-4">
               {user.brandAssignments.map((brand) => (
                 <Link

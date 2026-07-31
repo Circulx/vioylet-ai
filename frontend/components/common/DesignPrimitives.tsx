@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { ReactNode } from "react";
 import { Cell, Pie, PieChart, ResponsiveContainer } from "recharts";
 import { InformationTip } from "../InformationTip";
+import { AppBackButton } from "@/components/common/AppBackButton";
 
 type PageHeadingProps = {
     title: string;
@@ -14,11 +15,14 @@ type PageHeadingProps = {
 export function PageHeading({ title, actions, subtitle }: PageHeadingProps) {
     return (
         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-            <div className="space-y-1">
-                <h1 className="font-dmSans text-3xl font-bold tracking-tight text-primary">
-                    {title}
-                </h1>
-                {subtitle ? <p className="text-sm text-slate-500">{subtitle}</p> : null}
+            <div className="flex flex-wrap items-center gap-3">
+                <AppBackButton />
+                <div className="space-y-1">
+                    <h1 className="font-dmSans text-3xl font-bold tracking-tight text-primary">
+                        {title}
+                    </h1>
+                    {subtitle ? <p className="text-sm text-slate-500">{subtitle}</p> : null}
+                </div>
             </div>
             {actions ? <div className="flex flex-wrap items-center gap-3">{actions}</div> : null}
         </div>
@@ -167,7 +171,7 @@ export function UsageRing({
     ];
 
     return (
-        <div className="relative flex items-center gap-2 text-xs text-slate-500">
+        <div className="relative flex items-center gap-2 pr-4 text-xs text-slate-500">
             {label ? <span>{label}</span> : null}
             <div className="h-11 w-11">
                 <ResponsiveContainer width="100%" height="100%">
@@ -190,8 +194,8 @@ export function UsageRing({
                     </PieChart>
                 </ResponsiveContainer>
             </div>
-            <div className="absolute -top-1 -right-4">
-                <InformationTip content={`Shows how much of the usage allocated to this brand is left. Current usage pending: ${Math.round(safeValue)}%. The colored portion of the pie represents the remaining amount.`} />
+            <div className="absolute -top-1 -right-2">
+                <InformationTip content={`Shows how much of the usage allocated to this brand is left. Current usage pending: ${Math.round(safeValue)}%. The coloured portion of the pie represents the remaining amount.`} />
             </div>
         </div>
     );

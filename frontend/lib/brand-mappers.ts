@@ -42,6 +42,7 @@ type AttachmentLike = Pick<
   | "lifecycle_state"
   | "asset_category"
   | "metadata_json"
+  | "structured_data_json"
   | "normalized_data_json"
 > & {
   field_key?: string | null;
@@ -113,6 +114,8 @@ function createKnowledgeItemFromDescriptor(
     mimeType: typeof descriptor.mime_type === "string" ? descriptor.mime_type : undefined,
     pageCount: typeof descriptor.page_count === "number" ? descriptor.page_count : undefined,
     processingError: typeof descriptor.processing_error === "string" ? descriptor.processing_error : undefined,
+    structuredDataJson: toRecord(descriptor.structured_data_json),
+    normalizedDataJson: toRecord(descriptor.normalized_data_json),
     tags: fallbackTags,
     kind: "knowledge",
   });
@@ -352,11 +355,17 @@ export function mapBrandOverviewToForm(overview: BrandOverviewResponse): BrandFo
     digitalAccess: String(personaDemographics.digital_access || ""),
   };
 
+  const colorPaletteUploads = createKnowledgeItems(visualIdentity.color_palette_uploads, "visual_identity", ["Color Palette"]);
+  const activeColorPaletteAssetId = String(visualIdentity.active_color_palette_asset_id || "");
+  const activeColorPaletteUploadId = colorPaletteUploads.find(
+    (item) => item.uploadedAssetId === activeColorPaletteAssetId,
+  )?.id || "";
+
   form.visualIdentity = {
     brandMood: String(visualIdentity.brand_mood || ""),
     visualStyle: String(visualIdentity.visual_style || ""),
     logoPlacements: Array.isArray(visualIdentity.logo_placements)
-      ? visualIdentity.logo_placements.map((item) => String(item))
+      ? visualIdentity.logo_placements.slice(0, 1).map((item) => String(item))
       : visualIdentity.logo_placement
         ? [String(visualIdentity.logo_placement)]
         : [],
@@ -371,7 +380,8 @@ export function mapBrandOverviewToForm(overview: BrandOverviewResponse): BrandFo
             hex: String(toRecord(item).hex || ""),
           }))
         : [{ name: "", hex: "" }],
-    colorPaletteUploads: createKnowledgeItems(visualIdentity.color_palette_uploads, "visual_identity", ["Color Palette"]),
+    colorPaletteUploads,
+    activeColorPaletteUploadId,
     typography: String(typography.primary_style || ""),
     uploadedFonts: [],
     fontStyleGuide: createKnowledgeItems(visualIdentity.font_style_guides, "visual_identity", ["Font Guide"]),
@@ -476,6 +486,8 @@ function assetDescriptors(items: AttachmentLike[]) {
     lifecycle_state: item.lifecycle_state,
     asset_category: item.asset_category,
     field_key: item.field_key || undefined,
+    structured_data_json: item.structured_data_json || {},
+    normalized_data_json: item.normalized_data_json || {},
   }));
 }
 
@@ -513,7 +525,10 @@ function normalizeBrandSelections(form: BrandFormState) {
     sentenceLength: sanitizeOption(SENTENCE_LENGTH_OPTIONS, form.voiceTone.sentenceLength),
     perspective: sanitizeOption(PERSPECTIVE_OPTIONS, form.voiceTone.perspective),
     selectedAudiences: sanitizeOptionArray(AUDIENCE_OPTIONS, form.targetAudience.selectedAudiences),
-    logoPlacements: sanitizeOptionArray(LOGO_PLACEMENT_OPTIONS, form.visualIdentity.logoPlacements),
+    logoPlacements: sanitizeOptionArray(
+      LOGO_PLACEMENT_OPTIONS,
+      form.visualIdentity.logoPlacements,
+    ).slice(0, 1),
     location: sanitizeOption(LOCATION_OPTIONS, form.targetAudience.location),
     educationLevel: sanitizeOption(EDUCATION_LEVEL_OPTIONS, form.targetAudience.educationLevel),
     employmentStatus: sanitizeOption(EMPLOYMENT_STATUS_OPTIONS, form.targetAudience.employmentStatus),
@@ -776,6 +791,10 @@ export function mapBrandSections(form: BrandFormState, uploads?: UploadedBrandAs
         mood_boards: assetDescriptors(uploaded?.moodBoards || []),
         color_palette_asset_ids: assetIds(uploaded?.colorPaletteUploads || []),
         color_palette_uploads: assetDescriptors(uploaded?.colorPaletteUploads || []),
+        active_color_palette_asset_id:
+          form.visualIdentity.colorPaletteUploads.find(
+            (item) => item.id === form.visualIdentity.activeColorPaletteUploadId,
+          )?.uploadedAssetId || "",
         font_style_guide_asset_ids: assetIds(uploaded?.fontStyleGuide || []),
         font_style_guides: assetDescriptors(uploaded?.fontStyleGuide || []),
       },

@@ -8,7 +8,13 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.core.dependencies import CurrentPrincipal, assert_brand_access, forbid_super_admin_brand_access, get_current_principal
+from app.core.dependencies import (
+    CurrentPrincipal,
+    assert_brand_access,
+    assert_brand_manage_access,
+    forbid_super_admin_brand_access,
+    get_current_principal,
+)
 from app.db.session import get_db_session
 from app.integrations.object_storage import LocalObjectStorage
 from app.models.brand import BrandSpace
@@ -19,6 +25,7 @@ from app.schemas.brand import (
     BrandFinalizeRequest,
     BrandOverviewResponse,
     BrandResponse,
+    BrandSpaceHistoryResponse,
     BrandSectionUpsertRequest,
     BrandSectionsUpsertRequest,
     BrandUpdateRequest,
@@ -31,6 +38,7 @@ from app.schemas.brand_assets import (
     ValidationSummaryResponse,
 )
 from app.schemas.common import MessageResponse
+from app.services.asset_delivery import AssetDeliveryService
 from app.services.brand import BrandSpaceService
 from app.services.brand_autofill import BrandAutofillService
 from app.services.data_validation import DataValidatorService
@@ -40,6 +48,60 @@ from app.workers.ingestion_worker import process_document_sync
 
 
 router = APIRouter()
+
+
+def _brand_response(brand) -> BrandResponse:
+    response = BrandResponse.model_validate(brand)
+    context = dict(response.resolved_brand_context or {})
+    identity = dict(context.get("identity") or {})
+    delivery = AssetDeliveryService()
+
+    def signed_url(storage_path: object) -> str | None:
+        if not isinstance(storage_path, str) or not storage_path.strip():
+            return None
+        return delivery.build_signed_url(
+            storage_path=storage_path,
+            filename=storage_path.rsplit("/", 1)[-1],
+        )
+
+    logo_assets = identity.get("logo_assets")
+    if isinstance(logo_assets, list):
+        enriched_assets = []
+        for asset in logo_assets:
+            if not isinstance(asset, dict):
+                enriched_assets.append(asset)
+                continue
+            enriched_asset = dict(asset)
+            asset_url = enriched_asset.get("asset_url") or enriched_asset.get("url")
+            if not asset_url:
+                asset_url = signed_url(enriched_asset.get("storage_path"))
+            if asset_url:
+                enriched_asset["asset_url"] = asset_url
+                enriched_asset["url"] = asset_url
+            enriched_assets.append(enriched_asset)
+        identity["logo_assets"] = enriched_assets
+
+    logo_asset_url = identity.get("logo_asset_url")
+    if not logo_asset_url:
+        logo_asset_url = signed_url(identity.get("logo_asset_path"))
+    if not logo_asset_url and isinstance(identity.get("logo_assets"), list):
+        logo_asset_url = next(
+            (
+                asset.get("asset_url") or asset.get("url")
+                for asset in identity["logo_assets"]
+                if isinstance(asset, dict) and (asset.get("asset_url") or asset.get("url"))
+            ),
+            None,
+        )
+    if logo_asset_url:
+        identity["logo_asset_url"] = logo_asset_url
+
+    context["identity"] = identity
+    return response.model_copy(update={"resolved_brand_context": context})
+
+
+def _brand_responses(brands) -> list[BrandResponse]:
+    return [_brand_response(item) for item in brands]
 
 
 def trust_level_for_validation_state(validation_state: str | None) -> str:
@@ -64,8 +126,14 @@ async def create_brand(
     # Serves the brand creation endpoint; it uses FastAPI dependencies, delegates work to services, and returns
     # the response schema.
     forbid_super_admin_brand_access(principal)
-    brand = await BrandSpaceService(session).create_brand(principal.tenant_id, principal.user_id, payload)
-    return BrandResponse.model_validate(brand)
+    assert_brand_manage_access(principal)
+    brand = await BrandSpaceService(session).create_brand(
+        principal.tenant_id,
+        principal.user_id,
+        payload,
+        principal.role_codes,
+    )
+    return _brand_response(brand)
 
 
 @router.get("", response_model=list[BrandResponse])
@@ -77,7 +145,7 @@ async def list_brands(
     # the response schema.
     forbid_super_admin_brand_access(principal)
     brands = await BrandSpaceService(session).list_brands(principal.tenant_id, principal.user_id, principal.role_codes)
-    return [BrandResponse.model_validate(item) for item in brands]
+    return _brand_responses(brands)
 
 
 @router.get("/{brand_id}", response_model=BrandResponse)
@@ -93,7 +161,7 @@ async def get_brand(
     brand = await BrandSpaceService(session).brands.get_scoped(principal.tenant_id, brand_id)
     if not brand:
         raise HTTPException(status_code=404, detail="Brand Space not found")
-    return BrandResponse.model_validate(brand)
+    return _brand_response(brand)
 
 
 @router.get("/{brand_id}/usage", response_model=BrandUsageResponse)
@@ -112,6 +180,21 @@ async def get_brand_usage(
     return BrandUsageResponse.model_validate(payload)
 
 
+@router.get("/{brand_id}/history", response_model=list[BrandSpaceHistoryResponse])
+async def brand_history(
+    brand_id: UUID,
+    principal: CurrentPrincipal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db_session),
+) -> list[BrandSpaceHistoryResponse]:
+    # Serves Brand Space activity history for users who can access the current Brand Space.
+    forbid_super_admin_brand_access(principal)
+    assert_brand_access(principal, brand_id)
+    if not principal.tenant_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    history_entries = await BrandSpaceService(session).list_history(principal.tenant_id, brand_id)
+    return [BrandSpaceHistoryResponse.model_validate(item) for item in history_entries]
+
+
 @router.put("/{brand_id}", response_model=BrandResponse)
 async def update_brand(
     brand_id: UUID,
@@ -123,8 +206,9 @@ async def update_brand(
     # response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
+    assert_brand_manage_access(principal)
     brand = await BrandSpaceService(session).update_brand(principal.tenant_id, brand_id, payload)
-    return BrandResponse.model_validate(brand)
+    return _brand_response(brand)
 
 
 @router.put("/{brand_id}/sections/{section_code}", response_model=BrandResponse)
@@ -139,6 +223,7 @@ async def upsert_section(
     # response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
+    assert_brand_manage_access(principal)
     try:
         request = BrandSectionUpsertRequest(
             section_code=section_code,
@@ -148,7 +233,7 @@ async def upsert_section(
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=exc.errors()) from exc
     brand = await BrandSpaceService(session).upsert_section(principal.tenant_id, brand_id, request)
-    return BrandResponse.model_validate(brand)
+    return _brand_response(brand)
 
 
 @router.put("/{brand_id}/sections", response_model=BrandResponse)
@@ -162,8 +247,15 @@ async def upsert_sections(
     # response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
-    brand = await BrandSpaceService(session).upsert_sections(principal.tenant_id, brand_id, payload)
-    return BrandResponse.model_validate(brand)
+    assert_brand_manage_access(principal)
+    brand = await BrandSpaceService(session).upsert_sections(
+        principal.tenant_id,
+        brand_id,
+        payload,
+        principal.user_id,
+        principal.role_codes,
+    )
+    return _brand_response(brand)
 
 
 @router.post("/{brand_id}/finalize", response_model=BrandResponse)
@@ -177,8 +269,14 @@ async def finalize_brand(
     # response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
-    brand = await BrandSpaceService(session).finalize_brand(principal.tenant_id, brand_id)
-    return BrandResponse.model_validate(brand)
+    assert_brand_manage_access(principal)
+    brand = await BrandSpaceService(session).finalize_brand(
+        principal.tenant_id,
+        brand_id,
+        principal.user_id,
+        principal.role_codes,
+    )
+    return _brand_response(brand)
 
 
 @router.post("/{brand_id}/publish", response_model=BrandResponse)
@@ -191,8 +289,14 @@ async def publish_brand(
     # response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
-    brand = await BrandSpaceService(session).publish_brand(principal.tenant_id, brand_id)
-    return BrandResponse.model_validate(brand)
+    assert_brand_manage_access(principal)
+    brand = await BrandSpaceService(session).publish_brand(
+        principal.tenant_id,
+        brand_id,
+        principal.user_id,
+        principal.role_codes,
+    )
+    return _brand_response(brand)
 
 
 @router.post("/{brand_id}/autofill-from-knowledge", response_model=BrandAutofillResponse)
@@ -230,8 +334,9 @@ async def unpublish_brand(
     # response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
+    assert_brand_manage_access(principal)
     brand = await BrandSpaceService(session).unpublish_brand(principal.tenant_id, brand_id)
-    return BrandResponse.model_validate(brand)
+    return _brand_response(brand)
 
 
 @router.post("/{brand_id}/archive", response_model=BrandResponse)
@@ -244,8 +349,14 @@ async def archive_brand(
     # response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
-    brand = await BrandSpaceService(session).archive_brand(principal.tenant_id, brand_id)
-    return BrandResponse.model_validate(brand)
+    assert_brand_manage_access(principal)
+    brand = await BrandSpaceService(session).archive_brand(
+        principal.tenant_id,
+        brand_id,
+        principal.user_id,
+        principal.role_codes,
+    )
+    return _brand_response(brand)
 
 
 @router.post("/{brand_id}/restore", response_model=BrandResponse)
@@ -258,8 +369,14 @@ async def restore_brand(
     # response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
-    brand = await BrandSpaceService(session).restore_brand(principal.tenant_id, brand_id)
-    return BrandResponse.model_validate(brand)
+    assert_brand_manage_access(principal)
+    brand = await BrandSpaceService(session).restore_brand(
+        principal.tenant_id,
+        brand_id,
+        principal.user_id,
+        principal.role_codes,
+    )
+    return _brand_response(brand)
 
 
 @router.delete("/{brand_id}", response_model=MessageResponse)
@@ -272,7 +389,13 @@ async def delete_brand(
     # response schema.
     forbid_super_admin_brand_access(principal)
     assert_brand_access(principal, brand_id)
-    await BrandSpaceService(session).delete_brand(principal.tenant_id, brand_id)
+    assert_brand_manage_access(principal)
+    await BrandSpaceService(session).delete_brand(
+        principal.tenant_id,
+        brand_id,
+        principal.user_id,
+        principal.role_codes,
+    )
     return MessageResponse(message="Brand deleted")
 
 
@@ -295,7 +418,7 @@ async def brand_overview(
     guardrails = await service.guardrails.list_by_brand(brand_id, principal.tenant_id)
     objectives = await service.objectives.list_by_brand(brand_id, principal.tenant_id)
     return BrandOverviewResponse(
-        brand=BrandResponse.model_validate(brand),
+        brand=_brand_response(brand),
         sections=[{"section_code": item.section_code, "payload": item.payload, "version": item.version} for item in sections],
         personas=[service.intelligence.persona_to_dict(item) for item in personas],
         guardrails=[service.intelligence.guardrail_to_dict(item) for item in guardrails],

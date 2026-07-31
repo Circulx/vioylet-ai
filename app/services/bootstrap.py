@@ -31,7 +31,7 @@ DEFAULT_PERMISSIONS = [
 ROLE_PERMISSION_MAP = {
     RoleCode.SUPER_ADMIN: [code for code, _ in DEFAULT_PERMISSIONS],
     RoleCode.TENANT_ADMIN: ["brand.manage", "content.generate", "knowledge.manage", "analytics.view"],
-    RoleCode.TENANT_USER: ["brand.manage", "content.generate", "knowledge.manage"],
+    RoleCode.TENANT_USER: ["content.generate", "knowledge.manage"],
     RoleCode.BRAND_USER: ["content.generate", "knowledge.manage"],
     RoleCode.EXTERNAL_REVIEWER: ["review.comment"],
 }

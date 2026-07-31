@@ -1,6 +1,6 @@
-"use client";
+﻿"use client";
 
-import { CalendarDays } from "lucide-react";
+import { CalendarDays, ChevronDown, HelpCircle, HelpCircleIcon } from "lucide-react";
 import { PlatformPageTitle, SectionCard } from "@/components/platformOwner/PlatformOwnerPrimitives";
 import { useBrands } from "@/hooks/useBrands";
 import { useGetMe } from "@/hooks/useUser";
@@ -15,10 +15,15 @@ import {
     ProgressRow,
 } from "../Premitives";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
 import { Button } from "../ui/button";
 import { useId, useMemo, useState } from "react";
 import { buildUsageWindowRows, usagePercentage } from "@/lib/platform-owner";
 import { CartesianGrid, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import Link from "next/link";
+import Image from "next/image";
+import { tenantDashboardFaqs } from "@/lib/faqs";
 
 function toPercent(value?: number, max?: number) {
     if (!max || max <= 0) {
@@ -325,6 +330,21 @@ function BrandUsagePieTooltip({
     );
 }
 
+function DashboardFaqItem({ question, answer }: { question: string; answer: string }) {
+    const [open, setOpen] = useState(false);
+
+    return (
+        <Collapsible open={open} onOpenChange={setOpen} className="border-b border-[#E5E7F0] last:border-b-0">
+            <CollapsibleTrigger className="flex w-full items-center justify-between gap-4 py-4 text-left">
+                <span className="text-[15px] font-semibold text-[#252837]">{question}</span>
+                <ChevronDown className={`h-5 w-5 shrink-0 text-primary transition-transform ${open ? "rotate-180" : ""}`} />
+            </CollapsibleTrigger>
+            <CollapsibleContent className="pb-4 pr-8 text-sm leading-6 text-[#5F6472]">
+                {answer}
+            </CollapsibleContent>
+        </Collapsible>
+    );
+}
 export default function TenantAdminDashboard() {
     const { data: currentUser } = useGetMe();
     const { data: tenant } = useGetTenantData(currentUser?.tenantId ?? "");
@@ -340,6 +360,7 @@ export default function TenantAdminDashboard() {
     const [brandOcrUsageEndMonth, setBrandOcrUsageEndMonth] = useState("");
     const [brandAiUsageStartMonth, setBrandAiUsageStartMonth] = useState("");
     const [brandAiUsageEndMonth, setBrandAiUsageEndMonth] = useState("");
+    const [helpDialogOpen, setHelpDialogOpen] = useState(false);
 
 
     const totalCapacity = Math.round(
@@ -365,23 +386,11 @@ export default function TenantAdminDashboard() {
         lastUsed: formatDateLabel(brand.updated_at),
     }));
 
-    const usageRows = useMemo(() => {
-        if (usageSummary && monthlyUsage?.length) {
-            return monthlyUsage.map((row) => ({
-                month: row.month,
-                content: `${row.content_generations || 0}/${usageSummary.limits.max_content_generations || 0}`,
-                visuals: `${row.image_generations || 0}/${usageSummary.limits.max_image_generations || 0}`,
-                ocr: `${row.ocr_pages || 0}/${usageSummary.limits.max_ocr_pages || 0}`,
-                brandSpaces: `${usageSummary.consumption.brand_spaces || 0}/${usageSummary.limits.max_brand_spaces || 0}`,
-                users: `${usageSummary.consumption.users || 0}/${usageSummary.limits.max_users || 0}`,
-            }));
-        }
-        return buildUsageWindowRows(usageSummary, tenant?.metadata_json);
-    }, [monthlyUsage, tenant?.metadata_json, usageSummary]);
     const usageWindow = useMemo(
         () => (tenant?.metadata_json?.usage_window as Record<string, unknown> | undefined) ?? {},
         [tenant?.metadata_json?.usage_window],
     );
+    const hasUsageWindow = typeof usageWindow.start_month === "string" && typeof usageWindow.end_month === "string";
     const liveUsageRows = useMemo(
         () =>
             (brandUsage || []).map((brand) => ({
@@ -395,19 +404,50 @@ export default function TenantAdminDashboard() {
 
     const usageMonthOptions = useMemo(
         () => {
+            if (hasUsageWindow) {
+                return buildMonthYearOptions(
+                    typeof usageWindow.start_month === "string" ? usageWindow.start_month : undefined,
+                    typeof usageWindow.end_month === "string" ? usageWindow.end_month : undefined,
+                );
+            }
+
             if (monthlyUsage?.length) {
                 return monthlyUsage.map((row) => ({
                     value: row.month,
                     label: formatCompactMonthLabel(row.month),
                 }));
             }
+
             return buildMonthYearOptions(
                 typeof usageWindow.start_month === "string" ? usageWindow.start_month : undefined,
                 typeof usageWindow.end_month === "string" ? usageWindow.end_month : undefined,
             );
         },
-        [monthlyUsage, usageWindow.end_month, usageWindow.start_month],
+        [hasUsageWindow, monthlyUsage, usageWindow.end_month, usageWindow.start_month],
     );
+
+    const usageRows = useMemo(() => {
+        if (!usageSummary) {
+            return [];
+        }
+
+        const usageByMonth = new Map((monthlyUsage || []).map((row) => [row.month, row]));
+        if (!usageMonthOptions.length) {
+            return buildUsageWindowRows(usageSummary, tenant?.metadata_json);
+        }
+
+        return usageMonthOptions.map((option) => {
+            const row = usageByMonth.get(option.value);
+            return {
+                month: option.value,
+                content: `${row?.content_generations || 0}/${usageSummary.limits.max_content_generations || 0}`,
+                visuals: `${row?.image_generations || 0}/${usageSummary.limits.max_image_generations || 0}`,
+                ocr: `${row?.ocr_pages || 0}/${usageSummary.limits.max_ocr_pages || 0}`,
+                brandSpaces: `${usageSummary.consumption.brand_spaces || 0}/${usageSummary.limits.max_brand_spaces || 0}`,
+                users: `${usageSummary.consumption.users || 0}/${usageSummary.limits.max_users || 0}`,
+            };
+        });
+    }, [monthlyUsage, tenant?.metadata_json, usageMonthOptions, usageSummary]);
 
      const resolvedUsageMonth = usageMonthOptions.some((option) => option.value === selectedUsageMonth)
         ? selectedUsageMonth
@@ -632,8 +672,34 @@ export default function TenantAdminDashboard() {
     return (
         <div className="container">
             <div className="space-y-6">
-                <PlatformPageTitle title="Dashboard"></PlatformPageTitle>
-                <SectionCard title="Monthly Usage"
+                <PlatformPageTitle
+                    title={`${tenant?.name}'s Dashboard`}
+                    action={
+                        <Button
+                            type="button"
+                            onClick={() => setHelpDialogOpen(true)}
+                            className="h-12 rounded-none bg-primary/10 text-black px-5 text-[15px] font-medium hover:bg-primary/17"
+                        >
+                            <Image src={"actions_icons/info_circle.svg"} alt="info" width={16} height={16} />
+                            Help
+                        </Button>
+                    }
+                />
+                <Dialog open={helpDialogOpen} onOpenChange={setHelpDialogOpen}>
+                    <DialogContent className="max-h-[84vh] w-full max-w-[620px] overflow-y-auto rounded-none border-0 bg-white p-0 shadow-[0_24px_90px_-28px_rgba(15,23,42,0.45)]">
+                        <DialogHeader className="border-b border-[#E5E7F0] px-6 py-5 text-left">
+                            <DialogTitle className="text-[24px] font-bold leading-tight text-primary">Frequently Asked Questions</DialogTitle>
+                            <DialogDescription className="text-sm text-[#5F6472]">
+                                Quick answers for tenant dashboard usage, capacity, and reporting.
+                            </DialogDescription>
+                        </DialogHeader>
+                        <div className="px-6 py-2">
+                            {tenantDashboardFaqs.map((faq) => (
+                                <DashboardFaqItem key={faq.id} question={faq.question} answer={faq.answer} />
+                            ))}
+                        </div>
+                    </DialogContent>
+                </Dialog>                <SectionCard title="Monthly Usage"
                     toolbar={
                         <Popover>
                             <PopoverTrigger asChild>
@@ -670,7 +736,7 @@ export default function TenantAdminDashboard() {
                     }
                 >
                     <div className="space-y-4">
-                        <ProgressRow label="Total Capacity" value={selectedUsageMetrics.totalCapacity} icon="/tenants/capacity.svg" />
+                        <ProgressRow label="Total Capacity" info value={selectedUsageMetrics.totalCapacity} icon="/tenants/capacity.svg" />
                         <div className="grid gap-4 md:grid-cols-3">
                             <MiniMetric label="Content" progress={true} value={selectedUsageMetrics.contentPercent} icon="/tenants/content.svg" />
                             <MiniMetric label="Visuals" progress={true} value={selectedUsageMetrics.visualsPercent} icon="/tenants/visuals.svg" />
@@ -680,7 +746,7 @@ export default function TenantAdminDashboard() {
 
                 </SectionCard>
                 <div className="grid gap-4 md:grid-cols-2">
-                    <MiniMetric label="Brand Spaces" value={selectedUsageMetrics.brandSpacesUsed} helper={`${selectedUsageMetrics.brandSpacesLimit}`} compact icon="/tenants/brand_spaces.svg" />
+                    <MiniMetric label="Brand Space" value={selectedUsageMetrics.brandSpacesUsed} helper={`${selectedUsageMetrics.brandSpacesLimit}`} compact icon="/tenants/brand_spaces.svg" />
                     <MiniMetric label="Users" value={selectedUsageMetrics.usersUsed} helper={`${selectedUsageMetrics.usersLimit}`} compact icon="/tenants/users.svg" />
                 </div>
 
@@ -749,7 +815,7 @@ export default function TenantAdminDashboard() {
                     </SectionCard>
                 </div>
 
-                <SectionCard title="Brand Spaces" className="border-none p-0" >
+                <SectionCard title="Brand Wise Activity" className="border-none p-0" >
                     <div className="overflow-x-auto">
                         <table className="table">
                             <thead>

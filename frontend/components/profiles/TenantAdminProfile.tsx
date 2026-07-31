@@ -3,9 +3,9 @@
 import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { PencilLine } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
 import {
     AlertDialog,
     AlertDialogAction,
@@ -29,6 +29,8 @@ import Image from "next/image";
 import { Progress } from "../ui/progress";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
+import { toast } from "@/components/ui/use-toast";
+import { NotificationPreferenceControls } from "@/components/profiles/NotificationPreferenceControls";
 
 type EditableField = "full_name" | "email" | "phone_number" | null;
 
@@ -52,6 +54,7 @@ const ZERO_USAGE_SUMMARY: TenantUsageSummary = {
 
 export default function TenantAdminProfile() {
     const router = useRouter();
+    const queryClient = useQueryClient();
     const { user } = useRBAC();
     const logout = useLogout();
     const { data: profile } = useProfile();
@@ -60,7 +63,8 @@ export default function TenantAdminProfile() {
     const deleteProfile = useDeleteProfile();
     const usageTenantId = user?.tenantId ?? "";
     const { data: usageSummary } = useGetTenantUsageSummary(usageTenantId);
-    const [notificationsOverride, setNotificationsOverride] = useState<boolean | null>(null);
+    const [emailNotificationsOverride, setEmailNotificationsOverride] = useState<boolean | null>(null);
+    const [inAppNotificationsOverride, setInAppNotificationsOverride] = useState<boolean | null>(null);
     const [editingField, setEditingField] = useState<EditableField>(null);
     const [editValue, setEditValue] = useState("");
     const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
@@ -72,7 +76,17 @@ export default function TenantAdminProfile() {
     });
     const [feedback, setFeedback] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
-    const notifications = notificationsOverride ?? (profile?.extra?.notifications_enabled === false ? false : true);
+    const legacyNotificationsEnabled = profile?.extra?.notifications_enabled !== false;
+    const emailNotificationsEnabled =
+        emailNotificationsOverride ??
+        (typeof profile?.extra?.email_notifications_enabled === "boolean"
+            ? profile.extra.email_notifications_enabled
+            : legacyNotificationsEnabled);
+    const inAppNotificationsEnabled =
+        inAppNotificationsOverride ??
+        (typeof profile?.extra?.in_app_notifications_enabled === "boolean"
+            ? profile.extra.in_app_notifications_enabled
+            : legacyNotificationsEnabled);
     const usageDetails = usageSummary ?? ZERO_USAGE_SUMMARY;
 
     const account = useMemo(
@@ -108,7 +122,7 @@ export default function TenantAdminProfile() {
             },
             {
                 onSuccess: () => {
-                    setFeedback("Profile updated successfully.");
+                    setFeedback("My Profile has been updated successfully.");
                     setEditingField(null);
                 },
                 onError: () => {
@@ -118,25 +132,51 @@ export default function TenantAdminProfile() {
         );
     };
 
-    const handleNotificationToggle = (checked: boolean) => {
-        setNotificationsOverride(checked);
+    const handleEmailNotificationToggle = (checked: boolean) => {
+        setEmailNotificationsOverride(checked);
         updateProfile.mutate(
-            { notifications_enabled: checked },
+            { email_notifications_enabled: checked },
             {
-                onSuccess: () => setFeedback("Notification preference updated."),
+                onSuccess: () => setFeedback("Email notification preference updated."),
                 onError: () => {
-                    setNotificationsOverride(null);
-                    setError("Unable to update notification preference right now.");
+                    setEmailNotificationsOverride(null);
+                    setError("Unable to update email notification preference right now.");
                 },
             },
         );
     };
 
+    const handleInAppNotificationToggle = (checked: boolean) => {
+        setInAppNotificationsOverride(checked);
+        updateProfile.mutate(
+            { in_app_notifications_enabled: checked },
+            {
+                onSuccess: () => setFeedback("In-app notification preference updated."),
+                onError: () => {
+                    setInAppNotificationsOverride(null);
+                    setError("Unable to update in-app notification preference right now.");
+                },
+            },
+        );
+    };
+
+    const openPasswordDialog = () => {
+        setError(null);
+        setFeedback(null);
+        setPasswordForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
+        setPasswordDialogOpen(true);
+    };
+
     const handlePasswordSave = () => {
+        if (changePassword.isPending) {
+            return;
+        }
         if (passwordForm.newPassword !== passwordForm.confirmPassword) {
             setError("New password and confirm password must match.");
             return;
         }
+        setError(null);
+        setFeedback(null);
         changePassword.mutate(
             {
                 current_password: passwordForm.currentPassword,
@@ -144,6 +184,15 @@ export default function TenantAdminProfile() {
             },
             {
                 onSuccess: () => {
+                    if (user?.role === "TENANT_ADMIN" || user?.role === "TENANT_USER" || user?.role === "BRAND_USER") {
+                        toast({
+                            title: "Password Changed",
+                            description:
+                                "Your password has been changed successfully. If you did not perform this action, please contact your administrator immediately.",
+                            variant: "success",
+                        });
+                        void queryClient.invalidateQueries({ queryKey: ["notifications", user.id] });
+                    }
                     setFeedback("Password updated successfully.");
                     setError(null);
                     setPasswordDialogOpen(false);
@@ -170,7 +219,7 @@ export default function TenantAdminProfile() {
         <>
             <div className="w-full px-4 py-6">
                 <div className="mx-auto space-y-4">
-                    <PlatformPageTitle title="Profile" />
+                    <PlatformPageTitle title="My Profile" />
 
                     {feedback ? <p className="text-sm text-emerald-600">{feedback}</p> : null}
                     {error ? <p className="text-sm text-red-500">{error}</p> : null}
@@ -190,6 +239,11 @@ export default function TenantAdminProfile() {
                         <ProfileSectionCard className="flex-1 border shadow-[0_4px_10px_0_rgba(0,0,0,0.10)] px-5">
                             <div className="space-y-1">
                                 <h1 className="text-base font-medium py-3">Usage Detail</h1>
+                                <MetricRow label="Users" value={toPercent(usageDetails.consumption.users, usageDetails.limits.max_users)} />
+                                <MetricRow
+                                    label="Brand Space"
+                                    value={toPercent(usageDetails.consumption.brand_spaces, usageDetails.limits.max_brand_spaces)}
+                                />
                                 <MetricRow label="Total Capacity" value={aggregatePercent(usageDetails)} />
                                 <MetricRow
                                     label="Content"
@@ -212,24 +266,25 @@ export default function TenantAdminProfile() {
                                     child
                                     value={toPercent(usageDetails.consumption.ocr_pages, usageDetails.limits.max_ocr_pages)}
                                 />
-                                <MetricRow label="Users" value={toPercent(usageDetails.consumption.users, usageDetails.limits.max_users)} />
-                                <MetricRow
-                                    label="Brand Spaces"
-                                    value={toPercent(usageDetails.consumption.brand_spaces, usageDetails.limits.max_brand_spaces)}
-                                />
                             </div>
                         </ProfileSectionCard>
                     </div>
 
-                    <SettingsRow
-                        title="Notifications"
-                        description="Enable or disable alerts and updates"
-                        trailing={<Switch checked={notifications} onCheckedChange={handleNotificationToggle} />}
-                    />
+                    <ProfileSectionCard className="border px-5 py-4 shadow-[0px_4px_10px_0px_rgba(0,0,0,0.05)]">
+                        <NotificationPreferenceControls
+                            emailEnabled={emailNotificationsEnabled}
+                            inAppEnabled={inAppNotificationsEnabled}
+                            disabled={updateProfile.isPending}
+                            onEmailChange={handleEmailNotificationToggle}
+                            onInAppChange={handleInAppNotificationToggle}
+                        />
+                    </ProfileSectionCard>
 
                     <SettingsRow
                         title="Privacy Policy"
-                        description="Review how your personal information is collected, used, and protected on the platform. View Privacy & Policy."
+                        description="Review how your personal information is collected, used, and protected on the platform."
+                        link="privacy_policy"
+                        linkText="View Privacy Policy"
                     />
 
                     <SettingsRow
@@ -241,7 +296,7 @@ export default function TenantAdminProfile() {
                         title="Change password"
                         description="Update your account password to keep your account secure."
                         trailing={
-                            <Button variant={"ghost"} type="button" className="text-primary" onClick={() => setPasswordDialogOpen(true)}>
+                            <Button variant={"ghost"} type="button" className="text-primary" onClick={openPasswordDialog}>
                                 <Image src="/actions_icons/pencil.svg" alt="edit icon" width={16} height={16} className="font-semibold" />
                             </Button>
                         }
@@ -279,7 +334,7 @@ export default function TenantAdminProfile() {
             <Dialog open={editingField !== null} onOpenChange={(open) => (!open ? setEditingField(null) : null)}>
                 <DialogContent className="max-w-lg font-dmSans rounded-2xl border-0 p-8 shadow-[0_20px_80px_-24px_rgba(15,23,42,0.25)]">
                     <DialogHeader>
-                        <DialogTitle className="text-3xl text-slate-900">Update Profile Detail</DialogTitle>
+                        <DialogTitle className="text-3xl text-slate-900">Update My Profile Detail</DialogTitle>
                         <DialogDescription className="text-sm text-slate-500">
                             Save the updated account information shown in the profile screen.
                         </DialogDescription>
@@ -298,7 +353,7 @@ export default function TenantAdminProfile() {
                 </DialogContent>
             </Dialog>
 
-            <Dialog open={passwordDialogOpen} onOpenChange={setPasswordDialogOpen}>
+            <Dialog open={passwordDialogOpen} onOpenChange={(open) => !changePassword.isPending && setPasswordDialogOpen(open)}>
                 <DialogContent className="font-dmSans max-w-xl rounded-2xl border-0 p-8 shadow-[0_20px_80px_-24px_rgba(15,23,42,0.25)]">
                     <DialogHeader>
                         <DialogTitle className="text-2xl text-slate-900">Change Password</DialogTitle>
@@ -327,29 +382,33 @@ export default function TenantAdminProfile() {
                         />
                     </div>
                     <DialogFooter className="flex items-center justify-center mx-auto gap-3">
-                        <Button variant="outline" className="rounded-none p-5" onClick={() => setPasswordDialogOpen(false)}>
+                        <Button variant="outline" className="rounded-none p-5" onClick={() => setPasswordDialogOpen(false)} disabled={changePassword.isPending}>
                             Cancel
                         </Button>
-                        <Button className="rounded-none bg-primary/72 p-5 hover:bg-primary/90" onClick={handlePasswordSave}>
-                            Save
+                        <Button
+                            className="rounded-none bg-primary/72 p-5 hover:bg-primary/90"
+                            onClick={handlePasswordSave}
+                            disabled={changePassword.isPending}
+                        >
+                            {changePassword.isPending ? "Saving..." : "Save"}
                         </Button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
 
             <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-                <AlertDialogContent className="max-w-[460px] rounded-2xl border-0 px-8 py-10 shadow-[0_20px_80px_-24px_rgba(15,23,42,0.25)]">
+                <AlertDialogContent className="max-w-115 font-dmSans rounded-xl border-0 px-8 py-10 shadow-[0_20px_80px_-24px_rgba(15,23,42,0.25)]">
                     <AlertDialogHeader className="items-center text-center">
-                        <AlertDialogTitle className="text-5xl font-semibold tracking-tight text-slate-900">Delete Account?</AlertDialogTitle>
-                        <AlertDialogDescription className="text-xl text-slate-700">
+                        <AlertDialogTitle className="text-2xl font-semibold tracking-tight text-slate-900">Delete Account?</AlertDialogTitle>
+                        <AlertDialogDescription className="text-base text-slate-700">
                             This action will deactivate your account and sign you out immediately.
                         </AlertDialogDescription>
                     </AlertDialogHeader>
-                    <AlertDialogFooter className="mt-4 flex-row justify-center gap-6">
-                        <AlertDialogAction className="h-12 min-w-[152px] rounded-none bg-[#FF6D5E] text-base hover:bg-[#FF6D5E]/90" onClick={handleDeleteAccount}>
+                    <AlertDialogFooter className=" flex-row justify-center gap-2">
+                        <AlertDialogAction className="h-12 min-w-30 rounded-none bg-[#FF6D5E]/52 text-base hover:bg-[#FF6D5E]/90" onClick={handleDeleteAccount}>
                             Confirm
                         </AlertDialogAction>
-                        <AlertDialogCancel className="h-12 min-w-[152px] rounded-none border-slate-900 text-base text-slate-900 hover:bg-slate-50">
+                        <AlertDialogCancel className="h-12 min-w-30 rounded-none border-slate-900 text-base text-slate-900 hover:bg-slate-50">
                             Cancel
                         </AlertDialogCancel>
                     </AlertDialogFooter>
@@ -418,15 +477,21 @@ function SettingsRow({
     title,
     description,
     trailing,
+    link,
+    linkText
 }: {
     title: string;
     description?: string;
     trailing?: ReactNode;
+    link?: string;
+    linkText?: string;
 }) {
     return (
         <ProfileSectionCard
             title={title}
             description={description}
+            externalLink={link}
+            externalLinkText={linkText}
             className="flex items-center justify-between border gap-4 px-5 py-3 shadow-[0px_4px_10px_0px_rgba(0,0,0,0.05)]"
         >
             {trailing}

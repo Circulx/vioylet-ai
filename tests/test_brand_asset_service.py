@@ -39,6 +39,69 @@ class _AudienceStructuredRepoStub:
         return self.record
 
 
+class _CleanupSessionStub:
+    def __init__(self) -> None:
+        self.deleted = []
+        self.flushed = False
+        self.rolled_back = False
+
+    async def delete(self, value) -> None:
+        self.deleted.append(value)
+
+    async def flush(self) -> None:
+        self.flushed = True
+
+    async def rollback(self) -> None:
+        self.rolled_back = True
+
+
+class _FailingRetrievalStub:
+    def delete_asset(self, *_args) -> None:
+        raise RuntimeError("vector rebuild failed")
+
+
+class _FailingValidatorStub:
+    async def refresh_brand_context(self, _brand_space_id) -> None:
+        raise RuntimeError("snapshot refresh failed")
+
+
+class _StorageWithoutBasePathStub:
+    def __init__(self) -> None:
+        self.deleted_paths = []
+
+    def delete(self, storage_path: str) -> None:
+        self.deleted_paths.append(storage_path)
+
+
+class _ReusableAssetsRepoStub:
+    def __init__(self) -> None:
+        self.deleted_asset_id = None
+
+    async def list_by_knowledge_asset(self, _asset_id):
+        return []
+
+    async def delete_by_knowledge_asset(self, asset_id) -> None:
+        self.deleted_asset_id = asset_id
+
+
+class _PaletteEntriesRepoStub:
+    def __init__(self) -> None:
+        self.deleted_asset_id = None
+
+    async def delete_by_asset(self, asset_id) -> None:
+        self.deleted_asset_id = asset_id
+
+
+class _EmptyLinkedRepoStub:
+    async def get_by_knowledge_asset(self, _asset_id):
+        return None
+
+
+class _EmptyTemplateRepoStub:
+    async def get_by_source_asset(self, _asset_id):
+        return None
+
+
 @pytest.mark.asyncio
 async def test_persist_audience_stores_quality_and_provenance_on_structured_row() -> None:
     audience_assets = _AudienceAssetRepoStub()
@@ -117,3 +180,59 @@ async def test_persist_audience_stores_quality_and_provenance_on_structured_row(
     assert audience_structured.record.analysis_quality["analysis_quality_score"] == 8.7
     assert audience_structured.record.research_evidence["proof_cues"][0]["confidence"] == 0.84
     assert audience_assets.record.source_metadata_json["analysis_metadata"]["analysis_quality"]["source_agreement_score"] == 0.76
+
+
+@pytest.mark.asyncio
+async def test_cleanup_attachment_side_effects_tolerates_external_cleanup_failures() -> None:
+    service = BrandAssetService.__new__(BrandAssetService)
+    session = _CleanupSessionStub()
+    reusable_assets = _ReusableAssetsRepoStub()
+    palette_entries = _PaletteEntriesRepoStub()
+    service.session = session
+    service.retrieval = _FailingRetrievalStub()
+    service.storage = _StorageWithoutBasePathStub()
+    service.reusable_assets = reusable_assets
+    service.palette_entries = palette_entries
+    service.logo_assets = _EmptyLinkedRepoStub()
+    service.audience_assets = _EmptyLinkedRepoStub()
+    service.visual_references = _EmptyLinkedRepoStub()
+    service.mood_boards = _EmptyLinkedRepoStub()
+    service.typography_guides = _EmptyLinkedRepoStub()
+    service.word_bank_uploads = _EmptyLinkedRepoStub()
+    service.templates = _EmptyTemplateRepoStub()
+
+    asset = KnowledgeAsset(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        brand_space_id=uuid4(),
+        name="Brand guide",
+        original_filename="brand-guide.pdf",
+        mime_type="application/pdf",
+        storage_path="tenant/brand/brand_guide.pdf",
+        lifecycle_state="indexed",
+        channel="brand",
+        field_key="brand_voice",
+        metadata_json={},
+        structured_data_json={},
+        normalized_data_json={},
+        validation_summary_json={},
+    )
+
+    await service._cleanup_attachment_side_effects(asset)
+
+    assert reusable_assets.deleted_asset_id == asset.id
+    assert palette_entries.deleted_asset_id == asset.id
+    assert service.storage.deleted_paths == ["tenant/brand/brand_guide.pdf"]
+    assert session.flushed is True
+
+
+@pytest.mark.asyncio
+async def test_refresh_brand_context_best_effort_rolls_back_failed_refresh() -> None:
+    service = BrandAssetService.__new__(BrandAssetService)
+    session = _CleanupSessionStub()
+    service.session = session
+    service.validator = _FailingValidatorStub()
+
+    await service._refresh_brand_context_best_effort(uuid4())
+
+    assert session.rolled_back is True

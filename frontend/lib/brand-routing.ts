@@ -29,6 +29,10 @@ export function buildBrandEditHref(brand: RoutableBrand) {
   return `${buildBrandWorkspaceHref(brand)}/edit`;
 }
 
+export function buildBrandViewHref(brand: RoutableBrand) {
+  return `${buildBrandWorkspaceHref(brand)}/view`;
+}
+
 export function buildBrandSharingHref(brand: RoutableBrand) {
   return `${buildBrandWorkspaceHref(brand)}/sharing`;
 }

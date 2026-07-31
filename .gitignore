@@ -72,3 +72,7 @@ tests/scene-graph-overlay-minimal-*/
 # Local scratch / debug outputs
 scratch/
 
+# Deploy artifacts
+deploy/images/*.tar
+*.tar
+*.zip

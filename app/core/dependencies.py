@@ -115,7 +115,17 @@ def assert_brand_access(principal: CurrentPrincipal, brand_space_id: UUID) -> No
     forbid_super_admin_brand_access(principal)
     if principal.is_tenant_admin():
         return
+    if principal.has_any_role(RoleCode.BRAND_USER):
+        if brand_space_id not in principal.brand_space_ids:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+        return
     if principal.brand_space_ids and brand_space_id not in principal.brand_space_ids:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+
+
+def assert_brand_manage_access(principal: CurrentPrincipal) -> None:
+    # Only Tenant Admins can create, edit, publish, archive, delete, or mutate Brand Space files.
+    if not principal.has_any_role(RoleCode.TENANT_ADMIN):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
 
 

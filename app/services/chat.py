@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.enums import AssetRole, BrandSpaceLifecycle, ExportFileType
 from app.core.studio import resolve_studio_panel_defaults
 from app.core.exceptions import ChatGenerationCancelledError, GenerationFailureError, GuardrailViolationError, LifecycleError, NotFoundError
-from app.integrations.object_storage import LocalObjectStorage
+from app.integrations.object_storage import get_object_storage
 from app.services.asset_delivery import AssetDeliveryService
 from app.services.conversation_memory import ConversationMemoryService
 from app.models.content import ChatMessage, ContentSession, GeneratedAsset
@@ -1572,7 +1572,7 @@ class ChatService:
         storage_path = str(asset.get("storage_path", "")).strip()
         if not storage_path:
             return asset
-        storage = LocalObjectStorage()
+        storage = get_object_storage()
         if not storage.exists(storage_path):
             return {
                 **asset,

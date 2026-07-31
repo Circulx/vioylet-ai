@@ -6,7 +6,7 @@ export const tenantSchema = z.object({
     tenant: z.object({
         name: z.string().min(1, "Tenant name is required"),
         email: z.email("Valid email is required"),
-        phone: z.string().min(1, "Phone is required"),
+        phone: z.string().regex(/^\d{10}$/, "Valid 10-digit phone number is required"),
         address1: z.string().min(1, "Address is required"),
         address2: z.string().optional(),
         city: z.string().min(2, "City is required"),
@@ -18,7 +18,7 @@ export const tenantSchema = z.object({
     admin: z.object({
         name: z.string().min(1, "Admin name is required"),
         email: z.email("Valid email is required"),
-        phone: z.string().min(10, "Phone is required")
+        phone: z.string().regex(/^\d{10}$/, "Valid 10-digit phone number is required")
     }),
     usage: z.object({
         startMonth: z.string().min(1, "Start month is required"),

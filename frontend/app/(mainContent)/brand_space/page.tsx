@@ -3,6 +3,16 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import BrandSpaces from "@/components/brandSpaces/BrandSpaces";
 import {
     PlatformPageTitle,
@@ -29,6 +39,18 @@ function getBrandId(item: BrandResponse | { id: string }) {
     return item.id;
 }
 
+function getBrandDisplayName(item: BrandResponse | { name?: string; slug?: string; lifecycle_state?: string }) {
+    const lifecycleLabel =
+        item.lifecycle_state === "draft"
+            ? "Draft"
+            : item.lifecycle_state === "active"
+                ? "Active"
+                : item.lifecycle_state === "archived"
+                    ? "Archived"
+                    : "";
+    return item.name?.trim() || item.slug?.trim() || lifecycleLabel || "Brand Space";
+}
+
 export default function BrandSpacePage() {
     const router = useRouter();
     const { user, can } = useRBAC();
@@ -39,8 +61,10 @@ export default function BrandSpacePage() {
     const restoreBrand = useRestoreBrandMutation();
     const deleteBrand = useDeleteBrandMutation();
     const isAdmin = user?.role === "TENANT_ADMIN";
+    const canManageBrandSpaces = can("BRAND_SPACE", "EDIT") && can("BRAND_SPACE", "DELETE");
     const [activeTab, setActiveTab] = useState<"brand_spaces" | "archive">("brand_spaces");
     const [searchQuery, setSearchQuery] = useState("");
+    const [pendingDeleteBrand, setPendingDeleteBrand] = useState<{ id: string; name: string } | null>(null);
 
     const liveActiveSpaces = useMemo(
         () => (brands || []).filter((brand) => brand.lifecycle_state !== "archived" && brand.lifecycle_state !== "deleted"),
@@ -121,11 +145,24 @@ export default function BrandSpacePage() {
         }
     };
 
+    const confirmDeleteBrandSpace = () => {
+        if (!pendingDeleteBrand || deleteBrand.isPending) {
+            return;
+        }
+        const brand = pendingDeleteBrand;
+        setPendingDeleteBrand(null);
+        void runBrandAction(
+            () => deleteBrand.mutateAsync(brand.id),
+            "Brand Space deleted",
+            "Unable to delete this Brand Space right now.",
+        );
+    };
+
     return (
         <div className="w-full px-4 py-6">
             <div className="space-y-6">
                 <PlatformPageTitle
-                    title="Brand Spaces"
+                    title="My Brand Space"
                     action={
                         <div className="flex gap-4">
                             {isAdmin && (
@@ -157,7 +194,7 @@ export default function BrandSpacePage() {
                 <div className="flex items-center justify-between gap-4">
                     <UserPlatformTabSwitcher
                         tabs={[
-                            { id: "brand_spaces", label: "Your Space" },
+                            { id: "brand_spaces", label: "Your Studio" },
                             { id: "archive", label: "Archive" },
                         ]}
                         active={activeTab}
@@ -168,20 +205,21 @@ export default function BrandSpacePage() {
             </div>
                 <SectionCard className="border-none p-0" >
                     {isLoading ? (
-                        <div className="py-10 text-sm text-slate-500">Loading brand spaces...</div>
+                        <div className="py-10 text-sm text-slate-500">Loading Brand Space...</div>
                     ) : visibleSpaces.length === 0 ? (
                         <div className="w-full mx-auto flex items-center justify-center py-10 text-sm text-slate-500">
                             {activeTab === "brand_spaces"
-                                ? "No Brand Spaces yet. Start by creating a new Brand Space."
-                                : "No archived Brand Spaces yet."}
+                                ? "No Brand Space yet. Start by creating a new Brand Space."
+                                : "No archived Brand Space yet."}
                         </div>
                     ) : filteredVisibleSpaces.length === 0 ? (
                         <div className="w-full mx-auto flex items-center justify-center py-10 text-sm text-slate-500">
-                            No Brand Spaces match your search.
+                            No Brand Space matches your search.
                         </div>
                     ) : (
                         <BrandSpaces
                             items={filteredVisibleSpaces}
+                            canManage={canManageBrandSpaces}
                             onPublish={(item) => {
                                 void publishBrandSpace(item);
                             }}
@@ -207,18 +245,37 @@ export default function BrandSpacePage() {
                                 );
                             }}
                             onDelete={(item) => {
-                                if (!window.confirm(`Delete "${item.name}"? This will remove it from your Brand Space list.`)) {
-                                    return;
-                                }
-                                void runBrandAction(
-                                    () => deleteBrand.mutateAsync(getBrandId(item)),
-                                    "Brand Space deleted",
-                                    "Unable to delete this Brand Space right now.",
-                                );
+                                setPendingDeleteBrand({
+                                    id: getBrandId(item),
+                                    name: getBrandDisplayName(item),
+                                });
                             }}
                         />
                     )}
                 </SectionCard>
+                <AlertDialog open={Boolean(pendingDeleteBrand)} onOpenChange={(open) => !open && setPendingDeleteBrand(null)}>
+                    <AlertDialogContent className="max-w-[420px] rounded-none border-0 bg-white p-6 shadow-[0_20px_80px_-24px_rgba(15,23,42,0.35)]">
+                        <AlertDialogHeader>
+                            <AlertDialogTitle>Delete Brand Space?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                                Are you sure you want to delete &quot;{pendingDeleteBrand?.name || "Brand Space"}&quot;?
+                            </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                            <AlertDialogCancel className="rounded-none">Cancel</AlertDialogCancel>
+                            <AlertDialogAction
+                                onClick={(event) => {
+                                    event.preventDefault();
+                                    confirmDeleteBrandSpace();
+                                }}
+                                className="rounded-none bg-[#FF6D5E] text-white hover:bg-[#FF6D5E]/90"
+                                disabled={deleteBrand.isPending}
+                            >
+                                {deleteBrand.isPending ? "Deleting..." : "Delete"}
+                            </AlertDialogAction>
+                        </AlertDialogFooter>
+                    </AlertDialogContent>
+                </AlertDialog>
         </div>
     );
 }

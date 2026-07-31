@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import { FormField, FormSection, FormSubsection, StyledInput, StyledSelect, StyledTextarea } from "./FormFields";
+import { AdvancedSectionTitle, FormField, FormSection, FormSubsection, StyledInput, StyledSelect, StyledTextarea } from "./FormFields";
 import {
     BRAND_ARCHETYPE_OPTIONS,
     BUYING_STAGE_OPTIONS,
@@ -17,7 +17,30 @@ const emptyCompetitorBrand = (): CompetitorBrandField => ({
     x: "",
 });
 
-const AdditionalDetails = ({ brandId, form, setForm }: BrandTabProps) => {
+function hasMissingAdvancedFields(form: BrandTabProps["form"], competitors: CompetitorBrandField[]) {
+    const fields = [
+        form.additional.brandMission,
+        form.additional.brandVision,
+        form.additional.brandPromise,
+        form.additional.marketPositioning,
+        form.additional.roleOfDigitalPlatforms,
+        form.additional.socialMediaChallenges,
+        form.additional.businessProblemOrOpportunity,
+        form.additional.perceptionChallenge,
+        form.additional.humanInsight,
+        form.additional.brandAdvantage,
+        form.additional.strategy,
+        form.additional.brandArchetype,
+        form.additional.complianceLevel,
+    ];
+    const hasMissingCompetitorField = competitors.some((competitor) =>
+        [competitor.name, competitor.websiteUrl, competitor.linkedin, competitor.instagram, competitor.x].some(
+            (value) => !String(value || "").trim(),
+        ),
+    );
+    return fields.some((value) => !String(value || "").trim()) || hasMissingCompetitorField;
+}
+const AdditionalDetails = ({ form, setForm }: BrandTabProps) => {
     const updateField = <TKey extends keyof typeof form.additional>(
         key: TKey,
         value: (typeof form.additional)[TKey],
@@ -68,7 +91,7 @@ const AdditionalDetails = ({ brandId, form, setForm }: BrandTabProps) => {
     };
 
     return (
-        <FormSection title="Advanced" description="Optional fields to further refine your brand intelligence"
+        <FormSection title={<AdvancedSectionTitle showInfo={hasMissingAdvancedFields(form, competitors)} />} description="Optional fields to further refine your brand intelligence"
             className="bg-[#E9E9E966] px-6 pb-6 pt-2"
         >
             <div className="grid gap-8 lg:grid-cols-2">

@@ -169,7 +169,7 @@ class VisualIdentityPayload(APIModel):
     brand_mood: str | None = None
     visual_style: str | None = None
     logo_placement: LogoPlacementPayload = Field(default_factory=LogoPlacementPayload)
-    brand_color_palette: dict[str, str] = Field(default_factory=dict)
+    brand_color_palette: dict[str, Any] = Field(default_factory=dict)
     typography: dict[str, Any] = Field(default_factory=dict)
     reference_creative_asset_ids: list[UUID] = Field(default_factory=list)
     mood_board_asset_ids: list[UUID] = Field(default_factory=list)
@@ -244,6 +244,17 @@ class BrandResponse(APIModel):
     resolved_brand_context: dict[str, Any]
     created_at: datetime
     updated_at: datetime
+
+
+class BrandSpaceHistoryResponse(APIModel):
+    # Response contract for Brand Space activity history entries.
+    id: UUID
+    tenant_id: UUID
+    brand_space_id: UUID
+    activity_type: str
+    message: str
+    performed_by: UUID | None = None
+    created_at: datetime
 
 
 class BrandUsageMetricResponse(APIModel):

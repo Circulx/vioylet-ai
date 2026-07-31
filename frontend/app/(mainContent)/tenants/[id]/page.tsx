@@ -14,7 +14,8 @@ import {
     ToolbarToggle,
 } from "@/components/platformOwner/PlatformOwnerPrimitives";
 import { useGetTenantBrandSpaces, useGetTenantData, useGetTenantUsageSummary, useGetTenantUsers } from "@/hooks/tenantAdmins/useGetTenants";
-import { useUpdateTenantAdmin } from "@/hooks/tenantAdmins/useUpdateTenant";
+import { useDeactivateTenantUser, useReactivateTenantUser } from "@/hooks/tenantAdmins/useUpdateTenant";
+import { toast } from "@/components/ui/use-toast";
 import {
     buildRangeLabel,
     buildUsageWindowRows,
@@ -36,7 +37,8 @@ export default function TenantDetailsPage() {
     const { data: users } = useGetTenantUsers(tenantId);
     const { data: usage } = useGetTenantUsageSummary(tenantId);
     const { data: brandSpaces } = useGetTenantBrandSpaces(tenantId);
-    const { mutate: updateTenant, isPending: isUpdatingTenant } = useUpdateTenantAdmin();
+    const deactivateTenantAdmin = useDeactivateTenantUser(tenantId);
+    const reactivateTenantAdmin = useReactivateTenantUser(tenantId);
     const [tab, setTab] = useState("tenant");
     const [provider, setProvider] = useState("openai");
     const [selectedUsageMonth, setSelectedUsageMonth] = useState("");
@@ -398,6 +400,28 @@ export default function TenantDetailsPage() {
         return <div className="p-5 text-sm text-slate-500">Loading tenant details...</div>;
     }
 
+    const tenantAdminUserId = tenant.tenant_admin_user_id || "";
+    const tenantAdminIsActive = tenant.tenant_admin_is_active !== false;
+    const tenantAdminStatusMutationPending = deactivateTenantAdmin.isPending || reactivateTenantAdmin.isPending;
+    const toggleTenantAdminStatus = () => {
+        if (!tenantAdminUserId || tenantAdminStatusMutationPending) {
+            return;
+        }
+        const options = {
+            onSuccess: () => {
+                toast({
+                    title: "Tenant details have been updated successfully.",
+                    variant: "success",
+                });
+            },
+        };
+        if (tenantAdminIsActive) {
+            deactivateTenantAdmin.mutate(tenantAdminUserId, options);
+            return;
+        }
+        reactivateTenantAdmin.mutate(tenantAdminUserId, options);
+    };
+
     return (
         <div className="w-full space-y-6 px-5 py-5">
             <PlatformPageTitle
@@ -415,19 +439,12 @@ export default function TenantDetailsPage() {
                         <Button
                             variant="outline"
                             className="rounded-none border-[#D5D8E8] bg-[#D4D4D8] px-5 py-5 text-base text-white hover:bg-[#BFBFC6]"
-                            disabled={isUpdatingTenant}
-                            onClick={() =>
-                                updateTenant({
-                                    id: tenantId,
-                                    data: {
-                                        is_active: !tenant.is_active,
-                                    },
-                                })
-                            }
+                            disabled={!tenantAdminUserId || tenantAdminStatusMutationPending}
+                            onClick={toggleTenantAdminStatus}
                         >
                             <Image src={"/actions_icons/deactivate_user.svg"} alt="Edit" width={16} height={16} className="w-auto h-auto" />
 
-                            {tenant.is_active ? "Deactivate" : "Reactivate"}
+                            {tenantAdminIsActive ? "Deactivate" : "Reactivate"}
                         </Button>
                     </div>
                 }
@@ -506,7 +523,7 @@ export default function TenantDetailsPage() {
                         }
                     >
                         <div className="space-y-4">
-                            <ProgressRow label="Total Capacity" value={selectedUsageMetrics.totalCapacity} icon="/tenants/capacity.svg" />
+                            <ProgressRow label="Total Capacity" value={selectedUsageMetrics.totalCapacity} icon="/tenants/capacity.svg" info />
                             <div className="grid gap-4 md:grid-cols-3">
                                 <MiniMetric label="Content" progress={true} value={selectedUsageMetrics.contentPercent} icon="/tenants/content.svg" />
                                 <MiniMetric label="Visuals" progress={true} value={selectedUsageMetrics.visualsPercent} icon="/tenants/visuals.svg" />
@@ -576,7 +593,7 @@ export default function TenantDetailsPage() {
                         </div>
                     </SectionCard>
 
-                    <SectionCard title="Tenant Users"
+                    <SectionCard title="Super Users"
                         className="border-none p-0 py-2"
                     >
                         <div className="overflow-x-auto">

@@ -13,6 +13,7 @@ import { mapTenantFormToCreateRequest } from "@/lib/tenant-mappers";
 import type { TenantFormData } from "@/types/tenant.types";
 import { formatZodErrors, type FormErrors, tenantSchema } from "@/zod/tenantManagement";
 import { PlatformPageTitle } from "@/components/platformOwner/PlatformOwnerPrimitives";
+import { toast } from "@/components/ui/use-toast";
 
 const emptyForm: TenantFormData = {
     tenant: {
@@ -101,6 +102,10 @@ export default function CreateTenantPage() {
             if (tenant.activation_email?.reason) {
                 params.set("emailReason", tenant.activation_email.reason);
             }
+            toast({
+                title: "Tenant created successfully.",
+                variant: "success",
+            });
             router.push(`/tenants/${tenant.id}?${params.toString()}`);
         } catch (error) {
             const detail =

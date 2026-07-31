@@ -18,3 +18,5 @@ violyt_backend.egg-info
 tmp_uvicorn_smoke.err.log
 tmp_uvicorn_smoke.out.log
 tmp_uvicorn_smoke.log
+deploy/*.tar
+deploy/*.tar.gz

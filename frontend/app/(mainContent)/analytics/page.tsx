@@ -39,7 +39,7 @@ export default function AnalyticsPage() {
   const usage = (metrics.usage as Record<string, number> | undefined) || {};
   const tokenUsage = (metrics.token_usage as Record<string, number> | undefined) || {};
   const summaryTiles = [
-    { label: "Brand Spaces", value: metrics.number_of_brand_spaces },
+    { label: "Brand Space", value: metrics.number_of_brand_spaces },
     { label: "Users", value: metrics.total_users },
     { label: "Content Generations", value: metrics.content_generations },
     { label: "Knowledge Assets", value: metrics.knowledge_assets },

@@ -465,6 +465,7 @@ export interface ReviewDetailResponse {
     body: string;
     external_author_name?: string;
     author_user_id?: UUID;
+    created_at: string;
   }>;
 }
 

@@ -14,5 +14,12 @@ const configuredApiValue =
   process.env.NEXT_PUBLIC_API_BASE_URL ||
   "http://localhost:8000";
 
+const configuredServerApiValue =
+  process.env.SERVER_API_BASE_URI ||
+  process.env.INTERNAL_API_BASE_URI ||
+  process.env.API_INTERNAL_ORIGIN ||
+  configuredApiValue;
+
 export const apiOrigin = stripTrailingSlash(stripApiPrefix(configuredApiValue));
 export const apiBasePath = `${apiOrigin}/api/v1`;
+export const serverApiOrigin = stripTrailingSlash(stripApiPrefix(configuredServerApiValue));

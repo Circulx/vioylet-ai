@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ApiEndpoint } from "@/lib/api/endpoints";
 import { API } from "@/lib/api/endpoints";
 import { request } from "@/lib/api/request";
+import { refreshNotificationQueries } from "@/lib/notification-queries";
 
 export const useBrands = (enabled = true) =>
   useQuery({
@@ -38,6 +39,7 @@ export const useCreateBrand = () => {
     onSuccess: async (brand) => {
       await queryClient.invalidateQueries({ queryKey: ["brands"] });
       await queryClient.invalidateQueries({ queryKey: ["brand", brand.id] });
+      await refreshNotificationQueries(queryClient);
     },
   });
 };
@@ -66,6 +68,7 @@ export const useFinalizeBrand = (brandId: string) => {
       await queryClient.invalidateQueries({ queryKey: ["brand", brandId] });
       await queryClient.invalidateQueries({ queryKey: ["brand", brandId, "overview"] });
       await queryClient.invalidateQueries({ queryKey: ["brands"] });
+      await refreshNotificationQueries(queryClient);
     },
   });
 };
@@ -73,6 +76,7 @@ export const useFinalizeBrand = (brandId: string) => {
 const useBrandLifecycleMutation = (
   brandId: string,
   endpoint: ApiEndpoint<void, unknown>,
+  refreshNotifications = false,
 ) => {
   const queryClient = useQueryClient();
   return useMutation({
@@ -81,11 +85,14 @@ const useBrandLifecycleMutation = (
       await queryClient.invalidateQueries({ queryKey: ["brand", brandId] });
       await queryClient.invalidateQueries({ queryKey: ["brand", brandId, "overview"] });
       await queryClient.invalidateQueries({ queryKey: ["brands"] });
+      if (refreshNotifications) {
+        await refreshNotificationQueries(queryClient);
+      }
     },
   });
 };
 
-export const usePublishBrand = (brandId: string) => useBrandLifecycleMutation(brandId, API.BRANDS.PUBLISH);
+export const usePublishBrand = (brandId: string) => useBrandLifecycleMutation(brandId, API.BRANDS.PUBLISH, true);
 
 export const useAutofillBrandFromKnowledge = (brandId: string) =>
   useMutation({
@@ -95,13 +102,13 @@ export const useAutofillBrandFromKnowledge = (brandId: string) =>
 
 export const useUnpublishBrand = (brandId: string) => useBrandLifecycleMutation(brandId, API.BRANDS.UNPUBLISH);
 
-export const useArchiveBrand = (brandId: string) => useBrandLifecycleMutation(brandId, API.BRANDS.ARCHIVE);
+export const useArchiveBrand = (brandId: string) => useBrandLifecycleMutation(brandId, API.BRANDS.ARCHIVE, true);
 
-export const useRestoreBrand = (brandId: string) => useBrandLifecycleMutation(brandId, API.BRANDS.RESTORE);
+export const useRestoreBrand = (brandId: string) => useBrandLifecycleMutation(brandId, API.BRANDS.RESTORE, true);
 
-export const useDeleteBrand = (brandId: string) => useBrandLifecycleMutation(brandId, API.BRANDS.DELETE);
+export const useDeleteBrand = (brandId: string) => useBrandLifecycleMutation(brandId, API.BRANDS.DELETE, true);
 
-const useDynamicBrandLifecycleMutation = (endpoint: ApiEndpoint<void, unknown>) => {
+const useDynamicBrandLifecycleMutation = (endpoint: ApiEndpoint<void, unknown>, refreshNotifications = false) => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (brandId: string) => request(endpoint, { pathParams: brandId }),
@@ -109,16 +116,19 @@ const useDynamicBrandLifecycleMutation = (endpoint: ApiEndpoint<void, unknown>) 
       await queryClient.invalidateQueries({ queryKey: ["brand", brandId] });
       await queryClient.invalidateQueries({ queryKey: ["brand", brandId, "overview"] });
       await queryClient.invalidateQueries({ queryKey: ["brands"] });
+      if (refreshNotifications) {
+        await refreshNotificationQueries(queryClient);
+      }
     },
   });
 };
 
-export const usePublishBrandMutation = () => useDynamicBrandLifecycleMutation(API.BRANDS.PUBLISH);
+export const usePublishBrandMutation = () => useDynamicBrandLifecycleMutation(API.BRANDS.PUBLISH, true);
 
 export const useUnpublishBrandMutation = () => useDynamicBrandLifecycleMutation(API.BRANDS.UNPUBLISH);
 
-export const useArchiveBrandMutation = () => useDynamicBrandLifecycleMutation(API.BRANDS.ARCHIVE);
+export const useArchiveBrandMutation = () => useDynamicBrandLifecycleMutation(API.BRANDS.ARCHIVE, true);
 
-export const useRestoreBrandMutation = () => useDynamicBrandLifecycleMutation(API.BRANDS.RESTORE);
+export const useRestoreBrandMutation = () => useDynamicBrandLifecycleMutation(API.BRANDS.RESTORE, true);
 
-export const useDeleteBrandMutation = () => useDynamicBrandLifecycleMutation(API.BRANDS.DELETE);
+export const useDeleteBrandMutation = () => useDynamicBrandLifecycleMutation(API.BRANDS.DELETE, true);

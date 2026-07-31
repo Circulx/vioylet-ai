@@ -52,7 +52,7 @@ export default function DashboardPage() {
           title="Workspace Overview"
           actions={
             <Button className="rounded-none bg-primary px-5 py-4 text-base hover:bg-primary/90" onClick={() => router.push("/brand_space")}>
-              Open Brand Spaces
+              Open Brand Space
             </Button>
           }
         />
@@ -60,7 +60,7 @@ export default function DashboardPage() {
           <SurfaceCard className="space-y-4 p-5">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-lg font-semibold text-slate-900">Assigned Brand Spaces</p>
+                <p className="text-lg font-semibold text-slate-900">Assigned Brand Space</p>
                 <p className="text-sm text-slate-500">Use these spaces to generate content, visuals, and share outputs for review.</p>
               </div>
               <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">

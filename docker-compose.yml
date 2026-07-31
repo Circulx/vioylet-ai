@@ -50,7 +50,7 @@ services:
       - ./vector_store:/app/vector_store
     command: ["python", "scripts/run_worker.py"]
 
-  violyt-frontend:
+  frontend:
     image: violyt-frontend:local
     build:
       context: ./frontend
@@ -64,8 +64,9 @@ services:
         NEXT_PUBLIC_DEMO_OWNER_PASSWORD: ${NEXT_PUBLIC_DEMO_OWNER_PASSWORD:-DemoPass123!}
         GOOGLE_FONTS_API_KEY: ${GOOGLE_FONTS_API_KEY:-}
     environment:
-      NEXT_PUBLIC_ENV: development
+      NEXT_PUBLIC_ENV: development  
       NEXT_PUBLIC_API_BASE_URI: http://localhost:8000
+      SERVER_API_BASE_URI: http://api:8000
       NEXT_PUBLIC_ENABLE_MOCK_UI: "false"
       NEXT_PUBLIC_MOCK_ROLE: TENANT_ADMIN
       NEXT_PUBLIC_DEMO_OWNER_EMAIL: ${NEXT_PUBLIC_DEMO_OWNER_EMAIL:-owner@violyt.ai}

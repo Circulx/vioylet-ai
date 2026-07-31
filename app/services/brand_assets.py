@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 from io import BytesIO
+import logging
 from pathlib import Path
 import shutil
 from typing import Any
@@ -17,7 +18,7 @@ from app.ai.rag.retrieval import KnowledgeRetrievalService
 from app.core.enums import AssetLifecycle, AssetValidationState, JobType, UsageMetricCode
 from app.core.exceptions import NotFoundError
 from app.db.session import AsyncSessionLocal
-from app.integrations.object_storage import LocalObjectStorage
+from app.integrations.object_storage import get_object_storage
 from app.models.brand_assets import (
     AssetCategoryRouting,
     AssetProcessingStatus,
@@ -57,6 +58,7 @@ from app.repositories.brand_assets import (
     VisualReferenceAssetRepository,
     WordBankUploadRepository,
 )
+from app.repositories.brand import BrandSectionRepository
 from app.repositories.knowledge import KnowledgeAssetRepository, TemplateMetadataRepository, TemplateRepository
 from app.schemas.brand_assets import BrandAttachmentUploadRequest
 from app.services.data_validation import DataValidatorService
@@ -67,6 +69,9 @@ from app.services.usage import UsageLimitService
 from app.services.vectorstore.ingestion_service import IngestionService
 
 
+logger = logging.getLogger(__name__)
+
+
 class BrandAssetService:
     # Business layer for brand asset; routes and workers pass validated inputs here and receive domain results
     # back.
@@ -74,7 +79,7 @@ class BrandAssetService:
         # Wires the repositories and helper services this workflow reuses across its public methods.
         self.session = session
         self.assets = KnowledgeAssetRepository(session)
-        self.storage = LocalObjectStorage()
+        self.storage = get_object_storage()
         self.jobs = JobService(session)
         self.usage = UsageLimitService(session)
         self.retrieval = KnowledgeRetrievalService()
@@ -100,6 +105,7 @@ class BrandAssetService:
         self.cta_templates = BrandCTATemplateRepository(session)
         self.validator = DataValidatorService(session)
         self.preflight = UploadPreflightService()
+        self.sections = BrandSectionRepository(session)
 
     async def upload(
         self,
@@ -199,7 +205,7 @@ class BrandAssetService:
             status_message="Attachment unsynced and removed from validated brand context.",
         )
         await self.session.commit()
-        await self.validator.refresh_brand_context(brand_space_id)
+        await self._refresh_brand_context_best_effort(brand_space_id)
         await self.session.refresh(asset)
         return asset
 
@@ -216,9 +222,28 @@ class BrandAssetService:
             status_message="Attachment deleted.",
         )
         await self.session.commit()
-        await self.validator.refresh_brand_context(brand_space_id)
+        await self._refresh_brand_context_best_effort(brand_space_id)
         await self.session.refresh(asset)
         return asset
+
+    async def _refresh_brand_context_best_effort(self, brand_space_id: UUID) -> None:
+        # A failed derived-context refresh should not turn a completed file removal into a 500.
+        try:
+            await self.validator.refresh_brand_context(brand_space_id)
+        except Exception as exc:  # noqa: BLE001 - validation touches several optional derived tables
+            logger.warning(
+                "brand context refresh failed after attachment status change for brand %s: %s",
+                brand_space_id,
+                exc,
+                exc_info=True,
+            )
+            try:
+                await self.session.rollback()
+            except Exception:  # noqa: BLE001 - rollback is defensive session cleanup
+                logger.warning(
+                    "session rollback failed after brand context refresh error",
+                    exc_info=True,
+                )
 
     async def reprocess(self, tenant_id: UUID, brand_space_id: UUID, asset_id: UUID) -> KnowledgeAsset:
         # Runs the reprocess service flow and persists the resulting state before returning it to the route or
@@ -307,7 +332,12 @@ class BrandAssetService:
             billable_ocr_pages = 0 if is_typography_guide else max(asset.page_count, 1)
             if billable_ocr_pages:
                 await self.usage.enforce(asset.tenant_id, UsageMetricCode.OCR_PAGES, billable_ocr_pages)
-                await self.usage.increment(asset.tenant_id, UsageMetricCode.OCR_PAGES, billable_ocr_pages)
+                await self.usage.increment(
+                    asset.tenant_id,
+                    UsageMetricCode.OCR_PAGES,
+                    billable_ocr_pages,
+                    brand_space_id=asset.brand_space_id,
+                )
 
             await self._upsert_processing_status(
                 asset=asset,
@@ -1087,18 +1117,114 @@ class BrandAssetService:
         # Internal helper for clear reusable assets; it keeps the public service method focused on orchestration
         # instead of low-level shaping.
         for reusable_asset in await self.reusable_assets.list_by_knowledge_asset(knowledge_asset_id):
-            self.storage.delete(reusable_asset.storage_path)
+            self._delete_storage_object(reusable_asset.storage_path, "reusable brand asset")
         await self.reusable_assets.delete_by_knowledge_asset(knowledge_asset_id)
 
     async def _cleanup_attachment_side_effects(self, asset: KnowledgeAsset) -> None:
         # Internal helper for cleanup attachment side effects; it keeps the public service method focused on
         # orchestration instead of low-level shaping.
-        self.retrieval.delete_asset(str(asset.tenant_id), str(asset.brand_space_id), asset.channel, str(asset.id))
+        self._delete_retrieval_asset(asset)
         await self._clear_reusable_assets(asset.id)
         await self.palette_entries.delete_by_asset(asset.id)
         await self._delete_linked_records(asset.id)
+        await self._clear_visual_identity_palette_if_orphaned(asset)
         self._delete_attachment_storage_artifacts(asset.storage_path)
         await self.session.flush()
+
+    def _delete_retrieval_asset(self, asset: KnowledgeAsset) -> None:
+        # Vector cleanup must not block the database delete.
+        try:
+            self.retrieval.delete_asset(
+                str(asset.tenant_id),
+                str(asset.brand_space_id),
+                asset.channel,
+                str(asset.id),
+            )
+        except Exception as exc:  # noqa: BLE001 - provider errors vary by backend
+            logger.warning(
+                "brand attachment vector cleanup failed for asset %s: %s",
+                asset.id,
+                exc,
+                exc_info=True,
+            )
+
+    @staticmethod
+    def _is_color_palette_attachment(asset: KnowledgeAsset) -> bool:
+        # Internal helper for color palette cleanup; upload removal should clear only the matching form field.
+        return "color_palette" in {
+            str(asset.field_key or "").strip().lower(),
+            str(asset.asset_category or "").strip().lower(),
+            str(asset.source_intent or "").strip().lower(),
+        }
+
+    async def _clear_visual_identity_palette_if_orphaned(self, asset: KnowledgeAsset) -> None:
+        # Internal helper for color palette removal; saved form colors follow the remaining selected upload.
+        if not self._is_color_palette_attachment(asset):
+            return
+
+        active_palette_assets = await self.assets.list_by_field(
+            asset.brand_space_id,
+            "color_palette",
+            tenant_id=asset.tenant_id,
+            active_only=True,
+        )
+        sections = await self.sections.list_current_sections(asset.brand_space_id, asset.tenant_id)
+        visual_identity = next(
+            (section for section in sections if section.section_code == "visual_identity"),
+            None,
+        )
+        if not visual_identity or not isinstance(visual_identity.payload, dict):
+            return
+
+        payload = dict(visual_identity.payload)
+        remaining_palette_assets = [
+            candidate
+            for candidate in active_palette_assets
+            if candidate.id != asset.id
+            and str(candidate.lifecycle_state or "").lower() != AssetLifecycle.DELETED.value
+        ]
+        remaining_asset_ids = {str(candidate.id) for candidate in remaining_palette_assets}
+        selected_palette_asset = remaining_palette_assets[0] if remaining_palette_assets else None
+        persisted_palette_entries = await self.palette_entries.list_for_brand(asset.tenant_id, asset.brand_space_id)
+        selected_palette_entries = [
+            entry
+            for entry in persisted_palette_entries
+            if selected_palette_asset and entry.knowledge_asset_id == selected_palette_asset.id
+        ]
+        next_palette = self._brand_color_palette_payload(selected_palette_entries)
+
+        payload["color_palette_asset_ids"] = [str(candidate.id) for candidate in remaining_palette_assets]
+        payload["color_palette_uploads"] = [
+            descriptor
+            for descriptor in payload.get("color_palette_uploads", [])
+            if isinstance(descriptor, dict) and str(descriptor.get("id") or "") in remaining_asset_ids
+        ]
+        if selected_palette_asset and next_palette:
+            payload["brand_color_palette"] = next_palette
+            payload["active_color_palette_asset_id"] = str(selected_palette_asset.id)
+        else:
+            payload["brand_color_palette"] = {}
+            payload["active_color_palette_asset_id"] = ""
+        visual_identity.payload = payload
+
+    @staticmethod
+    def _brand_color_palette_payload(entries: list[ColorPaletteEntry]) -> dict[str, Any]:
+        # Internal helper for saved form payload; converts stored per-asset palette rows back into UI fields.
+        payload: dict[str, Any] = {}
+        additional: list[dict[str, str]] = []
+        for entry in entries:
+            role = str(entry.role or "accent").strip().lower()
+            item = {
+                "name": entry.color_name or role or "Additional color",
+                "hex": entry.hex_code,
+            }
+            if role in {"primary", "secondary"} and role not in payload:
+                payload[role] = entry.hex_code
+            else:
+                additional.append(item)
+        if additional:
+            payload["additional"] = additional
+        return payload
 
     async def _delete_linked_records(self, knowledge_asset_id: UUID) -> None:
         # Internal helper for linked records; it keeps the public service method focused on orchestration
@@ -1140,9 +1266,20 @@ class BrandAssetService:
         normalized_path = str(storage_path or "").strip()
         if not normalized_path:
             return
+        self._delete_storage_object(normalized_path, "brand attachment")
+
+        if not hasattr(self.storage, "base_path"):
+            return
+
         try:
             absolute_path = Path(self.storage.absolute_path(normalized_path))
-        except ValueError:
+        except (OSError, ValueError) as exc:
+            logger.warning(
+                "brand attachment local artifact cleanup skipped for %s: %s",
+                normalized_path,
+                exc,
+                exc_info=True,
+            )
             return
 
         scratch_root = absolute_path.parent / "_ocr"
@@ -1177,6 +1314,22 @@ class BrandAssetService:
             ]
         )
 
+    def _delete_storage_object(self, storage_path: str | None, label: str) -> None:
+        # Storage cleanup is best-effort because DB state is the source of truth for active attachments.
+        normalized_path = str(storage_path or "").strip()
+        if not normalized_path:
+            return
+        try:
+            self.storage.delete(normalized_path)
+        except Exception as exc:  # noqa: BLE001 - storage providers surface backend-specific errors
+            logger.warning(
+                "%s storage delete failed for %s: %s",
+                label,
+                normalized_path,
+                exc,
+                exc_info=True,
+            )
+
     @staticmethod
     def _remove_storage_target(target: Path) -> None:
         # Internal helper for storage target; it keeps the public service method focused on orchestration
@@ -1192,7 +1345,9 @@ class BrandAssetService:
     def _prune_empty_storage_dirs(self, directories: list[Path]) -> None:
         # Internal helper for prune empty storage dirs; it keeps the public service method focused on
         # orchestration instead of low-level shaping.
-        base_path = self.storage.base_path
+        base_path = getattr(self.storage, "base_path", None)
+        if base_path is None:
+            return
         for directory in directories:
             current = directory
             while current.exists() and current != base_path:
@@ -1244,30 +1399,88 @@ class BrandAssetService:
         # Internal helper for persist palette; it keeps the public service method focused on orchestration
         # instead of low-level shaping.
         await self.palette_entries.delete_by_asset(asset.id)
-        entries = outcome.structured_data.get("palette_entries", [])
-        if not isinstance(entries, list) or not entries:
-            entries = outcome.normalized_data.get("all", [])
-        if (not isinstance(entries, list) or not entries) and isinstance(outcome.template_analysis, dict):
-            entries = outcome.template_analysis.get("color_usage", [])
-        for entry in entries if isinstance(entries, list) else []:
-            if not isinstance(entry, dict):
-                continue
+        entries = self._palette_entries_from_outcome(outcome)
+        self._store_palette_entries_on_asset(asset, entries)
+        for entry in entries:
             hex_code = entry.get("hex_code")
-            if not hex_code:
-                continue
             self.session.add(
                 ColorPaletteEntry(
                     tenant_id=asset.tenant_id,
                     brand_space_id=asset.brand_space_id,
                     knowledge_asset_id=asset.id,
-                    role=entry.get("role", "primary"),
+                    role=entry.get("role", "accent"),
                     color_name=entry.get("color_name"),
                     hex_code=hex_code,
                     rgb_value=entry.get("rgb_value", {}),
                     confidence=outcome.confidence,
-                    source_metadata_json={"source": entry.get("source")},
+                    source_metadata_json={
+                        key: value
+                        for key, value in entry.items()
+                        if key not in {"role", "color_name", "hex_code", "rgb_value"}
+                    },
                 )
             )
+
+    @staticmethod
+    def _palette_entries_from_outcome(outcome: AssetProcessingOutcome) -> list[dict[str, Any]]:
+        # Internal helper for palette JSON persistence; keeps each upload's extracted colors on that asset.
+        entries = outcome.structured_data.get("palette_entries", [])
+        if not isinstance(entries, list) or not entries:
+            entries = outcome.normalized_data.get("palette_entries", [])
+        if not isinstance(entries, list) or not entries:
+            entries = outcome.normalized_data.get("all", [])
+        if (not isinstance(entries, list) or not entries) and isinstance(outcome.template_analysis, dict):
+            entries = outcome.template_analysis.get("color_usage", [])
+
+        normalized_entries: list[dict[str, Any]] = []
+        seen_hexes: set[str] = set()
+        for entry in entries if isinstance(entries, list) else []:
+            if not isinstance(entry, dict):
+                continue
+            hex_code = str(entry.get("hex_code") or entry.get("hex") or "").strip()
+            if not hex_code:
+                continue
+            hex_key = hex_code.upper()
+            if hex_key in seen_hexes:
+                continue
+            seen_hexes.add(hex_key)
+            role = str(entry.get("role") or "accent").strip().lower()
+            if role not in {"primary", "secondary", "accent"}:
+                role = "accent"
+            normalized_entries.append(
+                {
+                    **entry,
+                    "role": role,
+                    "hex_code": hex_code,
+                    "hex": hex_code,
+                    "rgb_value": entry.get("rgb_value", {}),
+                }
+            )
+        return normalized_entries
+
+    @staticmethod
+    def _store_palette_entries_on_asset(asset: KnowledgeAsset, entries: list[dict[str, Any]]) -> None:
+        # Stores extracted palette data in the asset JSON used by frontend file switching.
+        structured = asset.structured_data_json if isinstance(asset.structured_data_json, dict) else {}
+        normalized = asset.normalized_data_json if isinstance(asset.normalized_data_json, dict) else {}
+        primary_entries = [entry for entry in entries if entry.get("role") == "primary"]
+        secondary_entries = [entry for entry in entries if entry.get("role") == "secondary"]
+        accent_entries = [entry for entry in entries if entry.get("role") == "accent"]
+        asset.structured_data_json = {
+            **structured,
+            "palette_entries": entries,
+            "palette": entries,
+            "all": entries,
+        }
+        asset.normalized_data_json = {
+            **normalized,
+            "palette_entries": entries,
+            "palette": entries,
+            "all": entries,
+            "primary": primary_entries,
+            "secondary": secondary_entries,
+            "additional": accent_entries,
+        }
 
     async def _persist_typography(self, asset: KnowledgeAsset, outcome: AssetProcessingOutcome) -> None:
         # Internal helper for persist typography; it keeps the public service method focused on orchestration

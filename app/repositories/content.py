@@ -221,6 +221,25 @@ class ChatMessageRepository(Repository[ChatMessage]):
         )
         return list(result.scalars().all())
 
+    async def get_latest_assistant_by_content(
+        self,
+        content_version_id: UUID,
+        tenant_id: UUID,
+        brand_space_id: UUID,
+    ) -> ChatMessage | None:
+        # Returns the assistant message that carried the displayed asset payload for this content version.
+        result = await self.session.execute(
+            select(ChatMessage)
+            .where(
+                ChatMessage.content_version_id == content_version_id,
+                ChatMessage.tenant_id == tenant_id,
+                ChatMessage.brand_space_id == brand_space_id,
+                ChatMessage.role == "assistant",
+            )
+            .order_by(ChatMessage.created_at.desc())
+        )
+        return result.scalars().first()
+
     async def list_recent_by_session(
         self,
         session_id: UUID,

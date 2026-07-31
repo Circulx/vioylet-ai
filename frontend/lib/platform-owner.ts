@@ -155,9 +155,14 @@ export function buildUsageWindowRows(summary?: TenantUsageSummary, metadata?: Re
   const startMonth = typeof usageWindow.start_month === "string" ? usageWindow.start_month : "";
   const endMonth = typeof usageWindow.end_month === "string" ? usageWindow.end_month : "";
   const labels = buildMonthRange(startMonth, endMonth);
+  const [startYear, startMonthNumber] = startMonth.split("-").map(Number);
+  const now = new Date();
+  const currentMonthIndex = Number.isFinite(startYear) && Number.isFinite(startMonthNumber)
+    ? (now.getUTCFullYear() - startYear) * 12 + (now.getUTCMonth() + 1 - startMonthNumber)
+    : -1;
 
   return labels.map((label, index) => {
-    const isCurrent = index === labels.length - 1;
+    const isCurrent = index === currentMonthIndex;
     return {
       month: label,
       content: `${isCurrent ? summary.consumption.content_generations || 0 : 0}/${summary.limits.max_content_generations || 0}`,

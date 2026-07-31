@@ -3,14 +3,25 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   MetricTile,
   PlatformPageTitle,
   SectionCard,
 } from "@/components/platformOwner/PlatformOwnerPrimitives";
 import { useBrands } from "@/hooks/useBrands";
 import { useGetMe } from "@/hooks/useUser";
-import { useGetTenantData } from "@/hooks/tenantAdmins/useGetTenants";
+import { useGetTenantData, useGetTenantUsers } from "@/hooks/tenantAdmins/useGetTenants";
 import { useUpdateBrandUsageTargets } from "@/hooks/tenantAdmins/useUpdateTenant";
+import { addInAppNotificationForRecipients } from "@/hooks/useInAppNotifications";
 
 type UsageRow = {
   id: string;
@@ -18,16 +29,24 @@ type UsageRow = {
   value: number;
 };
 
+type PendingAllocationIncrease = {
+  brandId: string;
+  brandName: string;
+  previousValue: number;
+  nextValue: number;
+};
+
 export default function BrandUsageAllocationPage() {
   const { data: currentUser } = useGetMe();
   const tenantId = currentUser?.tenantId ?? "";
   const { data: tenant } = useGetTenantData(tenantId);
+  const { data: tenantUsers } = useGetTenantUsers(currentUser?.role === "TENANT_ADMIN" ? tenantId : "");
   const { data: brands } = useBrands();
   const updateBrandUsageTargets = useUpdateBrandUsageTargets();
 
   const initialRows = useMemo<UsageRow[]>(() => {
     const configuredTargets = (tenant?.metadata_json?.brand_usage_targets as Record<string, number> | undefined) ?? {};
-    const activeBrands = (brands || []).filter((brand) => brand.lifecycle_state !== "archived" && brand.lifecycle_state !== "deleted");
+    const activeBrands = (brands || []).filter((brand) => brand.lifecycle_state === "active");
     if (!activeBrands.length) {
       return [];
     }
@@ -47,11 +66,52 @@ export default function BrandUsageAllocationPage() {
   const [rows, setRows] = useState<UsageRow[]>(initialRows);
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [pendingIncrease, setPendingIncrease] = useState<PendingAllocationIncrease | null>(null);
   const isSavingRef = useRef(false);
+  const confirmedIncreaseBrandIdsRef = useRef(new Set<string>());
 
   useEffect(() => {
     setRows(initialRows);
+    setPendingIncrease(null);
+    confirmedIncreaseBrandIdsRef.current.clear();
   }, [initialRows]);
+
+  const updateRowValue = (brandId: string, value: number) => {
+    setRows((current) => current.map((item) => (item.id === brandId ? { ...item, value } : item)));
+  };
+
+  const handleAllocationChange = (row: UsageRow, nextValue: number) => {
+    const savedValue = initialRows.find((item) => item.id === row.id)?.value ?? row.value;
+    setFeedback(null);
+    setError(null);
+    if (nextValue > savedValue && !confirmedIncreaseBrandIdsRef.current.has(row.id)) {
+      setPendingIncrease({
+        brandId: row.id,
+        brandName: row.name,
+        previousValue: savedValue,
+        nextValue,
+      });
+      return;
+    }
+    updateRowValue(row.id, nextValue);
+  };
+
+  const confirmAllocationIncrease = () => {
+    if (!pendingIncrease) {
+      return;
+    }
+    confirmedIncreaseBrandIdsRef.current.add(pendingIncrease.brandId);
+    updateRowValue(pendingIncrease.brandId, pendingIncrease.nextValue);
+    setPendingIncrease(null);
+  };
+
+  const discardAllocationIncrease = () => {
+    if (!pendingIncrease) {
+      return;
+    }
+    updateRowValue(pendingIncrease.brandId, pendingIncrease.previousValue);
+    setPendingIncrease(null);
+  };
 
   const total = rows.reduce((sum, row) => sum + row.value, 0);
   const savedAllocationKey = useMemo(
@@ -63,6 +123,39 @@ export default function BrandUsageAllocationPage() {
     [rows],
   );
   const hasChanges = rows.length > 0 && currentAllocationKey !== savedAllocationKey;
+  const notificationRecipientIds = useMemo(() => {
+    const recipients = new Set<string>();
+    if (
+      currentUser?.tenantId === tenantId &&
+      (currentUser?.role === "TENANT_ADMIN" || currentUser?.role === "TENANT_USER") &&
+      currentUser.notificationsEnabled !== false
+    ) {
+      recipients.add(currentUser.id);
+    }
+    for (const user of tenantUsers || []) {
+      if (!user.is_active || user.tenant_id !== tenantId) {
+        continue;
+      }
+      if (
+        (user.role_codes.includes("tenant_admin") || user.role_codes.includes("tenant_user")) &&
+        user.notifications_enabled !== false
+      ) {
+        recipients.add(user.id);
+      }
+    }
+    return Array.from(recipients);
+  }, [currentUser, tenantId, tenantUsers]);
+
+  const notifyCapacityUsageUpdated = (brandUsageTargets: Record<string, number>) => {
+    if (!(currentUser?.role === "TENANT_ADMIN" || currentUser?.role === "TENANT_USER")) {
+      return;
+    }
+    const totalAllocation = Object.values(brandUsageTargets).reduce((sum, value) => sum + Number(value || 0), 0);
+    addInAppNotificationForRecipients(notificationRecipientIds, {
+      title: "Capacity Usage Updated",
+      message: `Brand capacity allocations have been updated. The total allocation is now ${totalAllocation}%. Review the latest allocations in Capacity Usage.`,
+    });
+  };
 
   return (
     <div className="container">
@@ -94,7 +187,10 @@ export default function BrandUsageAllocationPage() {
                     brandUsageTargets: Object.fromEntries(rows.map((row) => [row.id, row.value])),
                   },
                   {
-                    onSuccess: () => setFeedback("Usage allocation saved successfully."),
+                    onSuccess: (response) => {
+                      setFeedback("Usage allocation saved successfully.");
+                      notifyCapacityUsageUpdated(response.brand_usage_targets);
+                    },
                     onError: () => setError("Unable to save usage allocation right now."),
                     onSettled: () => {
                       isSavingRef.current = false;
@@ -110,8 +206,8 @@ export default function BrandUsageAllocationPage() {
 
         <div className="grid gap-4 md:grid-cols-3">
           <MetricTile label="Assigned Brands" value={String(rows.length)} />
-          <MetricTile label="Current Total" value={`${total}%`} />
-          <MetricTile label="Status" value={total === 100 ? "Balanced" : "Under allocated"} />
+          <MetricTile label="Total Capacity Used" value={`${total}%`} />
+          {/* <MetricTile label="Status" value={total === 100 ? "Balanced" : "Under allocated"} /> */}
         </div>
 
         <SectionCard title="Usage Overview" className="border-none p-0">
@@ -138,9 +234,7 @@ export default function BrandUsageAllocationPage() {
                   onChange={(event) => {
                     const numericValue = Number(event.target.value.replace(/[^\d]/g, "") || 0);
                     const nextValue = Math.max(0, Math.min(100, numericValue));
-                    setFeedback(null);
-                    setError(null);
-                    setRows((current) => current.map((item) => (item.id === row.id ? { ...item, value: nextValue } : item)));
+                    handleAllocationChange(row, nextValue);
                   }}
                   className="min-w-0 rounded-[4px] bg-[#F5F6FA] px-3 py-3.5 text-base font-medium text-[#121212] outline-none transition focus:ring-2 focus:ring-primary/20"
                 />
@@ -148,8 +242,47 @@ export default function BrandUsageAllocationPage() {
             ))}
           </div>
 
-          <p className="text-sm text-[#6B7280] mt-6">Current total allocation: {total}%</p>
+          {/* <p className="text-sm text-[#6B7280] mt-6">Current total allocation: {total}%</p> */}
         </SectionCard>
+
+        <AlertDialog
+          open={Boolean(pendingIncrease)}
+          onOpenChange={(open) => {
+            if (open) {
+              return;
+            }
+            discardAllocationIncrease();
+          }}
+        >
+          <AlertDialogContent className="rounded-none">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Increase Capacity Allocation?</AlertDialogTitle>
+              <AlertDialogDescription>
+                {pendingIncrease
+                  ? `${pendingIncrease.brandName} is currently allocated ${pendingIncrease.previousValue}% of the available capacity. Would you like to increase its capacity allocation?`
+                  : "Would you like to increase this capacity allocation?"}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogAction
+                onClick={(event) => {
+                  event.preventDefault();
+                  confirmAllocationIncrease();
+                }}
+              >
+                Yes
+              </AlertDialogAction>
+              <AlertDialogCancel
+                onClick={(event) => {
+                  event.preventDefault();
+                  discardAllocationIncrease();
+                }}
+              >
+                No
+              </AlertDialogCancel>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </div>
   );

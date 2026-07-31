@@ -13,7 +13,7 @@ from uuid import UUID
 from app.ai.providers.base import PromptEnvelope
 from app.ai.providers.router import ProviderRouter
 from app.core.enums import AssetRole
-from app.integrations.object_storage import LocalObjectStorage
+from app.integrations.object_storage import get_object_storage
 from app.integrations.vector_store import FaissVectorStoreProvider, SearchResult
 from app.models.content import ChatMessage, ContentSession, ContentVersion, GeneratedAsset
 from app.models.memory import ConversationMemoryEntry
@@ -68,7 +68,7 @@ class ConversationMemoryService:
         self.vectors = FaissVectorStoreProvider()
         self.providers = ProviderRouter()
         self.delivery = AssetDeliveryService()
-        self.storage = LocalObjectStorage()
+        self.storage = get_object_storage()
 
     @staticmethod
     def _namespace(tenant_id: UUID, brand_space_id: UUID) -> str:

@@ -35,6 +35,24 @@ import { Label } from "@/components/ui/label";
 import { InformationTip } from "@/components/InformationTip";
 import Image from "next/image";
 
+function AdvancedFieldsTipContent() {
+    return (
+        <div className="space-y-2 text-left">
+            <p className="font-medium text-[#6F6F6F]">Advanced Fields</p>
+            <p>For the best results, we recommend completing all Advanced fields. Providing more details helps Violyt generate more accurate, personalized, and higher-quality content.</p>
+        </div>
+    );
+}
+
+export function AdvancedSectionTitle({ showInfo }: { showInfo: boolean }) {
+    return (
+        <span className="inline-flex items-center">
+            <span>Advanced</span>
+            {showInfo ? <InformationTip content={<AdvancedFieldsTipContent />} /> : null}
+        </span>
+    );
+}
+
 type FormFieldProps = {
     label?: string;
     required?: boolean;
@@ -52,6 +70,8 @@ type UploadCollectionProps = {
     items: BrandUploadItem[];
     onAdd: (files: FileList | null) => void;
     onRemove: (itemId: string) => void;
+    activeItemId?: string;
+    onSelect?: (itemId: string) => void;
     multiple?: boolean;
     tags?: string[];
     className?: string;
@@ -365,9 +385,7 @@ export function FileUploadField({
                     event.currentTarget.value = "";
                 }}
             />
-            {item ? (
-                <UploadedFileCard item={item} onRemove={onRemove} />
-            ) : (
+            <div className="flex flex-wrap gap-4">
                 <Button
                     type="button"
                     onClick={() => inputRef.current?.click()}
@@ -376,7 +394,8 @@ export function FileUploadField({
                     <Upload className="mb-2 h-4 w-4" />
                     <span className="text-sm">{uploadLabel}</span>
                 </Button>
-            )}
+                {item ? <UploadedFileCard item={item} onRemove={onRemove} /> : null}
+            </div>
         </div>
     );
 }
@@ -387,6 +406,8 @@ export function FileUploadCollection({
     items,
     onAdd,
     onRemove,
+    activeItemId,
+    onSelect,
     multiple = true,
     tags,
     className,
@@ -395,7 +416,6 @@ export function FileUploadCollection({
 }: UploadCollectionProps) {
     const inputRef = useRef<HTMLInputElement | null>(null);
     const inputId = useId();
-    const canAddMore = multiple || items.length === 0;
 
     return (
         <div className={cn("space-y-3", className)}>
@@ -418,31 +438,35 @@ export function FileUploadCollection({
                 }}
             />
             <div className="flex flex-wrap gap-4">
+                <Button
+                    type="button"
+                    onClick={() => inputRef.current?.click()}
+                    className={cn(`flex h-20 w-60 flex-col items-center justify-center rounded-xl border-2 border-dashed border-[#E5E4E4] ${bgColor || 'bg-[#F6F6F6]'} text-sm text-slate-600 transition hover:border-primary/40 hover:bg-slate-50`)}
+                >
+                    <Upload className="mb-2 h-4 w-4" />
+                    Upload
+                    {tags?.length ? (
+                        <div className="mt-3 flex flex-wrap justify-center gap-1">
+                            {tags.map((tag) => (
+                                <span
+                                    key={tag}
+                                    className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] text-slate-500"
+                                >
+                                    {tag}
+                                </span>
+                            ))}
+                        </div>
+                    ) : null}
+                </Button>
                 {items.map((item) => (
-                    <UploadedFileCard key={item.id} item={item} onRemove={() => onRemove(item.id)} />
+                    <UploadedFileCard
+                        key={item.id}
+                        item={item}
+                        isActive={item.id === activeItemId}
+                        onSelect={onSelect ? () => onSelect(item.id) : undefined}
+                        onRemove={() => onRemove(item.id)}
+                    />
                 ))}
-                {canAddMore ? (
-                    <Button
-                        type="button"
-                        onClick={() => inputRef.current?.click()}
-                        className={cn(`flex h-20 w-60 flex-col items-center justify-center rounded-xl border-2 border-dashed border-[#E5E4E4] ${bgColor || 'bg-[#F6F6F6]'} text-sm text-slate-600 transition hover:border-primary/40 hover:bg-slate-50`)}
-                    >
-                        <Upload className="mb-2 h-4 w-4" />
-                        Upload
-                        {tags?.length ? (
-                            <div className="mt-3 flex flex-wrap justify-center gap-1">
-                                {tags.map((tag) => (
-                                    <span
-                                        key={tag}
-                                        className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] text-slate-500"
-                                    >
-                                        {tag}
-                                    </span>
-                                ))}
-                            </div>
-                        ) : null}
-                    </Button>
-                ) : null}
             </div>
         </div>
     );
@@ -653,9 +677,13 @@ export function AddMoreButton({
 function UploadedFileCard({
     item,
     onRemove,
+    isActive = false,
+    onSelect,
 }: {
     item: BrandUploadItem;
     onRemove: () => void;
+    isActive?: boolean;
+    onSelect?: () => void;
 }) {
     const [isPreviewOpen, setIsPreviewOpen] = useState(false);
     const previewSource = item.previewUrl || item.assetUrl;
@@ -689,11 +717,33 @@ function UploadedFileCard({
                                     : item.lifecycleState;
     return (
         <>
-            <div className="w-40 rounded-xl border border-slate-200 bg-white p-3 shadow-[0_10px_20px_-18px_rgba(15,23,42,0.45)]">
+            <div
+                role={onSelect ? "button" : undefined}
+                tabIndex={onSelect ? 0 : undefined}
+                aria-pressed={onSelect ? isActive : undefined}
+                onClick={onSelect}
+                onKeyDown={(event) => {
+                    if (!onSelect || (event.key !== "Enter" && event.key !== " ")) {
+                        return;
+                    }
+                    event.preventDefault();
+                    onSelect();
+                }}
+                className={cn(
+                    "w-40 rounded-xl border bg-white p-3 shadow-[0_10px_20px_-18px_rgba(15,23,42,0.45)] transition",
+                    onSelect ? "cursor-pointer hover:border-primary/50" : "",
+                    isActive ? "border-primary ring-2 ring-primary/15" : "border-slate-200",
+                )}
+            >
                 <div className="flex items-start justify-between gap-2">
                     <Button
                         type="button"
-                        onClick={() => isImagePreview && setIsPreviewOpen(true)}
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            if (isImagePreview) {
+                                setIsPreviewOpen(true);
+                            }
+                        }}
                         disabled={!isImagePreview}
                         className={cn(
                             "flex h-7 w-8 items-center justify-center overflow-hidden rounded-md bg-primary/8 text-sky-500 transition",
@@ -702,7 +752,15 @@ function UploadedFileCard({
                     >
                         {isImagePreview ? <Eye className="h-4 w-4" /> : item.assetUrl ? <ImagePlus className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
                     </Button>
-                    <Button variant={"ghost"} type="button" className="w-6 h-6 text-slate-400 transition bg-none hover:bg-none p-0" onClick={onRemove}>
+                    <Button
+                        variant={"ghost"}
+                        type="button"
+                        className="w-6 h-6 text-slate-400 transition bg-none hover:bg-none p-0"
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            onRemove();
+                        }}
+                    >
                         <Image src="/brandSpaces/remove.svg" alt="Remove file" width={16} height={16} className="h-4.5 w-4.5" />
                     </Button>
                 </div>

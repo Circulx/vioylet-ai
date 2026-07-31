@@ -15,7 +15,7 @@ from app.ai.rag.retrieval import KnowledgeRetrievalService
 from app.core.enums import AssetLifecycle, JobType, UsageMetricCode
 from app.core.exceptions import NotFoundError
 from app.core.logging import get_logger
-from app.integrations.object_storage import LocalObjectStorage
+from app.integrations.object_storage import get_object_storage
 from app.models.knowledge import KnowledgeAsset
 from app.repositories.knowledge import KnowledgeAssetRepository
 from app.schemas.knowledge import KnowledgeUploadRequest
@@ -35,7 +35,7 @@ class KnowledgeService:
         # Wires the repositories and helper services this workflow reuses across its public methods.
         self.session = session
         self.assets = KnowledgeAssetRepository(session)
-        self.storage = LocalObjectStorage()
+        self.storage = get_object_storage()
         self.ocr = OCRService()
         self.retrieval = KnowledgeRetrievalService()
         self.jobs = JobService(session)
@@ -156,7 +156,12 @@ class KnowledgeService:
             asset.extracted_summary = (text[:1000] if text else None)
             asset.page_count = extracted.get("page_count", 0)
             await self.usage.enforce(asset.tenant_id, UsageMetricCode.OCR_PAGES, max(asset.page_count, 1))
-            await self.usage.increment(asset.tenant_id, UsageMetricCode.OCR_PAGES, max(asset.page_count, 1))
+            await self.usage.increment(
+                asset.tenant_id,
+                UsageMetricCode.OCR_PAGES,
+                max(asset.page_count, 1),
+                brand_space_id=asset.brand_space_id,
+            )
             self.retrieval.delete_asset(str(asset.tenant_id), str(asset.brand_space_id), asset.channel, str(asset.id))
             if text:
                 self.retrieval.index_asset(

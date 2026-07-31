@@ -1,8 +1,9 @@
-"use client";
+﻿"use client";
 
 import { isAxiosError } from "axios";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { UserMinus } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -11,8 +12,11 @@ import { FormField, StyledInput } from "@/components/brandSpaces/tabs/FormFields
 import { PlatformPageTitle, SectionCard } from "@/components/platformOwner/PlatformOwnerPrimitives";
 import { useBrands } from "@/hooks/useBrands";
 import { getTenantUserRequestId, useSaveTenantUser, useTenantUserDetail } from "@/hooks/useTeamAccess";
+import { useDeactivateTenantUser, useReactivateTenantUser } from "@/hooks/tenantAdmins/useUpdateTenant";
 import { useGetMe } from "@/hooks/useUser";
+import { getApiErrorMessage } from "@/lib/api/error-message";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
+import { toast } from "@/components/ui/use-toast";
 
 type UserEditorFormProps = {
     mode: "create" | "edit";
@@ -39,6 +43,13 @@ type SubmissionFeedback = {
     description: string;
 };
 
+function isSupportedRoleSwap(oldRoleCode: UserEditorState["roleCode"], newRoleCode: UserEditorState["roleCode"]) {
+    return (
+        oldRoleCode !== newRoleCode &&
+        [oldRoleCode, newRoleCode].every((roleCode) => roleCode === "tenant_user" || roleCode === "brand_user")
+    );
+}
+
 function getMutationErrorMessage(error: unknown, mode: UserEditorFormProps["mode"]) {
     if (isAxiosError(error)) {
         const detail = error.response?.data?.detail;
@@ -51,15 +62,21 @@ function getMutationErrorMessage(error: unknown, mode: UserEditorFormProps["mode
         : "We could not save the changes right now.";
 }
 
+function normalizeContactNumber(value: string) {
+    return value.replace(/\D/g, "").slice(0, 10);
+}
 export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
     const router = useRouter();
     const { data: brands } = useBrands();
     const { data: currentUser } = useGetMe();
-    const { data: liveUser, isLoading } = useTenantUserDetail(userId || "");
+    const { tenantId, data: liveUser, isLoading } = useTenantUserDetail(userId || "");
     const saveUserId = mode === "edit" ? getTenantUserRequestId(liveUser) || userId : undefined;
 
     const saveUser = useSaveTenantUser(saveUserId);
+    const deactivateUser = useDeactivateTenantUser(tenantId);
+    const reactivateUser = useReactivateTenantUser(tenantId);
     const [confirmOpen, setConfirmOpen] = useState(false);
+    const [deactivateConfirmOpen, setDeactivateConfirmOpen] = useState(false);
     const [errors, setErrors] = useState<FormErrorState>({});
     const [submissionFeedback, setSubmissionFeedback] = useState<SubmissionFeedback | null>(null);
 
@@ -101,16 +118,24 @@ export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
         resolvedForm.roleCode === "tenant_admin"
             ? "Tenant Admin"
             : resolvedForm.roleCode === "tenant_user"
-                ? "Tenant User"
+                ? "Super User"
                 : "Brand User";
     const title =
         mode === "create"
             ? "Create User"
-            : `Edit ${resolvedForm.fullName || (resolvedForm.roleCode === "brand_user" ? "{Brand user name}" : "{Tenant User name}")}`;
+            : `Edit ${resolvedForm.fullName || (resolvedForm.roleCode === "brand_user" ? "{Brand user name}" : "{Super User name}")}`;
 
     const showBrandAssignment = resolvedForm.roleCode === "brand_user";
     const liveUserId = getTenantUserRequestId(liveUser);
     const isSelfEdit = mode === "edit" && Boolean(currentUser?.id) && liveUserId === currentUser?.id;
+    const isTenantAdminUser = liveUser?.role_codes.includes("tenant_admin") || resolvedForm.roleCode === "tenant_admin";
+    const canChangeAccountStatus =
+        mode === "edit" &&
+        Boolean(saveUserId) &&
+        Boolean(liveUser?.is_activated) &&
+        !isTenantAdminUser &&
+        !isSelfEdit;
+    const accountStatusMutationPending = deactivateUser.isPending || reactivateUser.isPending;
 
     const updateForm = (patch: Partial<UserEditorState>) => {
         setForm((current) => ({ ...(current ?? resolvedForm), ...patch }));
@@ -135,6 +160,8 @@ export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
         }
         if (!resolvedForm.contactNumber.trim()) {
             nextErrors.contactNumber = "Contact number is required.";
+        } else if (!/^\d{10}$/.test(resolvedForm.contactNumber)) {
+            nextErrors.contactNumber = "Contact number must be exactly 10 digits.";
         }
         if (showBrandAssignment && resolvedForm.selectedBrands.length === 0) {
             nextErrors.selectedBrands = "Assign at least one brand space for a brand user.";
@@ -147,6 +174,10 @@ export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
         if (saveUser.isPending) {
             return;
         }
+        const roleChangedByTenantAdmin =
+            mode === "edit" &&
+            currentUser?.role === "TENANT_ADMIN" &&
+            isSupportedRoleSwap(initialForm.roleCode, resolvedForm.roleCode);
         setSubmissionFeedback(null);
         saveUser.mutate(
             {
@@ -175,6 +206,24 @@ export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
                         router.push(`/user_management?${params.toString()}`);
                         return;
                     }
+                    if (roleChangedByTenantAdmin) {
+                        toast({
+                            title: "User role updated successfully.",
+                            variant: "success",
+                        });
+                        router.push(`/user_management/${getTenantUserRequestId(savedUser)}`);
+                        return;
+                    }
+                    const shouldShowProfileUpdateToast =
+                        (currentUser?.role === "PLATFORM_OWNER" && savedUser.role_codes.includes("tenant_admin")) ||
+                        (currentUser?.role === "TENANT_ADMIN" &&
+                            (savedUser.role_codes.includes("tenant_user") || savedUser.role_codes.includes("brand_user")));
+                    if (shouldShowProfileUpdateToast) {
+                        toast({
+                            title: "profile has been updated successfully.",
+                            variant: "success",
+                        });
+                    }
                     router.push(`/user_management/${getTenantUserRequestId(savedUser)}`);
                 },
                 onError: (error) => {
@@ -198,6 +247,43 @@ export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
         submit();
     };
 
+    const confirmDeactivateUser = async () => {
+        if (!saveUserId || deactivateUser.isPending) {
+            return;
+        }
+
+        try {
+            await deactivateUser.mutateAsync(saveUserId);
+            setDeactivateConfirmOpen(false);
+        } catch (error) {
+            toast({
+                title: "Unable to deactivate user",
+                description: getApiErrorMessage(error, "Please try again."),
+                variant: "destructive",
+            });
+        }
+    };
+
+    const handleAccountStatusClick = async () => {
+        if (!saveUserId || accountStatusMutationPending) {
+            return;
+        }
+        if (liveUser?.is_active) {
+            setDeactivateConfirmOpen(true);
+            return;
+        }
+
+        try {
+            await reactivateUser.mutateAsync(saveUserId);
+        } catch (error) {
+            toast({
+                title: "Unable to reactivate user",
+                description: getApiErrorMessage(error, "Please try again."),
+                variant: "destructive",
+            });
+        }
+    };
+
     if (mode === "edit" && isLoading && !liveUser) {
         return <div className="w-full px-6 py-10 text-sm text-slate-500">Loading user details...</div>;
     }
@@ -213,13 +299,32 @@ export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
                     <PlatformPageTitle
                         title={title}
                         action={
-                            <Button
-                                onClick={handleSaveClick}
-                                disabled={saveUser.isPending}
-                                className="h-12 rounded-none bg-primary/72 px-10 py-6 text-[15px] font-medium hover:bg-primary/90"
-                            >
-                                {saveUser.isPending ? (mode === "create" ? "Creating..." : "Saving...") : mode === "create" ? "Create" : "Save"}
-                            </Button>
+                            <div className="flex flex-wrap items-center justify-end gap-3">
+                                <Button
+                                    onClick={handleSaveClick}
+                                    disabled={saveUser.isPending}
+                                    className="h-12 rounded-none bg-primary/72 px-10 py-6 text-[15px] font-medium hover:bg-primary/90"
+                                >
+                                    {saveUser.isPending ? (mode === "create" ? "Creating..." : "Saving...") : mode === "create" ? "Create" : "Save"}
+                                </Button>
+                                {canChangeAccountStatus ? (
+                                    <Button
+                                        type="button"
+                                        onClick={handleAccountStatusClick}
+                                        disabled={accountStatusMutationPending}
+                                        className="h-12 rounded-none bg-[#BDBDBD] px-5 py-6 text-[15px] font-medium text-white hover:bg-[#AFAFAF]"
+                                    >
+                                        <UserMinus className="h-4 w-4" />
+                                        {accountStatusMutationPending
+                                            ? liveUser?.is_active
+                                                ? "Deactivating..."
+                                                : "Reactivating..."
+                                            : liveUser?.is_active
+                                                ? "Deactivate"
+                                                : "Reactivate"}
+                                    </Button>
+                                ) : null}
+                            </div>
                         }
                     />
 
@@ -257,10 +362,12 @@ export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
                             <FormField label="Contact Number" required error={errors.contactNumber}>
                                 <StyledInput
                                     placeholder="Enter contact number"
+                                    inputMode="numeric"
+                                    maxLength={10}
                                     value={resolvedForm.contactNumber}
                                     onChange={(event) => {
                                         setErrors((current) => ({ ...current, contactNumber: undefined }));
-                                        updateForm({ contactNumber: event.target.value });
+                                        updateForm({ contactNumber: normalizeContactNumber(event.target.value) });
                                     }}
                                 />
                             </FormField>
@@ -290,7 +397,7 @@ export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
                                             {mode === "edit" && resolvedForm.roleCode === "tenant_admin" ? (
                                                 <SelectItem value="tenant_admin">Tenant Admin</SelectItem>
                                             ) : null}
-                                            <SelectItem value="tenant_user">Tenant User</SelectItem>
+                                            <SelectItem value="tenant_user">Super User</SelectItem>
                                             <SelectItem value="brand_user">Brand User</SelectItem>
                                         </SelectGroup>
                                     </SelectContent>
@@ -350,6 +457,30 @@ export default function UserEditorForm({ mode, userId }: UserEditorFormProps) {
                         <AlertDialogCancel className="h-11 w-[140px] rounded-none border border-black bg-white p-0 text-base text-black hover:bg-white focus-visible:outline-none focus-visible:ring-0">
                             Cancel
                         </AlertDialogCancel>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
+
+            <AlertDialog open={deactivateConfirmOpen} onOpenChange={setDeactivateConfirmOpen}>
+                <AlertDialogContent className="max-w-[420px] rounded-none border-0 bg-white p-6 shadow-[0_20px_80px_-24px_rgba(15,23,42,0.35)]">
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Are you sure you want to deactivate this user?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            This user will no longer be able to access Violyt until their account is reactivated.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel className="rounded-none">Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                            onClick={(event) => {
+                                event.preventDefault();
+                                void confirmDeactivateUser();
+                            }}
+                            className="rounded-none bg-primary text-white hover:bg-primary/90"
+                            disabled={deactivateUser.isPending}
+                        >
+                            {deactivateUser.isPending ? "Deactivating..." : "Confirm"}
+                        </AlertDialogAction>
                     </AlertDialogFooter>
                 </AlertDialogContent>
             </AlertDialog>

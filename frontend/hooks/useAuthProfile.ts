@@ -3,29 +3,37 @@ import { API } from "@/lib/api/endpoints";
 import type { TwoFactorSetupResponse } from "@/lib/api/contracts";
 import { request } from "@/lib/api/request";
 import { clearTwoFactorTicket, setAuthTokens } from "@/lib/api/session";
+import { refreshNotificationQueries } from "@/lib/notification-queries";
 
-export const useProfile = () =>
+export const useProfile = (enabled = true) =>
   useQuery({
     queryKey: ["auth", "profile"],
+    enabled,
     queryFn: () => request(API.AUTH.PROFILE),
   });
 
 export const useUpdateProfile = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data: { full_name?: string; email?: string; phone_number?: string; notifications_enabled?: boolean }) =>
+    mutationFn: (data: { full_name?: string; email?: string; phone_number?: string; notifications_enabled?: boolean; email_notifications_enabled?: boolean; in_app_notifications_enabled?: boolean }) =>
       request(API.AUTH.UPDATE_PROFILE, { data }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["auth", "profile"] });
       await queryClient.invalidateQueries({ queryKey: ["me"] });
+      await refreshNotificationQueries(queryClient);
     },
   });
 };
 
-export const useChangePassword = () =>
-  useMutation({
+export const useChangePassword = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
     mutationFn: (data: { current_password: string; new_password: string }) => request(API.AUTH.CHANGE_PASSWORD, { data }),
+    onSuccess: async () => {
+      await refreshNotificationQueries(queryClient);
+    },
   });
+};
 
 export const useDeleteProfile = () => {
   const queryClient = useQueryClient();
@@ -62,6 +70,7 @@ export const useEnableTwoFactor = () => {
       await queryClient.invalidateQueries({ queryKey: ["auth", "two-factor-status"] });
       await queryClient.invalidateQueries({ queryKey: ["auth", "profile"] });
       await queryClient.invalidateQueries({ queryKey: ["me"] });
+      await refreshNotificationQueries(queryClient);
     },
   });
 };
@@ -74,6 +83,7 @@ export const useDisableTwoFactor = () => {
       await queryClient.invalidateQueries({ queryKey: ["auth", "two-factor-status"] });
       await queryClient.invalidateQueries({ queryKey: ["auth", "profile"] });
       await queryClient.invalidateQueries({ queryKey: ["me"] });
+      await refreshNotificationQueries(queryClient);
     },
   });
 };

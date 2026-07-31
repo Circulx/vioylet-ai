@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import {
     AlertCircle,
     CheckCircle2,
+    Clock3,
     Eye,
     FileText,
     Loader2,
@@ -15,6 +16,16 @@ import {
     Unplug,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
     Dialog,
     DialogContent,
@@ -28,7 +39,9 @@ import {
 } from "@/components/ui/collapsible";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageHeading } from "@/components/common/DesignPrimitives";
-import type { BrandResponse, ValidationSummaryResponse } from "@/lib/api/contracts";
+import { InformationTip } from "@/components/InformationTip";
+import { BrandSpaceHistoryDrawer } from "@/components/brandSpaces/BrandSpaceHistoryDrawer";
+import type { BrandAttachmentResponse, BrandResponse, ValidationSummaryResponse } from "@/lib/api/contracts";
 import { API } from "@/lib/api/endpoints";
 import { request } from "@/lib/api/request";
 import { buildBrandWorkspaceHref } from "@/lib/brand-routing";
@@ -55,7 +68,7 @@ import { useAutofillBrandFromKnowledge, useBrands, useCreateBrand } from "@/hook
 import { applyBrandAutofillToForm } from "@/lib/brand-autofill";
 import { useGetMe } from "@/hooks/useUser";
 import { useGetTenantData } from "@/hooks/tenantAdmins/useGetTenants";
-import { useUpdateTenantAdmin } from "@/hooks/tenantAdmins/useUpdateTenant";
+import { useUpdateBrandUsageTargets } from "@/hooks/tenantAdmins/useUpdateTenant";
 import { toast } from "@/components/ui/use-toast";
 import {
     emptyBrandFormState,
@@ -68,7 +81,7 @@ import {
 } from "@/types/brand-space.types";
 
 type BrandSpaceEditorProps = {
-    mode: "create" | "edit";
+    mode: "create" | "edit" | "view";
     brandId?: string;
     initialForm?: BrandFormState;
     initialLifecycleState?: string;
@@ -171,6 +184,136 @@ function extractedRole(entry: Record<string, unknown>) {
     return String(entry.role || "").trim().toLowerCase();
 }
 
+function colorPaletteEntriesFromData(data: Record<string, unknown>) {
+    const structuredEntries = Array.isArray(data.palette_entries)
+        ? data.palette_entries
+        : Array.isArray(data.palette)
+            ? data.palette
+            : Array.isArray(data.all)
+                ? data.all
+                : [];
+    const seenHexes = new Set<string>();
+    return structuredEntries
+        .map(toRecord)
+        .filter((entry) => {
+            const hex = extractedHex(entry).toUpperCase();
+            if (!hex || seenHexes.has(hex)) {
+                return false;
+            }
+            seenHexes.add(hex);
+            return true;
+        });
+}
+
+function colorPaletteEntriesFromUploadItem(item: BrandUploadItem | null | undefined) {
+    if (!item) {
+        return [];
+    }
+    return [
+        ...colorPaletteEntriesFromData(item.structuredDataJson || {}),
+        ...colorPaletteEntriesFromData(item.normalizedDataJson || {}),
+    ].filter((entry, index, entries) => {
+        const hex = extractedHex(entry).toUpperCase();
+        return hex && entries.findIndex((candidate) => extractedHex(candidate).toUpperCase() === hex) === index;
+    });
+}
+
+function colorNameFromPaletteEntry(entry: Record<string, unknown>) {
+    return String(
+        entry.color_name ||
+        entry.name ||
+        extractedRole(entry) ||
+        "Additional color",
+    );
+}
+
+function applyColorPaletteEntries(
+    form: BrandFormState,
+    activeColorPaletteUploadId: string,
+    entries: Record<string, unknown>[],
+): BrandFormState {
+    const primary = entries.find((entry) => extractedRole(entry) === "primary") || entries[0];
+    const secondary = entries.find((entry) => extractedRole(entry) === "secondary") || entries[1];
+    const additional = entries.filter((entry) => ![primary, secondary].includes(entry));
+    return {
+        ...form,
+        visualIdentity: {
+            ...form.visualIdentity,
+            activeColorPaletteUploadId,
+            primaryColor: primary ? extractedHex(primary) : "",
+            secondaryColor: secondary ? extractedHex(secondary) : "",
+            additionalColors: additional.length
+                ? additional.map((entry) => ({
+                    name: colorNameFromPaletteEntry(entry),
+                    hex: extractedHex(entry),
+                }))
+                : [{ name: "", hex: "" }],
+        },
+    };
+}
+
+function selectColorPaletteUpload(form: BrandFormState, itemId: string): BrandFormState {
+    const selectedItem = form.visualIdentity.colorPaletteUploads.find((item) => item.id === itemId);
+    if (!selectedItem) {
+        return form;
+    }
+    const entries = colorPaletteEntriesFromUploadItem(selectedItem);
+    if (!entries.length) {
+        return {
+            ...form,
+            visualIdentity: {
+                ...form.visualIdentity,
+                activeColorPaletteUploadId: itemId,
+            },
+        };
+    }
+    return applyColorPaletteEntries(form, itemId, entries);
+}
+
+function attachmentToUploadPatch(asset: BrandAttachmentResponse): UploadStatePatch {
+    return {
+        uploadedAssetId: asset.id,
+        assetUrl: asset.asset_url || undefined,
+        storagePath: asset.storage_path,
+        lifecycleState: asset.processing_status?.lifecycle_state || asset.lifecycle_state,
+        channel: asset.channel,
+        mimeType: asset.mime_type,
+        pageCount: asset.page_count,
+        processingError: asset.processing_error,
+        fieldKey: asset.field_key || undefined,
+        assetCategory: asset.asset_category || undefined,
+        validationState: asset.validation_state,
+        validationSummaryJson: asset.validation_summary_json,
+        structuredDataJson: asset.structured_data_json,
+        normalizedDataJson: asset.normalized_data_json,
+        processingStatus: asset.processing_status || undefined,
+        routing: asset.routing || undefined,
+        isActive: asset.is_active,
+    };
+}
+
+function syncActiveColorPaletteFields(form: BrandFormState): BrandFormState {
+    const activeId = form.visualIdentity.activeColorPaletteUploadId;
+    if (activeId) {
+        return selectColorPaletteUpload(form, activeId);
+    }
+    const firstProcessedItem = form.visualIdentity.colorPaletteUploads.find(
+        (item) => colorPaletteEntriesFromUploadItem(item).length > 0,
+    );
+    if (firstProcessedItem) {
+        return selectColorPaletteUpload(form, firstProcessedItem.id);
+    }
+    return form.visualIdentity.colorPaletteUploads.length
+        ? form
+        : {
+            ...form,
+            visualIdentity: {
+                ...form.visualIdentity,
+                activeColorPaletteUploadId: "",
+            },
+        };
+}
+
 function isSyncedUploadPatch(patch: UploadStatePatch) {
     const state = normalizeUploadState(
         patch.lifecycleState || patch.processingStatus?.lifecycle_state,
@@ -178,7 +321,11 @@ function isSyncedUploadPatch(patch: UploadStatePatch) {
     return ["indexed", "complete", "ready"].includes(state);
 }
 
-function applyExtractedVisualIdentityData(form: BrandFormState, patch: UploadStatePatch): BrandFormState {
+function applyExtractedVisualIdentityData(
+    form: BrandFormState,
+    patch: UploadStatePatch,
+    itemId?: string,
+): BrandFormState {
     if (!isSyncedUploadPatch(patch)) {
         return form;
     }
@@ -190,34 +337,10 @@ function applyExtractedVisualIdentityData(form: BrandFormState, patch: UploadSta
     let changed = false;
 
     if (fieldKey === "color_palette" || assetCategory === "color_palette") {
-        const entries = Array.isArray(structuredData.palette_entries)
-            ? structuredData.palette_entries.map(toRecord).filter((entry) => extractedHex(entry))
-            : [];
-        if (entries.length) {
-            const primary = entries.find((entry) => extractedRole(entry) === "primary") || entries[0];
-            const secondary = entries.find((entry) => extractedRole(entry) === "secondary") || entries[1];
-            const additional = entries.filter((entry) => ![primary, secondary].includes(entry));
-            const nextVisualIdentity = { ...visualIdentity };
-
-            if (!nextVisualIdentity.primaryColor && primary) {
-                nextVisualIdentity.primaryColor = extractedHex(primary);
-                changed = true;
-            }
-            if (!nextVisualIdentity.secondaryColor && secondary) {
-                nextVisualIdentity.secondaryColor = extractedHex(secondary);
-                changed = true;
-            }
-            if (
-                additional.length &&
-                !nextVisualIdentity.additionalColors.some((color) => color.name.trim() || color.hex.trim())
-            ) {
-                nextVisualIdentity.additionalColors = additional.map((entry) => ({
-                    name: String(entry.color_name || entry.name || extractedRole(entry) || "Additional color"),
-                    hex: extractedHex(entry),
-                }));
-                changed = true;
-            }
-            visualIdentity = nextVisualIdentity;
+        const entries = colorPaletteEntriesFromData(structuredData);
+        const activeId = form.visualIdentity.activeColorPaletteUploadId;
+        if (entries.length && itemId && (!activeId || activeId === itemId)) {
+            return applyColorPaletteEntries(form, itemId, entries);
         }
     }
 
@@ -247,6 +370,19 @@ function applyExtractedVisualIdentityData(form: BrandFormState, patch: UploadSta
     return changed ? { ...form, visualIdentity } : form;
 }
 
+function FileProcessingStatusTipContent() {
+    return (
+        <div className="space-y-2 text-left">
+            <p className="font-medium text-[#6F6F6F]">File Processing Status</p>
+            <p>These statuses indicate the current state of files uploaded to this Brand Space.</p>
+            <div className="space-y-1">
+                <p><span className="font-medium text-[#6F6F6F]">Ready:</span> Files have been uploaded successfully and are waiting to be processed.</p>
+                <p><span className="font-medium text-[#6F6F6F]">Processing:</span> Files are currently being processed. During this stage, Violyt extracts and analyzes the content to make it available for use.</p>
+                <p><span className="font-medium text-[#6F6F6F]">Synced:</span> File processing has been completed successfully, and the content is fully synchronized with the Brand Space. These files are now available for content generation and other Brand Space features.</p>
+            </div>
+        </div>
+    );
+}
 function UploadStatusPanel({
     items,
     isSubmitting,
@@ -285,7 +421,7 @@ function UploadStatusPanel({
     );
 
     return (
-        <div className="rounded-2xl border border-[#E3E6F2] bg-white px-5 py-4 shadow-[0_14px_32px_-28px_rgba(15,23,42,0.65)]">
+        <div className="rounded-2xl border border-[#E3E6F2] bg-white px-5 py-4 my-6 shadow-[0_14px_32px_-28px_rgba(15,23,42,0.65)]">
             <Collapsible
                 open={isOpen}
                 onOpenChange={setIsOpen}
@@ -313,11 +449,12 @@ function UploadStatusPanel({
                         >
                             {isOpen ? "View less" : "View more"}
                         </button>
+                        <InformationTip content={<FileProcessingStatusTipContent />} />
                     </div>
                 </div>
                 <CollapsibleContent className="flex flex-col gap-2">
 
-            <div className="mt-4 max-h-100 space-y-2 overflow-auto pr-1">
+            <div className="mt-4 max-h-105 space-y-2 overflow-auto pr-1">
                 {items.map((item) => {
                     const normalized = normalizeUploadState(item.lifecycleState);
                     const label = getUploadStateLabel(item.lifecycleState);
@@ -571,11 +708,12 @@ export default function BrandSpaceEditor({
 
     const queryClient = useQueryClient();
     const createBrand = useCreateBrand();
-    const updateTenant = useUpdateTenantAdmin();
+    const updateBrandUsageTargets = useUpdateBrandUsageTargets();
     const { data: currentUser } = useGetMe();
     const tenantId = currentUser?.tenantId ?? "";
     const { data: tenant } = useGetTenantData(tenantId);
     const { data: brands } = useBrands();
+    const isReadOnly = mode === "view";
 
     const [form, setForm] = useState<BrandFormState>(initialForm);
     const [submissionPhase, setSubmissionPhase] = useState<string | null>(null);
@@ -593,16 +731,18 @@ export default function BrandSpaceEditor({
     const [hydratedBrandStateId, setHydratedBrandStateId] = useState<string | null>(null);
     const [hydratedAttachmentBrandId, setHydratedAttachmentBrandId] = useState<string | null>(null);
     const [capacityDialogOpen, setCapacityDialogOpen] = useState(false);
+    const [editConfirmationOpen, setEditConfirmationOpen] = useState(false);
     const [capacityRows, setCapacityRows] = useState<CapacityUsageRow[]>([]);
     const [capacityError, setCapacityError] = useState<string | null>(null);
     const formRef = useRef(form);
+    const readOnlySetForm = useMemo(() => (() => undefined) as typeof setForm, []);
 
     useEffect(() => {
         formRef.current = form;
     }, [form]);
 
     useEffect(() => {
-        if (mode !== "edit") {
+        if (mode !== "edit" && mode !== "view") {
             return;
         }
         const nextLogos = normalizeBrandLogoItems(
@@ -668,7 +808,7 @@ export default function BrandSpaceEditor({
     }, [mode, skipDraftHydration]);
 
     useEffect(() => {
-        if (mode !== "create" || !didHydrateDraft) {
+        if (isReadOnly || mode !== "create" || !didHydrateDraft) {
             return;
         }
         saveBrandSpaceDraft({
@@ -676,7 +816,7 @@ export default function BrandSpaceEditor({
             lifecycleState: brandLifecycleState,
             form,
         });
-    }, [brandLifecycleState, didHydrateDraft, draftBrandId, form, mode]);
+    }, [brandLifecycleState, didHydrateDraft, draftBrandId, form, isReadOnly, mode]);
 
     const effectiveBrandId = draftBrandId ?? brandId ?? null;
     const activeTabNeedsAttachments = hasActivatedAttachmentTab && ATTACHMENT_TAB_VALUES.has(activeTab);
@@ -734,7 +874,7 @@ export default function BrandSpaceEditor({
                     return;
                 }
                 setForm((current) => {
-                    const merged = mergeBrandAttachmentsIntoForm(current, attachments);
+                    const merged = syncActiveColorPaletteFields(mergeBrandAttachmentsIntoForm(current, attachments));
                     formRef.current = merged;
                     return merged;
                 });
@@ -770,6 +910,7 @@ export default function BrandSpaceEditor({
         [uploadStatusItems],
     );
     const canOpenWorkspace = Boolean(draftBrand?.id) && brandLifecycleState === "active";
+    const canShowHistoryButton = canOpenWorkspace && currentUser?.role !== "PLATFORM_OWNER";
     const primarySubmitIntent: "publish" | "save" =
         brandLifecycleState === "active" || hasUnsavedUploadItems ? "save" : "publish";
     const isDraftSubmitting = isSubmitting && activeSubmitIntent === "draft";
@@ -778,6 +919,8 @@ export default function BrandSpaceEditor({
         isSubmitting && (activeSubmitIntent === "publish" || activeSubmitIntent === "save");
     const capacityTotal = capacityRows.reduce((sum, row) => sum + row.value, 0);
     const currentBrandCapacityRow = capacityRows.find((row) => row.isCurrentBrand || row.isNewBrand);
+    const requiresPublishedEditConfirmation =
+        mode === "edit" && brandLifecycleState === "active" && primarySubmitIntent === "save";
 
     const showSuccessToast = (title: string, description?: string) => {
         toast({
@@ -916,16 +1059,11 @@ export default function BrandSpaceEditor({
             return;
         }
 
-        await updateTenant.mutateAsync({
+        await updateBrandUsageTargets.mutateAsync({
             id: tenantId,
-            data: {
-                metadata_json: {
-                    ...(tenant.metadata_json || {}),
-                    brand_usage_targets: Object.fromEntries(
-                        rows.map((row) => [row.isNewBrand ? brand.id : row.id, row.value]),
-                    ),
-                },
-            },
+            brandUsageTargets: Object.fromEntries(
+                rows.map((row) => [row.isNewBrand ? brand.id : row.id, row.value]),
+            ),
         });
         await queryClient.invalidateQueries({ queryKey: ["brand", brand.id, "usage"] });
     };
@@ -933,10 +1071,54 @@ export default function BrandSpaceEditor({
     const applyUploadUpdate = (itemId: string, patch: Parameters<typeof updateBrandUploadItemState>[2]) => {
         setForm((current) => {
             const updated = updateBrandUploadItemState(current, itemId, patch);
-            const next = applyExtractedVisualIdentityData(updated, patch);
+            const next = applyExtractedVisualIdentityData(updated, patch, itemId);
             formRef.current = next;
             return next;
         });
+    };
+
+    const handleSelectColorPaletteUpload = async (itemId: string) => {
+        const targetItem = findBrandUploadItem(formRef.current, itemId);
+        if (!targetItem) {
+            return;
+        }
+
+        if (!targetItem.uploadedAssetId || !effectiveBrandId) {
+            setForm((current) => {
+                const next = selectColorPaletteUpload(current, itemId);
+                formRef.current = next;
+                return next;
+            });
+            return;
+        }
+
+        setForm((current) => {
+            const next = selectColorPaletteUpload(current, itemId);
+            formRef.current = next;
+            return next;
+        });
+
+        try {
+            const asset = await request(API.BRANDS.ATTACHMENT_DETAIL, {
+                pathParams: { brandId: effectiveBrandId, assetId: targetItem.uploadedAssetId },
+            });
+            const patch = attachmentToUploadPatch(asset);
+            setForm((current) => {
+                if (current.visualIdentity.activeColorPaletteUploadId !== itemId) {
+                    return current;
+                }
+                const updated = updateBrandUploadItemState(current, itemId, patch);
+                const next = selectColorPaletteUpload(updated, itemId);
+                formRef.current = next;
+                return next;
+            });
+        } catch {
+            setForm((current) => {
+                const next = selectColorPaletteUpload(current, itemId);
+                formRef.current = next;
+                return next;
+            });
+        }
     };
 
     useEffect(() => {
@@ -1046,6 +1228,9 @@ export default function BrandSpaceEditor({
     };
 
     const handleSubmit = async (intent: "draft" | "publish" | "save", usageRows?: CapacityUsageRow[]) => {
+        if (isReadOnly) {
+            return;
+        }
         if (canOpenWorkspace && intent === "publish") {
             router.push(buildBrandWorkspaceHref(draftBrand as BrandResponse));
             return;
@@ -1086,7 +1271,7 @@ export default function BrandSpaceEditor({
 
             if (hydratedAttachmentBrandId !== currentBrand.id) {
                 const existingAttachments = await listBrandSpaceAttachments(currentBrand.id);
-                formSnapshot = mergeBrandAttachmentsIntoForm(formSnapshot, existingAttachments);
+                formSnapshot = syncActiveColorPaletteFields(mergeBrandAttachmentsIntoForm(formSnapshot, existingAttachments));
                 formRef.current = formSnapshot;
                 setForm(formSnapshot);
             }
@@ -1117,7 +1302,7 @@ export default function BrandSpaceEditor({
                 }),
             );
             const latestAttachments = await listBrandSpaceAttachments(currentBrand.id);
-            formSnapshot = mergeBrandAttachmentsIntoForm(formRef.current, latestAttachments);
+            formSnapshot = syncActiveColorPaletteFields(mergeBrandAttachmentsIntoForm(formRef.current, latestAttachments));
             formRef.current = formSnapshot;
             setForm(formSnapshot);
             setHydratedAttachmentBrandId(currentBrand.id);
@@ -1179,6 +1364,9 @@ export default function BrandSpaceEditor({
     };
 
     const handleRemoveUpload = async (itemId: string) => {
+        if (isReadOnly) {
+            return;
+        }
         const targetItem = findBrandUploadItem(formRef.current, itemId);
         if (!targetItem) {
             return;
@@ -1191,7 +1379,11 @@ export default function BrandSpaceEditor({
                     pathParams: { brandId: effectiveBrandId, assetId: targetItem.uploadedAssetId },
                 });
             }
-            setForm((current) => removeBrandUploadItem(current, itemId));
+            setForm((current) => {
+                const next = syncActiveColorPaletteFields(removeBrandUploadItem(current, itemId));
+                formRef.current = next;
+                return next;
+            });
             showSuccessToast("File removed", `Removed ${targetItem.name}.`);
         } catch (error) {
             const detail = axios.isAxiosError(error)
@@ -1206,6 +1398,9 @@ export default function BrandSpaceEditor({
     };
 
     const handleReprocessUpload = async (itemId: string) => {
+        if (isReadOnly) {
+            return;
+        }
         const targetItem = findBrandUploadItem(formRef.current, itemId);
         if (!targetItem?.uploadedAssetId || !effectiveBrandId) {
             return;
@@ -1248,6 +1443,9 @@ export default function BrandSpaceEditor({
     };
 
     const handleUnsyncUpload = async (itemId: string) => {
+        if (isReadOnly) {
+            return;
+        }
         const targetItem = findBrandUploadItem(formRef.current, itemId);
         if (!targetItem?.uploadedAssetId || !effectiveBrandId) {
             return;
@@ -1290,6 +1488,9 @@ export default function BrandSpaceEditor({
     };
 
     const handleUnpublish = async () => {
+        if (isReadOnly) {
+            return;
+        }
         if (!effectiveBrandId) {
             return;
         }
@@ -1336,6 +1537,9 @@ export default function BrandSpaceEditor({
     };
 
     const handlePrimarySubmit = () => {
+        if (isReadOnly) {
+            return;
+        }
         if (primarySubmitIntent === "publish") {
             if (!validateRequiredFieldsForPublish()) {
                 return;
@@ -1346,10 +1550,18 @@ export default function BrandSpaceEditor({
             return;
         }
 
+        if (requiresPublishedEditConfirmation) {
+            setEditConfirmationOpen(true);
+            return;
+        }
+
         void handleSubmit(primarySubmitIntent);
     };
 
     const handleCapacityRowChange = (rowId: string, value: string) => {
+        if (isReadOnly) {
+            return;
+        }
         const nextValue = parseCapacityValue(value);
         setCapacityRows((current) =>
             current.map((row) => (row.id === rowId ? { ...row, value: nextValue } : row)),
@@ -1358,6 +1570,9 @@ export default function BrandSpaceEditor({
     };
 
     const handleConfirmCapacityUsage = () => {
+        if (isReadOnly) {
+            return;
+        }
         if (!tenantId || !tenant) {
             setCapacityError("Tenant context is missing. Please refresh and try again.");
             return;
@@ -1382,7 +1597,9 @@ export default function BrandSpaceEditor({
                         ? canOpenWorkspace
                             ? "Brand Space Ready"
                             : "Create Brand Space"
-                        : "Edit Brand Space"
+                        : isReadOnly
+                            ? "View Brand Space"
+                            : "Edit Brand Space"
                 }
                 actions={
                     <div className="flex flex-wrap items-center justify-end gap-3">
@@ -1392,11 +1609,11 @@ export default function BrandSpaceEditor({
                                 className="flex items-center justify-center gap-2 rounded-none bg-primary/72 p-6 text-base hover:bg-primary/90"
                             >
                                 <Eye className="h-4 w-4" />
-                                <span>Open Brand Space</span>
+                                <span>Open Studio</span>
                             </Button>
                         ) : null}
 
-                        {brandLifecycleState !== "active" ? (
+                        {!isReadOnly && brandLifecycleState !== "active" ? (
                             <Button
                                 type="button"
                                 variant="outline"
@@ -1414,7 +1631,7 @@ export default function BrandSpaceEditor({
                             </Button>
                         ) : null}
 
-                        {brandLifecycleState === "active" ? (
+                        {!isReadOnly && brandLifecycleState === "active" ? (
                             <Button
                                 type="button"
                                 variant="outline"
@@ -1426,59 +1643,69 @@ export default function BrandSpaceEditor({
                             </Button>
                         ) : null}
 
-                        <Button
-                            type="button"
-                            variant="outline"
-                            disabled={
-                                createBrand.isPending ||
-                                isSubmitting ||
-                                autofillFromKnowledge.isPending ||
-                                !(draftBrandId || brandId)
-                            }
-                            className="flex items-center justify-center gap-2 rounded-none border-primary/30 p-6 text-base text-primary hover:bg-primary/5"
-                            onClick={() => void handleAutofillFromKnowledge()}
-                        >
-                            {autofillFromKnowledge.isPending ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                                <Sparkles className="h-4 w-4" />
-                            )}
-                            <span>
-                                {autofillFromKnowledge.isPending
-                                    ? "Fetching from knowledge..."
-                                    : "Auto-fill from knowledge"}
-                            </span>
-                        </Button>
+                        {!isReadOnly ? (
+                            <Button
+                                type="button"
+                                variant="outline"
+                                disabled={
+                                    createBrand.isPending ||
+                                    isSubmitting ||
+                                    autofillFromKnowledge.isPending ||
+                                    !(draftBrandId || brandId)
+                                }
+                                className="flex items-center justify-center gap-2 rounded-none border-primary/30 p-6 text-base text-primary hover:bg-primary/5"
+                                onClick={() => void handleAutofillFromKnowledge()}
+                            >
+                                {autofillFromKnowledge.isPending ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                    <Sparkles className="h-4 w-4" />
+                                )}
+                                <span>
+                                    {autofillFromKnowledge.isPending
+                                        ? "Fetching from knowledge..."
+                                        : "Auto-fill from knowledge"}
+                                </span>
+                            </Button>
+                        ) : null}
 
-                        <Button
-                            onClick={handlePrimarySubmit}
-                            disabled={createBrand.isPending || isSubmitting}
-                            className="flex items-center justify-center gap-2 rounded-none bg-primary/72 p-6 text-base hover:bg-primary/90"
-                        >
-                            <span>
-                                {isPrimarySubmitting
-                                    ? primarySubmitIntent === "save"
-                                        ? "Saving..."
-                                        : "Publishing..."
-                                    : primarySubmitIntent === "save"
-                                        ? "Save Changes"
-                                        : "Publish Brand Space"}
-                            </span>
-                        </Button>
+                        {!isReadOnly ? (
+                            <Button
+                                onClick={handlePrimarySubmit}
+                                disabled={createBrand.isPending || isSubmitting}
+                                className="flex items-center justify-center gap-2 rounded-none bg-primary/72 p-6 text-base hover:bg-primary/90"
+                            >
+                                <span>
+                                    {isPrimarySubmitting
+                                        ? primarySubmitIntent === "save"
+                                            ? "Saving..."
+                                            : "Publishing..."
+                                        : primarySubmitIntent === "save"
+                                            ? "Save Changes"
+                                            : "Publish Brand Space"}
+                                </span>
+                            </Button>
+                        ) : null}
+
+                        {canShowHistoryButton ? (
+                            <BrandSpaceHistoryDrawer brandId={effectiveBrandId}>
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    aria-label="History"
+                                    title="History"
+                                    className="max-w-12 flex items-center justify-center rounded-none bg-primary/5 p-6 text-base hover:bg-primary/15"
+                                >
+                                    <Clock3 className="h-5 w-5" />
+                                </Button>
+                            </BrandSpaceHistoryDrawer>
+                        ) : null}
                     </div>
                 }
             />
 
             {/* <ValidationSummaryPanel lifecycleState={brandLifecycleState} summary={validationSummary} /> */}
 
-            <UploadStatusPanel
-                items={uploadStatusItems}
-                isSubmitting={isSubmitting}
-                actionItemId={actionItemId}
-                onReprocess={handleReprocessUpload}
-                onUnsync={handleUnsyncUpload}
-                onRemove={handleRemoveUpload}
-            />
 
             {canOpenWorkspace && hasPendingUploadItems ? (
                 <div className="rounded-xl border border-primary/15 bg-primary/5 px-4 py-3 text-sm text-primary">
@@ -1492,22 +1719,29 @@ export default function BrandSpaceEditor({
                         {brandSpaceTabs.map((tab) => {
                             const completion = tabCompletion[tab.value] ?? { percent: 100, required: 0, completed: 0 };
                             const fillPercent = Math.max(0, Math.min(100, completion.percent));
+                            const showCompletionLabel = !["brand_knowledge", "additional_details"].includes(tab.value);
                             return (
                                 <TabsTrigger
                                     key={tab.id}
                                     value={tab.value}
                                     className={cn(
-                                        "group relative overflow-visible rounded-lg border border-[#CDCDCD] bg-white px-2.5 py-1.5 text-xs shadow-none hover:bg-[#CDCDCD]/20 data-[state=active]:font-bold data-[state=active]:border-black data-[state=active]:border-2 shrink-0",
+                                        "group relative overflow-visible rounded-lg border border-[#CDCDCD] bg-white p-1.5 text-[15px] shadow-none hover:bg-[#F7F7FB] data-[state=active]:font-bold",
                                         fillPercent === 100 ? "border-primary/40" : "",
                                     )}
-                                    style={{
-                                        backgroundImage: `linear-gradient(90deg, rgba(201, 201, 201, 1) ${fillPercent}%, transparent ${fillPercent}%)`,
-                                    }}
                                 >
-                                    <span className="pointer-events-none absolute -top-6 left-1/2 z-20 hidden -translate-x-1/2 whitespace-nowrap rounded-sm bg-primary px-1.5 py-0.5 text-[10px] font-medium text-white group-hover:inline-flex">
-                                        {fillPercent}% Completed
+                                    {showCompletionLabel ? (
+                                        <span className="pointer-events-none absolute -top-6 left-1/2 z-20 hidden -translate-x-1/2 whitespace-nowrap rounded-sm bg-primary px-1.5 py-0.5 text-[10px] font-medium text-white group-hover:inline-flex">
+                                            {fillPercent}% Completed
+                                        </span>
+                                    ) : null}
+                                    <span
+                                        className="rounded-md px-3 py-2"
+                                        style={{
+                                            backgroundImage: `linear-gradient(90deg, rgba(201, 201, 201, 1) ${fillPercent}%, transparent ${fillPercent}%)`,
+                                        }}
+                                    >
+                                        {tab.label}
                                     </span>
-                                    {tab.label}
                                 </TabsTrigger>
                             );
                         })}
@@ -1522,12 +1756,35 @@ export default function BrandSpaceEditor({
                         const TabComponent = tab.content;
                         return (
                             <TabsContent key={tab.id} value={tab.value} className="w-full">
-                                <TabComponent brandId={effectiveBrandId || ""} form={form} setForm={setForm} onRemoveUpload={handleRemoveUpload} />
+                                <fieldset
+                                    disabled={isReadOnly}
+                                    className={cn(isReadOnly ? "pointer-events-none opacity-95" : "")}
+                                >
+                                    <TabComponent
+                                        brandId={effectiveBrandId || ""}
+                                        form={form}
+                                        setForm={isReadOnly ? readOnlySetForm : setForm}
+                                        onRemoveUpload={isReadOnly ? undefined : handleRemoveUpload}
+                                        onSelectColorPaletteUpload={isReadOnly ? undefined : handleSelectColorPaletteUpload}
+                                    />
+                                </fieldset>
                             </TabsContent>
                         );
                     })}
                 </div>
             </Tabs>
+
+            {!isReadOnly ? (
+                <UploadStatusPanel
+                    items={uploadStatusItems}
+                    isSubmitting={isSubmitting}
+                    actionItemId={actionItemId}
+                    onReprocess={handleReprocessUpload}
+                    onUnsync={handleUnsyncUpload}
+                    onRemove={handleRemoveUpload}
+                />
+            ) : null}
+
 
             {submissionPhase ? (
                 <div className="rounded-xl border border-primary/15 bg-primary/5 px-4 py-3 text-sm text-primary">
@@ -1604,19 +1861,44 @@ export default function BrandSpaceEditor({
                             <Button
                                 type="button"
                                 onClick={handleConfirmCapacityUsage}
-                                disabled={isSubmitting || updateTenant.isPending}
+                                disabled={isSubmitting || updateBrandUsageTargets.isPending}
                                 className="rounded-none bg-primary/72 p-5 hover:bg-primary/90"
                             >
-                                {isSubmitting || updateTenant.isPending ? "Creating..." : "Create Brand Space"}
+                                {isSubmitting || updateBrandUsageTargets.isPending ? "Creating..." : "Create Brand Space"}
                             </Button>
                         </div>
                     </div>
                 </DialogContent>
             </Dialog>
 
-            <p className="absolute bottom-2 left-1/4 mx-auto pt-8 text-center text-sm text-[#929292]">
+            <AlertDialog open={editConfirmationOpen} onOpenChange={setEditConfirmationOpen}>
+                <AlertDialogContent className="max-w-[420px] rounded-none border-0 bg-white p-6 shadow-[0_20px_80px_-24px_rgba(15,23,42,0.35)]">
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Edit Brand Space?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            Updating the Brand Space will affect future creative outputs. Are you sure you want to proceed with these changes?
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel className="w-22 h-12 rounded-none">No</AlertDialogCancel>
+                        <AlertDialogAction
+                            onClick={(event) => {
+                                event.preventDefault();
+                                setEditConfirmationOpen(false);
+                                void handleSubmit("save");
+                            }}
+                            className="w-22 h-12 rounded-none bg-primary/72 text-white hover:bg-primary/90"
+                            disabled={isSubmitting}
+                        >
+                            Yes
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
+
+            {/*<p className="absolute bottom-2 left-1/4 mx-auto pt-8 text-center text-sm text-[#929292]">
                 Violyt suggestions may need review. Verify accuracy before use.
-            </p>
+            </p> */}
         </div>
     );
 }

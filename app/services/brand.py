@@ -1,6 +1,9 @@
 # Service classes hold business workflows between the HTTP layer, repositories, and integrations.
 from __future__ import annotations
 
+import asyncio
+import logging
+from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -10,10 +13,11 @@ from app.ai.brand_intelligence import BrandIntelligenceService
 from app.core.enums import BrandSpaceLifecycle, RoleCode, UsageMetricCode
 from app.core.exceptions import LifecycleError, NotFoundError
 from app.models.brand import BrandConfigurationSection, BrandSpace, BrandSpaceMember, Guardrail, Objective, Persona
-from app.models.collaboration import UsageLimit
+from app.models.collaboration import BrandSpaceHistory, UsageLimit
 from app.models.content import ContentVersion, GeneratedAsset
 from app.models.knowledge import KnowledgeAsset
-from app.models.tenant import Tenant
+from app.models.tenant import Role, Tenant, User, UserRole
+from app.repositories.collaboration import BrandSpaceHistoryRepository
 from app.repositories.brand import (
     BrandMemberRepository,
     BrandSectionRepository,
@@ -23,11 +27,18 @@ from app.repositories.brand import (
     PersonaRepository,
 )
 from app.schemas.brand import BrandCreateRequest, BrandSectionUpsertRequest, BrandSectionsUpsertRequest, BrandUpdateRequest, GuardrailPayload
+from app.services.brand_capacity import BrandCapacityAllocationService
 from app.services.brand_summary_memory import BrandSummaryMemoryService
 from app.services.vectorstore.brand_profile_embedder import BrandProfileEmbedder
 from app.services.data_validation import DataValidatorService
+from app.services.email import EmailService
+from app.services.notification import InAppNotificationService
+from app.services.notification_preferences import email_notifications_enabled
 from app.services.usage import UsageLimitService
 from app.utils.text import slugify
+
+
+logger = logging.getLogger(__name__)
 
 
 class BrandSpaceService:
@@ -42,11 +53,13 @@ class BrandSpaceService:
         self.guardrails = GuardrailRepository(session)
         self.objectives = ObjectiveRepository(session)
         self.members = BrandMemberRepository(session)
+        self.history = BrandSpaceHistoryRepository(session)
         self.usage = UsageLimitService(session)
         self.intelligence = BrandIntelligenceService()
         self.validator = DataValidatorService(session)
         self.brand_summary_memory = BrandSummaryMemoryService()
         self.profile_embedder = BrandProfileEmbedder()
+        self.email = EmailService()
 
     @staticmethod
     def _clamp_percent(value: object) -> int:
@@ -85,10 +98,29 @@ class BrandSpaceService:
             }
         )
 
-    async def create_brand(self, tenant_id: UUID, created_by: UUID, payload: BrandCreateRequest) -> BrandSpace:
+    async def create_brand(
+        self,
+        tenant_id: UUID,
+        created_by: UUID,
+        payload: BrandCreateRequest,
+        actor_role_codes: set[str] | None = None,
+    ) -> BrandSpace:
         # Runs the brand service flow and persists the resulting state before returning it to the route or
         # worker.
-        await self.usage.enforce(tenant_id, UsageMetricCode.BRAND_SPACES)
+        current_brand_spaces = int(
+            await self.session.scalar(
+                select(func.count(BrandSpace.id)).where(
+                    BrandSpace.tenant_id == tenant_id,
+                    BrandSpace.lifecycle_state != BrandSpaceLifecycle.DELETED,
+                )
+            )
+            or 0
+        )
+        await self.usage.enforce(
+            tenant_id,
+            UsageMetricCode.BRAND_SPACES,
+            current_usage=current_brand_spaces,
+        )
         slug = slugify(payload.identity.brand_name)
         brand = BrandSpace(
             tenant_id=tenant_id,
@@ -178,7 +210,18 @@ class BrandSpaceService:
                     completion_percent=0,
                 )
             )
-        await self.usage.increment(tenant_id, UsageMetricCode.BRAND_SPACES)
+        await self.usage.increment(
+            tenant_id,
+            UsageMetricCode.BRAND_SPACES,
+            current_usage=current_brand_spaces,
+        )
+        if actor_role_codes:
+            await InAppNotificationService(self.session).create_brand_space_created_notification(
+                recipient_user_id=created_by,
+                tenant_id=tenant_id,
+                brand_space_name=brand.name,
+                actor_role_codes=actor_role_codes,
+            )
         await self.session.commit()
         return await self.refresh_context(brand.id)
 
@@ -324,12 +367,20 @@ class BrandSpaceService:
         await self.session.commit()
         return await self.refresh_context(brand_space_id)
 
-    async def upsert_sections(self, tenant_id: UUID, brand_space_id: UUID, payload: BrandSectionsUpsertRequest) -> BrandSpace:
+    async def upsert_sections(
+        self,
+        tenant_id: UUID,
+        brand_space_id: UUID,
+        payload: BrandSectionsUpsertRequest,
+        actor_user_id: UUID | None = None,
+        actor_role_codes: set[str] | None = None,
+    ) -> BrandSpace:
         # Runs the sections service flow and persists the resulting state before returning it to the route or
         # worker.
         brand = await self.brands.get_scoped(tenant_id, brand_space_id)
         if not brand:
             raise NotFoundError("Brand Space not found")
+        was_published = brand.lifecycle_state == BrandSpaceLifecycle.ACTIVE
         existing_sections = await self.sections.list_current_sections(brand_space_id, tenant_id)
         section_versions = {
             section.section_code: max(
@@ -341,7 +392,20 @@ class BrandSpaceService:
         for section in payload.sections:
             await self._apply_section_upsert(tenant_id, brand_space_id, brand, section, existing_sections, section_versions)
         await self.session.commit()
-        return await self.refresh_context(brand_space_id)
+        updated_brand = await self.refresh_context(brand_space_id)
+        normalized_actor_roles = {str(role_code) for role_code in (actor_role_codes or set())}
+        if was_published and actor_user_id and RoleCode.TENANT_ADMIN.value in normalized_actor_roles:
+            emails_scheduled = await self._dispatch_published_brand_space_updated_emails(updated_brand, actor_user_id)
+            if emails_scheduled:
+                await self.create_history_entry(
+                    tenant_id=tenant_id,
+                    brand_space_id=brand_space_id,
+                    activity_type="brand_space_updated",
+                    message="Brand Space updated.",
+                    performed_by=actor_user_id,
+                    metadata={"brand_space_name": updated_brand.name},
+                )
+        return updated_brand
 
     async def update_brand(self, tenant_id: UUID, brand_space_id: UUID, payload: BrandUpdateRequest) -> BrandSpace:
         # Runs the brand service flow by coordinating repositories, validators, and integrations, then returns
@@ -373,12 +437,21 @@ class BrandSpaceService:
                 configured_targets = raw_targets
         capacity_percent = self._clamp_percent(configured_targets.get(str(brand_space_id)) or configured_targets.get(brand_space_id))
         capacity_ratio = capacity_percent / 100
+        now = datetime.now(timezone.utc)
+        month_start = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
+        month_end = (
+            datetime(now.year + 1, 1, 1, tzinfo=timezone.utc)
+            if now.month == 12
+            else datetime(now.year, now.month + 1, 1, tzinfo=timezone.utc)
+        )
 
         content_used = int(
             await self.session.scalar(
                 select(func.count(ContentVersion.id)).where(
                     ContentVersion.tenant_id == tenant_id,
                     ContentVersion.brand_space_id == brand_space_id,
+                    ContentVersion.created_at >= month_start,
+                    ContentVersion.created_at < month_end,
                 )
             )
             or 0
@@ -388,6 +461,8 @@ class BrandSpaceService:
                 select(func.count(GeneratedAsset.id)).where(
                     GeneratedAsset.tenant_id == tenant_id,
                     GeneratedAsset.brand_space_id == brand_space_id,
+                    GeneratedAsset.created_at >= month_start,
+                    GeneratedAsset.created_at < month_end,
                 )
             )
             or 0
@@ -397,6 +472,8 @@ class BrandSpaceService:
                 select(func.coalesce(func.sum(KnowledgeAsset.page_count), 0)).where(
                     KnowledgeAsset.tenant_id == tenant_id,
                     KnowledgeAsset.brand_space_id == brand_space_id,
+                    KnowledgeAsset.created_at >= month_start,
+                    KnowledgeAsset.created_at < month_end,
                 )
             )
             or 0
@@ -425,8 +502,12 @@ class BrandSpaceService:
                 UsageMetricCode.OCR_PAGES,
             )
         ]
-        active_metric_percents = [item["percent"] for item in metrics if item["allocated_limit"] > 0]
-        usage_percent = round(sum(active_metric_percents) / len(active_metric_percents)) if active_metric_percents else 0
+        usage_percent = round(
+            BrandCapacityAllocationService.equal_average_usage_percent(
+                {str(metric_code): value for metric_code, value in usage_values.items()},
+                {str(metric_code): value for metric_code, value in limits.items()},
+            )
+        )
 
         return {
             "brand_space_id": brand_space_id,
@@ -436,17 +517,30 @@ class BrandSpaceService:
             "metrics": metrics,
         }
 
-    async def finalize_brand(self, tenant_id: UUID, brand_space_id: UUID) -> BrandSpace:
+    async def finalize_brand(
+        self,
+        tenant_id: UUID,
+        brand_space_id: UUID,
+        actor_user_id: UUID | None = None,
+        actor_role_codes: set[str] | None = None,
+    ) -> BrandSpace:
         # Runs the brand service flow by coordinating repositories, validators, and integrations, then returns
         # domain data.
-        return await self.publish_brand(tenant_id, brand_space_id)
+        return await self.publish_brand(tenant_id, brand_space_id, actor_user_id, actor_role_codes)
 
-    async def publish_brand(self, tenant_id: UUID, brand_space_id: UUID) -> BrandSpace:
+    async def publish_brand(
+        self,
+        tenant_id: UUID,
+        brand_space_id: UUID,
+        actor_user_id: UUID | None = None,
+        actor_role_codes: set[str] | None = None,
+    ) -> BrandSpace:
         # Runs the brand service flow by coordinating repositories, validators, and integrations, then returns
         # domain data.
         brand = await self.brands.get_scoped(tenant_id, brand_space_id)
         if not brand:
             raise NotFoundError("Brand Space not found")
+        should_notify_publish = brand.lifecycle_state != BrandSpaceLifecycle.ACTIVE
         sections = await self.sections.list_current_sections(brand_space_id, tenant_id)
         identity_section = next((section for section in sections if section.section_code == "identity"), None)
         if not identity_section or not identity_section.payload.get("brand_name"):
@@ -454,6 +548,13 @@ class BrandSpaceService:
         brand = await self.refresh_context(brand_space_id)
         brand.lifecycle_state = BrandSpaceLifecycle.ACTIVE
         brand.is_finalized = True
+        if actor_user_id and actor_role_codes and should_notify_publish:
+            await InAppNotificationService(self.session).create_brand_space_published_notification(
+                recipient_user_id=actor_user_id,
+                tenant_id=tenant_id,
+                brand_space_name=brand.name,
+                actor_role_codes=actor_role_codes,
+            )
         return await self._commit_and_refresh_brand(brand)
 
     async def unpublish_brand(self, tenant_id: UUID, brand_space_id: UUID) -> BrandSpace:
@@ -465,31 +566,70 @@ class BrandSpaceService:
         brand.lifecycle_state = BrandSpaceLifecycle.DRAFT
         return await self._commit_and_refresh_brand(brand)
 
-    async def archive_brand(self, tenant_id: UUID, brand_space_id: UUID) -> BrandSpace:
+    async def archive_brand(
+        self,
+        tenant_id: UUID,
+        brand_space_id: UUID,
+        actor_user_id: UUID | None = None,
+        actor_role_codes: set[str] | None = None,
+    ) -> BrandSpace:
         # Runs the brand service flow by coordinating repositories, validators, and integrations, then returns
         # domain data.
         brand = await self.brands.get_scoped(tenant_id, brand_space_id)
         if not brand:
             raise NotFoundError("Brand Space not found")
         brand.lifecycle_state = BrandSpaceLifecycle.ARCHIVED
+        if actor_user_id and actor_role_codes:
+            await InAppNotificationService(self.session).create_brand_space_archived_notification(
+                recipient_user_id=actor_user_id,
+                tenant_id=tenant_id,
+                brand_space_name=brand.name,
+                actor_role_codes=actor_role_codes,
+            )
         return await self._commit_and_refresh_brand(brand)
 
-    async def restore_brand(self, tenant_id: UUID, brand_space_id: UUID) -> BrandSpace:
+    async def restore_brand(
+        self,
+        tenant_id: UUID,
+        brand_space_id: UUID,
+        actor_user_id: UUID | None = None,
+        actor_role_codes: set[str] | None = None,
+    ) -> BrandSpace:
         # Runs the brand service flow by coordinating repositories, validators, and integrations, then returns
         # domain data.
         brand = await self.brands.get_scoped(tenant_id, brand_space_id)
         if not brand:
             raise NotFoundError("Brand Space not found")
         brand.lifecycle_state = BrandSpaceLifecycle.ACTIVE
+        if actor_user_id and actor_role_codes:
+            await InAppNotificationService(self.session).create_brand_space_restored_notification(
+                recipient_user_id=actor_user_id,
+                tenant_id=tenant_id,
+                brand_space_name=brand.name,
+                actor_role_codes=actor_role_codes,
+            )
         return await self._commit_and_refresh_brand(brand)
 
-    async def delete_brand(self, tenant_id: UUID, brand_space_id: UUID) -> BrandSpace:
+    async def delete_brand(
+        self,
+        tenant_id: UUID,
+        brand_space_id: UUID,
+        actor_user_id: UUID | None = None,
+        actor_role_codes: set[str] | None = None,
+    ) -> BrandSpace:
         # Runs the brand service flow by coordinating repositories, validators, and integrations, then returns
         # domain data.
         brand = await self.brands.get_scoped(tenant_id, brand_space_id)
         if not brand:
             raise NotFoundError("Brand Space not found")
         brand.lifecycle_state = BrandSpaceLifecycle.DELETED
+        if actor_user_id and actor_role_codes:
+            await InAppNotificationService(self.session).create_brand_space_deleted_notification(
+                recipient_user_id=actor_user_id,
+                tenant_id=tenant_id,
+                brand_space_name=brand.name,
+                actor_role_codes=actor_role_codes,
+            )
         return await self._commit_and_refresh_brand(brand)
 
     async def list_brands(self, tenant_id: UUID, user_id: UUID, role_codes: set[str]) -> list[BrandSpace]:
@@ -500,6 +640,111 @@ class BrandSpaceService:
             all_brands = await self.brands.list_by_tenant(tenant_id)
             return [brand for brand in all_brands if brand.id in set(brand_ids)]
         return await self.brands.list_by_tenant(tenant_id)
+
+    async def list_history(self, tenant_id: UUID, brand_space_id: UUID) -> list[BrandSpaceHistory]:
+        brand = await self.brands.get_scoped(tenant_id, brand_space_id)
+        if not brand:
+            raise NotFoundError("Brand Space not found")
+        return await self.history.list_for_brand(tenant_id, brand_space_id)
+
+    async def create_history_entry(
+        self,
+        *,
+        tenant_id: UUID,
+        brand_space_id: UUID,
+        activity_type: str,
+        message: str,
+        performed_by: UUID | None = None,
+        metadata: dict | None = None,
+    ) -> BrandSpaceHistory:
+        history_entry = BrandSpaceHistory(
+            tenant_id=tenant_id,
+            brand_space_id=brand_space_id,
+            activity_type=activity_type,
+            message=message,
+            performed_by=performed_by,
+            metadata_json=metadata or {},
+        )
+        await self.history.add(history_entry)
+        await self.session.commit()
+        return history_entry
+
+    async def _brand_space_update_email_recipients(
+        self,
+        tenant_id: UUID,
+        brand_space_id: UUID,
+        actor_user_id: UUID,
+    ) -> list[User]:
+        actor_result = await self.session.execute(
+            select(User)
+            .join(UserRole, UserRole.user_id == User.id)
+            .join(Role, Role.id == UserRole.role_id)
+            .where(
+                User.id == actor_user_id,
+                User.tenant_id == tenant_id,
+                User.is_active.is_(True),
+                Role.code == RoleCode.TENANT_ADMIN.value,
+            )
+            .distinct()
+        )
+        super_user_result = await self.session.execute(
+            select(User)
+            .join(UserRole, UserRole.user_id == User.id)
+            .join(Role, Role.id == UserRole.role_id)
+            .where(
+                User.tenant_id == tenant_id,
+                User.is_active.is_(True),
+                Role.code == RoleCode.TENANT_USER.value,
+            )
+            .distinct()
+        )
+        brand_user_result = await self.session.execute(
+            select(User)
+            .join(BrandSpaceMember, BrandSpaceMember.user_id == User.id)
+            .join(UserRole, UserRole.user_id == User.id)
+            .join(Role, Role.id == UserRole.role_id)
+            .where(
+                BrandSpaceMember.tenant_id == tenant_id,
+                BrandSpaceMember.brand_space_id == brand_space_id,
+                User.tenant_id == tenant_id,
+                User.is_active.is_(True),
+                Role.code == RoleCode.BRAND_USER.value,
+            )
+            .distinct()
+        )
+        recipients: list[User] = []
+        seen_emails: set[str] = set()
+        for user in [
+            *actor_result.scalars().all(),
+            *super_user_result.scalars().all(),
+            *brand_user_result.scalars().all(),
+        ]:
+            email = (user.email or "").strip()
+            email_key = email.lower()
+            if not email_key or email_key in seen_emails:
+                continue
+            if not email_notifications_enabled(getattr(user, "metadata_json", None)):
+                continue
+            seen_emails.add(email_key)
+            recipients.append(user)
+        return recipients
+
+    async def _dispatch_published_brand_space_updated_emails(self, brand: BrandSpace, actor_user_id: UUID) -> bool:
+        email_tasks = [
+            (recipient.email, recipient.full_name, brand.name)
+            for recipient in await self._brand_space_update_email_recipients(brand.tenant_id, brand.id, actor_user_id)
+        ]
+        if not email_tasks:
+            return False
+        asyncio.create_task(asyncio.to_thread(self._run_brand_space_updated_email_tasks, email_tasks))
+        return True
+
+    def _run_brand_space_updated_email_tasks(self, email_tasks: list[tuple[str, str | None, str]]) -> None:
+        for recipient_email, recipient_name, brand_space_name in email_tasks:
+            try:
+                self.email.send_brand_space_updated_email(recipient_email, recipient_name, brand_space_name)
+            except Exception:
+                logger.exception("Failed to send Brand Space updated email to %s.", recipient_email)
 
     async def require_active(self, tenant_id: UUID, brand_space_id: UUID) -> BrandSpace:
         # Runs the require active service flow by coordinating repositories, validators, and integrations, then

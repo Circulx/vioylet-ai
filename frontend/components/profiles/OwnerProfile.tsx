@@ -5,16 +5,18 @@ import { useMemo, useState } from "react";
 import { Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
-import { Switch } from "@/components/ui/switch";
 import { StyledInput } from "@/components/brandSpaces/tabs/FormFields";
 import { OwnerSectionCard, PlatformPageTitle, SectionCard } from "@/components/platformOwner/PlatformOwnerPrimitives";
 import Setup2faForm from "@/components/auth/Setup2faForm";
 import { useLogout } from "@/hooks/useLogout";
 import { useProfile, useTwoFactorStatus, useUpdateProfile } from "@/hooks/useAuthProfile";
 import { useRBAC } from "@/hooks/useRBAC";
+import { addInAppNotification } from "@/hooks/useInAppNotifications";
+import { toast } from "@/components/ui/use-toast";
 import { DialogTitle } from "@radix-ui/react-dialog";
 import { Label } from "../ui/label";
 import Image from "next/image";
+import { NotificationPreferenceControls } from "@/components/profiles/NotificationPreferenceControls";
 
 export default function OwnerProfile() {
     const { user } = useRBAC();
@@ -22,7 +24,8 @@ export default function OwnerProfile() {
     const { data: profile } = useProfile();
     const { data: twoFactorStatus } = useTwoFactorStatus();
     const updateProfile = useUpdateProfile();
-    const [notificationsOverride, setNotificationsOverride] = useState<boolean | null>(null);
+    const [emailNotificationsOverride, setEmailNotificationsOverride] = useState<boolean | null>(null);
+    const [inAppNotificationsOverride, setInAppNotificationsOverride] = useState<boolean | null>(null);
     const [editOpen, setEditOpen] = useState(false);
     const [twoFactorOpen, setTwoFactorOpen] = useState(false);
     const [form, setForm] = useState({ fullName: "", email: "", phoneNumber: "" });
@@ -39,13 +42,43 @@ export default function OwnerProfile() {
         [profile?.email, profile?.extra, profile?.full_name, user?.email, user?.name, user?.phone],
     );
 
-    const notifications = notificationsOverride ?? (profile?.extra?.notifications_enabled === false ? false : true);
+    const legacyNotificationsEnabled = profile?.extra?.notifications_enabled !== false;
+    const emailNotificationsEnabled =
+        emailNotificationsOverride ??
+        (typeof profile?.extra?.email_notifications_enabled === "boolean"
+            ? profile.extra.email_notifications_enabled
+            : legacyNotificationsEnabled);
+    const inAppNotificationsEnabled =
+        inAppNotificationsOverride ??
+        (typeof profile?.extra?.in_app_notifications_enabled === "boolean"
+            ? profile.extra.in_app_notifications_enabled
+            : legacyNotificationsEnabled);
+    const handleTwoFactorNotification = (enabled: boolean) => {
+        if (user?.role !== "PLATFORM_OWNER" || !user.id) {
+            return;
+        }
+        const message = enabled
+            ? "Two-factor authentication has been successfully enabled for your account."
+            : "Two-factor authentication has been disabled for your account.";
+
+        if (inAppNotificationsEnabled) {
+            addInAppNotification(user.id, {
+                title: "Security Update",
+                message,
+            });
+        }
+        toast({
+            title: "Security Update",
+            description: message,
+            variant: "success",
+        });
+    };
 
     return (
         <>
             <div className="w-full px-5 py-5">
                 <div className="w-full max-w-[1014px] space-y-5">
-                    <PlatformPageTitle title="Profile" />
+                    <PlatformPageTitle title="My Profile" />
 
                     <div className="font-manrope grid gap-4 lg:grid-cols-[1fr_50%]">
                         <OwnerSectionCard>
@@ -80,19 +113,43 @@ export default function OwnerProfile() {
                         </OwnerSectionCard>
                     </div>
 
-                    <SettingRow
-                        title="Notifications"
-                        description="Enable or disable alerts and updates"
-                        trailing={
-                            <Switch
-                                checked={notifications}
-                                onCheckedChange={(checked) => {
-                                    setNotificationsOverride(checked);
-                                    updateProfile.mutate({ notifications_enabled: checked });
-                                }}
-                            />
-                        }
-                    />
+                    <OwnerSectionCard className="border px-4 py-4 shadow-[0px_4px_10px_0px_rgba(0,0,0,0.05)]">
+                        <NotificationPreferenceControls
+                            emailEnabled={emailNotificationsEnabled}
+                            inAppEnabled={inAppNotificationsEnabled}
+                            disabled={updateProfile.isPending}
+                            onEmailChange={(checked) => {
+                                setEmailNotificationsOverride(checked);
+                                updateProfile.mutate(
+                                    { email_notifications_enabled: checked },
+                                    {
+                                        onError: () => {
+                                            setEmailNotificationsOverride(null);
+                                            toast({
+                                                title: "Unable to update email notification preference.",
+                                                variant: "destructive",
+                                            });
+                                        },
+                                    },
+                                );
+                            }}
+                            onInAppChange={(checked) => {
+                                setInAppNotificationsOverride(checked);
+                                updateProfile.mutate(
+                                    { in_app_notifications_enabled: checked },
+                                    {
+                                        onError: () => {
+                                            setInAppNotificationsOverride(null);
+                                            toast({
+                                                title: "Unable to update in-app notification preference.",
+                                                variant: "destructive",
+                                            });
+                                        },
+                                    },
+                                );
+                            }}
+                        />
+                    </OwnerSectionCard>
 
                     <SettingRow
                         title="Privacy Policy"
@@ -114,7 +171,7 @@ export default function OwnerProfile() {
 
             <Dialog open={editOpen} onOpenChange={setEditOpen}>
                 <DialogContent className="font-dmSans max-w-lg rounded-2xl border-0 px-8 py-8 shadow-[0_20px_80px_-24px_rgba(15,23,42,0.25)]">
-                    <DialogTitle className="text-2xl font-semibold text-[#111827]">Edit Profile</DialogTitle>
+                    <DialogTitle className="text-2xl font-semibold text-[#111827]">Edit My Profile</DialogTitle>
                     <div className="space-y-4">
                         {/* <h2 className="text-3xl font-semibold text-[#111827]"></h2> */}
                         <Label className="text-gray-500">Full name</Label>
@@ -158,7 +215,7 @@ export default function OwnerProfile() {
                                     ? "Manage your Google Authenticator protection for this account."
                                     : "Secure your account with Google Authenticator."}
                             </p>
-                            <Setup2faForm compact onConfigured={() => undefined} />
+                            <Setup2faForm compact onConfigured={() => undefined} onTwoFactorChanged={handleTwoFactorNotification} />
                         </div>
                     </div>
                 </DialogContent>

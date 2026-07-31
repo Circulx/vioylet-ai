@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import mimetypes
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from app.api.router import api_router
 from app.core.config import get_settings
 from app.core.exceptions import AuthorizationError, DomainError, DuplicateResourceError, GenerationFailureError, GuardrailViolationError, LifecycleError, NotFoundError, UploadValidationError, UsageLimitExceededError
 from app.db.session import AsyncSessionLocal
+from app.integrations.object_storage import get_object_storage
 from app.services.bootstrap import seed_demo_owner, seed_rbac
 
 
@@ -37,7 +39,24 @@ app.include_router(api_router, prefix=settings.api_v1_prefix)
 storage_dir = Path(settings.object_storage_base_path)
 storage_dir.mkdir(parents=True, exist_ok=True)
 if settings.expose_public_storage:
-    app.mount("/storage", StaticFiles(directory=storage_dir), name="storage")
+    if str(settings.object_storage_provider or "local").strip().lower() == "s3":
+        @app.api_route("/storage/{storage_path:path}", methods=["GET", "HEAD"], include_in_schema=False)
+        async def public_storage(storage_path: str, request: Request) -> Response:
+            storage = get_object_storage()
+            if request.method == "HEAD":
+                if not storage.exists(storage_path):
+                    raise HTTPException(status_code=404, detail="Asset not found")
+                return Response(media_type=mimetypes.guess_type(storage_path)[0] or "application/octet-stream")
+            try:
+                content = storage.read_bytes(storage_path)
+            except Exception as exc:  # noqa: BLE001 - storage providers surface backend-specific errors
+                raise HTTPException(status_code=404, detail="Asset not found") from exc
+            return Response(
+                content,
+                media_type=mimetypes.guess_type(storage_path)[0] or "application/octet-stream",
+            )
+    else:
+        app.mount("/storage", StaticFiles(directory=storage_dir), name="storage")
 
 
 @app.get("/health", include_in_schema=False)

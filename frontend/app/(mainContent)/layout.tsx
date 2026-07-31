@@ -1,10 +1,13 @@
 "use client";
 
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 import LoaderFullscreen from "@/components/LoaderFullscreen";
+import { FileSyncNotifier } from "@/components/FileSyncNotifier";
+import { WelcomeCelebrationOverlay } from "@/components/WelcomeCelebrationOverlay";
 import { useGetMe } from "@/hooks/useUser";
+import { canAccessPath, defaultPathForRole } from "@/lib/role-navigation";
 
 export default function ContentLayout({
   children,
@@ -12,7 +15,9 @@ export default function ContentLayout({
   children: React.ReactNode;
 }>) {
   const router = useRouter();
+  const pathname = usePathname();
   const { data: user, isLoading } = useGetMe();
+  const isForbidden = Boolean(user && !canAccessPath(user.role, pathname));
 
   useEffect(() => {
     if (isLoading) {
@@ -20,17 +25,25 @@ export default function ContentLayout({
     }
     if (!user) {
       router.replace("/auth/login");
+      return;
     }
-  }, [isLoading, router, user]);
+    if (isForbidden) {
+      router.replace(defaultPathForRole(user.role));
+    }
+  }, [isForbidden, isLoading, router, user]);
 
-  if (isLoading || !user) {
+  if (isLoading || !user || isForbidden) {
     return <LoaderFullscreen />;
   }
 
   return (
     <div className="flex min-h-screen w-full gap-2 bg-white p-2">
       <Sidebar />
-      <div className="relative min-h-[calc(100vh-16px)] flex-1 overflow-y-auto">{children}</div>
+      <div className="relative min-h-[calc(100vh-16px)] flex-1 overflow-y-auto">
+        {children}
+      </div>
+      <FileSyncNotifier user={user} />
+      <WelcomeCelebrationOverlay user={user} />
     </div>
   );
 }

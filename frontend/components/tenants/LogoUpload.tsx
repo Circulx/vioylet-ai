@@ -2,7 +2,6 @@
 
 import { apiOrigin } from "@/lib/env";
 import Image from "next/image";
-import { UploadCloud, UploadIcon } from "lucide-react";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Label } from "../ui/label";
 
@@ -22,7 +21,13 @@ function resolvePreview(value?: File | string | null) {
   return URL.createObjectURL(value);
 }
 
-const TenantLogoUpload = ({ value, onChange }: { value?: File | string | null; onChange: (logo: File) => void }) => {
+const TenantLogoUpload = ({
+  value,
+  onChange,
+}: {
+  value?: File | string | null;
+  onChange: (logo: File | string) => void;
+}) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -66,6 +71,15 @@ const TenantLogoUpload = ({ value, onChange }: { value?: File | string | null; o
     }
   };
 
+  const handleRemove = () => {
+    onChange("");
+    setError(null);
+    setDragActive(false);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
+
   return (
     <div className="w-full flex-1 space-y-3">
       <Label className="flex flex-col items-start gap-1 text-base font-medium leading-6 text-[#2F3342]">
@@ -73,43 +87,66 @@ const TenantLogoUpload = ({ value, onChange }: { value?: File | string | null; o
         <span className="text-base font-normal text-[#4B5563]">Custom branding in widget</span>
       </Label>
 
-      <button
-        type="button"
-        onClick={() => fileInputRef.current?.click()}
-        onDragOver={(event) => {
-          event.preventDefault();
-          setDragActive(true);
-        }}
-        onDragLeave={() => setDragActive(false)}
-        onDrop={(event) => {
-          event.preventDefault();
-          setDragActive(false);
-          const droppedFile = event.dataTransfer.files?.[0];
-          if (droppedFile) {
-            handleFile(droppedFile);
-          }
-        }}
-        className={`flex h-[77px] w-[191px] flex-col items-center justify-center rounded-[10px] border-2 hover:border-4 cursor-pointer border-dashed text-center transition ${
-          dragActive ? "border-primary bg-primary/5" : "border-primary/80 bg-[#F6F6F6]"
-        }`}
-      >
+      <div className="relative w-fit">
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          onDragOver={(event) => {
+            event.preventDefault();
+            setDragActive(true);
+          }}
+          onDragLeave={() => setDragActive(false)}
+          onDrop={(event) => {
+            event.preventDefault();
+            setDragActive(false);
+            const droppedFile = event.dataTransfer.files?.[0];
+            if (droppedFile) {
+              handleFile(droppedFile);
+            }
+          }}
+          className={`flex h-[77px] w-[191px] flex-col items-center justify-center rounded-[10px] border-2 hover:border-4 cursor-pointer border-dashed text-center transition ${
+            dragActive ? "border-primary bg-primary/5" : "border-primary/80 bg-[#F6F6F6]"
+          }`}
+        >
+          {preview ? (
+            <Image
+              src={preview}
+              alt="logo preview"
+              width={160}
+              height={64}
+              unoptimized
+              className="h-14 w-auto object-contain"
+            />
+          ) : (
+            <>
+              <Image
+                src="/actions_icons/document-upload.svg"
+                alt="upload placeholder"
+                width={32}
+                height={32}
+                className="mb-1 h-5 w-5"
+              />
+              <span className="text-base font-medium leading-[22px] text-[#2F3342] underline">Upload logo</span>
+            </>
+          )}
+        </button>
         {preview ? (
-          <Image
-            src={preview}
-            alt="logo preview"
-            width={160}
-            height={64}
-            unoptimized
-            className="h-14 w-auto object-contain"
-          />
-        ) : (
-          <>
-          <Image src="/actions_icons/document-upload.svg" alt="upload placeholder" width={32} height={32} className="mb-1 h-5 w-5" />
-            {/* <UploadIcon className="mb-1 h-5 w-5 text-primary" /> */}
-            <span className="text-base font-medium leading-[22px] text-[#2F3342] underline">Upload logo</span>
-          </>
-        )}
-      </button>
+          <button
+            type="button"
+            onClick={handleRemove}
+            className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center bg-none p-0 text-slate-400 transition hover:bg-none"
+            aria-label="Remove tenant logo"
+          >
+            <Image
+              src="/brandSpaces/remove.svg"
+              alt="Remove file"
+              width={16}
+              height={16}
+              className="h-4.5 w-4.5"
+            />
+          </button>
+        ) : null}
+      </div>
 
       {error ? <p className="text-sm text-red-500">{error}</p> : null}
 

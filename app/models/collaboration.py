@@ -32,13 +32,55 @@ class ReviewLink(UUIDPrimaryKeyMixin, TenantScopedMixin, BrandScopedMixin, Times
     expires_at: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
 
+class ReviewLinkParticipant(UUIDPrimaryKeyMixin, TenantScopedMixin, BrandScopedMixin, TimestampMixin, Base):
+    __tablename__ = "review_link_participants"
+    __table_args__ = (
+        UniqueConstraint("review_link_id", "user_id", name="uq_review_link_participant_user"),
+    )
+
+    review_link_id: Mapped[UUID] = mapped_column(ForeignKey("review_links.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    mentioned_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    access_role: Mapped[str] = mapped_column(String(50), default="viewer", nullable=False)
+
+
 class ReviewComment(UUIDPrimaryKeyMixin, TenantScopedMixin, BrandScopedMixin, TimestampMixin, Base):
     __tablename__ = "review_comments"
 
     review_link_id: Mapped[UUID] = mapped_column(ForeignKey("review_links.id", ondelete="CASCADE"), index=True)
+    parent_comment_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("review_comments.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     author_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     external_author_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     body: Mapped[str] = mapped_column(Text, nullable=False)
+    metadata_json: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+
+
+class InAppNotification(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "in_app_notifications"
+
+    recipient_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    tenant_id: Mapped[UUID | None] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True, index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    metadata_json: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+
+
+class BrandSpaceHistory(UUIDPrimaryKeyMixin, TenantScopedMixin, TimestampMixin, Base):
+    __tablename__ = "brand_space_history"
+
+    brand_space_id: Mapped[UUID] = mapped_column(
+        ForeignKey("brand_spaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    activity_type: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    performed_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     metadata_json: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
 
 
@@ -84,6 +126,27 @@ class UsageConsumption(UUIDPrimaryKeyMixin, TenantScopedMixin, TimestampMixin, B
     period_key: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     consumed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     metadata_json: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+
+
+class BrandCapacityAlertState(UUIDPrimaryKeyMixin, TenantScopedMixin, BrandScopedMixin, TimestampMixin, Base):
+    __tablename__ = "brand_capacity_alert_states"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "brand_space_id",
+            "period_key",
+            name="uq_brand_capacity_alert_period",
+        ),
+    )
+
+    brand_space_id: Mapped[UUID] = mapped_column(
+        ForeignKey("brand_spaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    period_key: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    last_usage_percent: Mapped[float] = mapped_column(default=0.0, nullable=False)
+    warning_sent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
 
 class JobRecord(UUIDPrimaryKeyMixin, TenantScopedMixin, BrandScopedMixin, TimestampMixin, Base):

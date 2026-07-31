@@ -1,4 +1,5 @@
 import {
+    AdvancedSectionTitle,
     FormField,
     FormSection,
     FormSubsection,
@@ -17,7 +18,18 @@ import { Label } from "@/components/ui/label";
 
 const clampToneWeight = (value: number) => Math.max(0, Math.min(100, value));
 
-const VoiceTone = ({ brandId, form, setForm }: BrandTabProps) => {
+function hasMissingAdvancedFields(form: BrandTabProps["form"]) {
+    const fields = [
+        form.voiceTone.primaryEmotion,
+        form.voiceTone.secondaryEmotion,
+        form.voiceTone.avoidedEmotion,
+        form.voiceTone.contentComplexity,
+        form.voiceTone.sentenceLength,
+    ];
+    return fields.some((value) => !String(value || "").trim());
+}
+
+const VoiceTone = ({ form, setForm }: BrandTabProps) => {
     const toneWeights = form.voiceTone.coreToneAttributeWeights || {};
     const updateField = <TKey extends keyof typeof form.voiceTone>(
         key: TKey,
@@ -117,7 +129,7 @@ const VoiceTone = ({ brandId, form, setForm }: BrandTabProps) => {
             </FormField>
             </FormSubsection>
 
-            <FormSubsection title="Advanced" description="Optional fields to further refine your brand intelligence" className="bg-[#E9E9E966] px-6 pb-6">
+            <FormSubsection title={<AdvancedSectionTitle showInfo={hasMissingAdvancedFields(form)} />} description="Optional fields to further refine your brand intelligence" className="bg-[#E9E9E966] px-6 pb-6">
                 <div className="grid gap-5 grid-cols-1 md:grid-cols-2">
                     <div className="space-y-5 max-w-md">
                         <FormField label="Primary Emotion">

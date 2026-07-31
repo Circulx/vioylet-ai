@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
 from pydantic import EmailStr, Field, field_validator
 
 from app.schemas.common import APIModel
+
+
+PhoneNumber = Annotated[str, Field(pattern=r"^\d{10}$")]
 
 
 class TenantUsageLimitUpdate(APIModel):
@@ -26,11 +29,11 @@ class TenantCreateRequest(APIModel):
     name: str
     slug: str
     contact_email: EmailStr
-    contact_number: str | None = None
+    contact_number: PhoneNumber | None = None
     address: str | None = None
     admin_full_name: str
     admin_email: EmailStr
-    admin_phone_number: str | None = None
+    admin_phone_number: PhoneNumber | None = None
     usage_limits: TenantUsageLimitUpdate
     metadata_json: dict[str, Any] = Field(default_factory=dict)
 
@@ -41,11 +44,11 @@ class TenantUpdateRequest(APIModel):
     name: str | None = None
     slug: str | None = None
     contact_email: EmailStr | None = None
-    contact_number: str | None = None
+    contact_number: PhoneNumber | None = None
     address: str | None = None
     admin_full_name: str | None = None
     admin_email: EmailStr | None = None
-    admin_phone_number: str | None = None
+    admin_phone_number: PhoneNumber | None = None
     usage_limits: TenantUsageLimitUpdate | None = None
     metadata_json: dict[str, Any] | None = None
     is_active: bool | None = None
@@ -124,6 +127,11 @@ class TenantSummaryResponse(TenantResponse):
     tenant_admin_name: str | None = None
     tenant_admin_email: EmailStr | None = None
     tenant_admin_phone_number: str | None = None
+    tenant_admin_user_id: UUID | None = None
+    tenant_admin_is_active: bool | None = None
+    tenant_admin_is_activated: bool | None = None
+    tenant_admin_activation_link_sent_count: int = 0
+    tenant_admin_activation_link_attempts_left: int = 0
     last_active_at: datetime | None = None
 
 
@@ -162,6 +170,9 @@ class TenantUserResponse(APIModel):
     brand_space_ids: list[UUID]
     created_at: datetime
     last_login_at: datetime | None = None
+    activation_link_sent_count: int = 0
+    activation_link_attempts_left: int = 0
+    notifications_enabled: bool = True
 
 
 class ActivationEmailStatus(APIModel):

@@ -58,6 +58,11 @@ _GLOBAL_TEXT_FIXES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bASA\b"), "USA"),  # common USA misspelling in country ranks
     (re.compile(r"\bU\.S\.A\b"), "USA"),
     (re.compile(r"\binvestmet\b", re.I), "investment"),
+    (re.compile(r"\btecnlogy\b", re.I), "technology"),
+    (re.compile(r"\btecnology\b", re.I), "technology"),
+    (re.compile(r"\brestate\b", re.I), "real estate"),
+    (re.compile(r"\bflucuations\b", re.I), "fluctuations"),
+    (re.compile(r"\bfluctation\b", re.I), "fluctuation"),
     (re.compile(r"\bMealtime\b"), "Mid-term"),
     (re.compile(r"\bmealtime\b"), "mid-term"),
     (re.compile(r"\bagroach\b", re.I), "approach"),

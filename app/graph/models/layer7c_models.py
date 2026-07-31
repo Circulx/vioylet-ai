@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any, List, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
@@ -167,6 +168,46 @@ class CreativeBlueprint(BaseModel):
             else:
                 fmt = "static"
         out["format"] = fmt
+
+        # LLM / UI often send list fields as a single string — coerce to list[str]
+        def _as_str_list(value: Any) -> list[str]:
+            if value is None:
+                return []
+            if isinstance(value, list):
+                return [str(x).strip() for x in value if str(x).strip()]
+            if isinstance(value, str):
+                text = value.strip()
+                if not text:
+                    return []
+                # Prefer newline / numbered beats; else sentence / semicolon splits
+                if "\n" in text:
+                    parts = text.splitlines()
+                elif ";" in text:
+                    parts = text.split(";")
+                elif re.search(r"\d+[\.\)]\s+", text):
+                    parts = re.split(r"\d+[\.\)]\s+", text)
+                else:
+                    parts = re.split(r"(?<=[.!?])\s+", text)
+                return [p.strip(" \t-•*") for p in parts if p and p.strip(" \t-•*")]
+            return [str(value).strip()] if str(value).strip() else []
+
+        for key in (
+            "story_flow",
+            "messaging_pillars",
+            "labels",
+            "hashtags",
+            "proof_points",
+            "stat_highlights",
+            "process_steps",
+            "visual_hierarchy",
+            "brand_alignment_notes",
+            "validation_checklist",
+            "missing_critical",
+            "claim_safety_notes",
+        ):
+            if key in out:
+                out[key] = _as_str_list(out.get(key))
+
         return out
 
     @model_validator(mode="after")

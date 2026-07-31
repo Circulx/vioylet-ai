@@ -16,14 +16,28 @@ from app.prompts.brand_copy_tone import (
     SEBI_FOOTER_HINT,
     NO_SEBI_STATIC_RULE,
     CAROUSEL_FIT_LOCK,
+    UNIVERSAL_FIT_LOCK,
     ICON_STYLE_LOCK,
+    ORANGE_COVERAGE_LOCK,
+    HEADLINE_COLOR_LOCK,
+    CONTENT_DEPTH_LOCK,
+    CAROUSEL_ICON_LOCK,
+    CAROUSEL_TEXT_FIT_LOCK,
+    PREMIUM_HD_ICON_LOCK,
+    INFOGRAPHIC_AUDIENCE_TONE_LOCK,
+    INFOGRAPHIC_RANKING_FORMAT_LOCK,
+    INFOGRAPHIC_TRADE_BOARD_LOCK,
+    RANKING_IMAGE_STUB,
+    STATIC_IMAGE_EXTRA_LOCKS,
 )
+from app.prompts.creative_sizes import size_string, canvas_label
+from app.prompts.carousel_sample_dna import CAROUSEL_SAMPLE_DNA_COMPACT
 
 
 class VisualReasoningPromptBuilder(BasePromptBuilder):
     """Layer 8 Visual Reasoning — prompts rebuilt from Jiraaf-grade sample creatives."""
 
-    PROMPT_VERSION = "4.6-premium-icons-layout-lock"
+    PROMPT_VERSION = "4.8-ranking-sample-dna"
 
     # Locked design tokens from Brand Space + PDF samples
     CAROUSEL_BG = JIRAAF_BG  # ice-blue #E8F0F8
@@ -51,36 +65,48 @@ class VisualReasoningPromptBuilder(BasePromptBuilder):
 CAROUSEL — SAMPLE DESIGN SYSTEM (LOCKED)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Canvas: 1080x1350 portrait (4:5) educational LinkedIn carousel slide.
+ABSOLUTE BOUNDARY: every element fully inside the 1080x1350 canvas — nothing bleeds or clips past edges.
+Safe margin ≥6% all sides. Reduce/drop content rather than clip.
 Background: SOLID {self.CAROUSEL_BG} FULL BLEED edge-to-edge — same hex everywhere.
 NO white side panels. NO second background. NO framed white page inside the canvas.
 Style: Clean corporate fintech education matching Jiraaf sample carousels.
-Soft ULTRA-PREMIUM clay-3D icons (high-detail studio renders, subtle gloss, strong shadows — NOT flat, NOT low-poly).
+Soft ULTRA-PREMIUM HD clay-3D icons (4K-sharp studio product renders, satin + gold accents, strong shadows — NOT flat, NOT blurry, NOT low-poly).
 Typography: bold navy ({self.NAVY}) headlines; gray supporting; ALL copy baked.
 Text must render as clean printed sans-serif, not embossed, not glowing, not outlined, not metallic.
+{HEADLINE_COLOR_LOCK}
 
-SLIDE ANATOMY (top → bottom) — SAMPLE DNA, CONTENT REQUIRED:
-1. TOP-RIGHT: tiny empty logo pocket only — never draw brand wordmark.
-2. Headline (required) + supporting line (required) — never headline-only.
-3. Optional soft callout with one short insight.
-4. Central ULTRA-PREMIUM clay-3D hero cluster (~30% height) — topic metaphors, large and sharp.
-5. Thin orange divider.
-6. THREE equal white chips with premium 3D icons + FULL labels (e.g. "What it is" not "What it").
-7. Bottom ~18% EMPTY for legal footer composite — do not bake SEBI text.
+SLIDE ANATOMY — TEXT DOMINANT (carousel only — match Sweep-In / Capital / Gains):
+1. TOP-RIGHT: plain empty ice-blue corner only — never draw logo, wordmark, or "Brand Logo" placeholder.
+2. MANDATORY UNIQUE navy headline at top-left on EVERY slide — never omit, never repeat topic title.
+3. Supporting line with mechanism or real number (required).
+4. DEPTH BLOCK (REQUIRED, ~35–45% of slide height): max TWO white cards with soft shadow.
+   EACH card = short bold label + one clear explanation (6–12 words) with ₹/%/rule.
+5. ICONS/AVATARS: premium HD clay-3D object (~12–16% height) bottom-right — wallet/coins/doc/lock. NEVER omit. NEVER giant hero.
+6. Thin orange divider optional between cards — never a stack of orange lines as the layout.
+7. NEVER empty Pros/Cons/Examples/Advantages navigation buttons.
+8. Bottom ~24% EMPTY for legal footer composite — do not bake SEBI text.
 
    Exact SEBI legal footer is composited in post (same as logo). Never invent SEBI text.
 
 {ICON_STYLE_LOCK}
+{CAROUSEL_ICON_LOCK}
+{CAROUSEL_TEXT_FIT_LOCK}
 {CAROUSEL_FIT_LOCK}
+{CAROUSEL_SAMPLE_DNA_COMPACT}
 
 RULES:
-- Required content every slide: headline + supporting + hero 3D + 3 labeled chips.
+- Required every slide: mandatory unique headline + supporting + max 2 explained fact cards.
+- Icons must stay tiny. If unsure, prefer MORE text and SMALLER icons.
 - FULL-BLEED ice-blue only — never white side bars / dual backgrounds.
 - Text style must be plain printed sans-serif with perfect English spelling — no stylized chrome/glow outlines.
-- EACH SLIDE UNIQUE: different headline, hero icons, bottom labels.
+- EACH SLIDE UNIQUE: different headline, different facts, different look.
 - Brand colours: navy {self.NAVY} + orange accents {self.ORANGE}.
-- NEVER invent Follow-Jiraaf lines; tiny top-right pocket only.
+{HEADLINE_COLOR_LOCK}
+{ORANGE_COVERAGE_LOCK}
+- NEVER invent Follow-Jiraaf lines; top-right corner stays plain empty ice-blue.
 - Perfect spelling. Do not invent SEBI text.
 - India market: prefer ₹ / %; USD only when source is USD.
+- FAIL if: repeated headlines, empty Pros/Cons chips, giant icons, thin one-line content, clipped text.
 """
         elif fmt == "infographic":
             format_instructions = f"""
@@ -88,6 +114,8 @@ RULES:
 INFOGRAPHIC — MATCH JIRAAF SAMPLE POSTERS (LOCKED)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Canvas: 1080x1350 portrait LinkedIn educational poster.
+ABSOLUTE BOUNDARY: every element fully inside the 1080x1350 canvas — nothing bleeds or clips past edges.
+Safe margin ≥6% all sides. Reduce/drop content rather than clip.
 Background: Soft off-white {self.INFO_BG}.
 Style: Clean, scannable, premium fintech — LIKE the Jiraaf samples (ranking bars / hub facts / % ranks).
 Typography: Bold navy headings; short labels; ALL copy baked into pixels.
@@ -111,6 +139,7 @@ POSTER RULES:
 1. TOP-RIGHT: tiny empty pocket only — NEVER draw logo/wordmark OR brand-name text (JIRAAF).
 2. Prefer short labels over paragraphs. If blueprint has long body, IGNORE it visually.
 3. Brand colours REQUIRED: navy {self.NAVY} + visible orange accents {self.ORANGE}
+{ORANGE_COVERAGE_LOCK}
    (section dashes, highlight bars, CTA arrows, dividers). Never navy-only.
 4. Trade boards = flat bars + typography. Soft matte clay-3D ONLY for education/hub — never on trade tables.
 5. Bake exact approved short strings; spelling must be perfect.
@@ -122,9 +151,12 @@ POSTER RULES:
         else:
             format_instructions = f"""
 STATIC SOCIAL FORMAT — MATCH JIRAAF SAMPLE TONE:
-- Canvas 1200x627 (LinkedIn) or 1080x1080 (Instagram).
+- Canvas: exact format×platform size (LinkedIn static 1200x627, Instagram 1080x1080, X 1200x675).
+- ABSOLUTE BOUNDARY: every element fully inside the canvas — nothing bleeds or clips past edges.
+- Safe margin ≥6% all sides. Reduce/drop content rather than clip.
 - Background ice-blue {self.CAROUSEL_BG}.
 - Brand colours REQUIRED: navy {self.NAVY} + visible orange accents {self.ORANGE}.
+{ORANGE_COVERAGE_LOCK}
 - Trade deficit / export-import → dual-bar year table (NOT bond education cards).
 - Education / why topics → benefit cards + hero icon (NOT country comparisons).
 - Ranking / comparison ONLY when the user asked for top-N / country-wise / vs ranks.
@@ -337,6 +369,10 @@ Return ONLY raw JSON."""
         slides: list[dict] | None = None,
         **kwargs: Any,
     ) -> str:
+        # Resolve exact export size for this format+platform — used in every sub-builder
+        canvas = canvas_label(fmt, platform)  # e.g. "1080x1350 4:5 portrait"
+        layout_type = str(kwargs.get("layout_type") or layout_archetype or "")
+
         if fmt == "infographic":
             return self._build_infographic_prompt(
                 brand_name=brand_name,
@@ -357,6 +393,7 @@ Return ONLY raw JSON."""
                 user_prompt=user_prompt,
                 visual_mood=visual_mood,
                 color_behavior=color_behavior,
+                canvas=canvas,
             )
 
         if fmt == "carousel":
@@ -376,6 +413,7 @@ Return ONLY raw JSON."""
                 visual_mood=visual_mood,
                 color_behavior=color_behavior,
                 initial_prompt=initial_prompt,
+                canvas=canvas,
             )
 
         return self._build_static_prompt(
@@ -391,7 +429,8 @@ Return ONLY raw JSON."""
             sections=infographic_sections or [],
             customer_quote=customer_quote,
             customer_name=customer_name,
-            layout_type=str(kwargs.get("layout_type") or layout_archetype or ""),
+            layout_type=layout_type,
+            canvas=canvas,
         )
 
     def _build_carousel_prompt(
@@ -412,6 +451,7 @@ Return ONLY raw JSON."""
         visual_mood: str,
         color_behavior: str,
         initial_prompt: str,
+        canvas: str = "1080x1350 4:5 portrait",
     ) -> str:
         story = "\n".join(f"- {b}" for b in (story_flow or [])[:5]) or "- (derive from headline/body)"
         proofs = "\n".join(f"- {p}" for p in (proof_points or [])[:5]) or "- (omit if empty)"
@@ -428,16 +468,25 @@ Return ONLY raw JSON."""
         return f"""Create ONE finished LinkedIn educational CAROUSEL SLIDE matching this locked sample design system.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CANVAS BOUNDARY LOCK (NON-NEGOTIABLE)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Canvas: {canvas}.
+ABSOLUTE BOUNDARY: Every pixel of every element (text, icon, chip, divider, CTA) MUST be
+fully inside the canvas rectangle. Nothing may be cropped, clipped, or bleed off any edge.
+Outer safe margin ≥6% on ALL four sides. Content that does not fit must be shortened or dropped.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 LOCKED VISUAL SYSTEM (FROM SAMPLE)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Canvas: 1080x1350 portrait (4:5).
+Canvas: {canvas}.
 BACKGROUND (NON-NEGOTIABLE): Solid flat {self.CAROUSEL_BG} across the entire canvas.
 - Same background color on every slide in the set. No gradients. No textured paper. No photo backgrounds. No pure white.
 - NEVER pure black, charcoal, dark navy, or grainy dark backgrounds — instant fail.
 Color accents: Navy text {self.NAVY}, body gray {self.BODY_GRAY}, orange divider accents {self.ORANGE}, gold metallic 3D accents {self.GOLD}, soft card tint {self.CARD_BLUE}.
 {ICON_STYLE_LOCK}
-Icon style: ULTRA-PREMIUM clay-3D — high-detail studio product renders, subtle gloss, rich shadows
-(NOT flat, NOT low-poly, NOT washed-out). Multiple LARGE 3D objects in the hero (never one lonely icon).
+{PREMIUM_HD_ICON_LOCK}
+Icon style: ULTRA-PREMIUM HD clay-3D — 4K-sharp studio product renders, satin + gold accents, rich shadows
+(NOT flat, NOT low-poly, NOT blurry, NOT washed-out). ONE tiny HD premium accent in corner (never giant hero cluster).
 Typography: Bold navy sans-serif headline; readable supporting lines; all text baked sharply into the image. Perfect English spelling — never invent gibberish on props.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -447,15 +496,15 @@ LOCKED LAYOUT STRUCTURE (TOP → BOTTOM)
 2) HEADLINE: MEDIUM bold navy (max 2 lines, ≤10 words) — never cut mid-word.
 3) SUPPORTING LINE: one short answer / subhead.
 4) CALLOUT BOX (optional): soft rounded ({self.CARD_BLUE}) — one short insight OR omit if crowded.
-5) HERO CLUSTER: LARGE (~30% height) group of 2–4 ULTRA-PREMIUM clay-3D equal-size objects matching THIS topic.
-6) DIVIDER: thin horizontal orange line (short connector optional).
-7) THREE BOTTOM CHIPS: premium 3D icon + ONE complete WORD each (band 60–74% down).
-   Labels must be full words (Coupons/Principal/Maturity) — never truncated fragments.
+5) PREMIUM HD clay-3D avatar icons (~12–16% height) bottom-right — sharp studio render — NEVER omit, NEVER giant hero cluster.
+6) DEPTH BLOCK: 2–3 white cards / rows with label + full explanation sentence each.
+7) DIVIDER: thin horizontal orange line optional.
 8) FOOTER SAFE ZONE (MANDATORY): leave bottom ~22% EMPTY ice-blue — do NOT bake SEBI text
    (exact legal footer is Pillow-composited after, same as logo — larger readable type).
-   Chips must never enter the footer zone.
+   Content cards must never enter the footer zone.
 
 {CAROUSEL_FIT_LOCK}
+{CAROUSEL_SAMPLE_DNA_COMPACT}
 
 Content must feel educational AND perfectly fitted — prefer less content that fits over more that breaks.
 
@@ -490,7 +539,7 @@ NON-NEGOTIABLE
 1. Background MUST be solid {self.CAROUSEL_BG} — identical slide-to-slide. NEVER black/charcoal.
 2. Use multiple ULTRA-PREMIUM clay-3D icons — LARGE, sharp, high-detail; still leave SEBI footer room.
 3. Bake all listed text as legible typography; no empty shells; no mid-word cuts; perfect spelling.
-4. Hierarchy: headline → supporting → optional callout → LARGE hero → chips → SEBI footer.
+4. Hierarchy: headline → supporting → DEPTH explanation cards (most of slide) → tiny accents → SEBI footer.
 5. No flat 2D clipart. No cheap low-poly blobs. No purple neon AI look. No watermark slogans.
 6. NEVER draw logos or brand-name text (no JIRAAF letters) — tiny top-right pocket only.
 7. NEVER invent SEBI/registration text in the image — leave bottom safe zone empty for post-composite.
@@ -518,6 +567,7 @@ Return ONLY the finished image-generation prompt."""
         user_prompt: str,
         visual_mood: str,
         color_behavior: str,
+        canvas: str = "1080x1350 4:5 portrait",
     ) -> str:
         title = headline or "Untitled"
         subtitle = supporting_line or ""
@@ -560,49 +610,69 @@ Return ONLY the finished image-generation prompt."""
         user_block = f'\nUSER TOPIC REQUEST:\n"{user_prompt}"\n' if user_prompt else ""
 
         return f"""Create ONE finished LinkedIn educational INFOGRAPHIC matching Jiraaf sample tone
-(education benefit cards / hubs / rankings ONLY when asked) — NOT a textbook essay grid.
+(simple retail language + ranking/list OR clean trade board) — NOT a textbook essay / jargon dump.
+
+{INFOGRAPHIC_AUDIENCE_TONE_LOCK}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CANVAS BOUNDARY LOCK (NON-NEGOTIABLE)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Canvas: {canvas}.
+ABSOLUTE BOUNDARY: Every pixel of every element (headline, icon, bar, card, source line) MUST be
+fully inside the canvas rectangle. Nothing may bleed, clip, or extend past any edge.
+Safe margin ≥6% on ALL four sides. If content does not fit, shorten labels or drop optional rows.
+No mid-word breaks. Perfect spelling (USD not ESD; Import not Emp; UAE not HAE).
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 LOCKED VISUAL SYSTEM (FROM JIRAAF SAMPLES)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Canvas: 1080x1350 portrait.
+Canvas: {canvas}.
 BACKGROUND: Soft off-white / light ice-blue {self.INFO_BG}. Clean, airy, premium.
 NEVER pure black, charcoal, dark navy, grainy, or textured dark backgrounds.
 Colors: Navy headings {self.NAVY}, body {self.BODY_GRAY}, REQUIRED orange accents {self.ORANGE}, gold {self.GOLD}. Never navy-only.
+{ORANGE_COVERAGE_LOCK}
 {ICON_STYLE_LOCK}
 Icon style:
 - EDUCATION / WHY posters: ULTRA-PREMIUM clay-3D icons for benefits (shield, coins, bank, chart) — NO national flags.
-- RANKING / country comparison ONLY when user asked to rank countries: REAL flat 2D national flags.
+- RANKING / country comparison ONLY when user asked to rank countries: glossy premium 3D flag tiles
+  (same as static Top Countries sample) — NEVER flat grey boxes, NEVER wrong country flags.
 Typography: Bold navy sans headlines; short labels. ALL text baked into pixels. Perfect spelling.
+CTA (if any): COMPACT ≤28% width, ≤4.5% height, 2–4 words — never a wide paragraph button.
+{STATIC_IMAGE_EXTRA_LOCKS}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 PICK ONE SAMPLE LAYOUT (by USER TOPIC — do not invent comparisons)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-A) TRADE DEFICIT DATA BOARD (DEFAULT when topic is India–Russia trade deficit / export-import):
+A) TRADE DEFICIT DATA BOARD (when topic is India–Russia trade deficit / export-import):
+{INFOGRAPHIC_TRADE_BOARD_LOCK}
    Match the Jiraaf sample poster EXACTLY in structure:
    1) Tiny empty top-right pocket
-   2) Punchy data headline + one factual subtitle
+   2) Punchy PLAIN data headline + one soft subtitle (no jargon)
    3) Column headers: EXPORT | TRADE BALANCE | IMPORT (Billion USD)
-   4) Fiscal-year rows: orange horizontal export bars LEFT | balance number CENTER | navy import bars RIGHT
+   4) Fiscal-year rows: orange export bars LEFT | balance CENTER | navy import bars RIGHT
    5) Bottom white box: "What India buys most from Russia" — category + USD Bn lines
    6) Source line (Ministry of Commerce…)
-   FORBIDDEN: handshake/FD briefcase/Capital Preservation/Regular Income/Liquidity Management/
-   bond cards / wrong flags / investment CTAs
+   FORBIDDEN: handshake/FD briefcase/technical sidebars (Key Drivers, Vostro, Currency Risk,
+   Advisor questions) / bond cards / wrong flags / paragraph CTAs
 
 B) EDUCATION / WHY / BENEFITS (ONLY for why bonds / predictable income / useful):
-   Hero clay-3D + 3–5 benefit cards — NO trade tables
+   Hero clay-3D + 3–5 benefit cards — NO trade tables — simple retail language
 
-C) RANKING LIST (ONLY if user asked top-N / FDI / country-wise):
-   Flag + NAME + bar + % + metric rows + Source footer
+C) RANKING LIST (ONLY if user asked top-N / FDI / country-wise) — SAME DNA as static:
+{INFOGRAPHIC_RANKING_FORMAT_LOCK}
+   Premium AI look identical to static Top Countries sample: glossy 3D flags + coin icons
+   Currency: ₹ / ¥ / USD letters / % — NEVER $ / US $
+   Language like: "Top investor in India" / "Strong economic ties" — NOT technical essays
 
 D) HUB + SHORT FACTS (ONLY bank rates / key rules):
    Center hub + 4–5 bank fact cards
 
 Do NOT invent bond education cards when the user asked for a trade deficit analysis.
 Do NOT invent a country comparison when the user asked why / benefits / useful / explain.
+Do NOT invent technical side panels the retail audience cannot understand.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-EXACT COPY TO BAKE (verbatim — keep short)
+EXACT COPY TO BAKE (verbatim — keep short + simple)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Brand: {brand_name}
 Hook: {hook or title}
@@ -621,7 +691,7 @@ Proof points:
 {proofs}
 Objective strip labels:
 {objectives}
-CTA / source / banner: {cta or '(short CTA for education; Source line only if ranking)'}
+CTA / source / banner: {cta or '(short CTA ≤4 words for education; Source line only if ranking)'}
 Note box: {note or '(omit note box if empty)'}
 Quote attribution: {customer_name or ''}
 Visual mood: {visual_mood}
@@ -633,12 +703,14 @@ NON-NEGOTIABLE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 1. Match user intent: why/benefits → education cards; ranking ONLY when asked.
 2. Bake exact short strings; never paraphrase into heavier textbook wording.
-3. Spelling perfect — never invent gibberish on cards.
+3. Spelling perfect — never invent gibberish on cards (USD/Import/UAE correct).
 4. Brand colours: navy {self.NAVY} + REQUIRED visible orange {self.ORANGE} accents.
+{ORANGE_COVERAGE_LOCK}
 5. India market: ₹/% only when numbers belong; never invent foreign yield comparison tables.
 6. NEVER invent country flags / India-USA-Germany-Japan boards for education prompts.
+{UNIVERSAL_FIT_LOCK}
 7. NEVER draw logos/wordmarks or brand-name text (no JIRAAF) — tiny top-right pocket only.
-8. No purple neon AI aesthetic. No empty shells.
+8. No purple neon AI aesthetic. No empty shells. No text breaking / mid-word cuts.
 9. {NO_SEBI_STATIC_RULE}
 
 Return ONLY the finished image-generation prompt."""
@@ -659,8 +731,12 @@ Return ONLY the finished image-generation prompt."""
         customer_quote: str = "",
         customer_name: str = "",
         layout_type: str = "",
+        canvas: str = "",
     ) -> str:
-        ratio = "1080x1080" if (platform or "").lower() == "instagram" else "1200x627"
+        # Use canvas from size_string if not passed in
+        if not canvas:
+            canvas = canvas_label("static", platform)
+        ratio = canvas
         user_block = f'\nUSER TOPIC REQUEST:\n"{user_prompt}"\n' if user_prompt else ""
         topic = (user_prompt or "").lower()
         layout_type = str(layout_type or "").strip()
@@ -713,9 +789,16 @@ Return ONLY the finished image-generation prompt."""
             return f"""Create a finished premium LinkedIn/social STATIC creative matching the Jiraaf
 BANK PENALTY RATES SAMPLE (hub + short fact cards WITH ICONS) — NOT a teaser ad.
 
-Canvas: prefer square 1080x1080 for this hub layout (or {ratio}).
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CANVAS BOUNDARY LOCK (NON-NEGOTIABLE)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Canvas: {ratio}.
+ABSOLUTE BOUNDARY: Every pixel of every element (hub, cards, icons, text) MUST be
+fully inside the {ratio} canvas. Nothing may bleed, clip, or extend past any edge.
+Safe margin ≥6% on ALL four sides.
 Background: clean solid ice-blue {self.INFO_BG} — NO texture stamps, NO ghost watermarks.
 Brand colours REQUIRED: navy {self.NAVY} headlines + visible orange {self.ORANGE} accents.
+{ORANGE_COVERAGE_LOCK}
 {ICON_STYLE_LOCK}
 
 FORBIDDEN (instant fail if present):
@@ -754,6 +837,7 @@ FAIL if any card shows gibberish, invented sentences, or misspellings.
 
 Mood: {visual_mood}
 Colors: navy {self.NAVY} + REQUIRED orange {self.ORANGE} accents on {self.INFO_BG}
+{ORANGE_COVERAGE_LOCK}
 {user_block}
 
 Return ONLY the finished image-generation prompt."""
@@ -766,7 +850,8 @@ Return ONLY the finished image-generation prompt."""
             if is_trade_data_board(user_prompt or ""):
                 ranking_block = f"""
 LAYOUT LOCK — TRADE DEFICIT DATA BOARD (match Jiraaf India–Russia sample, NOT bond poster):
-Canvas: 1080x1350 portrait LinkedIn infographic.
+Canvas: {ratio}.
+ABSOLUTE BOUNDARY: every element fully inside the canvas — nothing clips or bleeds past edges.
 Background: soft off-white / ice-blue {self.INFO_BG}.
 Top: punchy headline + one factual subtitle ONLY.
 Main: aligned dual-bar table —
@@ -782,32 +867,50 @@ Exact year / category rows (bake letter-perfect):
 """
             else:
                 ranking_block = f"""
-LAYOUT LOCK — STATIC RANKING (NOT bank hub):
-Canvas MUST read like a LinkedIn landscape ranking board, not a poster collage.
-Use a strict aligned table/grid across the 1200x627 landscape canvas.
-Top area: headline + one supporting line only.
-Main body: 8–10 evenly spaced horizontal rows with consistent baseline alignment.
-Each row = REAL flat national flag | country name | % value | 1 short fact | 1 short implication.
-Keep all rows inside one clean ranking block. No scattered floating labels.
-No extra decorative badges, stamps, floating cards, stray icons, or side illustrations inside the ranking area.
-At most ONE small supporting 3D accent outside the grid, or omit it entirely if it crowds the data.
-Highlight India with text color/weight only — do not move it out of the grid.
-Do NOT turn flags into 3D icons, map pins, shields, coins, or abstract country symbols.
+LAYOUT LOCK — PREMIUM STATIC RANKING (SAME DNA as infographic ranking):
+{RANKING_IMAGE_STUB}
+Canvas: {ratio}. Soft white / ice-blue {self.INFO_BG} — NEVER dark navy.
+ABSOLUTE BOUNDARY: every element fully inside the canvas — nothing clips.
+Same beauty as the premium AI Top Countries sample (glossy 3D flags + coin icons + clean type):
+1) LARGE bold navy headline top-left + soft supporting line + short thin orange accent line
+2) Top-right: empty pocket only (logo later) — never draw JIRAAF text
+3) Ranked vertical rows (exact count from data), evenly spaced, thin light dividers:
+   EACH row LEFT→RIGHT perfectly aligned:
+   - Orange rounded rank badge (white number)
+   - Glossy premium 3D flag tile — REAL correct flag for THAT country only
+   - Country NAME large bold navy + short grey phrase under it (≤6 plain words)
+   - Amount large bold navy on the RIGHT
+   - Tiny premium clay-3D coin/chart icon on the far right
+4) Bottom: COMPACT orange CTA pill (≤28% width, 2–4 words)
+CURRENCY: NEVER "US $" / "$" / "ESD" — ₹ India retail · ¥ Japan · "USD … Bn" if source USD · % inflation.
+FLAGS: correct per country (UAE not HAE; USA not ASA; no grey boxes; never swap NL/JP/GB).
+Tone: short myth-bust / news hooks — NOT textbook essays.
+FORBIDDEN: flat table-only look, banning 3D flags/coins, dark backgrounds, $ signs, navy-only.
 Exact ranked rows (bake letter-perfect):
 {rows_text}
 """
 
-        return f"""Create a finished premium LinkedIn/social STATIC creative.
+        return f"""Create a finished premium LinkedIn/social STATIC creative matching Jiraaf sample DNA.
 
-Background: solid ice-blue {self.CAROUSEL_BG} or soft {self.INFO_BG}.
-Style: clean premium fintech ranking board with baked typography.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CANVAS BOUNDARY LOCK (NON-NEGOTIABLE)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Canvas: {ratio}.
+ABSOLUTE BOUNDARY: Every pixel of every element (headline, icon, card, CTA, source line) MUST be
+fully inside the {ratio} canvas. Nothing may bleed, clip, or extend past any edge.
+Safe margin ≥6% on ALL four sides. Shorten or drop content before clipping occurs.
+
+Background: solid ice-blue {self.CAROUSEL_BG} or soft {self.INFO_BG} — NEVER dark navy / black.
+Style: premium fintech creative with glossy 3D accents + sharp baked typography (like Top Countries sample).
 Brand colours REQUIRED: navy {self.NAVY} + visible orange accents {self.ORANGE}.
-Logo: tiny top-right icon pocket only for {brand_name} — never draw brand-name text.
-Layout: Bold headline, supporting line, optional short body, clear CTA band.
+{ORANGE_COVERAGE_LOCK}
+{STATIC_IMAGE_EXTRA_LOCKS}
+Logo: tiny top-right empty pocket only — never draw brand-name text.
+Layout: Bold large headline, supporting line, ranked rows OR fact cards, compact CTA.
 {ranking_block}
 If sections/facts are provided below and this is NOT a ranking, prefer a hub or fact-card layout.
-Canvas: {ratio}.
 {NO_SEBI_STATIC_RULE}
+Never use $ or US $ — prefer ₹ / ¥ / USD letters / %.
 
 Exact text (bake letter-perfect — never invent gibberish):
 Headline: {headline}

@@ -13,19 +13,34 @@ from app.services.image_generation.dalle_service import DalleService
 from app.services.image_generation.logo_fetcher import get_brand_logo_storage_path
 from app.services.image_generation.sdxl_service import SdxlService
 from app.services.llm.llm_router import LLMRouter
-from app.services.copy_proofread import NO_AI_LOGO_RULE, SPELLING_ACCURACY_RULE, HUB_CARD_ICON_RULE
 from app.prompts.brand_copy_tone import (
-    BRAND_COLOR_LOCK_RULE,
-    CAROUSEL_SEBI_LOCK_RULE,
-    INDIA_MARKET_LOCK_RULE,
     SOURCE_FOOTER_RULE,
-    SEBI_FOOTER_HINT,
     NO_SEBI_STATIC_RULE,
-    CAROUSEL_FIT_LOCK,
     ICON_STYLE_LOCK,
+    UNIVERSAL_FIT_LOCK,
+    CAROUSEL_IMAGE_STYLE_STUB,
+    CAROUSEL_IMAGE_EXTRA_LOCKS,
+    STATIC_IMAGE_EXTRA_LOCKS,
+    INFOGRAPHIC_AUDIENCE_TONE_LOCK,
+    INFOGRAPHIC_TRADE_BOARD_LOCK,
 )
 from app.prompts.jiraaf_layout import classify_layout
 from app.prompts.creative_sizes import canvas_label, size_string
+
+# gpt-image-1 practical prompt budget (API also truncates ~6000)
+_IMAGE_PROMPT_BUDGET = 5800
+
+
+def _budget_prompt(content: str, locks: str = "", budget: int = _IMAGE_PROMPT_BUDGET) -> str:
+    """Keep slide CONTENT intact; only trim trailing locks if over budget."""
+    content = (content or "").strip()
+    locks = (locks or "").strip()
+    if len(content) >= budget:
+        return content[:budget]
+    remaining = budget - len(content) - 2
+    if remaining <= 0 or not locks:
+        return content
+    return f"{content}\n\n{locks[:remaining]}"
 
 logger = get_logger(__name__)
 
@@ -87,49 +102,228 @@ _FORBIDDEN_SAMPLE_CHIPS = {
     "investors",
 }
 
+# Empty teaser/nav chips — these make slides look cheap (user complaint)
+_FORBIDDEN_NAV_CHIPS = {
+    "pros",
+    "cons",
+    "examples",
+    "example",
+    "advantages",
+    "disadvantages",
+    "comparison",
+    "compare",
+    "benefits",
+    "drawbacks",
+    "overview",
+    "summary",
+    "details",
+    "learn",
+    "explore",
+    "start",
+    "more",
+    "next",
+    "swipe",
+}
+
+
+def _is_nav_chip(word: str) -> bool:
+    return (word or "").strip().lower() in _FORBIDDEN_NAV_CHIPS
+
+
+def _headline_is_repeat(current: str, prior: list[str]) -> bool:
+    """True if headline is nearly the same as a previous slide (e.g. 'Capital Controls' x5)."""
+    cur = " ".join((current or "").lower().split())
+    if not cur:
+        return True
+    # Strip common prefixes / punctuation
+    for prefix in ("what are ", "what is ", "why ", "how ", "understanding ", "about "):
+        if cur.startswith(prefix):
+            cur_core = cur[len(prefix) :]
+            break
+    else:
+        cur_core = cur
+    cur_core = cur_core.strip(" ?!.:-")
+    for p in prior:
+        prev = " ".join((p or "").lower().split())
+        for prefix in ("what are ", "what is ", "why ", "how ", "understanding ", "about "):
+            if prev.startswith(prefix):
+                prev_core = prev[len(prefix) :]
+                break
+        else:
+            prev_core = prev
+        prev_core = prev_core.strip(" ?!.:-")
+        if not prev_core:
+            continue
+        if cur == prev or cur_core == prev_core:
+            return True
+        # High overlap on short titles
+        if len(cur_core) <= 28 and (cur_core in prev_core or prev_core in cur_core):
+            return True
+        # Token overlap for near-duplicates ("trade deficit" vs "trade deficit and imports-exports")
+        cur_toks = set(cur_core.replace("-", " ").split())
+        prev_toks = set(prev_core.replace("-", " ").split())
+        if cur_toks and prev_toks:
+            overlap = len(cur_toks & prev_toks) / max(len(cur_toks | prev_toks), 1)
+            if overlap >= 0.7 and len(cur_toks & prev_toks) >= 2:
+                return True
+    return False
+
+
+def _is_bare_topic_headline(headline: str, user_prompt: str) -> bool:
+    """True for lazy titles that are just the topic name (Trade Deficit / Capital Controls)."""
+    h = " ".join((headline or "").lower().split()).strip(" ?!.:-")
+    for prefix in ("what are ", "what is ", "understanding ", "about "):
+        if h.startswith(prefix):
+            h = h[len(prefix) :].strip()
+    if not h or len(h.split()) > 5:
+        return False
+    topic = " ".join((user_prompt or "").lower().split())
+    # Known bare topic titles
+    bare = {
+        "trade deficit",
+        "capital controls",
+        "capital control",
+        "unrealized gains",
+        "unrealised gains",
+        "sweep-in fd",
+        "sweep in fd",
+        "fixed deposits",
+        "imports exports",
+        "imports-exports",
+    }
+    if h in bare:
+        return True
+    # Headline is basically a subset of the user topic words only
+    h_toks = set(h.replace("-", " ").split()) - {"and", "the", "a", "an", "of", "vs", "versus"}
+    if not h_toks:
+        return False
+    topic_toks = set(topic.replace("-", " ").split())
+    return h_toks.issubset(topic_toks) and len(h_toks) <= 4
+
+
+def _content_fact_lines(bp_slide: object | None, slide_body: str, slide_supporting: str) -> list[str]:
+    """Pull explanation lines to bake as content cards (full sentences, not empty Pros/Cons)."""
+    lines: list[str] = []
+
+    def _add(s: str, max_len: int = 75) -> None:
+        t = " ".join(str(s).split()).strip()
+        if not t:
+            return
+        # Skip bare nav words
+        if _is_nav_chip(t) or (len(t.split()) == 1 and t.lower() in {"selling", "hedging", "leverage", "hold", "sell"}):
+            return
+        if t not in lines:
+            lines.append(t[:max_len])
+
+    if bp_slide:
+        for p in list(getattr(bp_slide, "proof_points", None) or [])[:4]:
+            _add(str(p), 90)
+        for p in list(getattr(bp_slide, "stat_highlights", None) or [])[:3]:
+            _add(str(p), 90)
+        # Longer chip phrases that already explain something
+        for c in list(getattr(bp_slide, "chip_labels", None) or [])[:3]:
+            s = " ".join(str(c).split()).strip()
+            if s and (any(ch.isdigit() for ch in s) or "₹" in s or "%" in s or len(s.split()) >= 3):
+                _add(s, 90)
+
+    body = " ".join((slide_body or "").split()).strip()
+    if body:
+        # Prefer sentence chunks as separate cards
+        parts = [p.strip() for p in body.replace(";", ".").split(".") if p.strip()]
+        if len(parts) >= 2:
+            for part in parts[:3]:
+                if len(part.split()) >= 4:
+                    _add(part, 90)
+        else:
+            # Split long body into ~2 chunks by words
+            words = body.split()
+            if len(words) >= 16:
+                mid = len(words) // 2
+                _add(" ".join(words[:mid]), 90)
+                _add(" ".join(words[mid:]), 90)
+            else:
+                _add(body, 110)
+
+    if len(lines) < 2 and slide_supporting:
+        _add(slide_supporting, 90)
+
+    # Ensure at least something teachable
+    while len(lines) < 2 and body:
+        _add(body, 110)
+        break
+    return lines[:3]
+
 _ROLE_HEROES = {
-    "hook": "3D question-mark + bond certificate + rupee coin (curiosity hook)",
-    "define": "3D bond paper + calendar coupon strip + handshake (plain definition)",
-    "impact": "3D rising income chart + wallet + rupee stack (why it helps)",
-    "implication": "3D shield + lock/padlock + clock (predictable / protected)",
-    "proof": "3D investor briefcase + growth bars + handshake (real-world proof)",
-    "myth": "3D myth-bust stamp + lightbulb + checklist (myth vs truth)",
-    "cta": "3D CTA arrow + phone/app tile + rupee coin (closing action)",
-    "insight": "3D bond certificate + shield + rupee coins (topic insight)",
+    "hook": "HD premium clay-3D avatar: soft wallet + rupee coin stack + question spark (curiosity)",
+    "define": "HD premium clay-3D avatar: savings document + coin pile + labeled threshold marker",
+    "impact": "HD premium clay-3D avatar: comparison chart bars + FD certificate + wallet",
+    "implication": "HD premium clay-3D avatar: sweep arrows + savings phone + soft padlock",
+    "proof": "HD premium clay-3D avatar: checklist board + shield + coin stack",
+    "myth": "HD premium clay-3D avatar: balance scale + lightbulb + checklist",
+    "cta": "HD premium clay-3D avatar: comment bubble + phone tile + soft CTA arrow",
+    "insight": "HD premium clay-3D avatar: document + shield + chart",
 }
 
-# ONE-WORD chips only — multi-word phrases get truncated by SEBI ("Steady"/"Plan"/"Less")
-_ROLE_CHIPS = {
-    "hook": ("Hook", "Income", "Bonds"),
-    "define": ("Coupons", "Principal", "Maturity"),
-    "impact": ("Income", "Cashflow", "Stability"),
-    "implication": ("Safety", "Horizon", "Predictable"),
-    "proof": ("Example", "Lesson", "Action"),
-    "myth": ("Myth", "Reality", "Takeaway"),
-    "cta": ("Explore", "Learn", "Start"),
-    "insight": ("Income", "Safety", "Liquidity"),
-}
-
-# Distinct heroes by slide index so slides 3 vs 4 never clone the same cluster
 _BOND_HEROES_BY_N = {
-    1: "3D question-mark + bond certificate + rupee coin",
-    2: "3D bond paper + coupon calendar + handshake",
-    3: "3D coupon stream + wallet + rising income bars (HOW IT WORKS — unique)",
-    4: "3D shield + padlock + clock (INVESTOR IMPLICATION — different from slide 3)",
-    5: "3D briefcase + warning triangle + checklist (nuance / watch-out)",
-    6: "3D myth stamp + lightbulb + checklist",
-    7: "3D CTA arrow + phone tile + rupee coin",
+    1: "HD premium clay-3D avatar: bond certificate + gold rupee coin + soft spark",
+    2: "HD premium clay-3D avatar: bond paper + coupon calendar + wallet",
+    3: "HD premium clay-3D avatar: coupon stream + wallet + rising income bars",
+    4: "HD premium clay-3D avatar: shield + padlock + clock",
+    5: "HD premium clay-3D avatar: balance scale + checklist + lightbulb",
+    6: "HD premium clay-3D avatar: myth stamp + lightbulb + checklist",
+    7: "HD premium clay-3D avatar: CTA arrow + phone tile + rupee coin",
+}
+
+_CAPITAL_CONTROL_HEROES_BY_N = {
+    1: "HD premium clay-3D avatar: border gate + currency arrows + soft spark",
+    2: "HD premium clay-3D avatar: rule document + gold lock + currency token",
+    3: "HD premium clay-3D avatar: currency chart + shield + lock",
+    4: "HD premium clay-3D avatar: LRS document + sector icons + RBI stamp",
+    5: "HD premium clay-3D avatar: open gate + inflow arrows + bond certificate",
+    6: "HD premium clay-3D avatar: balance scale + arrows + checklist",
+    7: "HD premium clay-3D avatar: CTA arrow + document + chart",
+}
+
+_CAPITAL_CONTROL_CHIPS_BY_N = {
+    1: ("Duty", "Gold", "Story"),
+    2: ("Who", "Amount", "Where"),
+    3: ("Currency", "Markets", "Costs"),
+    4: ("LRS", "FDI", "RBI"),
+    5: ("Ease", "Attract", "Inflow"),
+    6: ("Myth", "Reality", "Takeaway"),
+    7: ("Comment", "Share", "Ask"),
 }
 
 _BOND_CHIPS_BY_N = {
-    1: ("Surprise", "Income", "Bonds"),
-    2: ("Coupons", "Principal", "Maturity"),
-    3: ("Mechanism", "Cashflow", "Timing"),
-    4: ("Investor", "Safety", "Horizon"),
-    5: ("Risk", "Condition", "Watch"),
-    6: ("Myth", "Reality", "Takeaway"),
-    7: ("Explore", "Learn", "Start"),
+    1: ("Price", "Coupon", "Rates"),
+    2: ("Bond", "Premium", "Yield"),
+    3: ("Hold", "Coupon", "Maturity"),
+    4: ("Exit", "Gain", "Redeploy"),
+    5: ("Cycle", "Opportunity", "Timing"),
+    6: ("Hold", "Sell", "Goals"),
+    7: ("Comment", "Share", "Ask"),
 }
+
+_ROLE_CHIPS = {
+    "hook": ("Fact", "Tension", "Why"),
+    "define": ("Meaning", "Rule", "Flow"),
+    "impact": ("Mechanism", "Number", "Effect"),
+    "implication": ("Choice", "Condition", "Impact"),
+    "proof": ("Caveat", "Tradeoff", "Watch"),
+    "myth": ("Myth", "Reality", "Takeaway"),
+    "cta": ("Comment", "Share", "Ask"),
+    "insight": ("Fact", "Number", "Impact"),
+}
+
+
+def _is_bond_topic(text: str) -> bool:
+    t = (text or "").lower()
+    return any(k in t for k in ("bond", "bonds", "debenture", "debentures", "fixed income", "coupon", "yield", "maturity"))
+
+
+def _is_capital_controls_topic(text: str) -> bool:
+    t = (text or "").lower()
+    return any(k in t for k in ("capital control", "capital controls", "capital flow", "inflow", "outflow", "currency control", "cross-border"))
 
 
 def _normalize_role(role: object) -> str:
@@ -163,7 +357,10 @@ def _normalize_role(role: object) -> str:
 
 
 def _chips_look_like_wrong_sample(chips: tuple[str, str, str]) -> bool:
-    return any(c.strip().lower() in _FORBIDDEN_SAMPLE_CHIPS for c in chips)
+    return any(
+        c.strip().lower() in _FORBIDDEN_SAMPLE_CHIPS or _is_nav_chip(c)
+        for c in chips
+    )
 
 
 def _one_word_chips(values: list[str] | tuple[str, ...]) -> tuple[str, str, str] | None:
@@ -174,7 +371,7 @@ def _one_word_chips(values: list[str] | tuple[str, ...]) -> tuple[str, str, str]
             continue
         # Prefer first token; keep short compounds like Cashflow
         token = w.split()[0].strip(".,;:!")
-        if token and token.lower() not in _FORBIDDEN_SAMPLE_CHIPS:
+        if token and token.lower() not in _FORBIDDEN_SAMPLE_CHIPS and not _is_nav_chip(token):
             words.append(token[:14])
         if len(words) == 3:
             return (words[0], words[1], words[2])
@@ -204,7 +401,9 @@ def _derive_carousel_chips(
             return got
 
     blob = f"{user_prompt} {slide_headline} {slide_body}".lower()
-    if any(k in blob for k in ("bond", "coupon", "predictable", "income", "yield", "maturity")):
+    if _is_capital_controls_topic(blob):
+        return _CAPITAL_CONTROL_CHIPS_BY_N.get(n) or _CAPITAL_CONTROL_CHIPS_BY_N[((n - 1) % 7) + 1]
+    if _is_bond_topic(user_prompt):
         return _BOND_CHIPS_BY_N.get(n) or _BOND_CHIPS_BY_N[((n - 1) % 7) + 1]
 
     return _ROLE_CHIPS.get(role, _ROLE_CHIPS["insight"])
@@ -220,7 +419,9 @@ def _derive_carousel_hero(
 ) -> str:
     """Hero cluster unique per slide index — slides 3 and 4 must not share the same set."""
     blob = f"{user_prompt} {slide_headline}".lower()
-    if any(k in blob for k in ("bond", "coupon", "predictable", "income", "yield")):
+    if _is_capital_controls_topic(blob):
+        hero = _CAPITAL_CONTROL_HEROES_BY_N.get(n) or _CAPITAL_CONTROL_HEROES_BY_N[((n - 1) % 7) + 1]
+    elif _is_bond_topic(user_prompt):
         hero = _BOND_HEROES_BY_N.get(n) or _BOND_HEROES_BY_N[((n - 1) % 7) + 1]
     else:
         hero = _ROLE_HEROES.get(role) or _ROLE_HEROES["insight"]
@@ -232,20 +433,15 @@ def _derive_carousel_hero(
 
 
 def _error_free_text_block(lines: list[tuple[str, str]], *, is_carousel: bool = False) -> str:
-    """Build quoted-text bake instructions (font + contrast + exact strings)."""
+    """Build quoted-text bake instructions (font + contrast + exact strings). Keep SHORT for image budget."""
     parts = [
-        "\n\nCRITICAL — ERROR-FREE BAKED TEXT (quoted strings are EXACT):\n",
-        "Typography: clean printed sans-serif only. No chrome, bevel, glow, outline, handwriting, or decorative text effects.\n",
-        "Contrast: dark navy text (#003975) on ice-blue background (#E8F0F8) with orange accents (#FFA400).\n",
-        "Render ONLY the quoted strings below — letter-perfect, never truncate headline with '...'.\n",
-        "Do not invent words. Do not misspell. Do not leave empty cards. Logo is composited after.\n",
-        "India market: prefer ₹/%; NEVER use £; USD only if source is USD; correct country names/flags.\n",
-        "Brand: navy #003975 + REQUIRED orange #FFA400 accents; ice-blue BG #E8F0F8.\n",
+        "\nEXACT BAKED TEXT (letter-perfect — never truncate mid-word):\n",
+        "Font: clean navy sans-serif on ice-blue/white. India: ₹/% only — never £.\n",
     ]
     if is_carousel:
-        parts.append(f"{SEBI_FOOTER_HINT}\n")
+        parts.append("Leave bottom ~14% empty for SEBI composite. No AI logo.\n")
     else:
-        parts.append(f"{NO_SEBI_STATIC_RULE}\n")
+        parts.append("No SEBI footer. No AI logo.\n")
     for label, quoted in lines:
         if quoted and quoted != '""':
             parts.append(f"{label}: {quoted}\n")
@@ -368,7 +564,8 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
             + f"source_footer={source_footer}\nsources={sources_note}\n"
             + "CRITICAL: Generate a FINISHED creative. Render the approved strings as sharp typography in the image. "
             "Do not leave empty shells. Do not invent alternate copy. "
-            "REQUIRED: navy #003975 + orange #FFA400 accents; ULTRA-PREMIUM clay-3D icons; content must fit fully. "
+            "REQUIRED: navy #003975 + orange #FFA400 accents (orange text+accents >=~2% of image); "
+            "ULTRA-PREMIUM clay-3D icons; content must fit fully. "
             + (
                 f'Bake compact footer text EXACTLY as: "{source_footer}". '
                 if source_footer
@@ -376,6 +573,11 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
             )
             + SOURCE_FOOTER_RULE
         )
+
+    # Size computation early — needed by expander prompts AND image generation
+    size = size_string(fmt, platform)
+    canvas_desc = canvas_label(fmt, platform)
+    logger.info("visual_reasoning.canvas_size", format=fmt, platform=platform, size=size)
 
     # 1. Complete visual reasoning structure (GPT-4o)
     service = _router.get_service("l8_visual_reasoning")
@@ -387,96 +589,100 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
         max_tokens=8192,
     )
 
-    # 1b. STAGE 2: Expand the image prompt into a professional 2500+ word cinematic art direction brief
+    # 1b. STAGE 2: Expand image prompt — SKIP for carousel (per-slide prompts are built below;
+    # expander output was unused and burned tokens every run).
     expander_meta: dict = {}
-    logger.info(
-        "visual_reasoning.prompt_expansion_start",
-        initial_prompt_len=len(output.image_prompt_direction),
-    )
-    expander_system = _prompt_builder.build_expander_system(
-        dominant_visual_system=output.dominant_visual_system,
-        fmt=fmt,
-    )
-    expander_user = _prompt_builder.build_expander_user(
-        brand_name=brand_intelligence.brand_core.brand_name,
-        visual_mood=brand_intelligence.visual_behavior.visual_mood,
-        color_behavior=brand_intelligence.visual_behavior.color_behavior,
-        image_behavior=brand_intelligence.visual_behavior.image_behavior,
-        design_sophistication=brand_intelligence.visual_behavior.design_sophistication,
-        concept_name=concept_dict.get("concept_name", ""),
-        core_idea=concept_dict.get("core_idea", ""),
-        visual_angle=concept_dict.get("visual_angle", ""),
-        copy_headline=headline,
-        copy_body=body,
-        supporting_line=supporting,
-        cta=cta,
-        infographic_sections=sections,
-        proof_points=proof_points,
-        stat_highlights=stat_highlights,
-        problem_statement=problem_statement,
-        solution_statement=solution_statement,
-        customer_quote=customer_quote,
-        customer_name=customer_name,
-        process_steps=process_steps,
-        format_strategy=format_plan.format_strategy,
-        layout_archetype=(
-            blueprint.layout_archetype if blueprint and blueprint.layout_archetype else format_plan.layout_archetype
-        ),
-        platform=platform,
-        initial_prompt=output.image_prompt_direction,
-        user_prompt=user_prompt,
-        dominant_visual_system=output.dominant_visual_system,
-        fmt=fmt,
-        layout_type=layout_type,
-        hook=(blueprint.hook if blueprint else "") or getattr(copy, "hook", None) or "",
-        story_flow=list(blueprint.story_flow) if blueprint and blueprint.story_flow else [],
-        slides=(
-            [s.model_dump() for s in blueprint.slides]
-            if blueprint and blueprint.slides
-            else [s.model_dump() for s in (copy.slide_copy or [])]
-        ),
-    )
-
-    try:
-        expanded_prompt, expander_meta = await service.complete_text(
-            system=expander_system,
-            user=expander_user,
-            layer="l8_prompt_expander",
-            temperature=0.35,
-            max_tokens=2048,
-        )
+    image_gen_prompt = output.image_prompt_direction
+    if fmt == "carousel":
+        logger.info("visual_reasoning.prompt_expansion_skipped", reason="carousel_uses_per_slide_prompts")
+    else:
         logger.info(
-            "visual_reasoning.prompt_expansion_complete",
-            expanded_prompt_len=len(expanded_prompt),
-            expander_tokens=expander_meta.get("output_tokens", 0),
+            "visual_reasoning.prompt_expansion_start",
+            initial_prompt_len=len(output.image_prompt_direction),
         )
-        # Lock exact approved copy AFTER expansion so the LLM cannot paraphrase away spelling
-        exact_lock = (
-            "\n\nLOCKED EXACT COPY (bake letter-perfect — do not rewrite):\n"
-            f'Headline: "{headline}"\n'
-            f'Supporting: "{supporting}"\n'
-            f'CTA: "{cta}"\n'
+        expander_system = _prompt_builder.build_expander_system(
+            dominant_visual_system=output.dominant_visual_system,
+            fmt=fmt,
         )
-        if sections:
-            exact_lock += "Sections:\n"
-            # Include all ranking rows (cap 15) — truncating to 5/6 caused top-10 bugs
-            for i, sec in enumerate(sections[:15], start=1):
-                if isinstance(sec, dict):
-                    lab = sec.get("section_label") or f"Item {i}"
-                    st = sec.get("stat") or ""
-                    incs = sec.get("includes") or []
-                    if isinstance(incs, list):
-                        incs_txt = "; ".join(str(x) for x in incs[:2])
-                    else:
-                        incs_txt = str(incs)
-                    exact_lock += f'{i}. "{lab}" | "{st}" | "{incs_txt}"\n'
-        image_gen_prompt = (expanded_prompt + exact_lock + f"\n{ICON_STYLE_LOCK}\n")[:6000]
-        output.image_prompt_direction = image_gen_prompt
-    except Exception as e:
-        logger.warning(
-            f"visual_reasoning.prompt_expansion_failed, using original prompt: {e}"
+        expander_user = _prompt_builder.build_expander_user(
+            brand_name=brand_intelligence.brand_core.brand_name,
+            visual_mood=brand_intelligence.visual_behavior.visual_mood,
+            color_behavior=brand_intelligence.visual_behavior.color_behavior,
+            image_behavior=brand_intelligence.visual_behavior.image_behavior,
+            design_sophistication=brand_intelligence.visual_behavior.design_sophistication,
+            concept_name=concept_dict.get("concept_name", ""),
+            core_idea=concept_dict.get("core_idea", ""),
+            visual_angle=concept_dict.get("visual_angle", ""),
+            copy_headline=headline,
+            copy_body=body,
+            supporting_line=supporting,
+            cta=cta,
+            infographic_sections=sections,
+            proof_points=proof_points,
+            stat_highlights=stat_highlights,
+            problem_statement=problem_statement,
+            solution_statement=solution_statement,
+            customer_quote=customer_quote,
+            customer_name=customer_name,
+            process_steps=process_steps,
+            format_strategy=format_plan.format_strategy,
+            layout_archetype=(
+                blueprint.layout_archetype if blueprint and blueprint.layout_archetype else format_plan.layout_archetype
+            ),
+            platform=platform,
+            initial_prompt=output.image_prompt_direction,
+            user_prompt=user_prompt,
+            dominant_visual_system=output.dominant_visual_system,
+            fmt=fmt,
+            layout_type=layout_type,
+            hook=(blueprint.hook if blueprint else "") or getattr(copy, "hook", None) or "",
+            story_flow=list(blueprint.story_flow) if blueprint and blueprint.story_flow else [],
+            slides=(
+                [s.model_dump() for s in blueprint.slides]
+                if blueprint and blueprint.slides
+                else [s.model_dump() for s in (copy.slide_copy or [])]
+            ),
+            canvas=canvas_desc,
         )
-        image_gen_prompt = output.image_prompt_direction
+
+        try:
+            expanded_prompt, expander_meta = await service.complete_text(
+                system=expander_system,
+                user=expander_user,
+                layer="l8_prompt_expander",
+                temperature=0.35,
+                max_tokens=2048,
+            )
+            logger.info(
+                "visual_reasoning.prompt_expansion_complete",
+                expanded_prompt_len=len(expanded_prompt),
+                expander_tokens=expander_meta.get("output_tokens", 0),
+            )
+            exact_lock = (
+                "\n\nLOCKED EXACT COPY (bake letter-perfect — do not rewrite):\n"
+                f'Headline: "{headline}"\n'
+                f'Supporting: "{supporting}"\n'
+                f'CTA: "{cta}"\n'
+            )
+            if sections:
+                exact_lock += "Sections:\n"
+                for i, sec in enumerate(sections[:15], start=1):
+                    if isinstance(sec, dict):
+                        lab = sec.get("section_label") or f"Item {i}"
+                        st = sec.get("stat") or ""
+                        incs = sec.get("includes") or []
+                        if isinstance(incs, list):
+                            incs_txt = "; ".join(str(x) for x in incs[:2])
+                        else:
+                            incs_txt = str(incs)
+                        exact_lock += f'{i}. "{lab}" | "{st}" | "{incs_txt}"\n'
+            image_gen_prompt = (expanded_prompt + exact_lock + f"\n{ICON_STYLE_LOCK}\n")[:6000]
+            output.image_prompt_direction = image_gen_prompt
+        except Exception as e:
+            logger.warning(
+                f"visual_reasoning.prompt_expansion_failed, using original prompt: {e}"
+            )
+            image_gen_prompt = output.image_prompt_direction
 
     # 2. Get the correct tenant_id and brand logo path from DB
     tenant_id = None
@@ -514,11 +720,6 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
     if not tenant_id:
         tenant_id = UUID("00000000-0000-0000-0000-000000000000")
 
-    # 3. Size computation — format × platform (must match Studio picker)
-    size = size_string(fmt, platform)
-    canvas_desc = canvas_label(fmt, platform)
-    logger.info("visual_reasoning.canvas_size", format=fmt, platform=platform, size=size)
-
     # 4. Image generation with gpt-image-1 + brand logo composite, falling back to SDXL/Mock
     async def _generate_one_image(
         prompt: str,
@@ -527,20 +728,21 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
         *,
         composite_sebi_footer: bool = False,
     ) -> str:
-        # Brand logo comes from Brand Space compositing — never from the image model.
-        # SEBI footer: carousel ONLY (user rule). Static/infographic never get disclaimer.
-        extra_locks = BRAND_COLOR_LOCK_RULE + INDIA_MARKET_LOCK_RULE
-        if composite_sebi_footer:
-            extra_locks = CAROUSEL_SEBI_LOCK_RULE + extra_locks
-        else:
-            extra_locks = f"\n\n{NO_SEBI_STATIC_RULE}\n" + extra_locks
-        safe_prompt = (
-            prompt
-            + NO_AI_LOGO_RULE
-            + SPELLING_ACCURACY_RULE
-            + HUB_CARD_ICON_RULE
-            + extra_locks
-        )[:6000]
+        # CRITICAL: content-first budget. Mega-locks (BRAND_COLOR_LOCK_RULE ~5.8k) used to
+        # append AFTER the prompt and truncate to 6000 — wiping every slide headline/body.
+        extra = (
+            CAROUSEL_IMAGE_EXTRA_LOCKS
+            if composite_sebi_footer
+            else STATIC_IMAGE_EXTRA_LOCKS
+        )
+        safe_prompt = _budget_prompt(prompt, extra, _IMAGE_PROMPT_BUDGET)
+        logger.info(
+            "visual_reasoning.image_prompt_budget",
+            suffix=fallback_suffix,
+            prompt_len=len(safe_prompt),
+            has_headline=("HEADLINE" in safe_prompt) or ("Headline:" in safe_prompt),
+            carousel=composite_sebi_footer,
+        )
         try:
             dalle = DalleService()
             url = await dalle.generate_and_save(
@@ -550,8 +752,9 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
                 size=image_size,
                 logo_storage_path=logo_storage_path,
                 logo_zone_instruction=logo_zone_instruction
-                or "tiny top-right pocket, ~12% width, 20px padding, no brand-name text",
+                or "plain empty top-right corner — no text, no box, no logo drawn",
                 composite_sebi_footer=composite_sebi_footer,
+                wipe_reserved_corner=composite_sebi_footer,
             )
             logger.info(
                 "visual_reasoning.dalle_success",
@@ -618,19 +821,10 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
         blueprint_slides = {
             s.slide_number: s for s in ((blueprint.slides if blueprint else None) or [])
         }
-        # Short style lock only — NEVER paste the full master expander prompt (that clones one slide N times)
-        style_lock = (
-            f"Finished {platform} {fmt} creative, canvas {canvas_desc}. "
-            f"FULL-BLEED solid ice-blue #E8F0F8 edge-to-edge — NO white side bars, NO second BG color, "
-            f"NO giant white frame. Navy #003975 headlines, gray supporting, orange #FFA400 accents. "
-            f"ULTRA-PREMIUM clay-3D icons (high-detail studio renders, LARGE heroes ~30% height). "
-            f"Match Jiraaf educational carousel samples. "
-            f"Leave tiny empty top-right pocket for Brand Space logo — no Follow-Jiraaf lines. "
-            f"Spell every word perfectly — never invent nonsense words (e.g. never 'Mealtime' for mid-term). "
-            f"TOPIC LOCK: stay on the user request only — never inject FDI / FX / capital-control / "
-            f"Inflows-Outflows-Limits chips unless those words are in the approved slide copy. "
-            f"{ICON_STYLE_LOCK}"
-            f"{CAROUSEL_FIT_LOCK}"
+        # SHORT style stub ONLY — mega-locks were ~16k chars and wiped slide content at [:6500]
+        style_stub = (
+            f"Finished {platform} carousel, canvas {canvas_desc}. "
+            f"{CAROUSEL_IMAGE_STYLE_STUB}"
         )
         total = len(carousel_slides)
         # Build ordered storyline from blueprint for swipe continuity
@@ -711,59 +905,164 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
             # Ensure supporting line is never empty (samples always have it)
             if not (slide_supporting or "").strip():
                 slide_supporting = (slide_body or "").split(".")[0].strip()[:90]
-            hl = _q(slide_headline, 70)
-            sup = _q(slide_supporting, 100)
-            body_txt = _q(slide_body, 120)
-            b0, b1, b2 = _chip_label(bottoms[0]), _chip_label(bottoms[1]), _chip_label(bottoms[2])
+            # Anti-repeat + ban bare topic titles ("TRADE DEFICIT", "CAPITAL CONTROLS")
+            raw_hl = str(slide_headline or "").strip()
+            needs_unique = _headline_is_repeat(raw_hl, used_headlines) or _is_bare_topic_headline(
+                raw_hl, user_prompt or ""
+            )
+            if needs_unique:
+                role_titles = {
+                    "hook": "Most people miss this angle",
+                    "define": "What this actually means in practice",
+                    "impact": "How the numbers work",
+                    "implication": "What changes for money flows",
+                    "proof": "Trade-offs you should watch",
+                    "myth": "The nuance most people skip",
+                    "cta": "What would you do next?",
+                    "insight": "The practical takeaway",
+                }
+                body_first = (slide_body or "").split(".")[0].strip()
+                if (
+                    body_first
+                    and 4 <= len(body_first.split()) <= 10
+                    and not _headline_is_repeat(body_first, used_headlines)
+                    and not _is_bare_topic_headline(body_first, user_prompt or "")
+                ):
+                    raw_hl = body_first
+                elif slide_supporting and not _is_bare_topic_headline(str(slide_supporting), user_prompt or ""):
+                    # Use supporting as title if it's a real insight sentence (shorten)
+                    words = str(slide_supporting).split()
+                    raw_hl = " ".join(words[:8]).rstrip(".,;:")
+                    if _headline_is_repeat(raw_hl, used_headlines) or _is_bare_topic_headline(raw_hl, user_prompt or ""):
+                        raw_hl = role_titles.get(role, f"Key insight {n}")
+                else:
+                    raw_hl = role_titles.get(role, f"Key insight {n}")
+                # If role title also repeats, append slide number
+                if _headline_is_repeat(raw_hl, used_headlines):
+                    raw_hl = f"{role_titles.get(role, 'Insight')} — slide {n}"
+                slide_headline = raw_hl
+
+            # Never ship an empty or bare-topic headline to the image model
+            if not str(slide_headline or "").strip() or _is_bare_topic_headline(
+                str(slide_headline), user_prompt or ""
+            ):
+                slide_headline = f"What investors should know next"
+
+            # Keep headlines short enough to bake fully (samples use ~6–10 words)
+            hl_words = str(slide_headline).split()
+            if len(hl_words) > 10:
+                slide_headline = " ".join(hl_words[:10]).rstrip(".,;:")
+
+            fact_lines = _content_fact_lines(bp_slide, str(slide_body or ""), str(slide_supporting or ""))
+            # Filter nav chips out of bottoms
+            bottoms = tuple(
+                ("Fact" if _is_nav_chip(x) else x) for x in bottoms
+            )
+            if all(_is_nav_chip(x) or x == "Fact" for x in bottoms):
+                # Replace empty nav set with content-derived words
+                derived = _one_word_chips(fact_lines) or _ROLE_CHIPS.get(role, _ROLE_CHIPS["insight"])
+                bottoms = derived
+
+            hl = _q(slide_headline, 80)
+            sup = _q(slide_supporting, 110)
+            body_txt = _q(slide_body, 260)
+            fact_q = [_q(f, 90) for f in fact_lines[:3]]
+            while len(fact_q) < 3:
+                fact_q.append('""')
+            f0, f1, f2 = fact_q[0], fact_q[1], fact_q[2]
             prior = "; ".join(used_headlines[-3:]) if used_headlines else "(none yet)"
             used_headlines.append(str(slide_headline or "")[:60])
-            slide_prompt = (
-                f"{style_lock}\n\n"
-                f"=== USER TOPIC (do not drift) ===\n{topic_lock}\n\n"
-                f"=== CAROUSEL STORYLINE (slide {n} of {total}) ===\n"
-                f"{storyline_block}\n\n"
-                f"=== RENDER SLIDE {n} — BEAT [{role}] ===\n"
-                f"Previous headline: {_q(prev_hl, 60)} | Next (don't show): {_q(next_hl, 60)}\n"
-                f"Already rendered headlines (do NOT clone look/meaning): {prior}\n"
-                f"This slide MUST look visually different from slides 1–{max(n-1,1)} "
-                f"(different hero objects, different chip words, different headline).\n"
-                f"FULL-BLEED ice-blue #E8F0F8 — never draw white side panels, black background, transparency, or a second background.\n"
-                f"HERO ULTRA-PREMIUM clay-3D cluster (~28% height, UNIQUE to slide {n}): {hero}\n"
-                f"HEADLINE (exact, required, unique): {hl}\n"
-                f"SUPPORTING LINE (exact, REQUIRED — deeper insight, not a vague slogan): {sup}\n"
-                f"SOFT CALLOUT (short insight if space — from body): {body_txt}\n"
-                f"BOTTOM CHIPS — three equal white rounded chips at 60–74% height "
-                f"(FULL one-word labels ABOVE the empty footer zone):\n"
-                f"  1) {b0}  2) {b1}  3) {b2}\n"
-                f"Each chip: soft-touch rounded 3D icon + the ONE complete word fully visible. "
-                f"Never truncate. Never multi-word. Never Steady/Plan/Less fragments.\n"
-                "Reserve bottom ~22% EMPTY ice-blue for SEBI composite — chips must NOT enter that zone.\n"
-                "Chip labels MUST match this education beat — NEVER use Inflows, Outflows, "
-                "Limits, FDI impact, FX impact, RBI role, or Policy tools unless those exact words "
-                "are in the approved headline/body above.\n"
-                "ALL text must be plain printed English sans-serif with perfect spelling. No embossed/glowing/outlined text effects.\n"
+
+            icon_rule = (
+                "ICON: ONE premium HD clay-3D object (~12–16% height) bottom-right "
+                "(wallet/coins/doc/lock/shield). Sharp studio render — not blurry toy.\n"
+                "TEXT: ≥8% margins; content ABOVE bottom ~14% SEBI zone; "
+                "headline LEFT 75% width; NEVER truncate mid-word; wrap to 2 FULL lines.\n"
+            )
+
+            # Role-based layout — MATCH SAMPLE PAGE DENSITY
+            if role == "hook":
+                layout_block = (
+                    "LAYOUT (HOOK):\n"
+                    f"- Headline + supporting. Two white cards: {f0} | {f1}\n"
+                    "- Premium clay-3D icon bottom-right.\n"
+                )
+            elif role in ("define", "insight"):
+                layout_block = (
+                    "LAYOUT (SCENARIO — 3 story blocks like Sweep-In ₹2 lakh page):\n"
+                    f"- Block1: {f0}\n- Block2: {f1}\n- Block3: {f2}\n"
+                    "- Premium clay-3D icon mid/bottom-right. NO sparse empty slide.\n"
+                )
+            elif role in ("impact", "implication"):
+                layout_block = (
+                    "LAYOUT (HOW IT WORKS / CHOICE):\n"
+                    f"- Cards: {f0} | {f1} | {f2}\n"
+                    "- Premium clay-3D icon bottom-right.\n"
+                )
+            elif role in ("proof", "myth"):
+                layout_block = (
+                    "LAYOUT (PROS/CONS WITH REASONS):\n"
+                    f"- A: {f0}\n- B: {f1}\n- Extra: {f2}\n"
+                    "- Premium clay-3D icon bottom-right.\n"
+                )
+            else:
+                layout_block = (
+                    "LAYOUT (CTA):\n"
+                    "- Question headline + invite line + one reason card.\n"
+                    "- Premium clay-3D icon bottom-right.\n"
+                    "- CTA BUTTON (if any): COMPACT — max 28% canvas width, ~4% height, "
+                    "2–3 word label, small padding. NEVER a wide/tall orange bar.\n"
+                )
+
+            # CONTENT FIRST — then short style. Never put mega-locks before headline.
+            content_core = (
+                f"=== RENDER SLIDE {n} of {total} — BEAT [{role}] ===\n"
+                f"TOPIC (context only, NOT headline): {topic_lock}\n"
+                f"STORYLINE:\n{storyline_block}\n"
+                f"Prior headlines (do not repeat): {prior}\n"
+                f"HEADLINE (MANDATORY COMPLETE navy top-left): {hl}\n"
+                f"SUPPORTING: {sup}\n"
+                f"BODY: {body_txt}\n"
+                f"STORY BLOCK 1: {f0}\n"
+                f"STORY BLOCK 2: {f1}\n"
+                f"STORY BLOCK 3: {f2}\n"
+                f"ICON: {hero}\n"
+                f"{layout_block}"
+                f"{icon_rule}"
                 + (
-                    f"CTA (closing): {_q(slide_cta, 40)}\n"
+                    f"CTA LABEL (compact button only): {_q(slide_cta, 24)}\n"
+                    "CTA SIZE LOCK: orange button ≤28% canvas width, ≤4.5% canvas height, "
+                    "centered above SEBI zone, small padding — NEVER oversized wide bar.\n"
                     if is_last and slide_cta
                     else ""
                 )
-                + "LAYOUT STANDARD: headline → supporting → hero 3D → orange divider → "
-                "3 one-word chips (60–74%) → empty bottom ~22% for legal footer (do not bake SEBI text).\n"
-                "FAIL if: cloned look vs prior slides, headline-only, missing supporting, truncated chips, "
-                "chips overlapping footer, white side bars, black/charcoal background, or wrong-topic FDI/FX chips."
-            )[:6500]
+                + "FAIL if: missing/truncated headline, sparse empty slide, cheap icon, empty Pros/Cons, oversized CTA."
+            )
+            slide_prompt = _budget_prompt(content_core, style_stub, _IMAGE_PROMPT_BUDGET)
+            logger.info(
+                "visual_reasoning.carousel_slide_prompt",
+                slide=n,
+                role=role,
+                prompt_len=len(slide_prompt),
+                has_headline=hl in slide_prompt or "HEADLINE" in slide_prompt,
+                headline=str(slide_headline or "")[:60],
+            )
             slide_url = await _generate_one_image(
                 slide_prompt, size, f"-slide-{n}", composite_sebi_footer=True
             )
             generated_urls.append(slide_url)
     else:
-        # Static / infographic / ranking — always AI image path (no Pillow board)
+        # Static / hub / ranking / trade — AI image only (no Pillow ranking board).
+        from app.prompts.jiraaf_layout import is_trade_data_board
+        from app.services.image_generation.ranking_board import sanitize_ranking_text
+        from app.prompts.brand_copy_tone import RANKING_IMAGE_STUB
+
         text_bake_suffix = _error_free_text_block(
             [
-                ("HEADLINE", _q(headline, 140)),
-                ("SUPPORTING LINE", _q(supporting, 180)),
+                ("HEADLINE", _q(sanitize_ranking_text(str(headline or "")), 140)),
+                ("SUPPORTING LINE", _q(sanitize_ranking_text(str(supporting or "")), 180)),
                 ("BODY", _q(body, 260)),
-                ("CTA", _q(cta, 60)),
+                ("CTA", _q(sanitize_ranking_text(str(cta or "")), 40)),
                 ("PROBLEM", _q(problem_statement, 160)),
                 ("SOLUTION", _q(solution_statement, 160)),
                 ("SECTIONS", _q(sections, 220)),
@@ -775,46 +1074,62 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
                 (
                     "SOURCE FOOTER",
                     _q(
-                        (blueprint.source_footer if blueprint else "") or "",
+                        sanitize_ranking_text(
+                            str((blueprint.source_footer if blueprint else "") or "")
+                        ),
                         80,
                     ),
                 ),
             ],
             is_carousel=False,
         )
-        # Build ultra-exact card bake lines for hub/ranking (cuts AI gibberish)
         card_bake = ""
         if blueprint and (blueprint.sections or []):
             card_lines = [
                 "\nEXACT CARD / ROW TEXT — bake ONLY these quoted strings (zero invented words):\n"
             ]
             for i, sec in enumerate((blueprint.sections or [])[:15], start=1):
-                label = (sec.section_label or f"Item {i}").strip()
-                facts = [str(x).strip() for x in (sec.includes or []) if str(x).strip()][:2]
-                if sec.stat and str(sec.stat).strip():
-                    facts = [str(sec.stat).strip()] + facts
+                label = sanitize_ranking_text((sec.section_label or f"Item {i}").strip())
+                facts = [
+                    sanitize_ranking_text(str(x).strip())
+                    for x in (sec.includes or [])
+                    if str(x).strip()
+                ][:2]
+                stat = sanitize_ranking_text(str(sec.stat or "").strip())
+                if stat:
+                    import re as _re
+
+                    stat = _re.sub(r"US\s*\$", "USD ", stat, flags=_re.I)
+                    stat = _re.sub(r"\$", "", stat)
+                    facts = [stat] + facts
                 facts = facts[:2]
                 card_lines.append(f'CARD {i} name: "{label}"\n')
                 for j, fact in enumerate(facts, start=1):
-                    # Keep each fact short so the image model doesn't garble
-                    short = " ".join(fact.split()[:10])
+                    short = " ".join(fact.split()[:8])
                     card_lines.append(f'CARD {i} line {j}: "{short}"\n')
             card_lines.append(
-                "Never invent extra sentences on cards. Never use £ — only ₹ or %.\n"
-                "If a fact does not fit, shorten spacing — do NOT invent filler words.\n"
+                "Never invent extra sentences. Never use £ or $ or US $ — use ₹ or USD or %.\n"
+                "BACKGROUND ice-blue #E8F0F8 / soft white — NEVER dark navy / black.\n"
+                "Align every row: orange badge | flag | name+phrase | ₹ amount | coin icon.\n"
+                "Match sample_top_countries_investing.png EXACTLY (AI image — not a flat table).\n"
             )
             card_bake = "".join(card_lines)
 
         layout_hint = (
             f"\n{NO_SEBI_STATIC_RULE}\n"
             "Use full canvas for content — no legal footer strip.\n"
-            "BACKGROUND MUST be ice-blue #E8F0F8 — NEVER pure black, charcoal, or dark grain.\n"
+            "BACKGROUND MUST be ice-blue #E8F0F8 / soft white — NEVER pure black, charcoal, dark navy.\n"
+            f"{INFOGRAPHIC_AUDIENCE_TONE_LOCK}\n"
             f"{ICON_STYLE_LOCK}\n"
+            f"{UNIVERSAL_FIT_LOCK}\n"
+            f"Canvas size LOCKED: {canvas_desc}. Fit every element inside with ≥6% margins.\n"
+            "Never clip CTA/text/icons. Prefer fewer short lines over overcrowding.\n"
+            "CTA COMPACT ≤28% width, ≤4 words. Perfect spelling. No mid-word breaks. No $ / US $.\n"
         )
         if blueprint and blueprint.layout_type == "static_hub_facts":
             layout_hint = (
                 "\nLAYOUT LOCK — HUB + 5 FACT CARDS WITH ICONS:\n"
-                "- Clean ice-blue #E8F0F8 background. NEVER black/charcoal. "
+                "- Clean ice-blue #E8F0F8 background. NEVER black/charcoal/dark navy. "
                 "NO watermark, NO giant J, NO JIRAAF text, NO giraffe.\n"
                 "- Center: strong ULTRA-PREMIUM clay-3D bank building icon in a circle.\n"
                 "- FIVE white rounded cards around the hub — EVERY card MUST have its own "
@@ -825,30 +1140,41 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
                 "- Tiny empty top-right pocket only for Brand Space logo composite later.\n"
                 f"- {NO_SEBI_STATIC_RULE}\n"
                 f"{ICON_STYLE_LOCK}\n"
+                f"{UNIVERSAL_FIT_LOCK}\n"
             )
         elif blueprint and blueprint.layout_type == "static_ranking":
-            from app.prompts.jiraaf_layout import is_trade_data_board
-
             if is_trade_data_board(user_prompt or ""):
                 layout_hint = (
-                    "\nLAYOUT LOCK — TRADE DEFICIT DATA BOARD (Jiraaf India–Russia sample DNA):\n"
-                    "- Portrait 1080x1350, ice-blue #E8F0F8 background.\n"
-                    "- Punchy data headline + one factual subtitle.\n"
-                    "- Dual-bar table: EXPORT (orange bars left) | TRADE BALANCE (center) | "
-                    "IMPORT (navy bars right), Billion USD, one row per fiscal year.\n"
-                    "- Bar lengths must match the numbers visually.\n"
+                    "\nLAYOUT LOCK — TRADE DEFICIT DATA BOARD (simple retail + India–Russia sample):\n"
+                    f"{INFOGRAPHIC_AUDIENCE_TONE_LOCK}\n"
+                    f"{INFOGRAPHIC_TRADE_BOARD_LOCK}\n"
+                    "- Portrait ice-blue #E8F0F8 background — NEVER dark navy.\n"
+                    "- Punchy PLAIN headline + one soft subtitle (no jargon).\n"
+                    "- Dual-bar table ONLY: EXPORT (orange) | TRADE BALANCE | IMPORT (navy), Billion USD.\n"
+                    "- Exact text: Export: USD …B / Import: USD …B — NEVER ESD/Emp/$/US $.\n"
                     "- Bottom box: What India buys most — category + USD amounts from CARD lines.\n"
-                    "- Source footer from research (e.g. Ministry of Commerce).\n"
-                    "- FORBIDDEN: FD briefcase, handshake hero as main story, Capital Preservation, "
-                    "Regular Income, Liquidity Management, bond cards, wrong flags, investment CTAs.\n"
+                    "- Source footer (Ministry of Commerce).\n"
+                    "- FORBIDDEN: FD briefcase, handshake, Key Drivers/Currency Risk/Vostro sidebars, "
+                    "bond cards, paragraph CTAs, wrong flags.\n"
+                    "- CTA if any: COMPACT ≤28% width, ≤4 words.\n"
                     f"- {NO_SEBI_STATIC_RULE}\n"
+                    f"- {UNIVERSAL_FIT_LOCK}\n"
                 )
             else:
                 layout_hint = (
-                    "\nLAYOUT LOCK — RANKING / DATA ROWS:\n"
-                    "- Ice-blue background. Ranked Name | % | amount rows from CARD lines.\n"
-                    "- Real flat flags only for country ranks. No bond benefit cards.\n"
+                    "\nLAYOUT LOCK — AI RANKING (match sample_top_countries_investing.png):\n"
+                    f"{RANKING_IMAGE_STUB}\n"
+                    f"{INFOGRAPHIC_AUDIENCE_TONE_LOCK}\n"
+                    f"- Canvas {canvas_desc}. Soft white / ice-blue #E8F0F8 — NEVER dark navy.\n"
+                    "- Centered navy headline + soft supporting + short orange accent line.\n"
+                    "- EACH row: orange rank square | glossy 3D flag | NAME + ≤5-word phrase | "
+                    "₹ amount | tiny gold coin + rising bars icon.\n"
+                    "- Phrases like: Top investor in India / Strong economic ties / Growing interest.\n"
+                    "- Flag MUST match country (UAE not HAE; USA not ASA; never wrong flags).\n"
+                    "- CURRENCY: ₹ for India FDI — never $ / US $ / ESD.\n"
+                    "- CTA: Explore more (2–3 words). Perfect spelling. No duplicate phrases.\n"
                     f"- {NO_SEBI_STATIC_RULE}\n"
+                    f"- {UNIVERSAL_FIT_LOCK}\n"
                 )
         single_url = await _generate_one_image(
             (image_gen_prompt + layout_hint + card_bake + text_bake_suffix)[:6000],

@@ -166,6 +166,28 @@ def _sample_corner_fill(base_img: Image.Image, canvas_width: int, canvas_height:
     return (r, g, b, 255)
 
 
+def _wipe_top_right_corner(
+    base_img: Image.Image,
+    canvas_width: int,
+    canvas_height: int,
+    *,
+    width_ratio: float = 0.14,
+    height_ratio: float = 0.09,
+) -> Image.Image:
+    """Remove AI-hallucinated logos / 'Brand Logo' placeholders before compositing.
+
+    Keep wipe SMALL so it never eats into the headline (user saw 'o..' truncation).
+    """
+    from PIL import ImageDraw
+
+    wipe_w = min(int(canvas_width * width_ratio), canvas_width)
+    wipe_h = min(int(canvas_height * height_ratio), canvas_height)
+    wipe_box = (canvas_width - wipe_w, 0, canvas_width, wipe_h)
+    fill = _sample_corner_fill(base_img, canvas_width, canvas_height)
+    ImageDraw.Draw(base_img).rectangle(wipe_box, fill=fill)
+    return base_img
+
+
 def _composite_logo(
     base_bytes: bytes,
     logo_bytes: bytes,
@@ -174,9 +196,9 @@ def _composite_logo(
     canvas_height: int,
 ) -> bytes:
     """Wipe a small top-right pocket, then paste the Brand Space logo AS-IS (icon + wordmark OK)."""
-    from PIL import ImageDraw
-
     base_img = Image.open(BytesIO(base_bytes)).convert("RGBA")
+    # Clear AI-drawn fake logos / placeholder boxes before placing the real asset.
+    base_img = _wipe_top_right_corner(base_img, canvas_width, canvas_height)
     logo_raw = Image.open(BytesIO(logo_bytes))
     logo_img = _make_background_transparent(logo_raw).convert("RGBA")
     # Tight crop again after any residual alpha fringe
@@ -198,13 +220,6 @@ def _composite_logo(
     logo_w, logo_h = logo_img.size
 
     pad = _LOGO_EDGE_PADDING
-    # Wipe only slightly larger than the tight logo — do not carve a huge empty corner
-    # that forces the headline to stay far left.
-    wipe_w = min(logo_w + pad * 2, int(canvas_width * 0.16))
-    wipe_h = min(logo_h + pad * 2, int(canvas_height * 0.12))
-    wipe_box = (canvas_width - wipe_w, 0, canvas_width, wipe_h)
-    fill = _sample_corner_fill(base_img, canvas_width, canvas_height)
-    ImageDraw.Draw(base_img).rectangle(wipe_box, fill=fill)
 
     x = canvas_width - logo_w - pad
     y = pad
@@ -367,6 +382,7 @@ class DalleService:
         logo_storage_path: str | None = None,
         logo_zone_instruction: str | None = None,
         composite_sebi_footer: bool = False,
+        wipe_reserved_corner: bool = False,
     ) -> str:
         """Call gpt-image-1, optionally composite the brand logo, save, and return URL path.
 
@@ -481,6 +497,21 @@ class DalleService:
             logger.info("dalle.resized_to_export", export=f"{export_w}x{export_h}")
         except Exception as resize_exc:
             logger.warning("dalle.resize_failed", error=str(resize_exc)[:200])
+
+        # Strip AI-hallucinated corner logos even when no Brand Space asset is available.
+        if wipe_reserved_corner and not logo_storage_path:
+            try:
+                base_img = Image.open(BytesIO(image_bytes))
+                real_w, real_h = base_img.size
+                wiped = _wipe_top_right_corner(
+                    base_img.convert("RGBA"), real_w, real_h
+                )
+                out = BytesIO()
+                _flatten_rgba_to_brand_bg(wiped).convert("RGB").save(out, format="PNG", optimize=False)
+                image_bytes = out.getvalue()
+                logger.info("dalle.corner_wiped", canvas=f"{real_w}x{real_h}")
+            except Exception as wipe_exc:
+                logger.warning("dalle.corner_wipe_failed", error=str(wipe_exc)[:200])
 
         # Logo composite using REAL image dimensions after resize
         if logo_storage_path:

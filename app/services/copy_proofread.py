@@ -42,7 +42,34 @@ _PROTECTED_TERMS = {
     "fintech",
     "b2b",
     "b2c",
+    "usd",
+    "fdi",
+    "uae",
+    "usa",
+    "uk",
 }
+
+
+_DETERMINISTIC_FIXES: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"\bESD\b", re.I), "USD"),
+    (re.compile(r"\bESDs\b", re.I), "USD"),
+    (re.compile(r"\bHAE\b"), "UAE"),
+    (re.compile(r"\bASA\b"), "USA"),
+    (re.compile(r"\bEmp\b"), "Import"),
+    (re.compile(r"\bImpp\b", re.I), "Import"),
+    (re.compile(r"\betch\b", re.I), "tech"),
+    (re.compile(r"\bhadge\b", re.I), "hedge"),
+    (re.compile(r"\bCONUTY\b", re.I), "Country"),
+    (re.compile(r"\binvestmet\b", re.I), "investment"),
+    (re.compile(r"\bgrewth\b", re.I), "growth"),
+]
+
+
+def _deterministic_token_fix(text: str) -> str:
+    t = text or ""
+    for pat, repl in _DETERMINISTIC_FIXES:
+        t = pat.sub(repl, t)
+    return t
 
 
 def _blueprint_cls():
@@ -101,7 +128,10 @@ def _set_path(obj: Any, path: tuple, value: str) -> None:
 
 
 def _local_spellcheck_text(text: str, spell) -> str:
-    if not text or not spell:
+    if not text:
+        return text
+    text = _deterministic_token_fix(text)
+    if not spell:
         return text
 
     def replace(match: re.Match[str]) -> str:
@@ -160,7 +190,7 @@ Return the same CreativeBlueprint JSON with corrected text fields only.
 No markdown. No preamble. Raw JSON only."""
     user = (
         "Proofread this Creative Blueprint JSON. Fix spelling/grammar typos "
-        "(examples: reguiar→regular, Invast→Invest, Peyouts→Payouts, "
+        "(examples: reguiar→regular, Invast→Invest, ESD→USD, etch→tech, HAE→UAE, "
         "portfoil→portfolio, approned→approved).\n\n"
         f"{blueprint.model_dump_json()}"
     )
@@ -213,10 +243,12 @@ NO_AI_LOGO_RULE = (
     "- Do NOT invent giraffe / stylized J marks as decoration.\n"
     "- Do NOT invent brand marketing lines like \"Follow Jiraaf…\", \"Follow JIRAAF for more…\", "
     "or any brand-name CTA — leave brand presence to the real logo only.\n"
-    "- NEVER invent brand-name text anywhere except what is already inside the Brand Space logo "
-    "file (composited later). Leave a clean top-right pocket empty for that real logo.\n"
-    "- The real Brand Space logo may include icon + Jiraaf wordmark — that is OK when composited. "
-    "You still must NOT redraw it or add extra Jiraaf text elsewhere.\n"
+    "- NEVER draw JIRAAF / Jiraaf / brand-name wordmark text anywhere in the image.\n"
+    "- NEVER draw placeholder labels: \"Brand Logo\", \"Logo\", \"Your Logo Here\", "
+    "\"brand logo\", or any dashed / dotted rectangle with logo text inside.\n"
+    "- NEVER draw a second logo box, watermark frame, or template placeholder in any corner.\n"
+    "- Leave ONLY a plain empty ice-blue top-right corner — no text, no box, no icon there.\n"
+    "- The real logo is composited later by backend — you must NOT pre-draw it.\n"
     "- Keep the FULL headline clear — never clip it for a logo band.\n"
     "- Background stays clean ice-blue / soft white — no orange ghost marks behind content.\n"
 )
@@ -240,15 +272,16 @@ SPELLING_ACCURACY_RULE = (
 
 HUB_CARD_ICON_RULE = (
     "\n\nHUB / FACT-CARD ICON RULE (NON-NEGOTIABLE):\n"
-    "- Every fact card MUST include a LARGE ULTRA-PREMIUM clay-3D icon "
-    "(high-detail studio render, subtle gloss, strong shadows — not flat clipart, not low-poly).\n"
-    "- For bank penalty hubs: 5 cards = 5 DIFFERENT premium 3D icons "
+    "- Every fact card MUST include a LARGE HD PREMIUM clay-3D icon "
+    "(4K-sharp studio product render, satin materials, gold accents, strong shadows — "
+    "not flat clipart, not low-poly, not blurry).\n"
+    "- For bank penalty hubs: 5 cards = 5 DIFFERENT premium HD 3D icons "
     "(e.g. classical bank, vault door, gold coin stack, shield, debit-card stack) "
     "placed above or beside each bank name.\n"
     "- Do NOT leave cards as text-only. Do NOT draw official trademark bank logos "
     "(Axis/SBI/HDFC/ICICI/PNB logo marks) — AI garbles trademarks. "
-    "Use clear premium 3D icons + the exact bank NAME as typography.\n"
-    "- Center hub also needs a strong ULTRA-PREMIUM clay-3D bank/building icon.\n"
+    "Use clear HD premium 3D icons + the exact bank NAME as typography.\n"
+    "- Center hub also needs a strong HD PREMIUM clay-3D bank/building icon.\n"
 )
 
 # Kept as alias for older imports

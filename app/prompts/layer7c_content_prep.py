@@ -11,7 +11,12 @@ from app.prompts.brand_copy_tone import (
     BANK_PENALTY_SAMPLE_RULES,
     SIMPLIFIED_CREATIVE_TONE_RULES,
     SOURCE_FOOTER_RULE,
+    INFOGRAPHIC_AUDIENCE_TONE_LOCK,
+    INFOGRAPHIC_RANKING_FORMAT_LOCK,
+    INFOGRAPHIC_TRADE_BOARD_LOCK,
 )
+from app.prompts.carousel_sample_dna import CAROUSEL_SAMPLE_DNA
+
 
 
 class ContentPrepPromptBuilder(BasePromptBuilder):
@@ -27,17 +32,18 @@ class ContentPrepPromptBuilder(BasePromptBuilder):
 
         layout_block = ""
         if story and format_name == "carousel":
-            layout_block = """
-LAYOUT = carousel_story (LOCKED STANDARD — same every time):
-- 5–6 slides: hook → define → how it works → investor implication → nuance/watch-out → CTA
-- DEPTH: each slide must teach a concrete insight from live research (mechanism / number / condition).
-  Reject vague slogans ("Connect the Dots", "bonds like stocks") unless the body explains the mechanism.
-- Each slide: unique headline + supporting_line + body (≤22 words, deeper than basics) + chip_labels[3]
-- chip_labels = exactly 3 ONE-WORD labels that explain THAT slide (e.g. Coupons, Principal, Maturity).
-  Never multi-word chips that truncate to Steady/Plan/Less.
-- story_flow = one short beat per slide
-- TOPIC LOCK: user topic only — no FDI/FX/capital-control drift
-- Perfect spelling
+            layout_block = f"""
+LAYOUT = carousel_story (LOCKED TO JIRAAF SAMPLE PDFs — Sweep-In / Capital / Gains):
+{CAROUSEL_SAMPLE_DNA}
+- 5–6 slides STORY: hook → ₹ scenario (3 blocks) → how it works → choice → pros/cons WITH reasons → CTA
+- UNIQUE COMPLETE headline every slide (max 8–10 words) — NEVER truncate, NEVER bare topic titles
+- body: 22–36 words that teach the beat + proof_points[2–3] full reason lines with ₹/% + chip_labels[3]
+- proof_points must be readable explanations (not one-word chips)
+- chip_labels NEVER Pros/Cons/Examples/Advantages — empty nav chips make slides look cheap
+- Icons/avatars are premium clay-3D accents — COPY must carry the teaching story
+- If pros/cons beat: put real reasons in body/proof_points
+- Prefer ₹ scenarios, comparison cues, hold-vs-exit choices — same depth as sample PDFs
+- Perfect spelling. Never sparse 1–2 line slides.
 """
         elif hub:
             layout_block = """
@@ -61,14 +67,17 @@ LAYOUT = education poster (LOCKED — carousel_story on static/infographic):
 
             user_p = str(kwargs.get("user_prompt") or "")
             if is_trade_data_board(user_p):
-                layout_block = """
-LAYOUT = trade deficit DATA BOARD (LOCKED — match Jiraaf India–Russia sample):
-- headline = punchy data claim (13x / deficit growth) from research — not bond slogans
-- supporting_line = one factual subtitle
+                layout_block = f"""
+LAYOUT = trade deficit DATA BOARD (LOCKED — simple retail tone + India–Russia sample):
+{INFOGRAPHIC_AUDIENCE_TONE_LOCK}
+{INFOGRAPHIC_TRADE_BOARD_LOCK}
+- headline = punchy plain data claim from research — not bond slogans / not "implications"
+- supporting_line = one soft factual subtitle
 - sections[] YEAR rows: label=FY, includes=["Export: USD …B","Import: USD …B"], stat=balance
 - Extra sections: top import categories India buys (fuels/oils/fertilisers) with USD amounts
 - source_footer = Ministry of Commerce / research domain
-- FORBIDDEN: Capital Preservation, Regular Income, FD, Liquidity Management, bond cards
+- FORBIDDEN: Capital Preservation, Regular Income, FD, Liquidity Management, bond cards,
+  Key Drivers / Currency Risk / Vostro side panels, paragraph CTAs
 """
             else:
                 rank_n = requested_rank_count(user_p)
@@ -78,11 +87,16 @@ LAYOUT = trade deficit DATA BOARD (LOCKED — match Jiraaf India–Russia sample
                     else "- sections[] MUST include ALL entities the user asked to rank/compare — never silently truncate to 5"
                 )
                 layout_block = f"""
-LAYOUT = static_ranking (LOCKED):
-- Ranked sections: Name | % | amount — almost no paragraphs
+LAYOUT = static_ranking (LOCKED — same DNA for static AND infographic ranking):
+{INFOGRAPHIC_AUDIENCE_TONE_LOCK}
+{INFOGRAPHIC_RANKING_FORMAT_LOCK}
+- Ranked sections: Country | plain phrase ≤6 words | amount — almost no paragraphs
 {count_line}
 - Fill sections[] OR dense stat_highlights with ALL requested entities
+- Real country names + correct flags (UAE not HAE; USA not ASA)
+- Currency: ₹/% India retail · ¥ Japan · USD letters if source USD — never $ / US $
 - Include Source footer domains when research available
+- CTA ≤4 words, compact — or omit
 """
 
         return f"""You are Violyt's Content Prep Intelligence (Prompt Intelligence orchestrator).

@@ -9,7 +9,14 @@ from app.prompts.brand_copy_tone import (
     BANK_PENALTY_SAMPLE_RULES,
     SIMPLIFIED_CREATIVE_TONE_RULES,
     SOURCE_FOOTER_RULE,
+    CONTENT_DEPTH_LOCK,
+    HEADLINE_COLOR_LOCK,
+    INFOGRAPHIC_AUDIENCE_TONE_LOCK,
+    INFOGRAPHIC_RANKING_FORMAT_LOCK,
+    INFOGRAPHIC_TRADE_BOARD_LOCK,
 )
+from app.prompts.carousel_sample_dna import CAROUSEL_SAMPLE_DNA
+
 
 
 def _is_data_hub_topic(text: str) -> bool:
@@ -33,61 +40,110 @@ class CopyEnginePromptBuilder(BasePromptBuilder):
 
     PROMPT_VERSION = "1.4-jiraaf-layout"
 
-    _CAROUSEL_STORY_SUFFIX = """
-CAROUSEL STORY — LOCKED STANDARD (do not invent a new structure each time):
-Emit 5–6 slides in slide_copy. Each slide teaches ONE deeper beat from research — not a vague slogan.
+    _CAROUSEL_STORY_SUFFIX = f"""
+{CAROUSEL_SAMPLE_DNA}
 
-ARC (fixed):
-1 hook — surprising concrete angle from research (a real mechanism/number/tension)
-2 define — what it actually is in plain words (mechanism, not metaphor)
-3 how it works — the engine (e.g. coupons / price / duration) with one concrete detail
-4 investor implication — who benefits / when it helps, with a specific reason
-5 nuance or watch-out from research (risk, condition, myth-bust)
-6 CTA — short action (optional if 5 slides)
+CAROUSEL OUTPUT RULES (client quality — NON-NEGOTIABLE — MATCH SAMPLE PDFs):
+Emit exactly 5–6 slides in slide_copy. Follow the sample STORY ARC beat-by-beat.
+This is an EDUCATION STORY, not a sparse poster set.
 
-DEPTH RULES (client bar):
-- Source article is good — EXTRACT a deeper insight per slide; do NOT stay at "bonds are useful" / "connect the dots".
-- FORBIDDEN vague lines: "Connect the Dots", "bonds like stocks" with no mechanism, "grow in value" alone.
-- Every body ≤22 words BUT must include a concrete idea (how coupons work, why income is predictable, what changes price).
-- If live research has facts/numbers, put at least one concrete fact across the deck (not all on slide 1).
+UNIQUE COMPLETE HEADLINES (critical):
+- Every slide_copy[].headline MUST be unique, COMPLETE (no mid-word cuts), max 8–10 words.
+- NEVER bare topic titles (BAD: "Sweep-in FD", "Capital Controls", "Interest rates").
+- NEVER near-duplicates.
+- GOOD sample-style headlines:
+  * "What if savings quietly earned FD-like returns?"
+  * "Let's say you keep ₹2 lakh idle"
+  * "A Sweep-in FD tries to solve this"
+  * "But what happens when you need money?"
+  * "So should you opt for Sweep-in FD?"
+  * "Would you choose the Sweep-in facility?"
 
-UNIQUENESS:
-- Every headline UNIQUE. Slide 3 and 4 must NOT restate slide 1–2.
-- Never clone the same metaphor/body across slides.
+STORY DEPTH (critical — client said "no story / no depth"):
+- Slide 1 HOOK: surprising question + concrete tension
+- Slide 2 SCENARIO: ₹ mini-story in body + 3 proof_points (e.g. ₹2L / ₹50k / ₹1.5L idle)
+- Slide 3 HOW IT WORKS: mechanism + comparison numbers (₹6,000 vs ₹10,500 style)
+- Slide 4 CHOICE: liquidity / decision + caveat (penalty note)
+- Slide 5 PROS/CONS: full reason sentences in proof_points (NOT empty Pros/Cons chips)
+- Slide 6 CTA: short question inviting comments
+- body: 22–36 words per slide — teach the beat like Sweep-In / Gains samples
+- supporting_line = mechanism/number sentence (required)
+- proof_points: 2–3 FULL explanation lines with ₹/%/rules (8–14 words each)
+- chip_labels = 3 content words — NEVER Pros/Cons/Examples/Advantages
 
-CHIP LABELS (for visual layer):
-- Also emit chip_labels when writing blueprint slides (3 ONE-WORD labels per slide).
-- Examples: Coupons | Principal | Maturity — never half-phrases like Steady / Plan / Less.
+FORBIDDEN CHEAP PATTERN (matches rejected outputs):
+- Sparse slides with only 1–2 vague lines
+- Truncated / missing headlines
+- Same headline repeated
+- Body that only restates a definition with no numbers
 
-TOPIC LOCK: stay on the user's topic. No FDI/FX/capital-control drift.
+TOPIC LOCK: stay on the user's topic.
 Spelling perfect.
 """
 
-    _RANKING_SUFFIX = """
-STATIC RANKING / DATA BOARD (layout_type=static_ranking):
+    _RANKING_SUFFIX = f"""
+STATIC + INFOGRAPHIC RANKING / DATA BOARD (layout_type=static_ranking):
+Same DNA for format=static AND format=infographic when ranking — tone + currency + orange + flags.
+{INFOGRAPHIC_AUDIENCE_TONE_LOCK}
 Pick the board type from the user topic:
 
-A) COUNTRY / TOP-N RANK (FDI, inflation ranks):
-- Fill infographic_sections with ranked rows: Name | % | amount.
-- Row COUNT must match the user's request (top 10 → 10 rows).
+A) COUNTRY / TOP-N RANK (FDI, inflation ranks) — MATCH sample_top_countries_investing.png:
+{INFOGRAPHIC_RANKING_FORMAT_LOCK}
+- Fill infographic_sections with ranked rows.
+- section_label = real country (USA, Singapore, Japan, UK, UAE — NEVER HAE / ASA)
+- includes = [ONE plain phrase ≤5 words] — copy this sample tone EXACTLY:
+  "Top investor in India" | "Strong economic ties" | "Growing interest" |
+  "Diverse sectors" | "Strategic partnerships"
+  NEVER jargon, NEVER essays, NEVER duplicate the amount as a phrase
+- stat = "₹50B" / "₹45B" style for India FDI ranks (NEVER "US $" / "$" / "ESD")
+  Inflation ranks → "6.5%" ; if source USD → "USD 50 Bn" letters only
+- supporting_line like: "A strong signal from global investors."
+- cta = "Explore more" (2–3 words ONLY — never "Explore Investment Opportunities")
+- Row COUNT must match the user request (top 6 → 6 rows).
+- SPELLING: UAE not HAE; USA not ASA; tech/infrastructure letter-perfect.
 
 B) TRADE DEFICIT / EXPORT–IMPORT BOARD (India–Russia sample DNA):
-- Punchy data headline (e.g. "India Buys 13x More From Russia than it Sells!" when research supports).
-- supporting_line: one factual subtitle about deficit growth.
-- sections[] = fiscal YEAR rows (typically 2020-21 … 2024-25):
-  section_label = year (e.g. "2023-2024")
-  includes = ["Export: USD X.XXB", "Import: USD Y.YYB"]
+{INFOGRAPHIC_TRADE_BOARD_LOCK}
+- Punchy plain data headline (e.g. "India Buys Much More From Russia Than It Sells").
+- supporting_line: one soft factual subtitle — NO "implications / exposure / hedge".
+- sections[] = fiscal YEAR rows (2020-21 … 2023-24):
+  section_label = year
+  includes = ["Export: USD X.XXB", "Import: USD Y.YYB"]  # NEVER ESD / Emp
   stat = trade balance as signed number (e.g. "-56.9")
 - Add 2–4 more sections for "What India buys most" categories with USD amounts
   (Mineral fuels, Edible oils, Fertilisers, …) from research — not invented.
 - source_footer from research (e.g. Ministry of Commerce and Industry).
-- body=""; customer_quote="".
+- body=""; customer_quote=""; NO technical side panels.
 FORBIDDEN for trade boards: Capital Preservation, Regular Income, FD briefcase,
-Liquidity Management, bond benefit cards, investment product CTAs, wrong flags.
+Liquidity Management, bond benefit cards, Vostro/Currency Risk cards, wrong flags,
+paragraph-length CTAs.
 """
 
-    _EDUCATION_POSTER_SUFFIX = """
+    _INFOGRAPHIC_SYSTEM_SUFFIX = f"""
+INFOGRAPHIC FORMAT — CRITICAL ADDITIONAL RULES:
+{INFOGRAPHIC_AUDIENCE_TONE_LOCK}
+Match Jiraaf sample tone — scannable, short labels — NOT textbook essays / teaser ads.
+
+Pick structure from USER INTENT (do NOT default to comparison):
+- WHY / useful / benefits / explain / how → BENEFIT cards (reasons), never country ranks
+- Ranking / top-N / country-wise / FDI → ranked Name|plain phrase|amount rows
+  ({INFOGRAPHIC_RANKING_FORMAT_LOCK})
+- Trade deficit → simple dual-bar year board only ({INFOGRAPHIC_TRADE_BOARD_LOCK})
+- Bank penalties / key rules → bank fact cards
+
+When education (why/benefits):
+- sections = reasons/benefits with short includes; NO invented country yield tables
+
+When ranking / comparison / top-N (user asked for it):
+- section_label = name (country/bank), stat = number when useful, includes = 1 short plain fact
+
+Top-level body usually EMPTY — facts live in sections.
+Spelling perfect. CTA ≤4 words. No text breaking.
+"""
+
+    _EDUCATION_POSTER_SUFFIX = f"""
 EDUCATION / WHY / BENEFITS POSTER (layout_type=carousel_story on static or infographic):
+{INFOGRAPHIC_AUDIENCE_TONE_LOCK}
 User asked WHY / HOW / useful / benefits / explain — NOT a ranking or country comparison.
 - headline: topic claim (e.g. "Bonds: Your Path to Predictable Income")
 - supporting_line: one short why-it-matters line
@@ -97,24 +153,6 @@ User asked WHY / HOW / useful / benefits / explain — NOT a ranking or country 
 FORBIDDEN unless the user explicitly asked to compare/rank:
 - Country tables (India/USA/Germany/Japan…)
 - Flag rows, FDI ranks, cross-market % boards, "vs" comparison matrices
-"""
-
-    _INFOGRAPHIC_SYSTEM_SUFFIX = """
-INFOGRAPHIC FORMAT — CRITICAL ADDITIONAL RULES:
-Match Jiraaf sample tone — scannable, short labels — NOT textbook essays / teaser ads.
-
-Pick structure from USER INTENT (do NOT default to comparison):
-- WHY / useful / benefits / explain / how → BENEFIT cards (reasons), never country ranks
-- Ranking / top-N / country-wise / FDI → ranked Name|%|amount rows
-- Bank penalties / key rules → bank fact cards
-
-When education (why/benefits):
-- sections = reasons/benefits with short includes; NO invented country yield tables
-
-When ranking / comparison / top-N (user asked for it):
-- section_label = name (country/bank), stat = number when useful, includes = 1–2 short facts
-
-Top-level body usually EMPTY — facts live in sections.
 """
 
     _STATIC_DATA_HUB_SUFFIX = """
@@ -140,6 +178,8 @@ Return a single JSON object matching CopyOutput.
 LAYOUT_TYPE (LOCKED): {layout_type or "infer from topic"}
 
 {SIMPLIFIED_CREATIVE_TONE_RULES}
+{CONTENT_DEPTH_LOCK}
+{HEADLINE_COLOR_LOCK}
 {BANK_PENALTY_SAMPLE_RULES if data_hub else ""}
 {SOURCE_FOOTER_RULE}
 

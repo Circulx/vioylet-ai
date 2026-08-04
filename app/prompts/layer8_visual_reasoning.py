@@ -23,7 +23,18 @@ from app.prompts.brand_copy_tone import (
     CONTENT_DEPTH_LOCK,
     CAROUSEL_ICON_LOCK,
     CAROUSEL_TEXT_FIT_LOCK,
+    CAROUSEL_AUDIENCE_TONE_LOCK,
     PREMIUM_HD_ICON_LOCK,
+    EDUCATION_POSTER_LAYOUT_LOCK,
+    INFOGRAPHIC_EXPLAIN_LAYOUT_LOCK,
+    INFOGRAPHIC_EXPLAIN_ORANGE_STUB,
+    INFOGRAPHIC_EXPLAIN_QUALITY_LOCK,
+    STATIC_EXPLAIN_LAYOUT_LOCK,
+    STATIC_EXPLAIN_QUALITY_LOCK,
+    STATIC_ORANGE_STUB,
+    STATIC_RANKING_INSIGHT_LOCK,
+    STATIC_HORIZONTAL_BAR_DNA_LOCK,
+    STATIC_HORIZONTAL_BAR_IMAGE_STUB,
     INFOGRAPHIC_AUDIENCE_TONE_LOCK,
     INFOGRAPHIC_RANKING_FORMAT_LOCK,
     INFOGRAPHIC_TRADE_BOARD_LOCK,
@@ -37,7 +48,7 @@ from app.prompts.carousel_sample_dna import CAROUSEL_SAMPLE_DNA_COMPACT
 class VisualReasoningPromptBuilder(BasePromptBuilder):
     """Layer 8 Visual Reasoning — prompts rebuilt from Jiraaf-grade sample creatives."""
 
-    PROMPT_VERSION = "4.8-ranking-sample-dna"
+    PROMPT_VERSION = "5.1-infographic-explain-static-bar-samples"
 
     # Locked design tokens from Brand Space + PDF samples
     CAROUSEL_BG = JIRAAF_BG  # ice-blue #E8F0F8
@@ -53,7 +64,15 @@ class VisualReasoningPromptBuilder(BasePromptBuilder):
         layout_type = str(kwargs.get("layout_type") or "")
         layout_lock = ""
         if layout_type == "carousel_story":
-            layout_lock = "LAYOUT_TYPE=carousel_story: 4–7 swipe education slides; one idea per slide; short lines."
+            if fmt in ("static", "infographic"):
+                layout_lock = (
+                    "LAYOUT_TYPE=carousel_story (education poster on static/infographic): "
+                    "headline + 3–5 heading+explanation cards — NOT ranking rows, NOT country flags."
+                )
+            else:
+                layout_lock = (
+                    "LAYOUT_TYPE=carousel_story: 4–7 swipe education slides; one idea per slide; short lines."
+                )
         elif layout_type == "static_hub_facts":
             layout_lock = "LAYOUT_TYPE=static_hub_facts: hub + 4–5 short fact cards with real ₹/% facts — never teaser-only."
         elif layout_type == "static_ranking":
@@ -70,6 +89,7 @@ Safe margin ≥6% all sides. Reduce/drop content rather than clip.
 Background: SOLID {self.CAROUSEL_BG} FULL BLEED edge-to-edge — same hex everywhere.
 NO white side panels. NO second background. NO framed white page inside the canvas.
 Style: Clean corporate fintech education matching Jiraaf sample carousels.
+{CAROUSEL_AUDIENCE_TONE_LOCK}
 Soft ULTRA-PREMIUM HD clay-3D icons (4K-sharp studio product renders, satin + gold accents, strong shadows — NOT flat, NOT blurry, NOT low-poly).
 Typography: bold navy ({self.NAVY}) headlines; gray supporting; ALL copy baked.
 Text must render as clean printed sans-serif, not embossed, not glowing, not outlined, not metallic.
@@ -80,7 +100,7 @@ SLIDE ANATOMY — TEXT DOMINANT (carousel only — match Sweep-In / Capital / Ga
 2. MANDATORY UNIQUE navy headline at top-left on EVERY slide — never omit, never repeat topic title.
 3. Supporting line with mechanism or real number (required).
 4. DEPTH BLOCK (REQUIRED, ~35–45% of slide height): max TWO white cards with soft shadow.
-   EACH card = short bold label + one clear explanation (6–12 words) with ₹/%/rule.
+   EACH card = short bold label + one clear explanation (6–12 plain English words) with ₹/%/rule.
 5. ICONS/AVATARS: premium HD clay-3D object (~12–16% height) bottom-right — wallet/coins/doc/lock. NEVER omit. NEVER giant hero.
 6. Thin orange divider optional between cards — never a stack of orange lines as the layout.
 7. NEVER empty Pros/Cons/Examples/Advantages navigation buttons.
@@ -106,6 +126,7 @@ RULES:
 - NEVER invent Follow-Jiraaf lines; top-right corner stays plain empty ice-blue.
 - Perfect spelling. Do not invent SEBI text.
 - India market: prefer ₹ / %; USD only when source is USD.
+- Bake copy in plain retail tone — no Vostro/hedge/sector-exposure jargon on slides.
 - FAIL if: repeated headlines, empty Pros/Cons chips, giant icons, thin one-line content, clipped text.
 """
         elif fmt == "infographic":
@@ -281,12 +302,19 @@ No preamble. No markdown fences. ONLY raw JSON.
         elif fmt == "infographic" or (
             layout_type == "carousel_story" and fmt in ("static", "infographic")
         ):
-            text_directive = (
-                f"Follow EDUCATION poster: soft bg {self.INFO_BG}, hero clay-3D icon, "
-                f"3–5 BENEFIT/REASON cards (NOT country comparison tables), "
-                f"navy {self.NAVY} + orange {self.ORANGE}, short CTA. "
-                "Only use ranking rows if layout_type is static_ranking."
-            )
+            if layout_type == "carousel_story" and fmt == "infographic":
+                text_directive = (
+                    f"Follow DENSE INFOGRAPHIC EXPLAIN (sample_infographic_explain_rbi_polymer.png): "
+                    f"soft bg {self.INFO_BG}, LARGE headline + intro paragraph, "
+                    f"orange-bar sections with 3-col UNIQUE fact cards + callout box, "
+                    f"navy {self.NAVY} + orange {self.ORANGE} bars/highlights. "
+                    f"NOT a sparse 3-block poster. Perfect spelling. Topic-safe CTA."
+                )
+            else:
+                text_directive = (
+                    f"Follow STATIC EXPLAIN poster: soft bg {self.INFO_BG}, hero clay-3D icon, "
+                    f"3–5 heading + explanation cards, navy {self.NAVY} + orange {self.ORANGE}."
+                )
         else:
             text_directive = (
                 "Bake approved headline/supporting/CTA as sharp typography; use soft matte clay-3D icons."
@@ -394,6 +422,7 @@ Return ONLY raw JSON."""
                 visual_mood=visual_mood,
                 color_behavior=color_behavior,
                 canvas=canvas,
+                layout_type=layout_type,
             )
 
         if fmt == "carousel":
@@ -466,6 +495,8 @@ Return ONLY raw JSON."""
         user_block = f'\nUSER TOPIC REQUEST:\n"{user_prompt}"\n' if user_prompt else ""
 
         return f"""Create ONE finished LinkedIn educational CAROUSEL SLIDE matching this locked sample design system.
+
+{CAROUSEL_AUDIENCE_TONE_LOCK}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 CANVAS BOUNDARY LOCK (NON-NEGOTIABLE)
@@ -568,11 +599,17 @@ Return ONLY the finished image-generation prompt."""
         visual_mood: str,
         color_behavior: str,
         canvas: str = "1080x1350 4:5 portrait",
+        layout_type: str = "",
     ) -> str:
         title = headline or "Untitled"
         subtitle = supporting_line or ""
-        story = "\n".join(f"{i}. {b}" for i, b in enumerate((story_flow or [])[:6], start=1)) or (
-            "1. Hook question\n2. Explain mechanism\n3. Break down components\n4. State objective/CTA\n5. Add caution note"
+        layout_type = str(layout_type or "").strip()
+        from app.prompts.jiraaf_layout import is_trade_data_board
+
+        is_rank = layout_type == "static_ranking"
+        is_hub = layout_type == "static_hub_facts"
+        is_education = layout_type == "carousel_story" or (
+            not is_rank and not is_hub
         )
 
         rows = []
@@ -584,33 +621,83 @@ Return ONLY the finished image-generation prompt."""
                 includes_txt = "; ".join(str(x) for x in includes[:2])
             else:
                 includes_txt = str(includes)
-            # Prefer rank row: name + number. Ignore long section bodies.
             body_sec = (sec.get("body") or "").strip()
             if len(body_sec.split()) > 8:
                 body_sec = ""
-            icon = sec.get("icon_hint") or "flag/metric icon"
-            rows.append(
-                f"RANK {i}: {label}"
-                f"{f' | {stat}' if stat else ''}"
-                f"{f' | {includes_txt}' if includes_txt else ''}"
-                f"{f' | note: {body_sec}' if body_sec else ''}"
-                f" | icon: {icon}"
+            icon = sec.get("icon_hint") or ("flag/metric icon" if is_rank else "clay-3D topic icon")
+
+            if is_education:
+                sub_lines = []
+                if isinstance(includes, list):
+                    for inc in includes[:3]:
+                        sub_lines.append(f"    - {inc}")
+                rows.append(
+                    f'SECTION {i}: "{label}"'
+                    + (("\n" + "\n".join(sub_lines)) if sub_lines else "")
+                    + (f'\n    callout: {body_sec}' if body_sec else "")
+                )
+            else:
+                rows.append(
+                    f"RANK {i}: {label}"
+                    f"{f' | {stat}' if stat else ''}"
+                    f"{f' | {includes_txt}' if includes_txt else ''}"
+                    f"{f' | note: {body_sec}' if body_sec else ''}"
+                    f" | icon: {icon}"
+                )
+
+        if is_education:
+            rows_text = "\n".join(rows) or (
+                "Build DENSE sample-style sections: orange bars + 3-col UNIQUE fact cards + callout — NOT sparse poster."
             )
-        rows_text = "\n".join(rows) or (
-            "Build 3–5 BENEFIT/REASON cards from the topic (e.g. Regular Income, Capital Preservation) "
-            "— NOT a country ranking unless the user asked to compare countries."
-        )
+        else:
+            rows_text = "\n".join(rows) or (
+                "Build ranked rows from the topic data — NOT benefit cards."
+            )
 
         stats = "\n".join(f"- {s}" for s in (stat_highlights or [])[:5]) or "- (optional)"
         proofs = "\n".join(f"- {p}" for p in (proof_points or [])[:5]) or "- (optional)"
         objectives = "\n".join(f"- {s}" for s in (process_steps or proof_points or [])[:4]) or (
-            "- Capital Preservation\n- Regular Income\n- Long-term Wealth Creation\n- Liquidity Management"
+            "- Section 1: Why it matters\n- Section 2: How it works\n- Section 3: What to watch"
         )
         note = customer_quote or ""
         user_block = f'\nUSER TOPIC REQUEST:\n"{user_prompt}"\n' if user_prompt else ""
 
-        return f"""Create ONE finished LinkedIn educational INFOGRAPHIC matching Jiraaf sample tone
-(simple retail language + ranking/list OR clean trade board) — NOT a textbook essay / jargon dump.
+        if is_rank and is_trade_data_board(user_prompt or ""):
+            layout_section = f"""LOCKED LAYOUT — TRADE DEFICIT DATA BOARD (layout_type=static_ranking):
+{INFOGRAPHIC_TRADE_BOARD_LOCK}
+Match the Jiraaf India–Russia sample EXACTLY:
+1) Tiny empty top-right pocket
+2) Punchy PLAIN data headline + one soft subtitle
+3) Column headers: EXPORT | TRADE BALANCE | IMPORT (Billion USD)
+4) Fiscal-year rows: orange export bars LEFT | balance CENTER | navy import bars RIGHT
+5) Bottom white box: "What India buys most from …" — category + USD Bn lines
+6) Source line if provided
+FORBIDDEN: bond benefit cards, handshake/FD briefcase, technical sidebars, wrong flags."""
+        elif is_rank:
+            layout_section = f"""LOCKED LAYOUT — RANKING LIST (layout_type=static_ranking):
+{INFOGRAPHIC_RANKING_FORMAT_LOCK}
+Premium AI look identical to static Top Countries sample: glossy 3D flags + coin icons.
+Currency: ₹ / ¥ / USD letters / % — NEVER $ / US $
+Language like: "Top investor in India" / "Strong economic ties" — NOT textbook essays."""
+        elif is_hub:
+            layout_section = """LOCKED LAYOUT — HUB + SHORT FACTS (layout_type=static_hub_facts):
+Center hub + 4–5 bank/rule fact cards with distinct clay-3D icons."""
+        else:
+            layout_section = f"""LOCKED LAYOUT — INFOGRAPHIC EXPLAIN EDITORIAL (layout_type=carousel_story):
+{INFOGRAPHIC_EXPLAIN_LAYOUT_LOCK}
+{INFOGRAPHIC_EXPLAIN_ORANGE_STUB}
+{INFOGRAPHIC_EXPLAIN_QUALITY_LOCK}
+{ORANGE_COVERAGE_LOCK}
+Match sample_infographic_explain_rbi_polymer.png EXACTLY (dense LinkedIn infographic):
+1) LARGE navy headline + 2-line intro with ₹/% fact — fill width like the sample
+2) 2–4 sections — thick ORANGE {self.ORANGE} left bar + UNIQUE navy heading each
+3) Fact sections: 3 UNIQUE mini-cards (icon + title + explanation with numbers) — never duplicate titles
+4) Optional text-only section with short paragraphs
+5) Orange-border callout + lightbulb + multi-sentence insight; source footer
+6) EMPTY top-right logo pocket only — never draw brand wordmark
+FAIL if: sparse poster (3 short lines + huge empty space), typos (Financrial), bond CTA off-topic, duplicate headings"""
+
+        return f"""Create ONE finished LinkedIn educational INFOGRAPHIC matching Jiraaf sample tone.
 
 {INFOGRAPHIC_AUDIENCE_TONE_LOCK}
 
@@ -632,44 +719,12 @@ NEVER pure black, charcoal, dark navy, grainy, or textured dark backgrounds.
 Colors: Navy headings {self.NAVY}, body {self.BODY_GRAY}, REQUIRED orange accents {self.ORANGE}, gold {self.GOLD}. Never navy-only.
 {ORANGE_COVERAGE_LOCK}
 {ICON_STYLE_LOCK}
-Icon style:
-- EDUCATION / WHY posters: ULTRA-PREMIUM clay-3D icons for benefits (shield, coins, bank, chart) — NO national flags.
-- RANKING / country comparison ONLY when user asked to rank countries: glossy premium 3D flag tiles
-  (same as static Top Countries sample) — NEVER flat grey boxes, NEVER wrong country flags.
 Typography: Bold navy sans headlines; short labels. ALL text baked into pixels. Perfect spelling.
 CTA (if any): COMPACT ≤28% width, ≤4.5% height, 2–4 words — never a wide paragraph button.
 {STATIC_IMAGE_EXTRA_LOCKS}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-PICK ONE SAMPLE LAYOUT (by USER TOPIC — do not invent comparisons)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-A) TRADE DEFICIT DATA BOARD (when topic is India–Russia trade deficit / export-import):
-{INFOGRAPHIC_TRADE_BOARD_LOCK}
-   Match the Jiraaf sample poster EXACTLY in structure:
-   1) Tiny empty top-right pocket
-   2) Punchy PLAIN data headline + one soft subtitle (no jargon)
-   3) Column headers: EXPORT | TRADE BALANCE | IMPORT (Billion USD)
-   4) Fiscal-year rows: orange export bars LEFT | balance CENTER | navy import bars RIGHT
-   5) Bottom white box: "What India buys most from Russia" — category + USD Bn lines
-   6) Source line (Ministry of Commerce…)
-   FORBIDDEN: handshake/FD briefcase/technical sidebars (Key Drivers, Vostro, Currency Risk,
-   Advisor questions) / bond cards / wrong flags / paragraph CTAs
-
-B) EDUCATION / WHY / BENEFITS (ONLY for why bonds / predictable income / useful):
-   Hero clay-3D + 3–5 benefit cards — NO trade tables — simple retail language
-
-C) RANKING LIST (ONLY if user asked top-N / FDI / country-wise) — SAME DNA as static:
-{INFOGRAPHIC_RANKING_FORMAT_LOCK}
-   Premium AI look identical to static Top Countries sample: glossy 3D flags + coin icons
-   Currency: ₹ / ¥ / USD letters / % — NEVER $ / US $
-   Language like: "Top investor in India" / "Strong economic ties" — NOT technical essays
-
-D) HUB + SHORT FACTS (ONLY bank rates / key rules):
-   Center hub + 4–5 bank fact cards
-
-Do NOT invent bond education cards when the user asked for a trade deficit analysis.
-Do NOT invent a country comparison when the user asked why / benefits / useful / explain.
-Do NOT invent technical side panels the retail audience cannot understand.
+{layout_section}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 EXACT COPY TO BAKE (verbatim — keep short + simple)
@@ -682,8 +737,8 @@ Body (use ONLY if short; else omit visually): {body}
 Problem: {problem_statement or '(omit)'}
 Solution: {solution_statement or '(omit)'}
 Storyline:
-{story}
-Benefit / structured cards (label first; ignore long bodies):
+{chr(10).join(f"{i}. {b}" for i, b in enumerate((story_flow or [])[:6], start=1)) or "1. Hook\n2. Explain\n3. CTA"}
+{"Section blocks (heading + sub-points):" if is_education else "Rank / data rows (label first):"}
 {rows_text}
 Stats:
 {stats}
@@ -701,7 +756,7 @@ Brand color behavior: {color_behavior}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 NON-NEGOTIABLE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-1. Match user intent: why/benefits → education cards; ranking ONLY when asked.
+1. layout_type={layout_type or 'auto'} — follow the LOCKED LAYOUT above; do NOT switch to ranking for explain topics.
 2. Bake exact short strings; never paraphrase into heavier textbook wording.
 3. Spelling perfect — never invent gibberish on cards (USD/Import/UAE correct).
 4. Brand colours: navy {self.NAVY} + REQUIRED visible orange {self.ORANGE} accents.
@@ -769,6 +824,7 @@ Return ONLY the finished image-generation prompt."""
             row_limit = min(max(len(sections or []), 1), 15)
 
         rows = []
+        is_education = layout_type == "carousel_story" and not is_bank_hub
         for i, sec in enumerate((sections or [])[:row_limit], start=1):
             label = sec.get("section_label") or f"Item {i}"
             includes = sec.get("includes") or []
@@ -778,11 +834,15 @@ Return ONLY the finished image-generation prompt."""
                 fact_parts = [str(includes).strip()] if str(includes).strip() else []
             quoted_bits = []
             for f in fact_parts:
-                short = " ".join(f.replace("£", "₹").split()[:10])
+                short = " ".join(f.replace("£", "₹").split()[:12])
                 quoted_bits.append(f'"{short}"')
             quoted = " | ".join(quoted_bits) or '"(no extra line)"'
-            name_kind = "Bank name" if is_bank_hub else "Row name"
-            rows.append(f'{i}. {name_kind} "{label}" — facts: {quoted}')
+            if is_bank_hub:
+                rows.append(f'{i}. Bank name "{label}" — facts: {quoted}')
+            elif is_education:
+                rows.append(f'{i}. HEADING "{label}" — explanation: {quoted}')
+            else:
+                rows.append(f'{i}. Row name "{label}" — facts: {quoted}')
         rows_text = "\n".join(rows)
 
         if is_bank_hub and rows_text:
@@ -842,6 +902,22 @@ Colors: navy {self.NAVY} + REQUIRED orange {self.ORANGE} accents on {self.INFO_B
 
 Return ONLY the finished image-generation prompt."""
 
+        # Education / explain poster — headings + explanation cards (NOT ranking)
+        education_block = ""
+        if layout_type == "carousel_story" and not is_bank_hub:
+            education_block = f"""
+LAYOUT LOCK — STATIC EXPLAIN POSTER (layout_type=carousel_story on static):
+{STATIC_EXPLAIN_LAYOUT_LOCK}
+{STATIC_EXPLAIN_QUALITY_LOCK}
+{STATIC_ORANGE_STUB}
+Canvas: {ratio}. Soft ice-blue {self.INFO_BG}.
+- Bold navy headline + supporting line — fully baked
+- ONE premium clay-3D hero + 3–5 cards (icon + heading + explanation each)
+- Orange dividers + orange CTA button
+Exact cards (letter-perfect, no missing text):
+{rows_text or '(use sections below)'}
+"""
+
         # Ranking / general static — keep text baked in (integrated), exact strings locked
         ranking_block = ""
         if layout_type == "static_ranking" and rows_text:
@@ -866,27 +942,29 @@ Exact year / category rows (bake letter-perfect):
 {rows_text}
 """
             else:
-                ranking_block = f"""
-LAYOUT LOCK — PREMIUM STATIC RANKING (SAME DNA as infographic ranking):
+                from app.prompts.jiraaf_layout import static_ranking_style
+
+                if static_ranking_style(user_prompt or "") == "horizontal_bar":
+                    ranking_block = f"""
+LAYOUT LOCK — STATIC HORIZONTAL BAR (sample_static_oil_consumption_bars.png):
+{STATIC_HORIZONTAL_BAR_DNA_LOCK}
+{STATIC_HORIZONTAL_BAR_IMAGE_STUB}
+{STATIC_RANKING_INSIGHT_LOCK}
+{STATIC_ORANGE_STUB}
+Canvas: {ratio}. Horizontal bars: COUNTRY | flag | bar | value inside | % outside.
+Highlight India/focal country in ORANGE bar. Orange arrow → insight text if provided below.
+Clay-3D oil barrels bottom-right. Source footer. Bake ALL rows — no stacked white cards.
+Exact bar rows + insight (letter-perfect):
+{rows_text}
+{customer_quote or ''}
+"""
+                else:
+                    ranking_block = f"""
+LAYOUT LOCK — STATIC VERTICAL COUNTRY RANKING (UNCHANGED — sample_top_countries_investing.png):
 {RANKING_IMAGE_STUB}
-Canvas: {ratio}. Soft white / ice-blue {self.INFO_BG} — NEVER dark navy.
-ABSOLUTE BOUNDARY: every element fully inside the canvas — nothing clips.
-Same beauty as the premium AI Top Countries sample (glossy 3D flags + coin icons + clean type):
-1) LARGE bold navy headline top-left + soft supporting line + short thin orange accent line
-2) Top-right: empty pocket only (logo later) — never draw JIRAAF text
-3) Ranked vertical rows (exact count from data), evenly spaced, thin light dividers:
-   EACH row LEFT→RIGHT perfectly aligned:
-   - Orange rounded rank badge (white number)
-   - Glossy premium 3D flag tile — REAL correct flag for THAT country only
-   - Country NAME large bold navy + short grey phrase under it (≤6 plain words)
-   - Amount large bold navy on the RIGHT
-   - Tiny premium clay-3D coin/chart icon on the far right
-4) Bottom: COMPACT orange CTA pill (≤28% width, 2–4 words)
-CURRENCY: NEVER "US $" / "$" / "ESD" — ₹ India retail · ¥ Japan · "USD … Bn" if source USD · % inflation.
-FLAGS: correct per country (UAE not HAE; USA not ASA; no grey boxes; never swap NL/JP/GB).
-Tone: short myth-bust / news hooks — NOT textbook essays.
-FORBIDDEN: flat table-only look, banning 3D flags/coins, dark backgrounds, $ signs, navy-only.
-Exact ranked rows (bake letter-perfect):
+{STATIC_ORANGE_STUB}
+Canvas: {ratio}. Orange rank badges, flags, amounts, coin icons — bake ALL row text.
+Exact ranked rows (letter-perfect):
 {rows_text}
 """
 
@@ -904,11 +982,13 @@ Background: solid ice-blue {self.CAROUSEL_BG} or soft {self.INFO_BG} — NEVER d
 Style: premium fintech creative with glossy 3D accents + sharp baked typography (like Top Countries sample).
 Brand colours REQUIRED: navy {self.NAVY} + visible orange accents {self.ORANGE}.
 {ORANGE_COVERAGE_LOCK}
+{STATIC_ORANGE_STUB}
 {STATIC_IMAGE_EXTRA_LOCKS}
 Logo: tiny top-right empty pocket only — never draw brand-name text.
 Layout: Bold large headline, supporting line, ranked rows OR fact cards, compact CTA.
+{education_block}
 {ranking_block}
-If sections/facts are provided below and this is NOT a ranking, prefer a hub or fact-card layout.
+If sections/facts are provided below and this is NOT a ranking, prefer education cards or hub layout.
 {NO_SEBI_STATIC_RULE}
 Never use $ or US $ — prefer ₹ / ¥ / USD letters / %.
 

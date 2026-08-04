@@ -26,10 +26,28 @@ _CTA_BG = (232, 109, 47)  # orange accent
 
 
 def _storage_path_from_url(image_url: str) -> str:
-    """Convert /storage/{path} or full URL into relative storage path."""
+    """Convert /storage/{path}, signed download URL, or full URL into relative storage path."""
     raw = (image_url or "").strip()
     if not raw:
         raise ValueError("image_url is required")
+
+    # Signed download URLs: /api/v1/storage/download?token=...
+    if "token=" in raw or "/api/v1/storage/download" in raw:
+        try:
+            from urllib.parse import parse_qs, urlparse
+
+            from app.services.asset_delivery import AssetDeliveryService
+
+            parsed = urlparse(raw if "://" in raw else f"http://local{raw if raw.startswith('/') else '/' + raw}")
+            token = (parse_qs(parsed.query).get("token") or [None])[0]
+            if token:
+                payload = AssetDeliveryService().verify_token(token)
+                path = str(payload.get("storage_path") or "").strip()
+                if path:
+                    return path.lstrip("/")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("image_text_edit.signed_url_resolve_failed error=%s", exc)
+
     # Strip origin if present
     if "://" in raw:
         raw = "/" + raw.split("://", 1)[1].split("/", 1)[-1]

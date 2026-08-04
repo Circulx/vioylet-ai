@@ -1,43 +1,39 @@
-# Jiraaf sample library (layout DNA)
+# Jiraaf sample library (layout DNA) — LOCKED ONCE
 
-Samples live in this folder. Used as locked creative DNA for Violyt L7/L7c/L8.
+Samples live in this folder. Used as permanent creative DNA for Violyt L7/L7c/L8.
+**Do not ask the user to re-provide these samples** — they are locked in code + this folder.
 
-## Carousel story (4–7 slides) — SAMPLE DNA LOCKED
-Primary references (content depth + storyline):
-| File | Pattern |
-|------|---------|
-| sample_sweep_in_fd.pdf | Hook → ₹ scenario → comparison table → liquidity/penalty → pros/cons → CTA |
-| sample_capital_control_v2.pdf | Hook with real policy fact → define (who/how/where) → why exists → India forms → easing nuance |
-| sample_unrealized_gains.pdf | Hook → bond ₹/rate example → hold scenario → exit scenario → when to sell → CTA |
+**Resolver:** `app/prompts/jiraaf_sample_templates.py` → `resolve_creative_template(prompt, format)`
 
-Also:
-| File | Pattern |
-|------|---------|
-| sample_cds_vs_ncds.pdf | Comparison story (Rahul vs Neha), short lines |
-| sample_india_japan_investment.pdf | News explainer, ¥ amounts, 3D diorama |
-| sample_capital_control.pdf | Myth → definition → implication |
-| sample_fire.pdf | Personal-finance education blocks |
-| sample_logical_fallacies.pdf | One fallacy per slide |
-| sample_jiraaf_1_0.pdf | Character story (Arjun) |
-| sample_inflation_lie.pdf | % + ₹ myth-bust, 3D characters |
+## Locked PNG templates (permanent)
 
-Code lock: `app/prompts/carousel_sample_dna.py` (`CAROUSEL_SAMPLE_DNA`)
+| Sample file | Template ID | When |
+|-------------|-------------|------|
+| **`sample_infographic_explain_rbi_polymer.png`** | `infographic_explain_editorial` | Explain / why / how + **infographic** — PERMANENT DNA (RBI polymer sample) |
+| `sample_static_oil_consumption_bars.png` | `horizontal_bar_ranking` | Oil/consumption top-N + static |
+| `sample_top_countries_investing.png` | `vertical_country_ranking` | Country/FDI top-N |
+| `sample_bank_penalties.png` | `static_hub_facts` | Bank penalties / key rules |
+| `sample_india_russia_trade_deficit.png` | `trade_deficit_board` | Trade deficit data |
 
-## Static hubs / rankings / data boards
-| File | Pattern |
-|------|---------|
-| sample_top_countries_investing.png | **LOCKED ranking DNA**: orange # badge \| flag \| Name + short phrase \| ₹50B \| coin icon |
-| sample_bank_penalties*.png | Hub + 5 bank fact cards, ₹/% |
-| India–Russia trade deficit (reference) | Dual-bar year table Export\|Balance\|Import |
+### Infographic explain anatomy (locked — sample_infographic_explain_rbi_polymer.png)
+1. Large navy headline + intro paragraph  
+2. Orange-bar section + **3 circular-icon fact columns**  
+3. Orange-bar section + orange highlight words + **3 clay-3D fact columns**  
+4. Orange-bar text section (short paragraphs)  
+5. Orange-border callout + lightbulb  
+6. Source footer · empty top-right logo pocket  
 
-**Ranking tone (exact):** "Top investor in India" / "Strong economic ties" / "Growing interest" — never textbook.
-Country ranks use **AI image only** (Pillow board disabled). Logo still Brand Space composite.
-Code locks: `RANKING_SAMPLE_DNA_LOCK`, `INFOGRAPHIC_AUDIENCE_TONE_LOCK`, `RANKING_IMAGE_STUB`, `INFOGRAPHIC_TRADE_BOARD_LOCK`
+Code: `INFOGRAPHIC_EXPLAIN_LAYOUT_LOCK` in `brand_copy_tone.py`
+
+## Carousel PDFs
+Sweep-In FD / Capital Controls / Unrealized Gains → `carousel_sample_dna.py`
 
 ## Shared DNA
-- BG ice-blue `#E8F0F8`, navy `#003975` headlines only, orange `#FFA400` accents only
-- Soft matte clay-3D icons sized to FIT (rounded soft-touch, satin finish — not glossy chrome)
-- SEBI disclaimer on CAROUSEL slides only (Pillow-composited). Static / infographic: no SEBI strip.
-- India currency rules: ₹/% default; ¥ Japan; USD only when source is USD
-- Logo: Brand Space composite only (no AI wordmark)
-- Carousel depth: real ₹ scenarios, mechanisms, A-vs-B choices, pros/cons — never shallow slogans
+- Navy `#003975` · Orange `#FFA400` · soft BG  
+- Logo: Brand Space composite only  
+- SEBI: carousel only  
+
+## QA
+```bash
+python scripts/verify_layout_router.py
+```

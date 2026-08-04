@@ -649,12 +649,22 @@ async function copyTextToClipboard(text: string) {
     textarea.remove();
 }
 
-function downloadAsset(asset: AssetReference, filename: string) {
+async function downloadAsset(asset: AssetReference, filename: string) {
     const downloadUrl = asset.asset_url || "";
     if (!downloadUrl) {
-        return;
+        throw new Error("Selected image is not ready to download.");
     }
-    triggerDownload(downloadUrlWithFilename(downloadUrl, filename), filename);
+    const response = await fetch(proxiedShareAssetUrl(downloadUrl), { credentials: "same-origin" });
+    if (!response.ok) {
+        throw new Error("Selected image could not be loaded for download.");
+    }
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    try {
+        triggerDownload(objectUrl, filename);
+    } finally {
+        window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    }
 }
 
 function loadImageFromUrl(url: string) {
@@ -1279,8 +1289,16 @@ function GeneratedImageViewer({
                     downloadAsset(asset, generatedSlideDownloadFilename(sourcePrompt, asset, index + 1, downloadableAssets.length)),
                 ),
             );
-        } catch {
-            await downloadAsset(activeAsset, generatedDownloadFilename(sourcePrompt, activeAsset));
+        } catch (error) {
+            try {
+                await downloadAsset(activeAsset, generatedDownloadFilename(sourcePrompt, activeAsset));
+            } catch {
+                toast({
+                    title: "Unable to save image",
+                    description: error instanceof Error ? error.message : "Download failed. Please try again.",
+                    variant: "destructive",
+                });
+            }
         } finally {
             setIsSaving(false);
         }

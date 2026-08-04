@@ -909,8 +909,11 @@ export default function BrandSpaceEditor({
         () => uploadStatusItems.some((item) => normalizeUploadState(item.lifecycleState) === "selected"),
         [uploadStatusItems],
     );
-    const canOpenWorkspace = Boolean(draftBrand?.id) && brandLifecycleState === "active";
-    const canShowHistoryButton = canOpenWorkspace && currentUser?.role !== "PLATFORM_OWNER";
+    const canOpenWorkspace = Boolean(effectiveBrandId) && brandLifecycleState === "active";
+    const canShowHistoryButton =
+        Boolean(effectiveBrandId) &&
+        brandLifecycleState === "active" &&
+        currentUser?.role !== "PLATFORM_OWNER";
     const primarySubmitIntent: "publish" | "save" =
         brandLifecycleState === "active" || hasUnsavedUploadItems ? "save" : "publish";
     const isDraftSubmitting = isSubmitting && activeSubmitIntent === "draft";
@@ -1527,13 +1530,18 @@ export default function BrandSpaceEditor({
     };
 
     const handleOpenBrandSpace = () => {
-        if (!draftBrand) {
+        if (!effectiveBrandId) {
             return;
         }
         if (!hasPendingUploadItems) {
             clearBrandSpaceDraft();
         }
-        router.push(buildBrandWorkspaceHref(draftBrand));
+        router.push(
+            buildBrandWorkspaceHref({
+                id: effectiveBrandId,
+                slug: draftBrand?.slug ?? effectiveBrandId,
+            }),
+        );
     };
 
     const handlePrimarySubmit = () => {
@@ -1714,8 +1722,9 @@ export default function BrandSpaceEditor({
             ) : null}
 
             <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
-                <div className="space-y-5">
-                    <TabsList className="flex h-auto flex-nowrap justify-start gap-1 bg-transparent p-0 overflow-x-auto w-full border-b border-slate-200 pb-2 scrollbar-thin">
+                <div className="space-y-5 pt-7">
+                    <div className="overflow-x-auto w-full border-b border-slate-200 pb-2 scrollbar-thin">
+                    <TabsList className="flex h-auto flex-nowrap justify-start gap-1 bg-transparent p-0 overflow-visible w-max min-w-full">
                         {brandSpaceTabs.map((tab) => {
                             const completion = tabCompletion[tab.value] ?? { percent: 100, required: 0, completed: 0 };
                             const fillPercent = Math.max(0, Math.min(100, completion.percent));
@@ -1730,7 +1739,7 @@ export default function BrandSpaceEditor({
                                     )}
                                 >
                                     {showCompletionLabel ? (
-                                        <span className="pointer-events-none absolute -top-6 left-1/2 z-20 hidden -translate-x-1/2 whitespace-nowrap rounded-sm bg-primary px-1.5 py-0.5 text-[10px] font-medium text-white group-hover:inline-flex">
+                                        <span className="pointer-events-none absolute -top-6 left-1/2 z-20 inline-flex -translate-x-1/2 whitespace-nowrap rounded-sm bg-primary px-1.5 py-0.5 text-[10px] font-medium text-white">
                                             {fillPercent}% Completed
                                         </span>
                                     ) : null}
@@ -1746,6 +1755,7 @@ export default function BrandSpaceEditor({
                             );
                         })}
                     </TabsList>
+                    </div>
                 </div>
 
                 <div className="pt-2">

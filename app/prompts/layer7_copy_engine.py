@@ -11,9 +11,22 @@ from app.prompts.brand_copy_tone import (
     SOURCE_FOOTER_RULE,
     CONTENT_DEPTH_LOCK,
     HEADLINE_COLOR_LOCK,
+    EDUCATION_POSTER_LAYOUT_LOCK,
+    INFOGRAPHIC_EXPLAIN_LAYOUT_LOCK,
+    INFOGRAPHIC_EXPLAIN_ORANGE_STUB,
+    INFOGRAPHIC_EXPLAIN_QUALITY_LOCK,
+    STATIC_EXPLAIN_LAYOUT_LOCK,
+    STATIC_EXPLAIN_QUALITY_LOCK,
+    STATIC_ORANGE_STUB,
+    STATIC_RANKING_INSIGHT_LOCK,
+    STATIC_HORIZONTAL_BAR_DNA_LOCK,
+    STATIC_HORIZONTAL_BAR_IMAGE_STUB,
     INFOGRAPHIC_AUDIENCE_TONE_LOCK,
     INFOGRAPHIC_RANKING_FORMAT_LOCK,
     INFOGRAPHIC_TRADE_BOARD_LOCK,
+    RANKING_IMAGE_STUB,
+    JIRAAF_ORANGE,
+    CAROUSEL_AUDIENCE_TONE_LOCK,
 )
 from app.prompts.carousel_sample_dna import CAROUSEL_SAMPLE_DNA
 
@@ -38,20 +51,22 @@ def _is_data_hub_topic(text: str) -> bool:
 class CopyEnginePromptBuilder(BasePromptBuilder):
     """Builds prompts for Layer 7: Copy Engine."""
 
-    PROMPT_VERSION = "1.4-jiraaf-layout"
+    PROMPT_VERSION = "1.5-carousel-retail-tone"
 
     _CAROUSEL_STORY_SUFFIX = f"""
 {CAROUSEL_SAMPLE_DNA}
+{CAROUSEL_AUDIENCE_TONE_LOCK}
 
 CAROUSEL OUTPUT RULES (client quality — NON-NEGOTIABLE — MATCH SAMPLE PDFs):
 Emit exactly 5–6 slides in slide_copy. Follow the sample STORY ARC beat-by-beat.
-This is an EDUCATION STORY, not a sparse poster set.
+This is an EDUCATION STORY in PLAIN RETAIL LANGUAGE — same tone as static/infographic samples.
 
 UNIQUE COMPLETE HEADLINES (critical):
 - Every slide_copy[].headline MUST be unique, COMPLETE (no mid-word cuts), max 8–10 words.
 - NEVER bare topic titles (BAD: "Sweep-in FD", "Capital Controls", "Interest rates").
+- NEVER policy-analyst jargon in headlines or body.
 - NEVER near-duplicates.
-- GOOD sample-style headlines:
+- GOOD sample-style headlines (plain English):
   * "What if savings quietly earned FD-like returns?"
   * "Let's say you keep ₹2 lakh idle"
   * "A Sweep-in FD tries to solve this"
@@ -59,23 +74,24 @@ UNIQUE COMPLETE HEADLINES (critical):
   * "So should you opt for Sweep-in FD?"
   * "Would you choose the Sweep-in facility?"
 
-STORY DEPTH (critical — client said "no story / no depth"):
-- Slide 1 HOOK: surprising question + concrete tension
+STORY DEPTH (teach with numbers — keep language simple):
+- Slide 1 HOOK: surprising question + concrete tension in plain words
 - Slide 2 SCENARIO: ₹ mini-story in body + 3 proof_points (e.g. ₹2L / ₹50k / ₹1.5L idle)
-- Slide 3 HOW IT WORKS: mechanism + comparison numbers (₹6,000 vs ₹10,500 style)
-- Slide 4 CHOICE: liquidity / decision + caveat (penalty note)
-- Slide 5 PROS/CONS: full reason sentences in proof_points (NOT empty Pros/Cons chips)
-- Slide 6 CTA: short question inviting comments
-- body: 22–36 words per slide — teach the beat like Sweep-In / Gains samples
-- supporting_line = mechanism/number sentence (required)
-- proof_points: 2–3 FULL explanation lines with ₹/%/rules (8–14 words each)
+- Slide 3 HOW IT WORKS: mechanism + comparison numbers (₹6,000 vs ₹10,500 style) — explain simply
+- Slide 4 CHOICE: liquidity / decision + honest caveat (penalty note)
+- Slide 5 PROS/CONS: short reason sentences in proof_points (NOT empty Pros/Cons chips)
+- Slide 6 CTA: short question inviting comments ("What would you do?")
+- body: 18–32 words per slide — short sentences, real ₹/% facts
+- supporting_line = one plain sentence with a number or "what it means" (required)
+- proof_points: 2–3 lines with ₹/%/rules (6–12 plain words each)
 - chip_labels = 3 content words — NEVER Pros/Cons/Examples/Advantages
 
-FORBIDDEN CHEAP PATTERN (matches rejected outputs):
+FORBIDDEN (too technical OR too shallow):
+- Vostro/Nostro, hedge, sector exposure, liquidity risk jargon, macro implications essays
 - Sparse slides with only 1–2 vague lines
 - Truncated / missing headlines
 - Same headline repeated
-- Body that only restates a definition with no numbers
+- Body that only restates a definition with jargon and no ₹/% example
 
 TOPIC LOCK: stay on the user's topic.
 Spelling perfect.
@@ -125,14 +141,16 @@ INFOGRAPHIC FORMAT — CRITICAL ADDITIONAL RULES:
 Match Jiraaf sample tone — scannable, short labels — NOT textbook essays / teaser ads.
 
 Pick structure from USER INTENT (do NOT default to comparison):
-- WHY / useful / benefits / explain / how → BENEFIT cards (reasons), never country ranks
-- Ranking / top-N / country-wise / FDI → ranked Name|plain phrase|amount rows
-  ({INFOGRAPHIC_RANKING_FORMAT_LOCK})
-- Trade deficit → simple dual-bar year board only ({INFOGRAPHIC_TRADE_BOARD_LOCK})
+- WHY / explain / how / what is → multi-section editorial (sample_infographic_explain_rbi_polymer.png)
+  Section headings + 3-col icon cards + callout box — NOT bond benefit cards
+- Ranking / top-N / country-wise / FDI → ranked rows ({INFOGRAPHIC_RANKING_FORMAT_LOCK})
+- Trade deficit → dual-bar year board ({INFOGRAPHIC_TRADE_BOARD_LOCK})
 - Bank penalties / key rules → bank fact cards
 
-When education (why/benefits):
-- sections = reasons/benefits with short includes; NO invented country yield tables
+When infographic explain (why/how/what is):
+- 2–4 section blocks: section_label = heading, includes = "Title | explanation" sub-points
+- customer_quote = final callout insight; source_footer when research exists
+- FORBIDDEN: Capital Preservation / Regular Income on unrelated topics
 
 When ranking / comparison / top-N (user asked for it):
 - section_label = name (country/bank), stat = number when useful, includes = 1 short plain fact
@@ -141,19 +159,28 @@ Top-level body usually EMPTY — facts live in sections.
 Spelling perfect. CTA ≤4 words. No text breaking.
 """
 
-    _EDUCATION_POSTER_SUFFIX = f"""
-EDUCATION / WHY / BENEFITS POSTER (layout_type=carousel_story on static or infographic):
-{INFOGRAPHIC_AUDIENCE_TONE_LOCK}
-User asked WHY / HOW / useful / benefits / explain — NOT a ranking or country comparison.
-- headline: topic claim (e.g. "Bonds: Your Path to Predictable Income")
-- supporting_line: one short why-it-matters line
-- infographic_sections: 3–5 BENEFIT / REASON cards — labels like "Regular Income",
-  "Capital Preservation", "Predictable Coupons" — NOT countries, NOT banks, NOT % ranking rows
-- includes = 1 short plain-English reason each (no invented foreign yields)
-FORBIDDEN unless the user explicitly asked to compare/rank:
-- Country tables (India/USA/Germany/Japan…)
-- Flag rows, FDI ranks, cross-market % boards, "vs" comparison matrices
+    _INFOGRAPHIC_EXPLAIN_SUFFIX = f"""
+INFOGRAPHIC EXPLAIN (layout_type=carousel_story on infographic) — DENSE sample DNA:
+{INFOGRAPHIC_EXPLAIN_LAYOUT_LOCK}
+{INFOGRAPHIC_EXPLAIN_ORANGE_STUB}
+{INFOGRAPHIC_EXPLAIN_QUALITY_LOCK}
+- headline (large question OK) + supporting_line with ₹/% fact
+- 2–4 UNIQUE sections[]: section_label = unique heading
+- includes[] = 2–3 items "Mini-title | explanation with ₹/%" — each mini-title UNIQUE
+- customer_quote = multi-sentence callout; source_footer when available
+- cta = "Learn more" / "Share the news!" ONLY — NEVER bond/investment CTA on RBI/currency topics
+FORBIDDEN: sparse 3-line posters, duplicate headings/titles, typos (Financrial/fiexible), bond CTAs off-topic
 """
+
+    _STATIC_EXPLAIN_SUFFIX = f"""
+STATIC EXPLAIN (layout_type=carousel_story on static):
+{STATIC_EXPLAIN_LAYOUT_LOCK}
+{STATIC_EXPLAIN_QUALITY_LOCK}
+{STATIC_ORANGE_STUB}
+- 3–5 sections[]: section_label, includes, icon_hint — every card complete
+"""
+
+    _EDUCATION_POSTER_SUFFIX = _INFOGRAPHIC_EXPLAIN_SUFFIX  # legacy alias
 
     _STATIC_DATA_HUB_SUFFIX = """
 STATIC DATA / HUB TOPICS (bank penalties, top-N rules, comparisons):
@@ -167,6 +194,31 @@ Example for FD penalty rates of top 5 Indian banks:
 - infographic_sections: EXACTLY 5 — Axis Bank, SBI, HDFC Bank, ICICI Bank, PNB
   each with includes = 1–2 short ₹/% rule lines, body = ""
 FORBIDDEN: teaser creatives that only ask "What Are Your FD Penalty Rates?" without listing the rates.
+"""
+
+    _STATIC_RANKING_SUFFIX = f"""
+STATIC RANKING — pick style from topic (both require orange {JIRAAF_ORANGE}):
+A) Country/FDI top-N → Top Countries vertical rows (UNCHANGED — {RANKING_IMAGE_STUB})
+B) Oil/consumption/data bars → horizontal bar chart ({STATIC_HORIZONTAL_BAR_DNA_LOCK})
+{STATIC_ORANGE_STUB}
+- Bake ALL row labels, values, % — no missing text; flags + icons on every row
+"""
+
+    _STATIC_HORIZONTAL_RANKING_SUFFIX = f"""
+STATIC HORIZONTAL BAR RANKING (oil/consumption/data only):
+{STATIC_HORIZONTAL_BAR_DNA_LOCK}
+{STATIC_RANKING_INSIGHT_LOCK}
+{STATIC_ORANGE_STUB}
+- sections[] = 7 ranked countries: section_label=NAME, stat=mb/d or value, includes=[% share, short phrase]
+- If user asks why/describe focal country: put 1–2 line insight in customer_quote or last section includes
+- Highlight India/focal row in orange; bake ALL 7 rows — no missing countries
+"""
+
+    _STATIC_VERTICAL_RANKING_SUFFIX = f"""
+STATIC VERTICAL COUNTRY RANKING (Top Countries — UNCHANGED):
+{INFOGRAPHIC_RANKING_FORMAT_LOCK}
+{RANKING_IMAGE_STUB}
+{STATIC_ORANGE_STUB}
 """
 
     def build_system(self, format_name: str = "static", **kwargs: Any) -> str:
@@ -225,9 +277,22 @@ No preamble. No explanations. Return ONLY raw JSON."""
             base += self._STATIC_DATA_HUB_SUFFIX
         # Ranking suffix ONLY for real rankings — never for every infographic
         if layout_type == "static_ranking":
-            base += self._RANKING_SUFFIX
-        if layout_type == "carousel_story" and format_name in ("static", "infographic"):
-            base += self._EDUCATION_POSTER_SUFFIX
+            from app.prompts.jiraaf_layout import static_ranking_style
+
+            if format_name == "static":
+                style = static_ranking_style(user_prompt)
+                if style == "horizontal_bar":
+                    base += self._STATIC_HORIZONTAL_RANKING_SUFFIX
+                elif style == "vertical_countries":
+                    base += self._STATIC_VERTICAL_RANKING_SUFFIX
+                else:
+                    base += self._RANKING_SUFFIX  # trade board copy rules
+            else:
+                base += self._RANKING_SUFFIX
+        if layout_type == "carousel_story" and format_name == "infographic":
+            base += self._INFOGRAPHIC_EXPLAIN_SUFFIX
+        elif layout_type == "carousel_story" and format_name == "static":
+            base += self._STATIC_EXPLAIN_SUFFIX
         if layout_type == "carousel_story" or format_name == "carousel":
             base += self._CAROUSEL_STORY_SUFFIX
         return base
@@ -308,9 +373,9 @@ Verified Facts:
 {facts_str or 'No individually verified facts returned.'}
 
 Source article is useful — EXTRACT concrete mechanisms, numbers, and conditions into the deck.
-Each carousel slide should teach ONE deeper insight from this research (how it works / why it matters /
-what to watch). Do NOT stay at vague lines like "Connect the Dots" or "bonds are like stocks".
-Translate into plain language — do not paste research prose. Put at least one concrete fact in the deck.
+Each carousel slide should teach ONE insight in PLAIN RETAIL LANGUAGE (how it works / why it matters /
+what to watch) — same tone as static/infographic samples. Do NOT use policy jargon or vague lines
+like "Connect the Dots". Translate research into short ₹/% sentences a retail investor gets in 3 seconds.
 """
 
         return f"""BRAND SIGNAL CONTEXT:

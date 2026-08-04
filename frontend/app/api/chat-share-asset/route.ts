@@ -16,7 +16,13 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Invalid asset URL" }, { status: 400 });
   }
 
-  if (parsedUrl.origin !== apiOrigin || !parsedUrl.pathname.startsWith("/api/v1/storage/download")) {
+  if (
+    parsedUrl.origin !== apiOrigin ||
+    !(
+      parsedUrl.pathname.startsWith("/api/v1/storage/download") ||
+      parsedUrl.pathname.startsWith("/storage/")
+    )
+  ) {
     return NextResponse.json({ error: "Asset URL is not allowed" }, { status: 400 });
   }
 

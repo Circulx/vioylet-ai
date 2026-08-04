@@ -10,6 +10,8 @@ Use for L7 / L7c / L8 carousel story generation.
 
 from app.prompts.brand_copy_tone import (
     CONTENT_DEPTH_LOCK,
+    CAROUSEL_AUDIENCE_TONE_LOCK,
+    CAROUSEL_CONTENT_DEPTH_LOCK,
     HEADLINE_COLOR_LOCK,
     JIRAAF_BG,
     JIRAAF_NAVY,
@@ -21,6 +23,8 @@ CAROUSEL_SAMPLE_DNA = f"""
 JIRAAF CAROUSEL SAMPLE DNA (NON-NEGOTIABLE — MATCH THESE PDFs)
 Samples: Sweep-In FD | Capital Controls | Unrealized Gains
 ════════════════════════════════════════════════════════
+
+{CAROUSEL_AUDIENCE_TONE_LOCK}
 
 VISUAL SYSTEM (every slide — copy the sample look exactly):
 - Canvas 1080x1350 portrait (4:5)
@@ -40,17 +44,17 @@ STORY ARC (5–6 slides) — SAME SHAPE AS THE SAMPLES (this is the "story"):
    Sweep-In: "What if your savings could quietly earn FD-like returns?"
    Capital: "Most people saw a tax change. Economists saw a bigger story."
    Gains: "Your bonds could be sitting on unrealised gains."
-2 SCENARIO / DEFINE — plain mechanism + concrete ₹ example in 3 text blocks
+2 SCENARIO / DEFINE — plain mechanism + concrete ₹ example in 3 short text blocks
    Sweep-In: "Let's say you keep ₹2 lakh…" / "only need ₹50,000…" / "₹1.5 lakh earns low interest"
-   Capital: What capital controls are + Who / How much / Where money can move
+   Capital: What limits are in plain English — who it affects / how much / where money can go
    Gains: Bought bond ₹1,00,000 @ 9% for 5 years; rates fall to 7% → price rises
-3 HOW IT WORKS — engine with comparison OR numbered rules OR concrete mechanism
+3 HOW IT WORKS — simple comparison OR numbered steps OR clear mechanism
    Sweep-In: Regular savings vs Sweep-in FD (₹6,000 vs ₹10,500 illustrative)
-   Capital: Why controls exist (weaker currency / unstable markets / higher borrowing costs)
-   Gains: Hold till maturity — coupon ₹9,000/year + principal
-4 IMPLICATION / CHOICE — investor decision with specific conditions
+   Capital: Why countries use limits — weaker currency / unstable markets / higher borrowing costs
+   Gains: Hold till maturity — coupon ₹9,000/year + principal back
+4 IMPLICATION / CHOICE — what YOU might do + one honest condition
    Sweep-In: "But what happens when you need the money?" + sweep-back + penalty note
-   Capital: Real India forms (LRS $250,000, FDI limits, overseas borrowing)
+   Capital: Real India examples in plain words (how much you can send abroad, overseas investing limits)
    Gains: Exit earlier — price rise; hold coupons OR book gain
 5 NUANCE / PROS-CONS — honest trade-offs WITH full reason sentences (never empty Pros/Cons)
    Sweep-In: Pros vs Cons cards + "it may make sense if…" conditions
@@ -68,13 +72,13 @@ PROS/CONS: headline + TWO columns/cards each with FULL reason sentences (not emp
 CTA: big question + "Let us know in the comments" + premium icon
    Optional orange CTA button: COMPACT only (≤28% width, ≤4.5% height) — never a wide bar
 
-DEPTH RULES (client "deep content"):
-{CONTENT_DEPTH_LOCK}
-- Put REAL ₹ / % / USD / policy numbers from research on 2+ slides.
+DEPTH RULES (client "deep content" — plain language only):
+{CAROUSEL_CONTENT_DEPTH_LOCK}
+- Put REAL ₹ / % numbers from research on 2+ slides — explain them simply.
 - Prefer a mini scenario over a slogan (who has how much / what rate / what happens).
-- Prefer a comparison or choice (A vs B, hold vs exit, pros vs cons WITH reasons).
+- Prefer a comparison or choice (A vs B, hold vs exit, pros vs cons WITH short reasons).
 - Include ONE honest caveat/note somewhere (penalty, illustrative, risk, condition).
-- supporting_line on every slide must add a mechanism or number — not restate the headline.
+- supporting_line on every slide must add a plain fact — not restate the headline in jargon.
 
 FORBIDDEN (instant fail — these match the bad outputs the client rejected):
 - Truncated headlines ("Interest earned o.." / mid-word cuts / "…")
@@ -84,12 +88,13 @@ FORBIDDEN (instant fail — these match the bad outputs the client rejected):
 - Topic title alone as headline ("Sweep-in FD", "Capital Controls")
 - Cloning the same body across slides
 - Cheap blurry calculator / toy icons
+- Technical jargon without a plain-English translation (Vostro, hedge, sector exposure, macro implications)
 
 PER-SLIDE COPY SHAPE:
-- headline: max 8–10 words, COMPLETE (no truncation), navy, unique, concrete
-- supporting_line: 1 short mechanism/number sentence (REQUIRED)
-- body: 22–36 words — full scenario / mechanism / comparison / caveat
-- proof_points: 2–3 FULL explanation lines with ₹/%/rules
+- headline: max 8–10 words, COMPLETE (no truncation), navy, unique, concrete — plain English
+- supporting_line: 1 short plain sentence with ₹/% or "what it means" (REQUIRED)
+- body: 18–32 words — full scenario / comparison / caveat in simple words
+- proof_points: 2–3 SHORT explanation lines with ₹/%/rules (6–12 words each)
 - chip_labels: exactly 3 ONE-WORD content labels matching THIS slide's beat
   Sweep-In: Idle | Threshold | Sweep  OR  Liquidity | Penalty | Access
   Capital: Who | Amount | Where  OR  Currency | Markets | Costs
@@ -103,9 +108,10 @@ COLOUR LOCK:
 # (use CAROUSEL_IMAGE_STYLE_STUB from brand_copy_tone instead — 6000 char budget).
 CAROUSEL_SAMPLE_DNA_COMPACT = f"""
 CAROUSEL ONLY — MATCH SAMPLE PDFs (Sweep-In / Capital / Gains):
-STORY: hook → ₹ scenario (3 blocks) → how it works → choice → pros/cons WITH reasons → CTA.
+TONE: same plain retail voice as static/infographic — short sentences, ₹/% facts, NO jargon.
+STORY: hook → ₹ scenario (3 blocks) → how it works → choice → pros/cons WITH short reasons → CTA.
 EVERY slide: FULL navy headline top-left (never omit, never truncate mid-word).
-CONTENT DENSE: 2–3 white story cards with ₹/%/rules — NOT sparse empty slides.
+CONTENT DENSE: 2–3 white story cards with simple ₹/% lines — NOT sparse empty slides.
 ICONS/AVATARS: ONE premium HD clay-3D object (~12–16% height) bottom-right.
 Bottom ~14% EMPTY for SEBI. COLOUR: navy {JIRAAF_NAVY}; orange {JIRAAF_ORANGE}; BG {JIRAAF_BG}.
 """

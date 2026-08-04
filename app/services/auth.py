@@ -524,6 +524,7 @@ class AuthService:
         user,
         actor_role_codes: set[str] | None,
     ) -> None:
+        logger = logging.getLogger(__name__)
         normalized_role_codes = {str(role_code) for role_code in (actor_role_codes or set())}
         supported_role_codes = {
             RoleCode.TENANT_ADMIN.value,
@@ -531,8 +532,27 @@ class AuthService:
             RoleCode.BRAND_USER.value,
         }
         if not normalized_role_codes.intersection(supported_role_codes):
+            logger.info(
+                "auth.password_changed_email_skipped_role user_id=%s roles=%s",
+                getattr(user, "id", ""),
+                sorted(normalized_role_codes),
+            )
             return
-        self.email.send_password_changed_confirmation_email(user.email, user.full_name)
+        delivery = self.email.send_password_changed_confirmation_email(user.email, user.full_name)
+        if not getattr(delivery, "delivered", False):
+            logger.warning(
+                "auth.password_changed_email_not_delivered user_id=%s email=%s attempted=%s reason=%s",
+                getattr(user, "id", ""),
+                user.email,
+                getattr(delivery, "attempted", False),
+                getattr(delivery, "reason", None) or "unknown",
+            )
+        else:
+            logger.info(
+                "auth.password_changed_email_delivered user_id=%s email=%s",
+                getattr(user, "id", ""),
+                user.email,
+            )
 
     async def delete_profile(self, user_id) -> PasswordResetResponse:
         # Runs the profile service flow and persists the resulting state before returning it to the route or

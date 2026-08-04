@@ -57,6 +57,12 @@ _GLOBAL_TEXT_FIXES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bFDR\b"), "FDI"),  # common FDI misspelling in rankings
     (re.compile(r"\bASA\b"), "USA"),  # common USA misspelling in country ranks
     (re.compile(r"\bU\.S\.A\b"), "USA"),
+    (re.compile(r"\bFinancrial\b"), "Financial"),
+    (re.compile(r"\bfinancrial\b"), "financial"),
+    (re.compile(r"\bfiexible\b", re.I), "flexible"),
+    (re.compile(r"\binternationa!l\b", re.I), "international"),
+    (re.compile(r"\bLeśs\b"), "Less"),
+    (re.compile(r"\bleśs\b"), "less"),
     (re.compile(r"\binvestmet\b", re.I), "investment"),
     (re.compile(r"\btecnlogy\b", re.I), "technology"),
     (re.compile(r"\btecnology\b", re.I), "technology"),
@@ -554,6 +560,36 @@ def polish_blueprint_meta(
         blueprint.tone = "simple, educational, sample-style"
     if not (blueprint.intent or "").strip():
         blueprint.intent = "awareness"
+
+    # Off-topic CTA repair (e.g. "Explore bond investments!" on RBI/currency explain)
+    cta = (blueprint.cta or "").strip()
+    prompt_l = (user_prompt or "").lower()
+    cta_l = cta.lower()
+    topic_is_currency = any(
+        k in prompt_l
+        for k in (
+            "polymer",
+            "plastic note",
+            "currency note",
+            "rbi testing",
+            "rbi trial",
+            "plastic currency",
+        )
+    )
+    cta_is_bond = any(k in cta_l for k in ("bond", "invest", "portfolio", "fd ", "fixed deposit"))
+    if topic_is_currency and cta_is_bond:
+        blueprint.cta = "Learn more"
+    if layout_type == "carousel_story" and blueprint.format == "infographic":
+        # Dedupe repeated section headings
+        seen: set[str] = set()
+        for i, sec in enumerate(blueprint.sections or []):
+            label = (sec.section_label or "").strip()
+            key = label.casefold()
+            if key and key in seen:
+                sec.section_label = f"{label} ({i + 1})"
+            elif key:
+                seen.add(key)
+
     if layout_type == "static_hub_facts" and _is_bank_penalty_hub(
         user_prompt, blueprint.headline or ""
     ):

@@ -92,9 +92,12 @@ HEADLINE & TEXT COLOUR LOCK (NON-NEGOTIABLE):
 - ALL headlines: dark navy {JIRAAF_NAVY} ONLY. Never orange. Never white on light BG.
 - ALL subheadings / section titles: dark navy {JIRAAF_NAVY} ONLY.
 - Body / supporting text: medium gray (#4A5568) or dark navy — never orange.
-- NO orange underline / orange bar under the headline.
-- Orange {JIRAAF_ORANGE} is ONLY for: thin dividers between cards, small bullet dots, bar/arrow accents in icons.
-- Gold {JIRAAF_GOLD} is ONLY for: 3D icon metallic accents — never for any text.
+- NO orange underline directly under the main headline title.
+- Orange {JIRAAF_ORANGE} is REQUIRED for infographic explain accents:
+  left vertical section bars, section dividers, CTA button fill, bullet dots, callout box border.
+- Orange {JIRAAF_ORANGE} is also for: thin dividers between cards, bar/arrow accents in charts.
+- Gold {JIRAAF_GOLD} is ONLY for: subtle 3D icon metallic highlights — NEVER replace orange accents.
+- NEVER use tan/brown/amber as a substitute for brand orange {JIRAAF_ORANGE}.
 - NEVER colour a headline, subheading, body paragraph, or ₹ amount orange (keep numbers navy).
 """
 
@@ -176,6 +179,238 @@ CAROUSEL FIT LOCK — MATCH SAMPLE PDFs (Sweep-In / Capital / Gains):
 - Spelling perfect. Plain printed sans-serif.
 """
 
+# Carousel education — same retail tone as static/infographic ranking (NOT policy-analyst speak)
+CAROUSEL_AUDIENCE_TONE_LOCK = """
+CAROUSEL TONE LOCK — same voice as static/infographic samples (NON-NEGOTIABLE):
+Target = everyday Indian investor on LinkedIn/Instagram — NOT a policy analyst or textbook.
+
+WRITE LIKE THIS (plain, short, human):
+  "What if your savings earned FD-like returns?"
+  "Let's say you keep ₹2 lakh in your account"
+  "Only ₹50,000 is needed for daily expenses"
+  "The rest sits idle at low savings interest"
+  "Would you try a sweep-in FD?"
+
+NEVER WRITE LIKE THIS (too technical — client rejected):
+  Vostro/Nostro, liquidity risk, sector exposure, currency hedge, macro implications,
+  regulatory framework, capital account convertibility, LRS without plain English,
+  "implications for portfolio allocation", advisor-briefing essays, empty Pros/Cons chips
+
+COPY RULES (every slide):
+- Headline: simple question or claim — max 8–10 words, complete (no mid-word cuts)
+- supporting_line: ONE short plain sentence with a ₹/% fact or "what it means"
+- body + proof_points: teach with a mini ₹ scenario — words a retail investor gets in 3 seconds
+- Each story card: bold label + ONE explanation ≤12 plain English words
+- CTA: short invite ("Comment below!" / "What would you do?") — never a paragraph button
+- India: ₹ and % default; USD only when source is USD (label "USD" — never $ / US $)
+- Perfect spelling. No jargon dumps. Depth = real numbers in simple language.
+"""
+
+CAROUSEL_CONTENT_DEPTH_LOCK = """
+CAROUSEL CONTENT DEPTH (plain language — still teach, never textbook):
+- Every slide needs a REAL insight with ₹ / % / a simple rule — not a vague slogan.
+- FORBIDDEN shallow: "Invest wisely" / "Unlock potential" / "Connect the dots"
+- FORBIDDEN technical: one-word chips (Selling / Hedging / Pros) with NO explanation
+- REQUIRED: mini scenario OR comparison OR honest trade-off — in words anyone understands
+- body: 18–32 words per slide — shorter sentences, same teaching depth as Sweep-In samples
+- Each card = label + one clear line (6–12 words) with ₹/% — NOT a jargon paragraph
+- Include ONE honest caveat somewhere (penalty, condition, illustrative note) in plain English
+"""
+
+# Infographic EXPLAIN — PERMANENT DNA from sample_infographic_explain_rbi_polymer.png
+# User provided this sample once — DO NOT drift; DO NOT ask for the sample again.
+INFOGRAPHIC_EXPLAIN_LAYOUT_LOCK = f"""
+════════════════════════════════════════════════════════
+INFOGRAPHIC EXPLAIN — PERMANENT SAMPLE LOCK (NON-NEGOTIABLE)
+File: app/prompts/references/jiraaf_samples/sample_infographic_explain_rbi_polymer.png
+Topic example in sample: "Why is the RBI testing plastic currency notes?"
+EVERY explain/why/how infographic MUST match this anatomy. Never invent a sparse poster.
+════════════════════════════════════════════════════════
+
+CANVAS: 1080x1350 portrait. Soft off-white / pale gray BG (NOT flat ice poster with huge empty space).
+
+1) HEADER
+   - EMPTY top-right pocket for Brand Space logo composite — NEVER draw JIRAAF wordmark/giraffe
+   - LARGE bold navy headline (question OK) — full width under logo pocket
+   - 1–2 line gray intro paragraph with a concrete fact (e.g. trial size / ₹ denominations)
+
+2) SECTION A — orange vertical bar + UNIQUE navy heading (sample: "Why polymer notes?")
+   - Thin light divider under section
+   - 3-COLUMN row: navy circular icon (white line-art) + UNIQUE bold mini-title + 1–2 line gray body
+   - Bold key numbers in body (₹4,000–5,000 crore / 2.5–4x / 60+ countries style)
+   - Mini-titles MUST be unique (Lower replacement costs | Longer lifespan | Globally tested)
+
+3) SECTION B — orange vertical bar + UNIQUE navy heading (sample: "Why the RBI is starting with a trial")
+   - Short intro line; highlight 1–2 words in ORANGE {JIRAAF_ORANGE} (sample: "cautious before")
+   - 3-COLUMN row: premium clay-3D icons + UNIQUE mini-title + explanation
+   - Sample icon types: shipping container | ATM | wallet — topic-matched for new topics
+
+4) SECTION C — orange vertical bar + UNIQUE navy heading (sample: "Only ₹10 and ₹20… Why?")
+   - 1–2 short paragraphs (text block — no mini-grid here)
+   - Bold key phrases (fastest-wearing / wider adoption)
+
+5) CALLOUT BOX — rounded rect, thin ORANGE border
+   - Orange circle + white lightbulb on left
+   - 2–3 sentence navy insight (customer_quote) with bold key phrases
+
+6) FOOTER
+   - "Source: …" small italic gray (when research available)
+   - NO AI-drawn SEBI legal strip on static/infographic (carousel only)
+
+ORANGE {JIRAAF_ORANGE} REQUIRED:
+- Left bars on EVERY section heading
+- Highlight words like "cautious before" in body
+- Callout border + lightbulb circle
+{ORANGE_COVERAGE_LOCK}
+
+COPY (L7/L7c):
+- 2–4 UNIQUE section_labels; includes[] = "Mini-title | explanation with ₹/%"
+- All mini-titles unique; customer_quote = callout; source_footer when available
+- CTA topic-safe only ("Learn more") — never bond CTA on currency/RBI topics
+
+FORBIDDEN:
+- Sparse 3-block poster with giant icons and empty space
+- Duplicate headings or duplicate mini-titles
+- Typos; bond cards on unrelated topics; ranking/trade boards unless asked
+"""
+
+INFOGRAPHIC_EXPLAIN_SPELLING_LOCK = """
+INFOGRAPHIC EXPLAIN SPELLING LOCK (FAIL on any typo):
+- Perfect English: Financial not Financrial; Less not Leśs; international not internationa!l; flexible not fiexible
+- RBI not OBI; India's not Indid's; counterfeit not counterfiet; polymer not polmer
+- No stray accents, punctuation inside words, or mid-word breaks
+- Bake ONLY quoted blueprint strings letter-perfect
+- UNIQUE section headings AND unique mini-titles — rewrite if anything would duplicate
+"""
+
+# Static EXPLAIN — simple hero + heading cards (NOT infographic editorial)
+STATIC_EXPLAIN_LAYOUT_LOCK = f"""
+STATIC EXPLAIN LOCK (simple poster — NOT infographic editorial):
+- Bold navy headline + one supporting line
+- ONE premium clay-3D hero icon (topic-matched) — NOT country flags
+- 3–5 white rounded cards: short HEADING + 1–2 line EXPLANATION
+- REQUIRED orange {JIRAAF_ORANGE}: section dividers, CTA button fill, bullet dots (≥2% image area)
+- Topic-specific copy ONLY — never paste bond examples on unrelated topics
+{ORANGE_COVERAGE_LOCK}
+"""
+
+# Visual quality — dense sample-matched infographic explain
+INFOGRAPHIC_EXPLAIN_QUALITY_LOCK = f"""
+INFOGRAPHIC EXPLAIN QUALITY LOCK (FAIL if sparse poster / duplicates / typos):
+{INFOGRAPHIC_EXPLAIN_SPELLING_LOCK}
+- MUST look like sample_infographic_explain_rbi_polymer.png: dense editorial, LARGE headline, filled sections.
+- FAIL if huge empty background with only 3 short lines — that is a poster, not this infographic.
+- EACH fact-grid section: orange left bar + navy heading + 3 columns with:
+  1) Icon (navy circular OR premium clay-3D — topic-matched, sharp HD)
+  2) UNIQUE bold mini-title (navy, 2–5 words) — never repeat titles
+  3) Explanation with ₹/%/number (gray, 8–18 words) — never empty under title
+- Callout box: lightbulb + full multi-sentence quote baked in.
+- Source footer when provided.
+- Orange highlight words in at least one body/intro line + orange bars + orange callout border.
+- BG soft {JIRAAF_BG}; navy {JIRAAF_NAVY} headlines; gray body — sharp printed sans-serif.
+{ICON_STYLE_LOCK}
+{UNIVERSAL_FIT_LOCK}
+"""
+
+# Visual quality + orange — static explain posters
+STATIC_EXPLAIN_QUALITY_LOCK = f"""
+STATIC EXPLAIN QUALITY LOCK:
+- Bake headline + supporting + EVERY card heading + explanation line — zero missing text.
+- EACH white card MUST have its own distinct LARGE clay-3D icon (not text-only cards).
+- Hero clay-3D icon top/center — topic-matched, premium studio render.
+- Orange {JIRAAF_ORANGE} dividers between cards + orange CTA button fill (≥2% image area).
+- Clean premium layout: ice-blue BG, navy headlines, gray body, sharp sans-serif — no gibberish.
+{ORANGE_COVERAGE_LOCK}
+{ICON_STYLE_LOCK}
+"""
+
+# Mandatory orange on ALL static creatives (explain + ranking + hub)
+STATIC_ORANGE_STUB = f"""
+STATIC ORANGE LOCK (ALL static formats — FAIL if missing):
+Brand orange {JIRAAF_ORANGE} REQUIRED ≥2% of image on EVERY static creative:
+- Explain: orange dividers, CTA button, bullet dots, icon accents
+- Horizontal bar ranking: orange highlight row, orange headline phrase, orange arrow annotation
+- Vertical country ranking (Top Countries): orange rank badges, accent line, CTA, coin icons
+- Hub facts: orange hub ring accents, divider lines
+Never tan/gold-only static with zero #FFA400.
+"""
+
+INFOGRAPHIC_EXPLAIN_ORANGE_STUB = f"""
+ORANGE BRAND LOCK (infographic explain — match sample):
+Brand orange {JIRAAF_ORANGE} REQUIRED:
+1) Thick orange vertical bars left of EVERY section heading
+2) 1–3 orange highlight words in intro/section line OR callout (sample: "cautious before")
+3) Orange callout box border; optional compact orange CTA
+4) Orange accents on clay-3D icons where natural
+Headline stays mostly navy (sample style) but MUST include orange text accents somewhere in body.
+Orange ≥2% of image. Never tan/gold bars instead of #FFA400.
+"""
+
+# Legacy alias — route by format in callers
+EDUCATION_POSTER_LAYOUT_LOCK = INFOGRAPHIC_EXPLAIN_LAYOUT_LOCK
+
+# Static HORIZONTAL BAR ranking — sample_static_oil_consumption_bars.png
+STATIC_HORIZONTAL_BAR_DNA_LOCK = f"""
+════════════════════════════════════════════════════════
+STATIC HORIZONTAL BAR DNA — sample_static_oil_consumption_bars.png
+Reference: app/prompts/references/jiraaf_samples/sample_static_oil_consumption_bars.png
+Use for format=static + static_ranking when topic is oil/consumption/data bars (ADDITIVE — does not replace Top Countries).
+════════════════════════════════════════════════════════
+
+COLOURS:
+- BG ice-blue {JIRAAF_BG}
+- Navy headline {JIRAAF_NAVY} with orange highlight phrase in title
+- Bars: medium-blue {JIRAAF_CARD} for rows; HIGHLIGHT row (India/subject) in orange {JIRAAF_ORANGE}
+- Orange annotation arrow + insight text on the right
+{ORANGE_COVERAGE_LOCK}
+{STATIC_ORANGE_STUB}
+
+TEXT + ICONS (every row must be complete):
+- Bake country NAME + value inside bar + % outside — no missing labels
+- Circular flag icon per row — correct country, never empty
+- Clay-3D topic icons bottom-right (oil barrels / coins) — premium HD, not blurry
+- Source footer with exact domain text
+
+LAYOUT:
+1) Centered headline — highlight key phrase in orange (e.g. "Oil-consuming country")
+2) Horizontal BAR CHART rows (top to bottom, longest first):
+   EACH row LEFT→RIGHT:
+   - Country NAME (navy, all-caps or bold)
+   - Circular flag icon at bar start
+   - Horizontal rounded BAR (length ∝ value)
+   - Value INSIDE bar right end (e.g. "5.621 mb/d" or "₹50B")
+   - % share OUTSIDE bar on the right (bold)
+3) Highlight the focal country row in ORANGE bar (others blue)
+4) Orange arrow annotation → 1–2 line insight text block on the right
+5) Premium clay-3D topic icons bottom-right (oil barrels / coins — topic-matched)
+6) Source footer bottom-left (e.g. "Source: Indian Express, Energy Institute")
+7) Tiny empty top-right pocket for logo — never draw JIRAAF text
+
+CURRENCY: mb/d · ₹ · % · USD letters — NEVER $ / US $ / ESD
+FLAGS: correct per country (USA not ASA; UAE not HAE)
+CTA: omit or compact ≤4 words — data posts often have no CTA button
+"""
+
+STATIC_HORIZONTAL_BAR_IMAGE_STUB = f"""
+STATIC HORIZONTAL BAR = sample_static_oil_consumption_bars.png:
+BG {JIRAAF_BG}. Navy headline {JIRAAF_NAVY} + orange highlight phrase.
+Rows: COUNTRY | flag circle | horizontal bar | value inside | % outside.
+Focal row (India/topic) = ORANGE bar; others = blue bars.
+Orange arrow → insight text. Clay-3D icons bottom-right. Source footer.
+Never vertical rank badges. Never bond benefit cards.
+"""
+
+# Hybrid ranking + insight (e.g. "top 7 oil countries — why India is top 3")
+STATIC_RANKING_INSIGHT_LOCK = f"""
+STATIC RANKING + INSIGHT (when user asks top-N AND why/describe about focal country):
+- Main visual = ranking board (horizontal bars OR vertical country rows — do NOT switch to education cards).
+- Bake the ranked list/data as the PRIMARY layout (all 7 rows with values).
+- Add 1–2 line INSIGHT annotation (orange arrow or callout box) answering the why/describe part.
+  Example: "India's rising energy demand reflects expanding mobility, industrial growth, and a fast-growing economy."
+- Highlight focal country (India) in ORANGE bar/row when user mentions India.
+{STATIC_ORANGE_STUB}
+"""
+
 # Infographic / static data posts — retail audience tone (client feedback Jul 2026)
 INFOGRAPHIC_AUDIENCE_TONE_LOCK = f"""
 RANKING TONE LOCK — match sample_top_countries_investing.png EXACTLY:
@@ -200,11 +435,13 @@ COPY SHAPE:
 - CTA: "Explore more" (2–3 words) — NEVER a long button sentence
 """
 
-# Shared DNA for STATIC + INFOGRAPHIC ranking — locked to saved sample PNG
+# Shared DNA for INFOGRAPHIC ranking — vertical rows (Top Countries sample)
 RANKING_SAMPLE_DNA_LOCK = f"""
 ════════════════════════════════════════════════════════
-RANKING SAMPLE DNA — STATIC + INFOGRAPHIC (SAME EVERY TIME)
+RANKING SAMPLE DNA — Top Countries vertical rows (UNCHANGED — primary country/FDI ranking)
 Reference: app/prompts/references/jiraaf_samples/sample_top_countries_investing.png
+Use for: infographic static_ranking OR static static_ranking when topic is country/FDI top-N.
+(Does NOT apply to oil/consumption horizontal bar topics — those use STATIC_HORIZONTAL_BAR_DNA_LOCK.)
 ════════════════════════════════════════════════════════
 
 COLOURS:
@@ -241,17 +478,52 @@ Never HAE/ASA/$/US $/wrong flags. Same for static AND infographic.
 INFOGRAPHIC_RANKING_FORMAT_LOCK = RANKING_SAMPLE_DNA_LOCK
 
 INFOGRAPHIC_TRADE_BOARD_LOCK = f"""
-TRADE DEFICIT BOARD LOCK (simple for retail audience — match India–Russia sample):
-- Punchy plain headline + one short subtitle (no "implications / exposure / hedge" jargon)
+TRADE DEFICIT BOARD LOCK — match sample_india_russia_trade_deficit.png EXACTLY:
+Reference: app/prompts/references/jiraaf_samples/sample_india_russia_trade_deficit.png
+- Punchy plain headline + one short subtitle on cream rounded strip (no jargon)
 - Clean dual-bar year table ONLY: EXPORT (orange) | TRADE BALANCE | IMPORT (navy), Billion USD
 - Year labels correct (2020-21, 2021-22, 2022-23, 2023-24…) — never "2021-2023"
 - Bake exact strings: "Export: USD X.XB" / "Import: USD Y.YB" — NEVER ESD / Emp / Impp / $
-- Orange accents required on export bars + dividers
-- Bottom box: "What India buys most from Russia" — 3–4 simple category + USD lines
+- Orange export bars LEFT; navy import bars RIGHT; balance numbers CENTER (deficit in red if large)
+- Bottom light-blue box: "What India buys most from Russia" — orange arrow bullets + category + USD lines
 - Source: Ministry of Commerce (or research domain)
+- Thick orange brand line at bottom edge optional
 - FORBIDDEN technical sidebars: Key Drivers, Sector Exposure, Currency Risk, Vostro/Bistro,
   Investment Considerations, Questions for Advisors, FD briefcase, handshake as main story
 - Optional CTA: COMPACT 2–4 words only — never a paragraph-length button
+"""
+
+# Static HUB facts — sample_bank_penalties.png
+STATIC_HUB_FACTS_DNA_LOCK = f"""
+════════════════════════════════════════════════════════
+STATIC HUB FACTS DNA — sample_bank_penalties.png
+Reference: app/prompts/references/jiraaf_samples/sample_bank_penalties.png
+Use for: bank penalties / key rules / top-N bank facts (layout_type=static_hub_facts).
+════════════════════════════════════════════════════════
+
+LAYOUT (hub + spoke — NOT ranking rows):
+1) Centered navy headline: "Bank's Penalty Rates and Key Rules" (or topic-matched variant)
+2) CENTER HUB: white circle with premium clay-3D bank building icon
+   - Coloured ring segments behind hub (orange {JIRAAF_ORANGE} segment required)
+   - Five bank pods on the ring (Axis Bank | SBI | HDFC Bank | ICICI Bank | PNB)
+3) FIVE white rounded cards around hub — one per bank:
+   - Exact bank name as heading (typed text — NOT official trademark logos)
+   - 1–2 SHORT lines with concrete ₹/% premature-withdrawal rules
+   - Thin connector line from card to hub pod
+4) BG soft off-white / ice-blue {JIRAAF_BG} — never dark navy/black
+5) Tiny empty top-right pocket for logo composite — never draw JIRAAF wordmark
+6) NO fake customer quotes. NO teaser question without rates. body="" on blueprint.
+
+COLOURS: navy {JIRAAF_NAVY} headlines · orange {JIRAAF_ORANGE} hub ring segment + dividers (≥2%)
+{ORANGE_COVERAGE_LOCK}
+{STATIC_ORANGE_STUB}
+"""
+
+STATIC_HUB_FACTS_IMAGE_STUB = f"""
+STATIC HUB = sample_bank_penalties.png:
+Hub + 5 bank fact cards. Center clay-3D bank building. Ring with bank pods.
+Cards: Axis | SBI | HDFC | ICICI | PNB — each with ₹/% penalty lines. Orange ring accent.
+Never ranking rows. Never bond benefit cards. Never teaser-only headline.
 """
 
 SIMPLIFIED_CREATIVE_TONE_RULES = f"""
@@ -267,17 +539,21 @@ LAYOUT ROUTER (follow layout_type)
 - carousel_story: education story OR single education poster
   Examples: why bonds / predictable income / liquidity / FIRE / myths / checklists
   → BENEFIT/REASON cards — NEVER invent country comparison tables unless user asked
-- static_hub_facts: hub + 4–5 short fact cards (bank penalties / key rules) — REAL ₹/% facts
-- static_ranking: ranked rows OR trade-deficit data boards
-  → FDI/country ranks: Name | short plain phrase | amount
-  → Trade deficit (India–Russia sample): year rows Export|Balance|Import dual bars
-    + "What India buys most" categories — NEVER bond/FD benefit cards / technical sidebars
+- static_hub_facts → hub + 5 bank fact cards (sample_bank_penalties.png)
+- static_ranking + oil/consumption/data bars + format=static → horizontal bar (sample_static_oil_consumption_bars.png)
+- static_ranking + country/FDI top-N → vertical rank rows (sample_top_countries_investing.png)
+- static_ranking + trade deficit → dual-bar board (sample_india_russia_trade_deficit.png)
+- carousel_story + format=infographic → DENSE sample editorial (sample_infographic_explain_rbi_polymer.png)
+- carousel_story + format=static → simple hero + heading cards (STATIC_EXPLAIN_LAYOUT_LOCK)
 
 ════════════════════════════════════════
 DATA POST vs TEASER vs EDUCATION
 ════════════════════════════════════════
-If user asks WHY / useful / benefits / explain / predictable income:
-→ Education poster with reason cards. FORBIDDEN: invent India vs USA vs Germany yield boards.
+If user asks WHY / useful / benefits / explain / how / what is:
+→ INFOGRAPHIC: multi-section editorial (section headings + 3-col icon cards + callout box)
+→ STATIC: simple hero + 3–5 heading/explanation cards
+→ FORBIDDEN: bond benefit cards (Capital Preservation / Regular Income) on unrelated topics
+→ FORBIDDEN: invent India vs USA vs Germany yield boards unless user asked compare/rank
 
 If user asks rates / rules / top-N / comparison / FDI / inflation / bank penalties:
 → Put ACTUAL facts in sections/slides. NO curiosity-only teasers. NO fake testimonials replacing data.
@@ -346,7 +622,8 @@ CAROUSEL STYLE (match Sweep-In / Capital / Gains samples):
 - Canvas portrait ice-blue BG {JIRAAF_BG} full-bleed.
 - Headlines navy {JIRAAF_NAVY} ONLY, COMPLETE words (never mid-word cut like "o..").
 - Orange {JIRAAF_ORANGE} accents only (dividers/stats). Body gray.
-- Layout: FULL headline top-left + 2–3 white story cards with ₹/% facts + ONE premium HD clay-3D
+- TONE: plain retail language on baked text — short sentences, ₹/% facts, NO jargon.
+- Layout: FULL headline top-left + 2–3 white story cards with simple ₹/% lines + ONE premium HD clay-3D
   avatar icon (~12–16% height) bottom-right (wallet/coins/doc/lock/shield).
 - CTA button (if any): COMPACT — ≤28% canvas width, ≤4.5% height, 2–3 words — NEVER a wide orange bar.
 - Bottom ~14% EMPTY for SEBI footer (composited later). Margins ≥8%. Nothing clipped.
@@ -354,10 +631,14 @@ CAROUSEL STYLE (match Sweep-In / Capital / Gains samples):
 - Story density like samples — NOT sparse empty slides. Perfect spelling. Plain sans-serif.
 """
 
+CAROUSEL_TONE_IMAGE_STUB = """
+TONE on baked text: plain retail — short sentences, ₹/% facts. NO Vostro/hedge/sector-exposure jargon.
+"""
+
 CAROUSEL_IMAGE_EXTRA_LOCKS = f"""
 BRAND/LOGO BAN: never draw JIRAAF wordmark, giraffe, "Brand Logo", dashed logo box, watermark.
 SEBI: leave bottom ~14% empty ice-blue — do NOT bake legal footer text.
-INDIA: prefer ₹/%; never £. Real numbers only. Never invent extra sentences.
+INDIA: prefer ₹/%; never £ or $ / US $. Real numbers only. Plain retail tone — no hedge/Vostro jargon.
 SPELLING: bake ONLY quoted strings letter-perfect. Never truncate headline with "…" or "o..".
 ICON: one HD clay-3D object only — sharp, studio-lit — not blurry toy.
 CTA: compact orange pill only (≤28% width, ≤4.5% height) — never oversized wide bar.
@@ -366,6 +647,7 @@ CTA: compact orange pill only (≤28% width, ≤4.5% height) — never oversized
 STATIC_IMAGE_EXTRA_LOCKS = f"""
 BRAND/LOGO BAN: never draw brand wordmark / watermark / "Brand Logo" placeholder.
 {NO_SEBI_STATIC_RULE}
+{STATIC_ORANGE_STUB}
 INDIA: ₹/% retail · ¥ Japan · USD letters if source USD — NEVER $ / US $ / ESD / £.
 Navy {JIRAAF_NAVY} headlines; orange {JIRAAF_ORANGE} MUST show (~2%+); BG {JIRAAF_BG}.
 Flags match countries (no ASA/HAE invents). Totals add up.

@@ -11,92 +11,40 @@ from app.prompts.brand_copy_tone import (
     BANK_PENALTY_SAMPLE_RULES,
     SIMPLIFIED_CREATIVE_TONE_RULES,
     SOURCE_FOOTER_RULE,
-    INFOGRAPHIC_AUDIENCE_TONE_LOCK,
-    INFOGRAPHIC_RANKING_FORMAT_LOCK,
-    INFOGRAPHIC_TRADE_BOARD_LOCK,
+    CAROUSEL_AUDIENCE_TONE_LOCK,
 )
-from app.prompts.carousel_sample_dna import CAROUSEL_SAMPLE_DNA
+from app.prompts.jiraaf_sample_templates import resolve_creative_template
 
 
 
 class ContentPrepPromptBuilder(BasePromptBuilder):
     """Layer 7c — Prompt Intelligence → Creative Blueprint."""
 
-    PROMPT_VERSION = "1.3-jiraaf-layout"
+    PROMPT_VERSION = "1.4-carousel-retail-tone"
 
     def build_system(self, format_name: str = "static", **kwargs: Any) -> str:
         layout_type = str(kwargs.get("layout_type") or "carousel_story")
+        user_p = str(kwargs.get("user_prompt") or "")
+        template = resolve_creative_template(user_p, format_name)
         hub = layout_type == "static_hub_facts"
-        ranking = layout_type == "static_ranking"
-        story = layout_type == "carousel_story"
 
-        layout_block = ""
-        if story and format_name == "carousel":
-            layout_block = f"""
-LAYOUT = carousel_story (LOCKED TO JIRAAF SAMPLE PDFs — Sweep-In / Capital / Gains):
-{CAROUSEL_SAMPLE_DNA}
-- 5–6 slides STORY: hook → ₹ scenario (3 blocks) → how it works → choice → pros/cons WITH reasons → CTA
+        from app.prompts.jiraaf_layout import requested_rank_count
+
+        rank_n = requested_rank_count(user_p) if layout_type == "static_ranking" else None
+        layout_block = template.l7c_layout_block(rank_n=rank_n)
+        if template.template_id == "carousel_story":
+            layout_block += f"""
+{CAROUSEL_AUDIENCE_TONE_LOCK}
+- 5–6 slides STORY: hook → ₹ scenario (3 blocks) → how it works → choice → pros/cons WITH short reasons → CTA
+- TONE: plain retail language — same voice as static/infographic (NOT policy analyst / NOT jargon)
 - UNIQUE COMPLETE headline every slide (max 8–10 words) — NEVER truncate, NEVER bare topic titles
-- body: 22–36 words that teach the beat + proof_points[2–3] full reason lines with ₹/% + chip_labels[3]
-- proof_points must be readable explanations (not one-word chips)
+- body: 18–32 words in short sentences + proof_points[2–3] plain lines with ₹/%
+- proof_points must be simple explanations (6–12 words) — not one-word chips or technical dumps
 - chip_labels NEVER Pros/Cons/Examples/Advantages — empty nav chips make slides look cheap
-- Icons/avatars are premium clay-3D accents — COPY must carry the teaching story
-- If pros/cons beat: put real reasons in body/proof_points
-- Prefer ₹ scenarios, comparison cues, hold-vs-exit choices — same depth as sample PDFs
-- Perfect spelling. Never sparse 1–2 line slides.
-"""
-        elif hub:
-            layout_block = """
-LAYOUT = static_hub_facts (LOCKED):
-- headline like "Bank's Penalty Rates and Key Rules" (not a teaser question alone)
-- sections[] with 4–5 REAL entity cards (banks) + short ₹/% includes
-- body=""; customer_quote=""; NO fake testimonials replacing data
-"""
-        elif story:
-            layout_block = """
-LAYOUT = education poster (LOCKED — carousel_story on static/infographic):
-- User asked WHY / useful / benefits / explain — NOT a country comparison.
-- headline = topic claim; supporting_line = one short why line
-- sections[] = 3–5 BENEFIT/REASON cards (Capital Preservation, Regular Income, etc.)
-- FORBIDDEN: invent India/USA/Germany/Japan tables, flags, FDI ranks, or % comparison boards
-  unless the user explicitly asked to compare/rank countries
-- body often short or empty; cta short
-"""
-        elif ranking:
-            from app.prompts.jiraaf_layout import is_trade_data_board, requested_rank_count
-
-            user_p = str(kwargs.get("user_prompt") or "")
-            if is_trade_data_board(user_p):
-                layout_block = f"""
-LAYOUT = trade deficit DATA BOARD (LOCKED — simple retail tone + India–Russia sample):
-{INFOGRAPHIC_AUDIENCE_TONE_LOCK}
-{INFOGRAPHIC_TRADE_BOARD_LOCK}
-- headline = punchy plain data claim from research — not bond slogans / not "implications"
-- supporting_line = one soft factual subtitle
-- sections[] YEAR rows: label=FY, includes=["Export: USD …B","Import: USD …B"], stat=balance
-- Extra sections: top import categories India buys (fuels/oils/fertilisers) with USD amounts
-- source_footer = Ministry of Commerce / research domain
-- FORBIDDEN: Capital Preservation, Regular Income, FD, Liquidity Management, bond cards,
-  Key Drivers / Currency Risk / Vostro side panels, paragraph CTAs
-"""
-            else:
-                rank_n = requested_rank_count(user_p)
-                count_line = (
-                    f"- sections[] MUST have EXACTLY {rank_n} ranked rows (user asked for top {rank_n}) — never stop at 5"
-                    if rank_n
-                    else "- sections[] MUST include ALL entities the user asked to rank/compare — never silently truncate to 5"
-                )
-                layout_block = f"""
-LAYOUT = static_ranking (LOCKED — same DNA for static AND infographic ranking):
-{INFOGRAPHIC_AUDIENCE_TONE_LOCK}
-{INFOGRAPHIC_RANKING_FORMAT_LOCK}
-- Ranked sections: Country | plain phrase ≤6 words | amount — almost no paragraphs
-{count_line}
-- Fill sections[] OR dense stat_highlights with ALL requested entities
-- Real country names + correct flags (UAE not HAE; USA not ASA)
-- Currency: ₹/% India retail · ¥ Japan · USD letters if source USD — never $ / US $
-- Include Source footer domains when research available
-- CTA ≤4 words, compact — or omit
+- Icons/avatars are premium clay-3D accents — COPY carries the teaching story in plain English
+- If pros/cons beat: put real short reasons in body/proof_points
+- Prefer ₹ scenarios, simple comparisons, hold-vs-exit choices — depth WITHOUT jargon
+- Perfect spelling. Never sparse 1–2 line slides. Never Vostro/hedge/sector-exposure language.
 """
 
         return f"""You are Violyt's Content Prep Intelligence (Prompt Intelligence orchestrator).

@@ -35,21 +35,51 @@ _HUB_KEYS = (
     "fixed deposit penalty",
 )
 
-_RANK_KEYS = (
+_RANK_KEYS_STRICT = (
+    "top countries",
+    "countries investing",
+    "country-wise",
+    "country wise",
+    "top 5 countries",
+    "top five countries",
+    "top 10 countries",
+    "top ten countries",
+    "fdi inflow",
+    "fdi into india",
+    "foreign direct investment",
+    "highest fdi",
+    "top investors",
+    "top investing",
+    "ranking of",
+    "ranked by",
+    "rank the top",
+)
+
+# Broad keys — NEVER alone trigger ranking (too many false positives)
+_RANK_KEYS_WEAK = (
     "fdi",
     "inflow",
     "inflows",
-    "top countries",
-    "country-wise",
     "ranking",
-    "rank ",
-    "vs other countries",
-    "compare india",
     "inflation rate",
-    "top 10",
-    "top ten",
-    "top 5 countries",
-    "top five countries",
+)
+
+_EXPLAIN_KEYS = (
+    "explain",
+    "what is",
+    "what are",
+    "why ",
+    "how ",
+    "useful",
+    "benefits",
+    "benefit",
+    "guide",
+    "understand",
+    "overview",
+    "types of",
+    "difference between",
+    "meaning of",
+    "introduction to",
 )
 
 # Bilateral / trade-deficit data boards (Jiraaf "India Buys 13x More From Russia" sample)
@@ -148,6 +178,90 @@ def is_trade_data_board(user_prompt: str) -> bool:
     return False
 
 
+def is_education_explain_intent(user_prompt: str) -> bool:
+    """True when user wants explanation / education — NOT a ranked list board."""
+    text = (user_prompt or "").lower()
+    return any(k in text for k in _STORY_KEYS) or any(k in text for k in _EXPLAIN_KEYS)
+
+
+def is_explicit_ranking_intent(user_prompt: str) -> bool:
+    """True ONLY for real ranked lists / trade data boards — NOT general explain topics."""
+    import re
+
+    text = (user_prompt or "").lower()
+    if is_trade_data_board(user_prompt):
+        return True
+
+    # Explicit top-N + list entity (countries, banks, nations…)
+    if re.search(r"\btop[\s\-]?\d{1,2}\b", text) and any(
+        w in text for w in ("countr", "nation", "bank", "rank", "fdi", "invest", "inflation")
+    ):
+        return True
+    if re.search(
+        r"\btop[\s\-]+(ten|twelve|fifteen|eleven|five|six|seven|eight|nine|three|four)\b",
+        text,
+    ) and any(w in text for w in ("countr", "nation", "bank", "rank", "fdi")):
+        return True
+
+    if any(k in text for k in _RANK_KEYS_STRICT):
+        return True
+
+    # Weak keys only count WITH list/rank context — not bare "fdi" or "explain fdi"
+    if any(k in text for k in _RANK_KEYS_WEAK):
+        if any(
+            w in text
+            for w in (
+                "top ",
+                "top-",
+                "rank",
+                "countr",
+                "nation",
+                "compare",
+                " vs ",
+                "versus",
+                "highest",
+                "lowest",
+            )
+        ):
+            return True
+
+    return False
+
+
+# Horizontal bar chart static (oil consumption, % comparisons) — separate from Top Countries ranking
+_HORIZONTAL_BAR_KEYS = (
+    "oil",
+    "consumption",
+    "consuming",
+    "mb/d",
+    "barrel",
+    "barrels",
+    "largest",
+    "biggest",
+    "market share",
+    "gdp",
+    "economy size",
+    "energy demand",
+    "petroleum",
+    "crude",
+)
+
+
+def is_static_horizontal_bar_intent(user_prompt: str) -> bool:
+    """True for static horizontal-bar data charts (oil, consumption) — NOT country FDI top-N."""
+    text = (user_prompt or "").lower()
+    return any(k in text for k in _HORIZONTAL_BAR_KEYS)
+
+
+def static_ranking_style(user_prompt: str) -> Literal["horizontal_bar", "vertical_countries", "trade_board"]:
+    """Pick static ranking visual — keeps Top Countries vertical; horizontal bar is additive."""
+    if is_trade_data_board(user_prompt):
+        return "trade_board"
+    if is_static_horizontal_bar_intent(user_prompt):
+        return "horizontal_bar"
+    return "vertical_countries"
+
+
 def _prefer_data_format(
     selected: str,
     *,
@@ -163,7 +277,7 @@ def classify_layout(
     user_prompt: str,
     selected_format: str | None = None,
 ) -> LayoutDecision:
-    """Pick layout from prompt intent. Strong data intents beat a wrong format click."""
+    """Pick layout from prompt intent. Ranking ONLY when user asked for a list/rank."""
     text = (user_prompt or "").lower()
     fmt = (selected_format or "").strip().lower()
     if fmt not in ("static", "carousel", "infographic"):
@@ -171,13 +285,17 @@ def classify_layout(
 
     is_hub = any(k in text for k in _HUB_KEYS)
     is_trade = is_trade_data_board(user_prompt)
-    is_rank = any(k in text for k in _RANK_KEYS) or is_trade
-    is_story = any(k in text for k in _STORY_KEYS)
-    if is_trade or is_hub or (is_rank and not is_story):
-        # Data / hub boards never become education posters
-        is_story = False
+    is_explain = is_education_explain_intent(user_prompt)
+    is_rank = is_explicit_ranking_intent(user_prompt)
 
-    # ── Strong intents first (do NOT require the user to rewrite the prompt) ──
+    # Explain-only wins over weak rank keywords (e.g. "explain FDI" ≠ country rank board).
+    # Hybrid "top 7 countries + describe why India…" keeps static_ranking — insight goes in annotation/callout.
+    if is_explain and not is_rank and not is_trade and not is_hub:
+        pass  # education path below
+    elif is_explain and is_rank:
+        is_explain = False  # data ranking board + optional insight text — NOT education cards
+
+    # ── Strong data intents first ──
     if is_hub:
         out = _prefer_data_format(fmt, default="static")
         return LayoutDecision("static_hub_facts", out, "intent_hub_facts")
@@ -188,29 +306,38 @@ def classify_layout(
         out = _prefer_data_format(fmt, default="infographic")
         return LayoutDecision("static_ranking", out, "intent_ranking_board")
 
-    # ── Explicit format for education / story ──
+    # ── Education / explain → headings + explanation cards (NOT ranking board) ──
     if fmt == "carousel":
         return LayoutDecision("carousel_story", "carousel", "user_selected_carousel")
-    if fmt == "infographic":
-        if is_story:
-            return LayoutDecision("carousel_story", "infographic", "infographic_education_poster")
-        return LayoutDecision("carousel_story", "infographic", "infographic_default_poster")
-    if fmt == "static":
-        if is_story:
-            return LayoutDecision("carousel_story", "static", "static_single_story_poster")
-        return LayoutDecision("carousel_story", "static", "static_default_poster")
+    if fmt in ("infographic", "static"):
+        return LayoutDecision(
+            "carousel_story",
+            fmt,  # type: ignore[arg-type]
+            "education_poster_headings_explain",
+        )
 
     # ── No format selected ──
-    if is_story:
+    if is_explain:
         return LayoutDecision("carousel_story", "carousel", "auto_carousel_story")
     return LayoutDecision("carousel_story", "carousel", "auto_carousel_story")
+
+
+def resolve_layout_type(
+    user_prompt: str,
+    selected_format: str | None = None,
+    *,
+    blueprint_layout: str | None = None,
+) -> LayoutType:
+    """Authoritative layout — always re-classify from prompt; ignore stale blueprint."""
+    return classify_layout(user_prompt, selected_format).layout_type
 
 
 def layout_cheat_sheet() -> str:
     """Human-readable routing table for UI / docs."""
     return (
         "Trade deficit / export-import -> data board (infographic)\n"
-        "Top-N / FDI / country ranks -> ranking board (infographic)\n"
+        "Top-N / FDI / country ranks ONLY when explicit -> ranking board (infographic)\n"
+        "Explain / why / how / benefits -> headings + explanation cards (static/infographic)\n"
         "Bank penalties / key rules -> hub + fact cards (static)\n"
         "Why / how / benefits / myths -> carousel story (or education poster if static/infographic)\n"
         "You do NOT need to rewrite the prompt - intent picks the layout."

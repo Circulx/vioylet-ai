@@ -20,11 +20,26 @@ from app.prompts.brand_copy_tone import (
     UNIVERSAL_FIT_LOCK,
     CAROUSEL_IMAGE_STYLE_STUB,
     CAROUSEL_IMAGE_EXTRA_LOCKS,
+    CAROUSEL_AUDIENCE_TONE_LOCK,
+    CAROUSEL_TONE_IMAGE_STUB,
     STATIC_IMAGE_EXTRA_LOCKS,
     INFOGRAPHIC_AUDIENCE_TONE_LOCK,
     INFOGRAPHIC_TRADE_BOARD_LOCK,
+    INFOGRAPHIC_EXPLAIN_LAYOUT_LOCK,
+    INFOGRAPHIC_EXPLAIN_ORANGE_STUB,
+    INFOGRAPHIC_EXPLAIN_QUALITY_LOCK,
+    STATIC_EXPLAIN_LAYOUT_LOCK,
+    STATIC_EXPLAIN_QUALITY_LOCK,
+    STATIC_ORANGE_STUB,
+    ORANGE_COVERAGE_LOCK,
+    STATIC_RANKING_INSIGHT_LOCK,
+    STATIC_HORIZONTAL_BAR_DNA_LOCK,
+    STATIC_HORIZONTAL_BAR_IMAGE_STUB,
+    EDUCATION_POSTER_LAYOUT_LOCK,
+    RANKING_IMAGE_STUB,
 )
 from app.prompts.jiraaf_layout import classify_layout
+from app.prompts.jiraaf_sample_templates import resolve_creative_template
 from app.prompts.creative_sizes import canvas_label, size_string
 
 # gpt-image-1 practical prompt budget (API also truncates ~6000)
@@ -511,10 +526,30 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
 
     recommended = creative_concepts.recommended_concept
 
-    layout_type = (
-        (blueprint.layout_type if blueprint else "")
-        or classify_layout(user_prompt, fmt).layout_type
+    layout_decision = classify_layout(user_prompt, fmt)
+    layout_type = layout_decision.layout_type
+    creative_template = resolve_creative_template(user_prompt, fmt)
+    if creative_template.layout_type != layout_type:
+        layout_type = creative_template.layout_type
+    logger.info(
+        "visual_reasoning.template_locked",
+        template_id=creative_template.template_id,
+        sample=creative_template.sample_file,
+        layout=layout_type,
+        format=fmt,
+        style=creative_template.visual_style,
     )
+    if blueprint:
+        stale = (blueprint.layout_type or blueprint.layout_archetype or "").strip()
+        if stale and stale != layout_type:
+            logger.warning(
+                "visual_reasoning.layout_override",
+                blueprint_layout=stale,
+                resolved_layout=layout_type,
+                reason=layout_decision.reason,
+            )
+            blueprint.layout_type = layout_type
+            blueprint.layout_archetype = layout_type
 
     # Convert Concept Pydantic model to dict
     concept_dict = {
@@ -540,11 +575,6 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
     )
     if blueprint:
         story = "; ".join(blueprint.story_flow or [])
-        layout_type = (
-            blueprint.layout_type
-            or blueprint.layout_archetype
-            or classify_layout(user_prompt, fmt).layout_type
-        )
         source_footer = (blueprint.source_footer or "").strip()
         sources_note = ""
         if blueprint.sources:
@@ -912,14 +942,14 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
             )
             if needs_unique:
                 role_titles = {
-                    "hook": "Most people miss this angle",
-                    "define": "What this actually means in practice",
+                    "hook": "Most people miss this",
+                    "define": "What this means in practice",
                     "impact": "How the numbers work",
-                    "implication": "What changes for money flows",
-                    "proof": "Trade-offs you should watch",
-                    "myth": "The nuance most people skip",
-                    "cta": "What would you do next?",
-                    "insight": "The practical takeaway",
+                    "implication": "What this means for your money",
+                    "proof": "Trade-offs to watch",
+                    "myth": "The bit most people skip",
+                    "cta": "What would you do?",
+                    "insight": "The simple takeaway",
                 }
                 body_first = (slide_body or "").split(".")[0].strip()
                 if (
@@ -1017,6 +1047,7 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
             # CONTENT FIRST — then short style. Never put mega-locks before headline.
             content_core = (
                 f"=== RENDER SLIDE {n} of {total} — BEAT [{role}] ===\n"
+                f"TONE: plain retail language on all baked text — short sentences, ₹/% facts, NO jargon.\n"
                 f"TOPIC (context only, NOT headline): {topic_lock}\n"
                 f"STORYLINE:\n{storyline_block}\n"
                 f"Prior headlines (do not repeat): {prior}\n"
@@ -1036,9 +1067,13 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
                     if is_last and slide_cta
                     else ""
                 )
-                + "FAIL if: missing/truncated headline, sparse empty slide, cheap icon, empty Pros/Cons, oversized CTA."
+                + "FAIL if: missing/truncated headline, sparse empty slide, cheap icon, empty Pros/Cons, oversized CTA, technical jargon on cards."
             )
-            slide_prompt = _budget_prompt(content_core, style_stub, _IMAGE_PROMPT_BUDGET)
+            slide_prompt = _budget_prompt(
+                content_core,
+                style_stub + "\n" + CAROUSEL_TONE_IMAGE_STUB,
+                _IMAGE_PROMPT_BUDGET,
+            )
             logger.info(
                 "visual_reasoning.carousel_slide_prompt",
                 slide=n,
@@ -1085,97 +1120,57 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
         )
         card_bake = ""
         if blueprint and (blueprint.sections or []):
+            is_education_layout = layout_type == "carousel_story"
+            is_infographic_explain = is_education_layout and fmt == "infographic"
+            is_rank_layout = layout_type == "static_ranking"
             card_lines = [
                 "\nEXACT CARD / ROW TEXT — bake ONLY these quoted strings (zero invented words):\n"
             ]
             for i, sec in enumerate((blueprint.sections or [])[:15], start=1):
                 label = sanitize_ranking_text((sec.section_label or f"Item {i}").strip())
+                max_facts = 3 if is_infographic_explain else 2
                 facts = [
                     sanitize_ranking_text(str(x).strip())
                     for x in (sec.includes or [])
                     if str(x).strip()
-                ][:2]
+                ][:max_facts]
                 stat = sanitize_ranking_text(str(sec.stat or "").strip())
-                if stat:
+                if stat and is_rank_layout:
                     import re as _re
 
                     stat = _re.sub(r"US\s*\$", "USD ", stat, flags=_re.I)
                     stat = _re.sub(r"\$", "", stat)
                     facts = [stat] + facts
-                facts = facts[:2]
-                card_lines.append(f'CARD {i} name: "{label}"\n')
-                for j, fact in enumerate(facts, start=1):
-                    short = " ".join(fact.split()[:8])
-                    card_lines.append(f'CARD {i} line {j}: "{short}"\n')
-            card_lines.append(
-                "Never invent extra sentences. Never use £ or $ or US $ — use ₹ or USD or %.\n"
-                "BACKGROUND ice-blue #E8F0F8 / soft white — NEVER dark navy / black.\n"
-                "Align every row: orange badge | flag | name+phrase | ₹ amount | coin icon.\n"
-                "Match sample_top_countries_investing.png EXACTLY (AI image — not a flat table).\n"
-            )
+                facts = facts[:max_facts]
+                if is_infographic_explain:
+                    card_lines.append(f'SECTION {i} HEADING: "{label}"\n')
+                    for j, fact in enumerate(facts, start=1):
+                        short = " ".join(fact.split()[:22])
+                        card_lines.append(f'SECTION {i} FACT {j}: "{short}"\n')
+                    card_lines.append(
+                        "Render as DENSE sample infographic: 3-col unique fact cards under heading "
+                        "(icon + unique title + explanation). Perfect spelling. No duplicate titles.\n"
+                    )
+                elif is_education_layout:
+                    card_lines.append(f'CARD {i} HEADING: "{label}"\n')
+                    for j, fact in enumerate(facts, start=1):
+                        short = " ".join(fact.split()[:14])
+                        card_lines.append(f'CARD {i} EXPLANATION {j}: "{short}"\n')
+                else:
+                    card_lines.append(f'CARD {i} name: "{label}"\n')
+                    for j, fact in enumerate(facts, start=1):
+                        short = " ".join(fact.split()[:8])
+                        card_lines.append(f'CARD {i} line {j}: "{short}"\n')
+            card_lines.append(f"Layout: {creative_template.image_stub}\n")
             card_bake = "".join(card_lines)
 
-        layout_hint = (
-            f"\n{NO_SEBI_STATIC_RULE}\n"
-            "Use full canvas for content — no legal footer strip.\n"
-            "BACKGROUND MUST be ice-blue #E8F0F8 / soft white — NEVER pure black, charcoal, dark navy.\n"
-            f"{INFOGRAPHIC_AUDIENCE_TONE_LOCK}\n"
-            f"{ICON_STYLE_LOCK}\n"
-            f"{UNIVERSAL_FIT_LOCK}\n"
-            f"Canvas size LOCKED: {canvas_desc}. Fit every element inside with ≥6% margins.\n"
-            "Never clip CTA/text/icons. Prefer fewer short lines over overcrowding.\n"
-            "CTA COMPACT ≤28% width, ≤4 words. Perfect spelling. No mid-word breaks. No $ / US $.\n"
+        layout_hint = creative_template.l8_image_hint(canvas_desc=canvas_desc)
+        if creative_template.layout_type == "static_ranking":
+            layout_hint += f"\n{INFOGRAPHIC_AUDIENCE_TONE_LOCK}\n"
+        layout_hint += (
+            f"Canvas size LOCKED: {canvas_desc}. Fit every element inside with >=6% margins.\n"
+            "Never clip CTA/text/icons. CTA COMPACT <=28% width, <=4 words.\n"
         )
-        if blueprint and blueprint.layout_type == "static_hub_facts":
-            layout_hint = (
-                "\nLAYOUT LOCK — HUB + 5 FACT CARDS WITH ICONS:\n"
-                "- Clean ice-blue #E8F0F8 background. NEVER black/charcoal/dark navy. "
-                "NO watermark, NO giant J, NO JIRAAF text, NO giraffe.\n"
-                "- Center: strong ULTRA-PREMIUM clay-3D bank building icon in a circle.\n"
-                "- FIVE white rounded cards around the hub — EVERY card MUST have its own "
-                "distinct LARGE ULTRA-PREMIUM clay-3D icon (vault / coins / shield / bank / cards) "
-                "+ exact bank name + 1–2 SHORT exact fact lines only.\n"
-                "- Card body text = ONLY the quoted CARD lines below. No gibberish. No invented words.\n"
-                "- Do NOT draw official trademark bank logos — premium 3D icons + typed names only.\n"
-                "- Tiny empty top-right pocket only for Brand Space logo composite later.\n"
-                f"- {NO_SEBI_STATIC_RULE}\n"
-                f"{ICON_STYLE_LOCK}\n"
-                f"{UNIVERSAL_FIT_LOCK}\n"
-            )
-        elif blueprint and blueprint.layout_type == "static_ranking":
-            if is_trade_data_board(user_prompt or ""):
-                layout_hint = (
-                    "\nLAYOUT LOCK — TRADE DEFICIT DATA BOARD (simple retail + India–Russia sample):\n"
-                    f"{INFOGRAPHIC_AUDIENCE_TONE_LOCK}\n"
-                    f"{INFOGRAPHIC_TRADE_BOARD_LOCK}\n"
-                    "- Portrait ice-blue #E8F0F8 background — NEVER dark navy.\n"
-                    "- Punchy PLAIN headline + one soft subtitle (no jargon).\n"
-                    "- Dual-bar table ONLY: EXPORT (orange) | TRADE BALANCE | IMPORT (navy), Billion USD.\n"
-                    "- Exact text: Export: USD …B / Import: USD …B — NEVER ESD/Emp/$/US $.\n"
-                    "- Bottom box: What India buys most — category + USD amounts from CARD lines.\n"
-                    "- Source footer (Ministry of Commerce).\n"
-                    "- FORBIDDEN: FD briefcase, handshake, Key Drivers/Currency Risk/Vostro sidebars, "
-                    "bond cards, paragraph CTAs, wrong flags.\n"
-                    "- CTA if any: COMPACT ≤28% width, ≤4 words.\n"
-                    f"- {NO_SEBI_STATIC_RULE}\n"
-                    f"- {UNIVERSAL_FIT_LOCK}\n"
-                )
-            else:
-                layout_hint = (
-                    "\nLAYOUT LOCK — AI RANKING (match sample_top_countries_investing.png):\n"
-                    f"{RANKING_IMAGE_STUB}\n"
-                    f"{INFOGRAPHIC_AUDIENCE_TONE_LOCK}\n"
-                    f"- Canvas {canvas_desc}. Soft white / ice-blue #E8F0F8 — NEVER dark navy.\n"
-                    "- Centered navy headline + soft supporting + short orange accent line.\n"
-                    "- EACH row: orange rank square | glossy 3D flag | NAME + ≤5-word phrase | "
-                    "₹ amount | tiny gold coin + rising bars icon.\n"
-                    "- Phrases like: Top investor in India / Strong economic ties / Growing interest.\n"
-                    "- Flag MUST match country (UAE not HAE; USA not ASA; never wrong flags).\n"
-                    "- CURRENCY: ₹ for India FDI — never $ / US $ / ESD.\n"
-                    "- CTA: Explore more (2–3 words). Perfect spelling. No duplicate phrases.\n"
-                    f"- {NO_SEBI_STATIC_RULE}\n"
-                    f"- {UNIVERSAL_FIT_LOCK}\n"
-                )
         single_url = await _generate_one_image(
             (image_gen_prompt + layout_hint + card_bake + text_bake_suffix)[:6000],
             size,

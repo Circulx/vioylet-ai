@@ -102,10 +102,11 @@ export function WelcomeCelebrationOverlay({ user }: WelcomeCelebrationOverlayPro
 
   const shouldCheckNotifications = storageChecked && isEligibleRole && !alreadyShown;
   const { data: notifications = [] } = useQuery({
-    queryKey: ["notifications", user.id, "welcome-celebration"],
+    queryKey: ["notifications", user.id],
     enabled: shouldCheckNotifications,
     queryFn: () => request(API.NOTIFICATIONS.LIST),
-    staleTime: 0,
+    refetchOnWindowFocus: false,
+    staleTime: 60_000,
   });
 
   const welcomeNotification = useMemo(

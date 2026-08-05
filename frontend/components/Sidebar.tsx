@@ -59,7 +59,7 @@ export default function Sidebar() {
         queryKey: ["notifications", user?.id, "unread-count"],
         enabled: Boolean(user?.id),
         queryFn: () => request(API.NOTIFICATIONS.UNREAD_COUNT),
-        refetchOnWindowFocus: "always",
+        refetchOnWindowFocus: false,
         refetchInterval: user?.id ? NOTIFICATION_REFETCH_INTERVAL_MS : false,
     });
     const { data: brands } = useBrands(user?.role !== "PLATFORM_OWNER");

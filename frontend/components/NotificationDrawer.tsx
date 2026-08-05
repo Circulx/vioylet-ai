@@ -14,10 +14,9 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { API } from "@/lib/api/endpoints"
 import { request } from "@/lib/api/request"
-import { NOTIFICATION_REFETCH_INTERVAL_MS } from "@/lib/notification-queries"
 import { useGetMe } from "@/hooks/useUser"
 import { useInAppNotifications } from "@/hooks/useInAppNotifications"
-import { ReactNode, useCallback, useEffect, useMemo, useState } from "react"
+import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   BadgeCheck,
   BarChart3,
@@ -162,6 +161,8 @@ export function NotificationDrawer({ children }: { children: ReactNode }) {
   const { data: user } = useGetMe()
   const queryClient = useQueryClient()
   const [open, setOpen] = useState(false)
+  const drawerOpenRef = useRef(false)
+  const hasProcessedOpenRef = useRef(false)
   const [highlightedUnreadKeys, setHighlightedUnreadKeys] = useState<Set<string>>(new Set())
   const [animatingNotificationKeys, setAnimatingNotificationKeys] = useState<Set<string>>(new Set())
   const {
@@ -170,16 +171,21 @@ export function NotificationDrawer({ children }: { children: ReactNode }) {
     clear: clearLocalNotifications,
     markAllRead: markLocalNotificationsRead,
   } = useInAppNotifications(user?.id)
-  const { data: serverNotifications = [], refetch: refetchServerNotifications } = useQuery({
+  const {
+    data: serverNotifications = [],
+    isFetching: isFetchingServerNotifications,
+    isSuccess: hasLoadedServerNotifications,
+  } = useQuery({
     queryKey: ["notifications", user?.id],
-    enabled: Boolean(user?.id),
+    enabled: Boolean(user?.id) && open,
     queryFn: () => request(API.NOTIFICATIONS.LIST),
-    refetchOnWindowFocus: "always",
-    refetchInterval: user?.id ? NOTIFICATION_REFETCH_INTERVAL_MS : false,
+    refetchOnWindowFocus: false,
   })
   const markServerNotificationsRead = useMutation({
     mutationFn: () => request(API.NOTIFICATIONS.MARK_READ),
     onMutate: async () => {
+      const previousServerNotifications = queryClient.getQueryData<typeof serverNotifications>(["notifications", user?.id])
+      const previousUnreadCount = queryClient.getQueryData(["notifications", user?.id, "unread-count"])
       await Promise.all([
         queryClient.cancelQueries({ queryKey: ["notifications", user?.id] }),
         queryClient.cancelQueries({ queryKey: ["notifications", user?.id, "unread-count"] }),
@@ -191,21 +197,22 @@ export function NotificationDrawer({ children }: { children: ReactNode }) {
         })),
       )
       queryClient.setQueryData(["notifications", user?.id, "unread-count"], { unread_count: 0 })
+      return { previousServerNotifications, previousUnreadCount }
+    },
+    onError: (_error, _variables, context) => {
+      queryClient.setQueryData(["notifications", user?.id], context?.previousServerNotifications)
+      queryClient.setQueryData(["notifications", user?.id, "unread-count"], context?.previousUnreadCount)
     },
     onSettled: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["notifications", user?.id] }),
-        queryClient.invalidateQueries({ queryKey: ["notifications", user?.id, "unread-count"] }),
-      ])
+      await queryClient.invalidateQueries({ queryKey: ["notifications", user?.id, "unread-count"] })
     },
   })
   const clearServerNotifications = useMutation({
     mutationFn: () => request(API.NOTIFICATIONS.CLEAR),
     onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["notifications", user?.id] }),
-        queryClient.invalidateQueries({ queryKey: ["notifications", user?.id, "unread-count"] }),
-      ])
+      queryClient.setQueryData(["notifications", user?.id], [])
+      queryClient.setQueryData(["notifications", user?.id, "unread-count"], { unread_count: 0 })
+      await queryClient.invalidateQueries({ queryKey: ["notifications", user?.id, "unread-count"] })
     },
   })
   const deleteServerNotification = useMutation({
@@ -213,11 +220,11 @@ export function NotificationDrawer({ children }: { children: ReactNode }) {
       request(API.NOTIFICATIONS.DELETE, {
         pathParams: notificationId,
       }),
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["notifications", user?.id] }),
-        queryClient.invalidateQueries({ queryKey: ["notifications", user?.id, "unread-count"] }),
-      ])
+    onSuccess: async (_response, notificationId) => {
+      queryClient.setQueryData<typeof serverNotifications>(["notifications", user?.id], (current) =>
+        (current || []).filter((notification) => notification.id !== notificationId),
+      )
+      await queryClient.invalidateQueries({ queryKey: ["notifications", user?.id, "unread-count"] })
     },
   })
   const notifications = useMemo(() => [
@@ -268,7 +275,7 @@ export function NotificationDrawer({ children }: { children: ReactNode }) {
     const nextPlayedAnimationKeys = new Set([...playedAnimationKeys, ...animationKeysToPlay])
     writeCelebratedWelcomeKeys(user.id, nextPlayedAnimationKeys)
     setAnimatingNotificationKeys((current) => new Set([...current, ...animationKeysToPlay]))
-  }, [notifications, user?.id])
+  }, [notifications, user])
 
   useEffect(() => {
     if (!open) {
@@ -276,6 +283,40 @@ export function NotificationDrawer({ children }: { children: ReactNode }) {
     }
     playNotificationCardAnimations()
   }, [notifications, open, playNotificationCardAnimations])
+
+  useEffect(() => {
+    if (
+      !open ||
+      !user?.id ||
+      !hasLoadedServerNotifications ||
+      isFetchingServerNotifications ||
+      hasProcessedOpenRef.current
+    ) {
+      return
+    }
+
+    hasProcessedOpenRef.current = true
+    const unreadServerKeys = serverNotifications
+      .filter((notification) => notification.unread)
+      .map((notification) => getNotificationKey("server", notification.id))
+    if (!unreadServerKeys.length) {
+      return
+    }
+
+    queueMicrotask(() => {
+      if (drawerOpenRef.current) {
+        setHighlightedUnreadKeys((current) => new Set([...current, ...unreadServerKeys]))
+      }
+      markServerNotificationsRead.mutate()
+    })
+  }, [
+    hasLoadedServerNotifications,
+    isFetchingServerNotifications,
+    markServerNotificationsRead,
+    open,
+    serverNotifications,
+    user?.id,
+  ])
 
   useEffect(() => {
     if (!animatingNotificationKeys.size) {
@@ -294,6 +335,8 @@ export function NotificationDrawer({ children }: { children: ReactNode }) {
       open={open}
       onOpenChange={(nextOpen) => {
         setOpen(nextOpen)
+        drawerOpenRef.current = nextOpen
+        hasProcessedOpenRef.current = false
         if (!nextOpen) {
           setHighlightedUnreadKeys(new Set())
           return
@@ -305,8 +348,6 @@ export function NotificationDrawer({ children }: { children: ReactNode }) {
         playNotificationCardAnimations()
         if (user?.id) {
           markLocalNotificationsRead()
-          markServerNotificationsRead.mutate()
-          void refetchServerNotifications()
         }
       }}
     >

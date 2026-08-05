@@ -724,7 +724,6 @@ export default function BrandSpaceEditor({
     const [didHydrateDraft, setDidHydrateDraft] = useState(mode !== "create");
     const [actionItemId, setActionItemId] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState(brandSpaceTabs[0].value);
-    const [hasActivatedAttachmentTab, setHasActivatedAttachmentTab] = useState(false);
     const [hydratedBrandStateId, setHydratedBrandStateId] = useState<string | null>(null);
     const [hydratedAttachmentBrandId, setHydratedAttachmentBrandId] = useState<string | null>(null);
     const [capacityDialogOpen, setCapacityDialogOpen] = useState(false);
@@ -761,7 +760,6 @@ export default function BrandSpaceEditor({
         setBrandLifecycleState(initialLifecycleState);
         setHydratedBrandStateId(null);
         setHydratedAttachmentBrandId(null);
-        setHasActivatedAttachmentTab(false);
     }, [brandId, initialForm, initialLifecycleState, mode]);
 
     useEffect(() => {
@@ -777,7 +775,6 @@ export default function BrandSpaceEditor({
             setValidationSummary(null);
             setHydratedBrandStateId(null);
             setHydratedAttachmentBrandId(null);
-            setHasActivatedAttachmentTab(false);
             setDidHydrateDraft(true);
             return;
         }
@@ -816,13 +813,10 @@ export default function BrandSpaceEditor({
     }, [brandLifecycleState, didHydrateDraft, draftBrandId, form, isReadOnly, mode]);
 
     const effectiveBrandId = draftBrandId ?? brandId ?? null;
-    const activeTabNeedsAttachments = hasActivatedAttachmentTab && ATTACHMENT_TAB_VALUES.has(activeTab);
+    const activeTabNeedsAttachments = ATTACHMENT_TAB_VALUES.has(activeTab);
 
     const handleTabChange = (nextTab: string) => {
         setActiveTab(nextTab);
-        if (ATTACHMENT_TAB_VALUES.has(nextTab)) {
-            setHasActivatedAttachmentTab(true);
-        }
     };
 
     useEffect(() => {

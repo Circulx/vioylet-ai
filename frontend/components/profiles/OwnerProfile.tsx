@@ -58,8 +58,8 @@ export default function OwnerProfile() {
             return;
         }
         const message = enabled
-            ? "Two-factor authentication has been successfully enabled for your account."
-            : "Two-factor authentication has been disabled for your account.";
+            ? "Two-factor authentication is now enabled."
+            : "Two-factor authentication is now disabled.";
 
         if (inAppNotificationsEnabled) {
             addInAppNotification(user.id, {

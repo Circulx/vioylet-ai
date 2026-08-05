@@ -101,6 +101,10 @@ export default function TenantAdminProfile() {
         [profile?.email, profile?.extra, profile?.full_name, user?.email, user?.name, user?.phone],
     );
 
+    const supportEmail =
+        typeof profile?.extra?.support_email === "string" && profile.extra.support_email.trim()
+            ? profile.extra.support_email.trim()
+            : "Not configured";
     const openFieldDialog = (field: Exclude<EditableField, null>) => {
         setEditingField(field);
         setError(null);
@@ -290,6 +294,21 @@ export default function TenantAdminProfile() {
                     <SettingsRow
                         title="Disclaimer"
                         description="Read the terms outlining platform limitations, responsibilities, and usage conditions. View Disclaimer."
+                    />
+                    <SettingsRow
+                        title="Contact Us"
+                        description={
+                            <>
+                                Email Address:{" "}
+                                {supportEmail !== "Not configured" ? (
+                                    <a href={`mailto:${supportEmail}`} className="text-black hover:text-primary hover:underline">
+                                        {supportEmail}
+                                    </a>
+                                ) : (
+                                    supportEmail
+                                )}
+                            </>
+                        }
                     />
 
                     <SettingsRow
@@ -481,7 +500,7 @@ function SettingsRow({
     linkText
 }: {
     title: string;
-    description?: string;
+    description?: ReactNode;
     trailing?: ReactNode;
     link?: string;
     linkText?: string;
@@ -511,7 +530,7 @@ export function ProfileSectionCard({
     externalLinkText,
 }: {
     title?: string;
-    description?: string;
+    description?: ReactNode;
     toolbar?: ReactNode;
     children: ReactNode;
     className?: string;

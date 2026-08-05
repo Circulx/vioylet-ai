@@ -493,6 +493,42 @@
   }
 }
 
+@keyframes violyt-notification-sidebar-ring {
+  0%, 100% {
+    transform: rotate(0deg) scale(1);
+  }
+  15% {
+    transform: rotate(-10deg) scale(1.03);
+  }
+  30% {
+    transform: rotate(9deg) scale(1.04);
+  }
+  45% {
+    transform: rotate(-7deg) scale(1.03);
+  }
+  60% {
+    transform: rotate(5deg) scale(1.02);
+  }
+  75% {
+    transform: rotate(-2deg) scale(1.01);
+  }
+}
+
+@keyframes violyt-notification-icon-pop {
+  0% {
+    opacity: 0.72;
+    transform: scale(0.48);
+  }
+  55% {
+    opacity: 1;
+    transform: scale(1.46);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 .notification-celebration-card {
   animation: violyt-welcome-card-pop 4.2s ease-out both;
 }
@@ -513,6 +549,25 @@
 .notification-critical-icon {
   animation: violyt-notification-warning-icon 1.5s ease-in-out 3;
   transform-origin: center;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .notification-sidebar-bell-ring {
+    animation: violyt-notification-sidebar-ring 520ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+    transform-origin: 50% 8%;
+  }
+
+  .notification-icon-new-arrival {
+    animation: violyt-notification-icon-pop 5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    transform-origin: center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .notification-sidebar-bell-ring,
+  .notification-icon-new-arrival {
+    animation: none !important;
+  }
 }
 
 .notification-balloon {
@@ -556,4 +611,140 @@
   color: #f4bf4f;
   left: 54%;
   top: 72%;
+}
+
+@keyframes violyt-notification-icon-rocket-lift {
+  0% { opacity: 0.74; transform: translateY(8px) scale(0.72) rotate(-14deg); }
+  60% { opacity: 1; transform: translateY(-8px) scale(1.32) rotate(8deg); }
+  100% { opacity: 1; transform: translateY(0) scale(1) rotate(0deg); }
+}
+
+@keyframes violyt-notification-icon-bounce {
+  0%, 100% { transform: translateY(0) scale(1); }
+  35% { transform: translateY(-8px) scale(1.18); }
+  68% { transform: translateY(2px) scale(0.96); }
+}
+
+@keyframes violyt-notification-icon-slide-settle {
+  0% { opacity: 0.7; transform: translateY(-12px) scale(0.86); }
+  65% { opacity: 1; transform: translateY(4px) scale(1.1); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes violyt-notification-icon-rotate-in {
+  0% { opacity: 0.7; transform: rotate(-150deg) scale(0.68); }
+  70% { opacity: 1; transform: rotate(18deg) scale(1.18); }
+  100% { opacity: 1; transform: rotate(0deg) scale(1); }
+}
+
+@keyframes violyt-notification-icon-shake {
+  0%, 100% { transform: translateX(0) scale(1); }
+  20% { transform: translateX(-5px) scale(1.08); }
+  42% { transform: translateX(5px) scale(1.08); }
+  64% { transform: translateX(-3px) scale(1.04); }
+}
+
+@keyframes violyt-notification-icon-lock-snap {
+  0% { opacity: 0.78; transform: translateY(-8px) scale(0.74); }
+  46% { transform: translateY(4px) scale(1.24); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes violyt-notification-icon-key-rotate {
+  0% { opacity: 0.76; transform: rotate(-52deg) scale(0.72); }
+  58% { opacity: 1; transform: rotate(28deg) scale(1.24); }
+  100% { opacity: 1; transform: rotate(0deg) scale(1); }
+}
+
+@keyframes violyt-notification-icon-grow-in {
+  0% { opacity: 0.72; transform: scaleY(0.28) scaleX(0.72); }
+  62% { opacity: 1; transform: scaleY(1.32) scaleX(1.16); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .notification-icon-celebrate {
+    position: relative;
+  }
+
+  .notification-icon-celebrate::after {
+    animation: violyt-notification-icon-sparkle 5s ease-out both;
+    color: #a855f7;
+    content: "\2726";
+    font-size: 11px;
+    pointer-events: none;
+    position: absolute;
+    right: -7px;
+    top: -8px;
+  }
+
+  .notification-icon-celebrate,
+  .notification-icon-pop-scale,
+  .notification-icon-chat-pop,
+  .notification-icon-check-pop,
+  .notification-icon-envelope-pop,
+  .notification-icon-unlock-pop {
+    animation: violyt-notification-icon-pop 5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    transform-origin: center;
+  }
+
+  .notification-icon-rocket-lift {
+    animation: violyt-notification-icon-rocket-lift 5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    transform-origin: center;
+  }
+
+  .notification-icon-bounce {
+    animation: violyt-notification-icon-bounce 5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    transform-origin: center;
+  }
+
+  .notification-icon-slide-settle {
+    animation: violyt-notification-icon-slide-settle 5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    transform-origin: center;
+  }
+
+  .notification-icon-rotate-in,
+  .notification-icon-smooth-rotate {
+    animation: violyt-notification-icon-rotate-in 5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    transform-origin: center;
+  }
+
+  .notification-icon-gentle-shake,
+  .notification-icon-alert-shake,
+  .notification-icon-bell-ring {
+    animation: violyt-notification-icon-shake 5s ease-in-out both;
+    transform-origin: center;
+  }
+
+  .notification-icon-lock-snap {
+    animation: violyt-notification-icon-lock-snap 5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    transform-origin: center;
+  }
+
+  .notification-icon-key-rotate,
+  .notification-icon-pencil-draw {
+    animation: violyt-notification-icon-key-rotate 5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    transform-origin: center;
+  }
+
+  .notification-icon-slow-pulse {
+    animation: violyt-notification-warning-icon 5s ease-in-out 1;
+    transform-origin: center;
+  }
+
+  .notification-icon-grow-in {
+    animation: violyt-notification-icon-grow-in 5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    transform-origin: center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [class*="notification-icon-"] {
+    animation: none !important;
+  }
+}
+@keyframes violyt-notification-icon-sparkle {
+  0% { opacity: 0; transform: translate(2px, 4px) scale(0.4) rotate(0deg); }
+  42% { opacity: 1; transform: translate(8px, -8px) scale(1.25) rotate(24deg); }
+  100% { opacity: 0; transform: translate(12px, -13px) scale(0.72) rotate(48deg); }
 }

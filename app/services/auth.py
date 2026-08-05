@@ -280,6 +280,8 @@ class AuthService:
         ip_address: str | None,
         device_info: str | None,
     ) -> None:
+        # Platform Owner login-attempt emails are mandatory security notices and intentionally bypass
+        # the user's Email Notifications preference.
         recipient_email = self._platform_owner_login_attempt_recipient(user)
         if not recipient_email:
             return
@@ -563,8 +565,13 @@ class AuthService:
                 "email_notifications_enabled": email_notifications_enabled(getattr(user, "metadata_json", None)),
                 "in_app_notifications_enabled": in_app_notifications_enabled(getattr(user, "metadata_json", None)),
                 "two_factor_enabled": self.is_two_factor_enabled(user),
+                "support_email": self.support_email(),
             },
         )
+
+    def support_email(self) -> str:
+        settings = self.email.settings
+        return (settings.smtp_from_email or settings.smtp_username or "").strip()
 
     def is_two_factor_enabled(self, user) -> bool:
         # Runs the is two factor enabled service flow by coordinating repositories, validators, and

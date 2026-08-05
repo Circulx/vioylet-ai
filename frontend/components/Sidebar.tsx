@@ -62,6 +62,13 @@ export default function Sidebar() {
         refetchOnWindowFocus: false,
         refetchInterval: user?.id ? NOTIFICATION_REFETCH_INTERVAL_MS : false,
     });
+    const { data: serverNotificationsForBell = [], isFetched: hasFetchedServerNotificationsForBell } = useQuery({
+        queryKey: ["notifications", user?.id],
+        enabled: Boolean(user?.id),
+        queryFn: () => request(API.NOTIFICATIONS.LIST),
+        refetchOnWindowFocus: "always",
+        refetchInterval: user?.id ? NOTIFICATION_REFETCH_INTERVAL_MS : false,
+    });
     const { data: brands } = useBrands(user?.role !== "PLATFORM_OWNER");
     const path = usePathname();
     const router = useRouter();
@@ -81,8 +88,52 @@ export default function Sidebar() {
     const localUnreadNotificationCount = localNotifications.filter((notification) => notification.unread).length;
     const unreadNotificationCount = serverUnreadNotificationCount + localUnreadNotificationCount;
     const unreadNotificationLabel = unreadNotificationCount > 99 ? "99+" : String(unreadNotificationCount);
+    const knownSidebarNotificationKeysRef = useRef<Set<string>>(new Set());
+    const hasInitializedSidebarNotificationKeysRef = useRef(false);
+    const notificationBellAnimationTimeoutRef = useRef<number | null>(null);
+    const [isNotificationBellAnimating, setIsNotificationBellAnimating] = useState(false);
     useNotificationSound(localUnreadNotificationCount, user?.notificationsEnabled !== false);
     useNotificationSound(serverUnreadNotificationCount, user?.notificationsEnabled !== false, hasFetchedUnreadNotificationCount);
+
+    useEffect(() => {
+        if (!hasFetchedServerNotificationsForBell) {
+            return;
+        }
+
+        const currentNotificationKeys = new Set([
+            ...serverNotificationsForBell.map((notification) => `server-${notification.id}`),
+            ...localNotifications.map((notification) => `local-${notification.id}`),
+        ]);
+        if (!hasInitializedSidebarNotificationKeysRef.current) {
+            knownSidebarNotificationKeysRef.current = currentNotificationKeys;
+            hasInitializedSidebarNotificationKeysRef.current = true;
+            return;
+        }
+
+        const hasNewNotification = [...currentNotificationKeys].some((notificationKey) => !knownSidebarNotificationKeysRef.current.has(notificationKey));
+        knownSidebarNotificationKeysRef.current = currentNotificationKeys;
+        if (!hasNewNotification) {
+            return;
+        }
+
+        setIsNotificationBellAnimating(false);
+        window.requestAnimationFrame(() => {
+            setIsNotificationBellAnimating(true);
+            if (notificationBellAnimationTimeoutRef.current !== null) {
+                window.clearTimeout(notificationBellAnimationTimeoutRef.current);
+            }
+            notificationBellAnimationTimeoutRef.current = window.setTimeout(() => {
+                setIsNotificationBellAnimating(false);
+                notificationBellAnimationTimeoutRef.current = null;
+            }, 650);
+        });
+    }, [hasFetchedServerNotificationsForBell, localNotifications, serverNotificationsForBell]);
+
+    useEffect(() => () => {
+        if (notificationBellAnimationTimeoutRef.current !== null) {
+            window.clearTimeout(notificationBellAnimationTimeoutRef.current);
+        }
+    }, []);
 
     return (
         <aside
@@ -151,7 +202,11 @@ export default function Sidebar() {
                                             type="button"
                                         >
                                             <span className="relative inline-flex h-5 w-5 shrink-0">
-                                                <Image src={icon} width={20} height={20} alt={item.name} className="h-5 w-5" />
+                                                <span
+                                                    className={cn("inline-flex h-5 w-5", isNotificationBellAnimating && "notification-sidebar-bell-ring")}
+                                                >
+                                                    <Image src={icon} width={20} height={20} alt={item.name} className="h-5 w-5" />
+                                                </span>
                                                 {unreadNotificationCount > 0 ? (
                                                     <span
                                                         className="absolute -right-2 -top-2 flex h-5 min-w-5 items-center justify-center rounded-full bg-[#FF6D5E] px-1 text-[10px] font-semibold leading-none text-white shadow-sm"

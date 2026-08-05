@@ -434,10 +434,10 @@ function VisualMetadataUploadField({
             </div>
 
             <Dialog open={isOpen} onOpenChange={handleOpenChange}>
-                <DialogContent className="max-h-[90vh] w-full max-w-5xl overflow-y-auto border-none bg-white p-0 shadow-xl" showCloseButton>
+                <DialogContent className="max-h-[90vh] w-full max-w-5xl overflow-hidden border-none bg-white p-0 shadow-xl" showCloseButton>
                     <DialogTitle className="sr-only">Upload {label} files</DialogTitle>
-                    <div className="mx-auto my-8 w-[88%] rounded-sm bg-[#F4F4F4] px-8 py-6">
-                        <div className="mx-auto max-w-[400px] space-y-7">
+                    <div className="mx-auto my-8 flex max-h-[calc(90vh-4rem)] w-[88%] flex-col rounded-sm bg-[#F4F4F4] px-8 py-6">
+                        <div className="mx-auto flex min-h-0 w-full max-w-[400px] flex-col gap-7">
                             <h3 className="text-base font-bold text-[#121212]">Upload File:</h3>
 
                             <Button
@@ -462,7 +462,7 @@ function VisualMetadataUploadField({
                                 }}
                             />
 
-                            <div className="space-y-7">
+                            <div className="min-h-0 flex-1 space-y-7 overflow-y-auto pr-2">
                                 {pendingUploads.map((upload) => (
                                     <VisualPendingUploadCard
                                         key={upload.item.id}
@@ -479,7 +479,7 @@ function VisualMetadataUploadField({
                             </div>
 
                             {pendingUploads.length ? (
-                                <div className="flex justify-center pt-1">
+                                <div className="shrink-0 flex justify-center pt-1">
                                     <Button
                                         type="button"
                                         onClick={handleUploadAll}

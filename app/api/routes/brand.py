@@ -16,7 +16,7 @@ from app.core.dependencies import (
     get_current_principal,
 )
 from app.db.session import get_db_session
-from app.integrations.object_storage import LocalObjectStorage
+from app.integrations.object_storage import LocalObjectStorage, get_object_storage
 from app.models.brand import BrandSpace
 from app.models.retrieval_log import RetrievalLog
 from app.schemas.brand import (
@@ -55,6 +55,7 @@ def _brand_response(brand) -> BrandResponse:
     context = dict(response.resolved_brand_context or {})
     identity = dict(context.get("identity") or {})
     delivery = AssetDeliveryService()
+    storage = get_object_storage()
 
     def signed_url(storage_path: object) -> str | None:
         if not isinstance(storage_path, str) or not storage_path.strip():
@@ -63,6 +64,16 @@ def _brand_response(brand) -> BrandResponse:
             storage_path=storage_path,
             filename=storage_path.rsplit("/", 1)[-1],
         )
+
+    def signed_existing_url(storage_path: object) -> str | None:
+        if not isinstance(storage_path, str) or not storage_path.strip():
+            return None
+        try:
+            if not storage.exists(storage_path):
+                return None
+        except Exception:  # noqa: BLE001 - storage backends expose provider-specific exceptions
+            return None
+        return signed_url(storage_path)
 
     logo_assets = identity.get("logo_assets")
     if isinstance(logo_assets, list):
@@ -73,7 +84,7 @@ def _brand_response(brand) -> BrandResponse:
                 continue
             enriched_asset = dict(asset)
             stored_asset_url = enriched_asset.get("asset_url") or enriched_asset.get("url")
-            asset_url = signed_url(enriched_asset.get("storage_path")) or stored_asset_url
+            asset_url = signed_existing_url(enriched_asset.get("storage_path")) or stored_asset_url
             if asset_url:
                 enriched_asset["asset_url"] = asset_url
                 enriched_asset["url"] = asset_url
@@ -81,7 +92,7 @@ def _brand_response(brand) -> BrandResponse:
         identity["logo_assets"] = enriched_assets
 
     stored_logo_asset_url = identity.get("logo_asset_url")
-    logo_asset_url = signed_url(identity.get("logo_asset_path"))
+    logo_asset_url = signed_existing_url(identity.get("logo_asset_path"))
     if not logo_asset_url and isinstance(identity.get("logo_assets"), list):
         logo_asset_url = next(
             (

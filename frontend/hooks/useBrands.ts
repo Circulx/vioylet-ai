@@ -9,6 +9,8 @@ export const useBrands = (enabled = true) =>
     queryKey: ["brands"],
     enabled,
     queryFn: () => request(API.BRANDS.LIST),
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
   });
 
 export const useBrand = (brandId: string) =>

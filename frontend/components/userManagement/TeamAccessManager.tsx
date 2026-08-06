@@ -106,69 +106,73 @@ export default function TeamAccessManager() {
     const [resendingUserId, setResendingUserId] = useState<string | null>(null);
     const [pendingDeactivateUser, setPendingDeactivateUser] = useState<TableRow | null>(null);
     const activeFilterCount = Number(createdFilter !== "all") + Number(activityFilter !== "all");
-    const brandNames = new Map((brands || []).map((brand) => [brand.id, brand.name]));
-
-    const liveTenantRows: TableRow[] = tenantUsers.map((user) => {
-        const activityStatus = getUserActivityStatus(user.last_login_at);
-        const accountStatus = formatUserAccountStatus(user.is_active, user.is_activated);
+    const { tenantRows, brandRows } = useMemo(() => {
+        const brandNames = new Map((brands || []).map((brand) => [brand.id, brand.name]));
+        const liveTenantRows: TableRow[] = tenantUsers.map((user) => {
+            const activityStatus = getUserActivityStatus(user.last_login_at);
+            const accountStatus = formatUserAccountStatus(user.is_active, user.is_activated);
+            return {
+                id: getTenantUserRequestId(user),
+                fullName: user.full_name,
+                email: user.email,
+                createdAt: user.created_at,
+                isActive: user.is_active,
+                isTenantAdmin: user.role_codes.includes("tenant_admin"),
+                activityStatus,
+                isPendingActivation: user.is_active && !user.is_activated,
+                activationLinkSentCount: user.activation_link_sent_count || 0,
+                activationLinkAttemptsLeft: user.activation_link_attempts_left || 0,
+                cells: [
+                    user.full_name,
+                    user.email,
+                    formatDate(user.created_at),
+                    accountStatus,
+                    formatUserActivityStatus(activityStatus),
+                ],
+            };
+        });
+        const liveBrandRows: TableRow[] = brandUsers.map((user) => {
+            const brandAssignmentLabel =
+                user.brand_space_ids.map((brandId) => brandNames.get(brandId) || brandId).join(", ") || "-";
+            const activityStatus = getUserActivityStatus(user.last_login_at);
+            const accountStatus = formatUserAccountStatus(user.is_active, user.is_activated);
+            return {
+                id: getTenantUserRequestId(user),
+                fullName: user.full_name,
+                email: user.email,
+                createdAt: user.created_at,
+                isActive: user.is_active,
+                isTenantAdmin: user.role_codes.includes("tenant_admin"),
+                activityStatus,
+                isPendingActivation: user.is_active && !user.is_activated,
+                activationLinkSentCount: user.activation_link_sent_count || 0,
+                activationLinkAttemptsLeft: user.activation_link_attempts_left || 0,
+                cells: [
+                    user.full_name,
+                    user.email,
+                    formatDate(user.created_at),
+                    accountStatus,
+                    formatUserActivityStatus(activityStatus),
+                    brandAssignmentLabel,
+                ],
+            };
+        });
         return {
-            id: getTenantUserRequestId(user),
-            fullName: user.full_name,
-            email: user.email,
-            createdAt: user.created_at,
-            isActive: user.is_active,
-            isTenantAdmin: user.role_codes.includes("tenant_admin"),
-            activityStatus,
-            isPendingActivation: user.is_active && !user.is_activated,
-            activationLinkSentCount: user.activation_link_sent_count || 0,
-            activationLinkAttemptsLeft: user.activation_link_attempts_left || 0,
-            cells: [
-                user.full_name,
-                user.email,
-                formatDate(user.created_at),
-                accountStatus,
-                formatUserActivityStatus(activityStatus),
-            ],
+            tenantRows: compactRows(liveTenantRows),
+            brandRows: compactRows(liveBrandRows),
         };
-    });
-
-    const liveBrandRows: TableRow[] = brandUsers.map((user) => {
-        const brandAssignmentLabel =
-            user.brand_space_ids.map((brandId) => brandNames.get(brandId) || brandId).join(", ") || "-";
-        const activityStatus = getUserActivityStatus(user.last_login_at);
-        const accountStatus = formatUserAccountStatus(user.is_active, user.is_activated);
-        return {
-            id: getTenantUserRequestId(user),
-            fullName: user.full_name,
-            email: user.email,
-            createdAt: user.created_at,
-            isActive: user.is_active,
-            isTenantAdmin: user.role_codes.includes("tenant_admin"),
-            activityStatus,
-            isPendingActivation: user.is_active && !user.is_activated,
-            activationLinkSentCount: user.activation_link_sent_count || 0,
-            activationLinkAttemptsLeft: user.activation_link_attempts_left || 0,
-            cells: [
-                user.full_name,
-                user.email,
-                formatDate(user.created_at),
-                accountStatus,
-                formatUserActivityStatus(activityStatus),
-                brandAssignmentLabel,
-                // user.last_login_at ? formatDate(user.last_login_at) : "Recent",
-            ],
-        };
-    });
-
-    const tenantRows = compactRows(liveTenantRows);
-    const brandRows = compactRows(liveBrandRows);
-    const visibleRows = (activeTab === "tenant-users" ? tenantRows : brandRows).filter((row) => {
-        return (
-            matchesSearch(row, search) &&
-            matchesCreatedDateFilter(row.createdAt, createdFilter) &&
-            (activityFilter === "all" || row.activityStatus === activityFilter)
-        );
-    });
+    }, [brandUsers, brands, tenantUsers]);
+    const visibleRows = useMemo(
+        () =>
+            (activeTab === "tenant-users" ? tenantRows : brandRows).filter((row) => {
+                return (
+                    matchesSearch(row, search) &&
+                    matchesCreatedDateFilter(row.createdAt, createdFilter) &&
+                    (activityFilter === "all" || row.activityStatus === activityFilter)
+                );
+            }),
+        [activeTab, activityFilter, brandRows, createdFilter, search, tenantRows],
+    );
     const creationFeedback = useMemo(() => {
         if (searchParams.get("created") !== "1") {
             return null;

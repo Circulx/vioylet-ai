@@ -148,7 +148,7 @@ export default function Sidebar() {
         >
             <div className={cn("flex items-center justify-between pl-3 pr-1 py-5", !isSidebarOpen && "justify-center px-3")}>
                 <button className={cn("font-dmSans text-[32px] font-bold tracking-[-0.01em] text-primary", !isSidebarOpen && "hidden")}>
-                    <Image src="/VIOLYT-LOGO-PurpleTM.svg" alt="Violyt" width={34} height={28} className="h-7 w-24 border-none p-0 cursor-pointer" onClick={() => router.push("/dashboard")} />
+                    <Image src="/VIOLYT-LOGO-PurpleTM.svg" alt="Violyt" width={34} height={28} className="h-7 w-24 border-none p-0 cursor-pointer" onClick={() => router.push("/brand_space")} />
                 </button>
                 <abbr title={!isSidebarOpen && "Toggle Sidebar" || ""}>
                     <Button
@@ -397,7 +397,7 @@ function BrandChatGroup({
                 <div className="space-y-1">
                     {chatSessions.map((session: ChatSessionResponse) => {
                         const title = session.title?.trim() || "Untitled chat";
-                        const isActiveChat = activeChatId ? activeChatId === session.id : isCurrentBrand && session.id === chatSessions[0]?.id;
+                        const isActiveChat = activeChatId === session.id;
                         return (
                             <div
                                 key={session.id}

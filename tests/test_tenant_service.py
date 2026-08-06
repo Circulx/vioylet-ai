@@ -59,6 +59,14 @@ class DummyScalarListResult:
         return self.values
 
 
+class DummyRowsResult:
+    def __init__(self, rows) -> None:  # noqa: ANN001
+        self.rows = rows
+
+    def all(self):  # noqa: ANN201
+        return self.rows
+
+
 class DummyStorage:
     def __init__(self) -> None:
         self.deleted: list[str] = []
@@ -307,7 +315,12 @@ async def test_list_tenant_brand_space_summaries_collects_usage_metrics():
             )
         ]
     )
-    session.scalar.side_effect = [12, 7, 18, recent_login]
+    session.execute.side_effect = [
+        DummyRowsResult([(brand_id, 12)]),
+        DummyRowsResult([(brand_id, 7)]),
+        DummyRowsResult([(brand_id, 18)]),
+        DummyRowsResult([(brand_id, recent_login)]),
+    ]
 
     summaries = await service.list_tenant_brand_space_summaries(tenant_id)
 
@@ -319,6 +332,34 @@ async def test_list_tenant_brand_space_summaries_collects_usage_metrics():
     assert summary["ocr_pages"] == 18
     assert summary["last_login_at"] == recent_login
     assert summary["last_active_at"] == recent_login
+
+
+async def test_build_user_summaries_batches_related_data():
+    session = DummySession()
+    service = TenantService(session)
+    first_user = build_user()
+    second_user = build_user(tenant_id=first_user.tenant_id, email="second@acme.com")
+    role_brand_id = uuid4()
+    member_brand_id = uuid4()
+    session.execute.side_effect = [
+        DummyRowsResult(
+            [
+                (first_user.id, "tenant_user", None),
+                (second_user.id, "brand_user", role_brand_id),
+            ]
+        ),
+        DummyRowsResult([(second_user.id, member_brand_id)]),
+        DummyRowsResult([(first_user.id, 2), (second_user.id, 4)]),
+    ]
+
+    summaries = await service.build_user_summaries([first_user, second_user])
+
+    assert session.execute.await_count == 3
+    assert summaries[0]["role_codes"] == ["tenant_user"]
+    assert summaries[0]["activation_link_sent_count"] == 2
+    assert summaries[1]["role_codes"] == ["brand_user"]
+    assert summaries[1]["brand_space_ids"] == [role_brand_id, member_brand_id]
+    assert summaries[1]["activation_link_sent_count"] == 4
 
 
 async def test_build_user_summary_includes_activation_link_sent_count():

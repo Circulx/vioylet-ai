@@ -39,22 +39,17 @@ export function BrandSpaceHistoryDrawer({
     children: ReactNode;
 }) {
     const [open, setOpen] = useState(false);
-    const { data: historyEntries = [], isError, isLoading, refetch } = useQuery({
+    const { data: historyEntries = [], isError, isLoading } = useQuery({
         queryKey: ["brand-space-history", brandId],
         enabled: open && Boolean(brandId),
         queryFn: () => request(API.BRANDS.HISTORY, { pathParams: brandId || "" }),
-        refetchOnWindowFocus: "always",
+        refetchOnWindowFocus: false,
     });
 
     return (
         <Sheet
             open={open}
-            onOpenChange={(nextOpen) => {
-                setOpen(nextOpen);
-                if (nextOpen && brandId) {
-                    void refetch();
-                }
-            }}
+            onOpenChange={setOpen}
         >
             <SheetTrigger asChild>{children}</SheetTrigger>
             <SheetContent className="overflow-hidden font-dmSans">

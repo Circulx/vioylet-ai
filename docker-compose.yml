@@ -12,7 +12,8 @@ services:
       OBJECT_STORAGE_BASE_PATH: /app/storage
       VECTOR_STORE_BASE_PATH: /app/vector_store
       GENERATION_TRACE_BASE_PATH: /app/storage/generation_traces
-      GENERATED_ASSETS_BASE_URL: http://localhost:8000/storage
+      GENERATED_ASSETS_BASE_URL: ${GENERATED_ASSETS_BASE_URL:-http://localhost:8000/storage}
+      ASSET_DOWNLOAD_BASE_URL: ${ASSET_DOWNLOAD_BASE_URL:-http://localhost:8000/api/v1/storage/download}
     ports:
       - "8000:8000"
     depends_on:
@@ -39,7 +40,8 @@ services:
       OBJECT_STORAGE_BASE_PATH: /app/storage
       VECTOR_STORE_BASE_PATH: /app/vector_store
       GENERATION_TRACE_BASE_PATH: /app/storage/generation_traces
-      GENERATED_ASSETS_BASE_URL: http://localhost:8000/storage
+      GENERATED_ASSETS_BASE_URL: ${GENERATED_ASSETS_BASE_URL:-http://localhost:8000/storage}
+      ASSET_DOWNLOAD_BASE_URL: ${ASSET_DOWNLOAD_BASE_URL:-http://localhost:8000/api/v1/storage/download}
     depends_on:
       postgres:
         condition: service_healthy

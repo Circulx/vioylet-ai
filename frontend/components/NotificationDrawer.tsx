@@ -16,7 +16,7 @@ import { API } from "@/lib/api/endpoints"
 import { request } from "@/lib/api/request"
 import { useGetMe } from "@/hooks/useUser"
 import { useInAppNotifications } from "@/hooks/useInAppNotifications"
-import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { ReactNode, useEffect, useMemo, useRef, useState } from "react"
 import {
   Archive,
   BadgeCheck,
@@ -277,30 +277,6 @@ export function NotificationDrawer({ children }: { children: ReactNode }) {
     }
     deleteServerNotification.mutate(notification.id)
   }
-  const playNotificationCardAnimations = useCallback(() => {
-    if (!user?.id) {
-      return
-    }
-    const playedAnimationKeys = readCelebratedWelcomeKeys(user.id)
-    const animationKeysToPlay = notifications
-      .filter((notification) => notification.unread && getNotificationAnimationVariant(notification.title, notification.message))
-      .map((notification) => getNotificationKey(notification.source, notification.id))
-      .filter((notificationKey) => !playedAnimationKeys.has(notificationKey))
-    if (!animationKeysToPlay.length) {
-      return
-    }
-    const nextPlayedAnimationKeys = new Set([...playedAnimationKeys, ...animationKeysToPlay])
-    writeCelebratedWelcomeKeys(user.id, nextPlayedAnimationKeys)
-    setAnimatingNotificationKeys((current) => new Set([...current, ...animationKeysToPlay]))
-  }, [notifications, user])
-
-  useEffect(() => {
-    if (!open) {
-      return
-    }
-    playNotificationCardAnimations()
-  }, [notifications, open, playNotificationCardAnimations])
-
   useEffect(() => {
     if (
       !open ||
@@ -334,18 +310,6 @@ export function NotificationDrawer({ children }: { children: ReactNode }) {
     serverNotifications,
     user?.id,
   ])
-
-  useEffect(() => {
-    if (!animatingNotificationKeys.size) {
-      return
-    }
-
-    const timeout = window.setTimeout(() => {
-      setAnimatingNotificationKeys(new Set())
-    }, 4800)
-
-    return () => window.clearTimeout(timeout)
-  }, [animatingNotificationKeys])
 
   return (
     <Sheet

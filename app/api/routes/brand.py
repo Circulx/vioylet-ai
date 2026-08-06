@@ -72,18 +72,16 @@ def _brand_response(brand) -> BrandResponse:
                 enriched_assets.append(asset)
                 continue
             enriched_asset = dict(asset)
-            asset_url = enriched_asset.get("asset_url") or enriched_asset.get("url")
-            if not asset_url:
-                asset_url = signed_url(enriched_asset.get("storage_path"))
+            stored_asset_url = enriched_asset.get("asset_url") or enriched_asset.get("url")
+            asset_url = signed_url(enriched_asset.get("storage_path")) or stored_asset_url
             if asset_url:
                 enriched_asset["asset_url"] = asset_url
                 enriched_asset["url"] = asset_url
             enriched_assets.append(enriched_asset)
         identity["logo_assets"] = enriched_assets
 
-    logo_asset_url = identity.get("logo_asset_url")
-    if not logo_asset_url:
-        logo_asset_url = signed_url(identity.get("logo_asset_path"))
+    stored_logo_asset_url = identity.get("logo_asset_url")
+    logo_asset_url = signed_url(identity.get("logo_asset_path"))
     if not logo_asset_url and isinstance(identity.get("logo_assets"), list):
         logo_asset_url = next(
             (
@@ -93,6 +91,8 @@ def _brand_response(brand) -> BrandResponse:
             ),
             None,
         )
+    if not logo_asset_url:
+        logo_asset_url = stored_logo_asset_url
     if logo_asset_url:
         identity["logo_asset_url"] = logo_asset_url
 

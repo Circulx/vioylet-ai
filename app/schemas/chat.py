@@ -76,3 +76,12 @@ class ChatSendResponse(APIModel):
     # Response contract for chat send; routes serialize service or ORM results into this frontend-facing shape.
     user_message: ChatMessageResponse
     assistant_message: ChatMessageResponse
+
+
+class ChatPipelineRecordRequest(APIModel):
+    # Persists a completed pipeline run (prompt + generated images) into chat history.
+    prompt: str = Field(min_length=1)
+    image_urls: list[str] = Field(min_length=1)
+    assistant_text: str | None = None
+    studio_panel: StudioPanelSelection | None = None
+    title: str | None = Field(default=None, max_length=255)

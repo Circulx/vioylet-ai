@@ -53,6 +53,20 @@ export default function BlueprintApprovalCard({
   }, [blueprint]);
 
   const fmt = (draft.format || format || "static").toLowerCase();
+  const headlineReady = Boolean((draft.headline || "").trim());
+  const hasPlaceholderSections = (draft.sections || []).some((sec) => {
+    const label = (sec.section_label || "").trim().toLowerCase();
+    return !label || label === "item" || /^item\s+\d+$/i.test(label);
+  });
+  const storylineReady =
+    (draft.story_flow || []).some((line) => Boolean(String(line || "").trim())) ||
+    (draft.sections || []).some((sec) => Boolean((sec.body || "").trim()) || (sec.includes || []).length > 0);
+  const blockApprove = !headlineReady || (fmt !== "carousel" && hasPlaceholderSections && !storylineReady);
+  const blockReason = !headlineReady
+    ? "Add a headline before generating."
+    : hasPlaceholderSections && !storylineReady
+      ? "Fill section labels/body (no empty Item placeholders) before generating."
+      : "";
 
   return (
     <SurfaceCard className="p-6 border-amber-200 bg-amber-50/40 space-y-5 col-span-1 md:col-span-2">
@@ -91,22 +105,26 @@ export default function BlueprintApprovalCard({
         <div className="bg-white/90 rounded-lg border border-amber-100 p-3 space-y-1">
           <p className="text-[10px] font-bold uppercase tracking-wide text-amber-700">Sources</p>
           <ul className="space-y-1">
-            {(draft.sources || []).map((src, i) => (
-              <li key={`${src.url}-${i}`} className="text-xs text-slate-700 break-all">
-                {src.url ? (
+            {(draft.sources || []).map((src, i) => {
+              const url = (src.url || "").trim();
+              const isHttp = /^https?:\/\//i.test(url);
+              return (
+              <li key={`${url}-${i}`} className="text-xs text-slate-700 break-all">
+                {isHttp ? (
                   <a
-                    href={src.url}
+                    href={url}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-amber-800 underline underline-offset-2 hover:text-amber-950"
                   >
-                    {src.title || src.url}
+                    {src.title || url}
                   </a>
                 ) : (
-                  src.title || "—"
+                  <span>{src.title || url || "—"} (no openable link)</span>
                 )}
               </li>
-            ))}
+              );
+            })}
           </ul>
         </div>
       )}
@@ -122,10 +140,18 @@ export default function BlueprintApprovalCard({
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
         <div className="bg-white/80 rounded-lg border border-amber-100 p-3">
           <p className="text-amber-600 font-bold uppercase text-[9px]">Purpose</p>
           <p className="text-slate-700 mt-1">{draft.purpose || "—"}</p>
+        </div>
+        <div className="bg-white/80 rounded-lg border border-amber-100 p-3">
+          <p className="text-amber-600 font-bold uppercase text-[9px]">Platform</p>
+          <p className="text-slate-700 mt-1 capitalize">
+            {draft.platform === "twitter" || draft.platform === "x"
+              ? "X (Twitter)"
+              : draft.platform || "—"}
+          </p>
         </div>
         <div className="bg-white/80 rounded-lg border border-amber-100 p-3">
           <p className="text-amber-600 font-bold uppercase text-[9px]">Audience</p>
@@ -333,7 +359,7 @@ export default function BlueprintApprovalCard({
       <div className="flex flex-col sm:flex-row gap-3 pt-2">
         <Button
           onClick={() => onApprove(draft)}
-          disabled={isApproving}
+          disabled={isApproving || blockApprove}
           className="flex-1 bg-amber-700 hover:bg-amber-800 text-white gap-2 h-11"
         >
           {isApproving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
@@ -349,6 +375,9 @@ export default function BlueprintApprovalCard({
           Cancel
         </Button>
       </div>
+      {blockApprove ? (
+        <p className="text-xs font-medium text-amber-900">{blockReason}</p>
+      ) : null}
     </SurfaceCard>
   );
 }

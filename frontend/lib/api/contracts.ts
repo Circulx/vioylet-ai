@@ -619,6 +619,14 @@ export interface ChatSessionUpdateRequest {
   is_active?: boolean;
 }
 
+export interface ChatPipelineRecordRequest {
+  prompt: string;
+  image_urls: string[];
+  assistant_text?: string;
+  studio_panel?: StudioPanelSelection;
+  title?: string;
+}
+
 export interface ChatMessageCreateRequest {
   message: string;
   studio_panel: StudioPanelSelection;

@@ -253,7 +253,7 @@ element_type allowed: headline|subheadline|supporting_line|body|cta|label|footer
 No preamble. No markdown fences. ONLY raw JSON.
 {layout_lock}
 {SOURCE_FOOTER_RULE}
-{(SEBI_FOOTER_HINT if fmt == "carousel" else NO_SEBI_STATIC_RULE)}
+{(SEBI_FOOTER_HINT if fmt == "carousel" and "jiraaf" in str(kwargs.get("brand_name") or "").casefold() else NO_SEBI_STATIC_RULE)}
 {format_instructions}"""
 
     def build_user(
@@ -305,10 +305,9 @@ No preamble. No markdown fences. ONLY raw JSON.
             if layout_type == "carousel_story" and fmt == "infographic":
                 text_directive = (
                     f"Follow DENSE INFOGRAPHIC EXPLAIN (sample_infographic_explain_rbi_polymer.png): "
-                    f"soft bg {self.INFO_BG}, LARGE headline + intro paragraph, "
-                    f"orange-bar sections with 3-col UNIQUE fact cards + callout box, "
-                    f"navy {self.NAVY} + orange {self.ORANGE} bars/highlights. "
-                    f"NOT a sparse 3-block poster. Perfect spelling. Topic-safe CTA."
+                    f"BG {self.INFO_BG}, navy {self.NAVY}, orange {self.ORANGE}. "
+                    f"Multi-section editorial with orange bars + 3-col fact cards + callout. "
+                    f"Headline NOT oversized. Fill canvas with real content. Perfect spelling."
                 )
             else:
                 text_directive = (
@@ -683,19 +682,19 @@ Language like: "Top investor in India" / "Strong economic ties" — NOT textbook
             layout_section = """LOCKED LAYOUT — HUB + SHORT FACTS (layout_type=static_hub_facts):
 Center hub + 4–5 bank/rule fact cards with distinct clay-3D icons."""
         else:
-            layout_section = f"""LOCKED LAYOUT — INFOGRAPHIC EXPLAIN EDITORIAL (layout_type=carousel_story):
+            layout_section = f"""LOCKED LAYOUT — DENSE INFOGRAPHIC EXPLAIN (layout_type=carousel_story):
 {INFOGRAPHIC_EXPLAIN_LAYOUT_LOCK}
 {INFOGRAPHIC_EXPLAIN_ORANGE_STUB}
 {INFOGRAPHIC_EXPLAIN_QUALITY_LOCK}
 {ORANGE_COVERAGE_LOCK}
-Match sample_infographic_explain_rbi_polymer.png EXACTLY (dense LinkedIn infographic):
-1) LARGE navy headline + 2-line intro with ₹/% fact — fill width like the sample
-2) 2–4 sections — thick ORANGE {self.ORANGE} left bar + UNIQUE navy heading each
-3) Fact sections: 3 UNIQUE mini-cards (icon + title + explanation with numbers) — never duplicate titles
-4) Optional text-only section with short paragraphs
-5) Orange-border callout + lightbulb + multi-sentence insight; source footer
-6) EMPTY top-right logo pocket only — never draw brand wordmark
-FAIL if: sparse poster (3 short lines + huge empty space), typos (Financrial), bond CTA off-topic, duplicate headings"""
+Match sample_infographic_explain_rbi_polymer.png EXACTLY:
+1) Navy headline (NOT oversized) + gray intro with ₹/% fact
+2) Orange-bar section + 3 circular-icon fact columns with real explanations
+3) Orange-bar section + orange highlight words + 3 clay-3D fact columns
+4) Orange-bar text section (short paragraphs)
+5) Thin orange-border callout + lightbulb (NOT solid orange slab)
+6) Source footer · empty top-right logo pocket
+FAIL if: sparse giant-headline poster, empty ice-blue void, typos, ranking rows"""
 
         return f"""Create ONE finished LinkedIn educational INFOGRAPHIC matching Jiraaf sample tone.
 

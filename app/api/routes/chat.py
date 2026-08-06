@@ -14,6 +14,7 @@ from app.schemas.chat import (
     ChatEnhancePromptResponse,
     ChatMessageCreateRequest,
     ChatMessageResponse,
+    ChatPipelineRecordRequest,
     ChatSendResponse,
     ChatSessionCreateRequest,
     ChatSessionResponse,
@@ -156,6 +157,29 @@ async def enhance_prompt(
     assert_chat_brand_access(principal, brand_scope)
     return ChatEnhancePromptResponse(
         enhanced_prompt="Create a LinkedIn thought leadership post explaining why investors should consider bonds as part of a diversified portfolio."
+    )
+
+
+@router.post("/sessions/{session_id}/pipeline-result", response_model=ChatSendResponse)
+async def record_pipeline_result(
+    session_id: UUID,
+    payload: ChatPipelineRecordRequest,
+    brand_scope: UUID = Depends(get_brand_scope_header),
+    principal: CurrentPrincipal = Depends(get_current_principal),
+    session: AsyncSession = Depends(get_db_session),
+) -> ChatSendResponse:
+    brand_scope = require_brand_scope(brand_scope)
+    assert_chat_brand_access(principal, brand_scope)
+    user_message, assistant_message = await ChatService(session).record_pipeline_result(
+        session_id=session_id,
+        tenant_id=principal.tenant_id,
+        brand_space_id=brand_scope,
+        user_id=principal.user_id,
+        payload=payload,
+    )
+    return ChatSendResponse(
+        user_message=ChatMessageResponse.model_validate(user_message),
+        assistant_message=ChatMessageResponse.model_validate(assistant_message),
     )
 
 

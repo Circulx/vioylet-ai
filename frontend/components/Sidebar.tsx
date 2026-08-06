@@ -342,7 +342,7 @@ function BrandChatGroup({
                 <div className="space-y-1">
                     {chatSessions.map((session: ChatSessionResponse) => {
                         const title = session.title?.trim() || "Untitled chat";
-                        const isActiveChat = activeChatId ? activeChatId === session.id : isCurrentBrand && session.id === chatSessions[0]?.id;
+                        const isActiveChat = Boolean(activeChatId) && activeChatId === session.id;
                         return (
                             <div
                                 key={session.id}

@@ -41,6 +41,7 @@ from app.prompts.brand_copy_tone import (
 from app.prompts.jiraaf_layout import classify_layout
 from app.prompts.jiraaf_sample_templates import resolve_creative_template
 from app.prompts.creative_sizes import canvas_label, size_string
+from app.services.blueprint_quality import repair_explain_infographic_copy, repair_generic_headline
 
 # gpt-image-1 practical prompt budget (API also truncates ~6000)
 _IMAGE_PROMPT_BUDGET = 5800
@@ -483,6 +484,8 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
         )
 
     # Prefer approved Creative Blueprint text for art direction cues
+    brand_name = (brand_intelligence.brand_core.brand_name or "").strip()
+    is_jiraaf_brand = "jiraaf" in brand_name.casefold()
     headline = (blueprint.headline if blueprint and blueprint.headline else copy.headline)
     body = (blueprint.body if blueprint and blueprint.body else copy.body)
     supporting = (
@@ -531,6 +534,25 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
     creative_template = resolve_creative_template(user_prompt, fmt)
     if creative_template.layout_type != layout_type:
         layout_type = creative_template.layout_type
+    is_infographic_explain = (
+        fmt == "infographic"
+        and (
+            layout_type == "carousel_story"
+            or creative_template.template_id == "infographic_explain_editorial"
+            or creative_template.visual_style == "infographic_explain"
+        )
+    )
+    if blueprint and is_infographic_explain:
+        blueprint = repair_explain_infographic_copy(
+            blueprint,
+            layout_type=layout_type,
+            user_prompt=user_prompt or "",
+        )
+        blueprint = repair_generic_headline(blueprint, layout_type=layout_type)
+        headline = blueprint.headline or headline
+        supporting = blueprint.supporting_line or supporting
+        customer_quote = blueprint.customer_quote or customer_quote
+        sections = [s.model_dump() for s in blueprint.sections] if blueprint.sections else sections
     logger.info(
         "visual_reasoning.template_locked",
         template_id=creative_template.template_id,
@@ -563,6 +585,7 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
     system = _prompt_builder.build_system(
         fmt=fmt,
         layout_type=layout_type,
+        brand_name=brand_name,
     )
     user = _prompt_builder.build_user(
         brand_intelligence=brand_intelligence,
@@ -623,8 +646,11 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
     # expander output was unused and burned tokens every run).
     expander_meta: dict = {}
     image_gen_prompt = output.image_prompt_direction
-    if fmt == "carousel":
-        logger.info("visual_reasoning.prompt_expansion_skipped", reason="carousel_uses_per_slide_prompts")
+    if fmt == "carousel" or is_infographic_explain:
+        logger.info(
+            "visual_reasoning.prompt_expansion_skipped",
+            reason="carousel_or_explain_uses_direct_image_prompt",
+        )
     else:
         logger.info(
             "visual_reasoning.prompt_expansion_start",
@@ -698,7 +724,16 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
                 exact_lock += "Sections:\n"
                 for i, sec in enumerate(sections[:15], start=1):
                     if isinstance(sec, dict):
-                        lab = sec.get("section_label") or f"Item {i}"
+                        lab = str(sec.get("section_label") or "").strip()
+                        if not lab or lab.casefold() in {"item", f"item {i}"}:
+                            body = str(sec.get("body") or "").strip()
+                            incs_raw = sec.get("includes") or []
+                            first = (
+                                str(incs_raw[0]).strip()
+                                if isinstance(incs_raw, list) and incs_raw
+                                else ""
+                            )
+                            lab = " ".join((body or first).split()[:8]).rstrip(".,;:") or f"Point {i}"
                         st = sec.get("stat") or ""
                         incs = sec.get("includes") or []
                         if isinstance(incs, list):
@@ -707,6 +742,15 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
                             incs_txt = str(incs)
                         exact_lock += f'{i}. "{lab}" | "{st}" | "{incs_txt}"\n'
             image_gen_prompt = (expanded_prompt + exact_lock + f"\n{ICON_STYLE_LOCK}\n")[:6000]
+            if not is_jiraaf_brand:
+                # Keep premium icon quality, but drop Jiraaf-only finance object examples / palette defaults.
+                brand_icon_lock = (
+                    "\nBRAND ICON LOCK: Match THIS brand's visual mood and topic objects only. "
+                    f"Brand: {brand_name or 'active Brand Space'}. "
+                    "Do NOT invent finance/wallet/rupee/SEBI/bond icons unless the topic requires them. "
+                    "Prefer icons that match the brand category and the user's prompt.\n"
+                )
+                image_gen_prompt = (expanded_prompt + exact_lock + brand_icon_lock)[:6000]
             output.image_prompt_direction = image_gen_prompt
         except Exception as e:
             logger.warning(
@@ -757,14 +801,16 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
         fallback_suffix: str = "",
         *,
         composite_sebi_footer: bool = False,
+        image_quality: str | None = None,
+        skip_extra_locks: bool = False,
     ) -> str:
-        # CRITICAL: content-first budget. Mega-locks (BRAND_COLOR_LOCK_RULE ~5.8k) used to
-        # append AFTER the prompt and truncate to 6000 — wiping every slide headline/body.
-        extra = (
-            CAROUSEL_IMAGE_EXTRA_LOCKS
-            if composite_sebi_footer
-            else STATIC_IMAGE_EXTRA_LOCKS
-        )
+        extra = ""
+        if not skip_extra_locks:
+            extra = (
+                CAROUSEL_IMAGE_EXTRA_LOCKS
+                if composite_sebi_footer
+                else STATIC_IMAGE_EXTRA_LOCKS
+            )
         safe_prompt = _budget_prompt(prompt, extra, _IMAGE_PROMPT_BUDGET)
         logger.info(
             "visual_reasoning.image_prompt_budget",
@@ -785,6 +831,7 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
                 or "plain empty top-right corner — no text, no box, no logo drawn",
                 composite_sebi_footer=composite_sebi_footer,
                 wipe_reserved_corner=composite_sebi_footer,
+                quality=image_quality,
             )
             logger.info(
                 "visual_reasoning.dalle_success",
@@ -1083,100 +1130,150 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
                 headline=str(slide_headline or "")[:60],
             )
             slide_url = await _generate_one_image(
-                slide_prompt, size, f"-slide-{n}", composite_sebi_footer=True
+                slide_prompt,
+                size,
+                f"-slide-{n}",
+                # Jiraaf-only legal footer — never bake onto other brands.
+                composite_sebi_footer=is_jiraaf_brand,
             )
             generated_urls.append(slide_url)
     else:
-        # Static / hub / ranking / trade — AI image only (no Pillow ranking board).
-        from app.prompts.jiraaf_layout import is_trade_data_board
+        # Static / hub / ranking / trade / explain — AI image only (NO Pillow renderers).
         from app.services.image_generation.ranking_board import sanitize_ranking_text
-        from app.prompts.brand_copy_tone import RANKING_IMAGE_STUB
 
-        text_bake_suffix = _error_free_text_block(
-            [
-                ("HEADLINE", _q(sanitize_ranking_text(str(headline or "")), 140)),
-                ("SUPPORTING LINE", _q(sanitize_ranking_text(str(supporting or "")), 180)),
-                ("BODY", _q(body, 260)),
-                ("CTA", _q(sanitize_ranking_text(str(cta or "")), 40)),
-                ("PROBLEM", _q(problem_statement, 160)),
-                ("SOLUTION", _q(solution_statement, 160)),
-                ("SECTIONS", _q(sections, 220)),
-                ("STATS", _q(stat_highlights, 160)),
-                ("PROOF POINTS", _q(proof_points, 180)),
-                ("PROCESS STEPS", _q(process_steps, 160)),
-                ("QUOTE", _q(customer_quote, 160)),
-                ("QUOTE ATTRIBUTION", _q(customer_name, 60)),
-                (
-                    "SOURCE FOOTER",
-                    _q(
-                        sanitize_ranking_text(
-                            str((blueprint.source_footer if blueprint else "") or "")
-                        ),
-                        80,
-                    ),
-                ),
-            ],
-            is_carousel=False,
-        )
-        card_bake = ""
-        if blueprint and (blueprint.sections or []):
-            is_education_layout = layout_type == "carousel_story"
-            is_infographic_explain = is_education_layout and fmt == "infographic"
-            is_rank_layout = layout_type == "static_ranking"
-            card_lines = [
-                "\nEXACT CARD / ROW TEXT — bake ONLY these quoted strings (zero invented words):\n"
-            ]
-            for i, sec in enumerate((blueprint.sections or [])[:15], start=1):
-                label = sanitize_ranking_text((sec.section_label or f"Item {i}").strip())
-                max_facts = 3 if is_infographic_explain else 2
-                facts = [
-                    sanitize_ranking_text(str(x).strip())
-                    for x in (sec.includes or [])
-                    if str(x).strip()
-                ][:max_facts]
-                stat = sanitize_ranking_text(str(sec.stat or "").strip())
-                if stat and is_rank_layout:
-                    import re as _re
+        if is_infographic_explain and blueprint:
+            from app.services.image_generation.explain_image_prompt import (
+                build_explain_infographic_prompt,
+            )
 
-                    stat = _re.sub(r"US\s*\$", "USD ", stat, flags=_re.I)
-                    stat = _re.sub(r"\$", "", stat)
-                    facts = [stat] + facts
-                facts = facts[:max_facts]
-                if is_infographic_explain:
-                    card_lines.append(f'SECTION {i} HEADING: "{label}"\n')
-                    for j, fact in enumerate(facts, start=1):
-                        short = " ".join(fact.split()[:22])
-                        card_lines.append(f'SECTION {i} FACT {j}: "{short}"\n')
-                    card_lines.append(
-                        "Render as DENSE sample infographic: 3-col unique fact cards under heading "
-                        "(icon + unique title + explanation). Perfect spelling. No duplicate titles.\n"
+            explain_prompt = build_explain_infographic_prompt(
+                blueprint,
+                canvas_desc=canvas_desc,
+                supporting=supporting or "",
+                customer_quote=customer_quote or "",
+            )
+            logger.info(
+                "visual_reasoning.explain_ai_prompt",
+                prompt_len=len(explain_prompt),
+                headline=(blueprint.headline or "")[:60],
+                sections=len(blueprint.sections or []),
+            )
+            last_err: Exception | None = None
+            for attempt in range(2):
+                try:
+                    suffix = "" if attempt == 0 else "-explain-retry"
+                    prompt_try = explain_prompt
+                    if attempt == 1:
+                        prompt_try = (
+                            explain_prompt
+                            + "\nRETRY: Previous output had spelling errors. "
+                            "Render ONLY the quoted COPY block — zero paraphrase.\n"
+                        )
+                    single_url = await _generate_one_image(
+                        prompt_try[:6000],
+                        size,
+                        suffix,
+                        composite_sebi_footer=False,
+                        image_quality="high",
+                        skip_extra_locks=True,
                     )
-                elif is_education_layout:
-                    card_lines.append(f'CARD {i} HEADING: "{label}"\n')
-                    for j, fact in enumerate(facts, start=1):
-                        short = " ".join(fact.split()[:14])
-                        card_lines.append(f'CARD {i} EXPLANATION {j}: "{short}"\n')
-                else:
-                    card_lines.append(f'CARD {i} name: "{label}"\n')
-                    for j, fact in enumerate(facts, start=1):
-                        short = " ".join(fact.split()[:8])
-                        card_lines.append(f'CARD {i} line {j}: "{short}"\n')
-            card_lines.append(f"Layout: {creative_template.image_stub}\n")
-            card_bake = "".join(card_lines)
+                    generated_urls.append(single_url)
+                    break
+                except Exception as exc:
+                    last_err = exc
+                    logger.warning(
+                        "visual_reasoning.explain_ai_attempt_failed",
+                        attempt=attempt + 1,
+                        error=str(exc)[:200],
+                    )
+            else:
+                raise RuntimeError(
+                    f"Explain infographic image failed after 2 attempts: {last_err}"
+                ) from last_err
+        else:
+            text_bake_suffix = _error_free_text_block(
+                [
+                    ("HEADLINE", _q(sanitize_ranking_text(str(headline or "")), 140)),
+                    ("SUPPORTING LINE", _q(sanitize_ranking_text(str(supporting or "")), 180)),
+                    ("BODY", _q(body, 260)),
+                    ("CTA", _q(sanitize_ranking_text(str(cta or "")), 40)),
+                    ("PROBLEM", _q(problem_statement, 160)),
+                    ("SOLUTION", _q(solution_statement, 160)),
+                    ("SECTIONS", _q(sections, 220)),
+                    ("STATS", _q(stat_highlights, 160)),
+                    ("PROOF POINTS", _q(proof_points, 180)),
+                    ("PROCESS STEPS", _q(process_steps, 160)),
+                    ("QUOTE", _q(customer_quote, 160)),
+                    ("QUOTE ATTRIBUTION", _q(customer_name, 60)),
+                    (
+                        "SOURCE FOOTER",
+                        _q(
+                            sanitize_ranking_text(
+                                str((blueprint.source_footer if blueprint else "") or "")
+                            ),
+                            80,
+                        ),
+                    ),
+                ],
+                is_carousel=False,
+            )
+            card_bake = ""
+            if blueprint and (blueprint.sections or []):
+                is_education_layout = layout_type == "carousel_story"
+                is_rank_layout = layout_type == "static_ranking"
+                card_lines = [
+                    "\nEXACT CARD / ROW TEXT — bake ONLY these quoted strings (zero invented words):\n"
+                ]
+                for i, sec in enumerate((blueprint.sections or [])[:15], start=1):
+                    raw_label = (sec.section_label or "").strip()
+                    if not raw_label or raw_label.casefold() in {"item", f"item {i}"}:
+                        body = (sec.body or "").strip()
+                        first = next(
+                            (str(x).strip() for x in (sec.includes or []) if str(x).strip()),
+                            "",
+                        )
+                        raw_label = " ".join((body or first).split()[:8]).rstrip(".,;:") or f"Point {i}"
+                    label = sanitize_ranking_text(raw_label)
+                    max_facts = 2
+                    facts = [
+                        sanitize_ranking_text(str(x).strip())
+                        for x in (sec.includes or [])
+                        if str(x).strip()
+                    ][:max_facts]
+                    stat = sanitize_ranking_text(str(sec.stat or "").strip())
+                    if stat and is_rank_layout:
+                        import re as _re
 
-        layout_hint = creative_template.l8_image_hint(canvas_desc=canvas_desc)
-        if creative_template.layout_type == "static_ranking":
-            layout_hint += f"\n{INFOGRAPHIC_AUDIENCE_TONE_LOCK}\n"
-        layout_hint += (
-            f"Canvas size LOCKED: {canvas_desc}. Fit every element inside with >=6% margins.\n"
-            "Never clip CTA/text/icons. CTA COMPACT <=28% width, <=4 words.\n"
-        )
-        single_url = await _generate_one_image(
-            (image_gen_prompt + layout_hint + card_bake + text_bake_suffix)[:6000],
-            size,
-            composite_sebi_footer=False,
-        )
-        generated_urls.append(single_url)
+                        stat = _re.sub(r"US\s*\$", "USD ", stat, flags=_re.I)
+                        stat = _re.sub(r"\$", "", stat)
+                        facts = [stat] + facts
+                    facts = facts[:max_facts]
+                    if is_education_layout:
+                        card_lines.append(f'CARD {i} HEADING: "{label}"\n')
+                        for j, fact in enumerate(facts, start=1):
+                            short = " ".join(fact.split()[:14])
+                            card_lines.append(f'CARD {i} EXPLANATION {j}: "{short}"\n')
+                    else:
+                        card_lines.append(f'CARD {i} name: "{label}"\n')
+                        for j, fact in enumerate(facts, start=1):
+                            short = " ".join(fact.split()[:8])
+                            card_lines.append(f'CARD {i} line {j}: "{short}"\n')
+                card_lines.append(f"Layout: {creative_template.image_stub}\n")
+                card_bake = "".join(card_lines)
+
+            layout_hint = creative_template.l8_image_hint(canvas_desc=canvas_desc)
+            if creative_template.layout_type == "static_ranking":
+                layout_hint += f"\n{INFOGRAPHIC_AUDIENCE_TONE_LOCK}\n"
+            layout_hint += (
+                f"Canvas size LOCKED: {canvas_desc}. Fit every element inside with >=6% margins.\n"
+                "Never clip CTA/text/icons. CTA COMPACT <=28% width, <=4 words.\n"
+            )
+            single_url = await _generate_one_image(
+                (image_gen_prompt + layout_hint + card_bake + text_bake_suffix)[:6000],
+                size,
+                composite_sebi_footer=False,
+            )
+            generated_urls.append(single_url)
 
     # Set the generated image fields on the output Pydantic model
     output.generated_image_url = generated_urls[0] if generated_urls else ""

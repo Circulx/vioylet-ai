@@ -82,10 +82,24 @@ class BlueprintInfographicSection(BaseModel):
             return data
         out = dict(data)
         if not out.get("section_label"):
-            out["section_label"] = (
-                str(out.get("label") or out.get("title") or out.get("name") or "Item").strip()
-                or "Item"
-            )
+            # Never default to the literal "Item" — that string gets baked into images.
+            label = str(
+                out.get("label") or out.get("title") or out.get("name") or out.get("heading") or ""
+            ).strip()
+            if label and label.casefold() not in {"item", "items", "untitled"}:
+                out["section_label"] = label
+            else:
+                body = str(out.get("body") or "").strip()
+                includes = out.get("includes") or []
+                first_include = ""
+                if isinstance(includes, list) and includes:
+                    first_include = str(includes[0] or "").strip()
+                fallback = body or first_include
+                if fallback:
+                    words = fallback.split()
+                    out["section_label"] = " ".join(words[:8]).rstrip(".,;:")
+                else:
+                    out["section_label"] = ""
         if out.get("body") is None:
             out["body"] = ""
         return out

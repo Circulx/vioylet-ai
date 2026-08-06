@@ -160,16 +160,16 @@ Spelling perfect. CTA ≤4 words. No text breaking.
 """
 
     _INFOGRAPHIC_EXPLAIN_SUFFIX = f"""
-INFOGRAPHIC EXPLAIN (layout_type=carousel_story on infographic) — DENSE sample DNA:
+INFOGRAPHIC EXPLAIN (layout_type=carousel_story on infographic) — sample DNA, SHORT copy:
 {INFOGRAPHIC_EXPLAIN_LAYOUT_LOCK}
 {INFOGRAPHIC_EXPLAIN_ORANGE_STUB}
 {INFOGRAPHIC_EXPLAIN_QUALITY_LOCK}
-- headline (large question OK) + supporting_line with ₹/% fact
-- 2–4 UNIQUE sections[]: section_label = unique heading
-- includes[] = 2–3 items "Mini-title | explanation with ₹/%" — each mini-title UNIQUE
-- customer_quote = multi-sentence callout; source_footer when available
+- headline (question OK, ≤10 words) + supporting_line (1 line, ≤14 words)
+- 2–3 UNIQUE sections[]: section_label = short heading (≤8 words)
+- includes[] = 2–3 items "Mini-title | short fact" — explanation ≤10 words, mini-title ≤4 words
+- customer_quote = ONE sentence callout (≤16 words); source_footer when available
 - cta = "Learn more" / "Share the news!" ONLY — NEVER bond/investment CTA on RBI/currency topics
-FORBIDDEN: sparse 3-line posters, duplicate headings/titles, typos (Financrial/fiexible), bond CTAs off-topic
+FORBIDDEN: long paragraphs, full-width orange headers, duplicate headings, typos, bond CTAs off-topic
 """
 
     _STATIC_EXPLAIN_SUFFIX = f"""

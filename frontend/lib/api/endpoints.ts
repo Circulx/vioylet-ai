@@ -148,6 +148,7 @@ export const API = {
     CANCEL_GENERATION: { method: "POST", url: (sessionId: string) => `/api/v1/chat/sessions/${sessionId}/cancel` } as ApiEndpoint<void, { message?: string }>,
     LIST_MESSAGES: { method: "GET", url: (sessionId: string) => `/api/v1/chat/sessions/${sessionId}/messages` } as ApiEndpoint<void, ChatMessageResponse[]>,
     SEND_MESSAGE: { method: "POST", url: (sessionId: string) => `/api/v1/chat/sessions/${sessionId}/messages` } as ApiEndpoint<unknown, ChatSendResponse>,
+    RECORD_PIPELINE_RESULT: { method: "POST", url: (sessionId: string) => `/api/v1/chat/sessions/${sessionId}/pipeline-result` } as ApiEndpoint<import("./contracts").ChatPipelineRecordRequest, ChatSendResponse>,
   },
   REVIEW: {
     CREATE_LINK: { method: "POST", url: "/api/v1/review/share-link" } as ApiEndpoint<unknown, ReviewLinkResponse>,

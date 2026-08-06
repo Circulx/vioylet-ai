@@ -170,9 +170,8 @@ function KnowledgeUploadField({ label, items, onAddItems, onRemove }: KnowledgeU
 
   const handleOpenChange = (open: boolean) => {
     setIsOpen(open);
-    if (!open) {
-      setPendingUploads([]);
-    }
+    // Keep queued files when closing so tab switches / accidental closes do not wipe the queue.
+    // Files are cleared only after successful Upload (handleUploadAll) or explicit remove.
   };
 
   return (

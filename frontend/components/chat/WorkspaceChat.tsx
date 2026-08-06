@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { type KeyboardEvent, type MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import {
@@ -42,27 +42,33 @@ import type {
     StudioPanelSelection,
     TemplateRecommendationResponse,
 } from "@/lib/api/contracts";
-import { buildBrandChatHref, buildBrandSharingHref, resolveBrandByRouteKey } from "@/lib/brand-routing";
+import { buildBrandChatHref, buildBrandEditHref, buildBrandSharingHref, buildBrandWorkspaceHref, resolveBrandByRouteKey } from "@/lib/brand-routing";
+import { apiOrigin } from "@/lib/env";
 import { useBrandUsage, useBrands } from "@/hooks/useBrands";
 import { usePipeline } from "@/hooks/usePipeline";
 import ChatPipelinePanel, {
     type ChatPipelineState,
 } from "@/components/chat/ChatPipelinePanel";
+import ChatHistorySidebar from "@/components/chat/ChatHistorySidebar";
 import {
     useChatMessages,
     useChatSessions,
     useCancelChatGeneration,
     useCreateChatSession,
+    useDeleteChatSession,
     useExportContent,
     useEnhancePrompt,
     useApplyImageEdit,
     useCreateShareLink,
     useImageEditState,
+    useRecordPipelineResult,
     useSendChatMessage,
     useTemplateRecommendations,
     useToneCheck,
+    useUpdateChatSession,
     useUploadKnowledgeAsset,
 } from "@/hooks/useContentWorkspace";
+import { deriveChatTitle, filterTodaySessions, studioPanelToState } from "@/lib/chat-session-utils";
 import { fileToDataUrl, stripFileExtension } from "@/lib/file-utils";
 import {
     coerceGenerationDecision,
@@ -422,26 +428,44 @@ function sortAssetsBySequence(assets: AssetReference[]) {
         .map((entry) => entry.asset);
 }
 
+function normalizeAssetUrl(url?: string | null): string | undefined {
+    if (!url) {
+        return undefined;
+    }
+    if (/^(https?:|data:|blob:)/i.test(url)) {
+        return url;
+    }
+    return `${apiOrigin}${url.startsWith("/") ? url : `/${url}`}`;
+}
+
+function withNormalizedAssetUrl<T extends { asset_url?: string | null }>(asset: T): T {
+    const normalized = normalizeAssetUrl(asset.asset_url);
+    return normalized === asset.asset_url ? asset : { ...asset, asset_url: normalized };
+}
+
 function resolveGeneratedImageAssets(payload: ChatAssistantStructuredPayload | Record<string, unknown> | undefined) {
     if (!payload || Array.isArray(payload)) {
         return [];
     }
     const typedPayload = payload as ChatAssistantStructuredPayload;
-    const exportImages = (typedPayload.export_assets || []).filter(
-        (asset) => asset.mime_type.startsWith("image/") && Boolean(asset.asset_url),
-    );
+    const exportImages = (typedPayload.export_assets || [])
+        .map(withNormalizedAssetUrl)
+        .filter((asset) => asset.mime_type.startsWith("image/") && Boolean(asset.asset_url));
     if (exportImages.length) {
         return sortAssetsBySequence(dedupeImageAssets(exportImages));
     }
-    if (typedPayload.preview_asset?.asset_url && typedPayload.preview_asset.mime_type.startsWith("image/")) {
-        return [typedPayload.preview_asset];
+    const previewAsset = typedPayload.preview_asset ? withNormalizedAssetUrl(typedPayload.preview_asset) : undefined;
+    if (previewAsset?.asset_url && previewAsset.mime_type.startsWith("image/")) {
+        return [previewAsset];
     }
     return sortAssetsBySequence(dedupeImageAssets(
-        (typedPayload.assets || []).filter((asset) =>
-            asset.mime_type.startsWith("image/") &&
-            Boolean(asset.asset_url) &&
-            ["render_export", "render_preview", "ai_image"].includes(asset.asset_role),
-        ),
+        (typedPayload.assets || [])
+            .map(withNormalizedAssetUrl)
+            .filter((asset) =>
+                asset.mime_type.startsWith("image/") &&
+                Boolean(asset.asset_url) &&
+                ["render_export", "render_preview", "ai_image"].includes(asset.asset_role),
+            ),
     ));
 }
 
@@ -450,7 +474,7 @@ function resolveGeneratedExportAssets(payload: ChatAssistantStructuredPayload | 
         return [];
     }
     const typedPayload = payload as ChatAssistantStructuredPayload;
-    return (typedPayload.export_assets || []).filter((asset) => Boolean(asset.asset_url));
+    return (typedPayload.export_assets || []).map(withNormalizedAssetUrl).filter((asset) => Boolean(asset.asset_url));
 }
 
 function resolvePreviousUserPrompt(messages: ChatMessageResponse[], currentIndex: number) {
@@ -1906,6 +1930,18 @@ function StudioPanel({
     const applyPlatform = (next: Platform) => {
         setPlatform(next);
         setSizeLabel(resolveSizeOptions(format, next)[0].label);
+        // Keep audience in sync with platform — stale LinkedIn audience was leaking onto Instagram runs.
+        const platformAudienceDefaults: Record<Platform, string> = {
+            instagram: "Indian Instagram users / retail savers",
+            linkedin: "Indian LinkedIn professionals / retail savers",
+            x: "Indian X (Twitter) users / retail savers",
+            youtube_thumbnail: "Indian YouTube viewers / retail savers",
+        };
+        const preferred = platformAudienceDefaults[next];
+        const matchedOption =
+            targetAudienceOptions.find((option) => option.toLowerCase().includes(next.replace("_", " "))) ||
+            targetAudienceOptions.find((option) => preferred.toLowerCase().includes(option.toLowerCase().slice(0, 12)));
+        setTargetAudience(matchedOption || preferred);
     };
 
     return (
@@ -2026,6 +2062,7 @@ function StudioPanel({
 }
 
 export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
+    const router = useRouter();
     const searchParams = useSearchParams();
     const { data: brands, isLoading: isBrandsLoading } = useBrands();
     const brand = useMemo(() => resolveBrandByRouteKey(brands, brandKey), [brands, brandKey]);
@@ -2036,19 +2073,36 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
         [brand?.resolved_brand_context],
     );
 
-    const { data: sessions } = useChatSessions(brandId);
+    const { data: sessions, isLoading: isSessionsLoading } = useChatSessions(brandId);
     const createSession = useCreateChatSession(brandId);
+    const updateChatSession = useUpdateChatSession(brandId);
+    const deleteChatSession = useDeleteChatSession(brandId);
+    const recordPipelineResult = useRecordPipelineResult(brandId);
     const uploadKnowledgeAsset = useUploadKnowledgeAsset(brandId);
     const [activeSessionId, setActiveSessionId] = useState("");
     const selectedSessionId = searchParams.get("chat") || "";
     const selectedSessionIsAvailable = Boolean(
         selectedSessionId && sessions?.some((session) => session.id === selectedSessionId),
     );
-    const resolvedActiveSessionId = selectedSessionIsAvailable
-        ? selectedSessionId
-        : activeSessionId || sessions?.[0]?.id || "";
+    const resolvedActiveSessionId = useMemo(() => {
+        if (selectedSessionId) {
+            // Trust URL while sessions are still loading.
+            if (!sessions || selectedSessionIsAvailable) {
+                return selectedSessionId;
+            }
+        }
+        return activeSessionId;
+    }, [activeSessionId, selectedSessionId, selectedSessionIsAvailable, sessions]);
+    const activeSession = useMemo(
+        () => (sessions || []).find((session) => session.id === resolvedActiveSessionId),
+        [resolvedActiveSessionId, sessions],
+    );
+    const todaySessions = useMemo(() => filterTodaySessions(sessions || []), [sessions]);
     const {
         data: messages,
+        isLoading: isMessagesLoading,
+        isFetched: isMessagesFetched,
+        isError: isMessagesError,
         fetchNextPage: fetchOlderMessages,
         hasNextPage: hasOlderMessages,
         isFetchingNextPage: isFetchingOlderMessages,
@@ -2106,6 +2160,9 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
     const activeGenerationControllerRef = useRef<AbortController | null>(null);
     const activeGenerationSessionRef = useRef<string>("");
     const pipelineInFlightRef = useRef(false);
+    const purgedOldSessionsRef = useRef(false);
+    const hasAutoOpenedSessionRef = useRef(false);
+    const skipAutoOpenOnceRef = useRef(false);
     const exportAssetCacheRef = useRef(new Map<string, AssetReference[]>());
 
     const sizeOption = useMemo(() => {
@@ -2207,6 +2264,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
     );
     const selectedTemplateLabel = selectedTemplate?.name || selectedTemplateName;
     const hasConversation =
+        Boolean(resolvedActiveSessionId) ||
         Boolean((messages || []).length) ||
         (pipelineUi.status !== "idle" && pipelineUi.status !== "cancelled");
     const allocationPercent = brandUsage?.capacity_percent ?? 0;
@@ -2287,6 +2345,11 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
         ? `${latestMessage.id}:${latestMessage.message_text.length}:${latestMessage.content_version_id || ""}`
         : "";
     const [generationProgressIndex, setGenerationProgressIndex] = useState(0);
+    const showConversationLoading =
+        Boolean(resolvedActiveSessionId) &&
+        !isMessagesFetched &&
+        (isMessagesLoading || isFetchingOlderMessages) &&
+        !orderedMessages.length;
     const activeGenerationMessage = isGeneratingMessage
         ? GENERATION_PROGRESS_MESSAGES[generationProgressIndex] || GENERATION_PROGRESS_MESSAGES[0]
         : GENERATION_PROGRESS_MESSAGES[0];
@@ -2322,29 +2385,30 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
     };
 
     useEffect(() => {
-        if (!sessions?.length) {
+        if (!selectedSessionId) {
             return;
         }
-
-        if (!selectedSessionId || !selectedSessionIsAvailable) {
-            setActiveSessionId("");
+        if (sessions && !selectedSessionIsAvailable) {
             return;
         }
-
         if (activeSessionId !== selectedSessionId) {
             setActiveSessionId(selectedSessionId);
         }
     }, [activeSessionId, selectedSessionId, selectedSessionIsAvailable, sessions]);
 
     useEffect(() => {
-        if (!resolvedActiveSessionId || !hasOlderMessages || isFetchingOlderMessages) {
+        if (!resolvedActiveSessionId || !activeSession?.studio_panel) {
             return;
         }
-        const timeoutId = window.setTimeout(() => {
-            void fetchOlderMessages();
-        }, 250);
-        return () => window.clearTimeout(timeoutId);
-    }, [fetchOlderMessages, hasOlderMessages, isFetchingOlderMessages, resolvedActiveSessionId]);
+        const restoredPanel = studioPanelToState(activeSession.studio_panel);
+        if (!restoredPanel) {
+            return;
+        }
+        setStudioFormat(restoredPanel.format);
+        setStudioPlatform(restoredPanel.platform);
+        setStudioFileType(restoredPanel.fileType);
+        setStudioSizeLabel(restoredPanel.sizeLabel);
+    }, [activeSession?.studio_panel, resolvedActiveSessionId]);
 
     useEffect(() => {
         setActiveChatSearchMatchIndex(0);
@@ -2403,8 +2467,17 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
     }, [latestMessageScrollKey, normalizedChatSearchQuery, orderedMessages.length, resolvedActiveSessionId]);
 
     const handleMessageListScroll = useCallback(() => {
-        autoFollowChatRef.current = isScrolledNearBottom(messageListRef.current);
-    }, []);
+        const messageList = messageListRef.current;
+        autoFollowChatRef.current = isScrolledNearBottom(messageList);
+        if (
+            messageList &&
+            messageList.scrollTop < 80 &&
+            hasOlderMessages &&
+            !isFetchingOlderMessages
+        ) {
+            void fetchOlderMessages();
+        }
+    }, [fetchOlderMessages, hasOlderMessages, isFetchingOlderMessages]);
 
     useEffect(() => {
         resizeComposer(composerTextareaRef.current);
@@ -2441,14 +2514,114 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
         };
     }, [enhancePromptMode]);
 
+    const resetChatWorkspaceState = useCallback(() => {
+        setPipelineUi({ status: "idle" });
+        setComposerDraft("");
+        setWorkspacePrompt("");
+        setAttachedAssets([]);
+        setWorkspaceError("");
+        setChatSearchQuery("");
+    }, []);
 
-    if (isBrandsLoading) {
-        return <div className="p-5 text-sm text-slate-500">Loading workspace...</div>;
-    }
+    const handleNewChat = useCallback(() => {
+        if (!brand) {
+            return;
+        }
+        resetChatWorkspaceState();
+        setActiveSessionId("");
+        hasAutoOpenedSessionRef.current = true;
+        skipAutoOpenOnceRef.current = true;
+        router.push(buildBrandWorkspaceHref(brand));
+    }, [brand, resetChatWorkspaceState, router]);
 
-    if (!brand) {
-        return <div className="p-5 text-sm text-slate-500">Brand Space not found.</div>;
-    }
+    const handleSelectChatSession = useCallback(
+        (sessionId: string) => {
+            if (!brand || sessionId === resolvedActiveSessionId) {
+                return;
+            }
+            resetChatWorkspaceState();
+            setActiveSessionId(sessionId);
+            router.push(buildBrandChatHref(brand, sessionId));
+        },
+        [brand, resolvedActiveSessionId, resetChatWorkspaceState, router],
+    );
+
+    const handleRenameChatSession = useCallback(
+        (sessionId: string, title: string) => {
+            updateChatSession.mutate({ sessionId, data: { title } });
+        },
+        [updateChatSession],
+    );
+
+    const handleDeleteChatSession = useCallback(
+        (sessionId: string) => {
+            if (!brand) {
+                return;
+            }
+            if (resolvedActiveSessionId === sessionId) {
+                const nextSession = todaySessions.find((session) => session.id !== sessionId);
+                resetChatWorkspaceState();
+                router.push(nextSession ? buildBrandChatHref(brand, nextSession.id) : buildBrandWorkspaceHref(brand));
+            }
+            deleteChatSession.mutate(sessionId);
+        },
+        [brand, deleteChatSession, resolvedActiveSessionId, resetChatWorkspaceState, router, todaySessions],
+    );
+
+    useEffect(() => {
+        if (!brand || selectedSessionId || isSessionsLoading) {
+            return;
+        }
+        if (skipAutoOpenOnceRef.current) {
+            skipAutoOpenOnceRef.current = false;
+            return;
+        }
+        if (hasAutoOpenedSessionRef.current) {
+            return;
+        }
+        if (!todaySessions.length) {
+            return;
+        }
+        hasAutoOpenedSessionRef.current = true;
+        const latestSession = [...todaySessions].sort(
+            (left, right) =>
+                new Date(right.updated_at || right.created_at).getTime() -
+                new Date(left.updated_at || left.created_at).getTime(),
+        )[0];
+        if (latestSession?.id) {
+            router.replace(buildBrandChatHref(brand, latestSession.id));
+        }
+    }, [brand, isSessionsLoading, router, selectedSessionId, todaySessions]);
+
+    useEffect(() => {
+        if (!brandId || !sessions?.length || purgedOldSessionsRef.current || isSessionsLoading) {
+            return;
+        }
+        const staleSessions = sessions.filter((session) => !todaySessions.some((item) => item.id === session.id));
+        purgedOldSessionsRef.current = true;
+        if (!staleSessions.length) {
+            return;
+        }
+        if (staleSessions.some((session) => session.id === resolvedActiveSessionId)) {
+            resetChatWorkspaceState();
+            if (brand) {
+                router.push(todaySessions[0] ? buildBrandChatHref(brand, todaySessions[0].id) : buildBrandWorkspaceHref(brand));
+            }
+        }
+        staleSessions.forEach((session) => {
+            deleteChatSession.mutate(session.id);
+        });
+    }, [
+        brand,
+        brandId,
+        deleteChatSession,
+        isSessionsLoading,
+        resetChatWorkspaceState,
+        resolvedActiveSessionId,
+        router,
+        sessions,
+        todaySessions,
+    ]);
 
     const extractApiError = (error: unknown, fallback: string) => {
         if (axios.isAxiosError(error)) {
@@ -2466,20 +2639,46 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
     const isRequestCanceled = (error: unknown) =>
         axios.isCancel(error) || (axios.isAxiosError(error) && error.code === "ERR_CANCELED");
 
-    const ensureSession = async () => {
+    const ensureSession = async (prompt?: string) => {
         if (!canGenerateInWorkspace) {
             throw new Error("This Brand Space is still in draft. Activate it before generating content or images.");
+        }
+        if (!brand) {
+            throw new Error("Brand Space not found.");
         }
         if (resolvedActiveSessionId) {
             return resolvedActiveSessionId;
         }
+        const titleSource = prompt || workspacePrompt || composerDraft;
         const session = await createSession.mutateAsync({
-            title: workspacePrompt || `${brand.name} Workspace`,
+            title: deriveChatTitle(titleSource),
             studio_panel: studioPanel,
         });
         setActiveSessionId(session.id);
+        if (brand) {
+            router.replace(buildBrandChatHref(brand, session.id));
+        }
         return session.id;
     };
+
+    const persistPipelineToChat = useCallback(
+        async (sessionId: string, prompt: string, imageUrls: string[]) => {
+            if (!imageUrls.length) {
+                return;
+            }
+            await recordPipelineResult.mutateAsync({
+                sessionId,
+                data: {
+                    prompt: prompt.trim(),
+                    image_urls: imageUrls,
+                    studio_panel: studioPanel,
+                    title: deriveChatTitle(prompt),
+                },
+            });
+            setPipelineUi({ status: "idle" });
+        },
+        [recordPipelineResult, studioPanel],
+    );
 
     const cancelActiveGeneration = () => {
         const sessionId = activeGenerationSessionRef.current || resolvedActiveSessionId;
@@ -2560,14 +2759,19 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
 
             // Creative formats use Violyt Intelligence Pipeline in chat (blueprint → AI-baked text image).
             if (studioFormat !== "video") {
+                const trimmedMessage = message.trim();
                 const pipelinePlatform =
                     studioPlatform === "x" ? "twitter" : studioPlatform === "youtube_thumbnail" ? "linkedin" : studioPlatform;
                 const pipelineFormat =
                     studioFormat === "carousel" || studioFormat === "infographic" ? studioFormat : "static";
 
+                autoFollowChatRef.current = true;
+                forceScrollToBottomRef.current = true;
+                const sessionId = await ensureSession(trimmedMessage);
+
                 setPipelineUi({
                     status: "running",
-                    prompt: message.trim(),
+                    prompt: trimmedMessage,
                     format: pipelineFormat,
                     blueprint: null,
                     imageUrls: [],
@@ -2575,13 +2779,13 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                 });
                 setSelectedAction("none");
                 setComposerDraft("");
-                setWorkspacePrompt((current) => (current.trim() === message.trim() ? "" : current));
+                setWorkspacePrompt((current) => (current.trim() === trimmedMessage ? "" : current));
                 setAttachedAssets([]);
                 setAttachmentError("");
 
                 const phase1 = await runPipeline.mutateAsync({
                     brand_id: brandId,
-                    user_prompt: message.trim(),
+                    user_prompt: trimmedMessage,
                     platform: pipelinePlatform as "linkedin" | "instagram" | "twitter",
                     format: pipelineFormat,
                 });
@@ -2590,7 +2794,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                     setPipelineUi({
                         status: "awaiting_blueprint_approval",
                         runId: phase1.run_id || undefined,
-                        prompt: message.trim(),
+                        prompt: trimmedMessage,
                         format: pipelineFormat,
                         blueprint: phase1.creative_blueprint,
                         imageUrls: [],
@@ -2602,7 +2806,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                 if (phase1.status === "failed") {
                     setPipelineUi({
                         status: "failed",
-                        prompt: message.trim(),
+                        prompt: trimmedMessage,
                         format: pipelineFormat,
                         error: phase1.error || "Pipeline failed before blueprint approval.",
                     });
@@ -2612,15 +2816,19 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                 const urls =
                     phase1.final_output?.asset_urls?.filter(Boolean) ||
                     (phase1.final_output?.asset_url ? [phase1.final_output.asset_url] : []);
-                setPipelineUi({
-                    status: urls.length ? "complete" : "failed",
-                    runId: phase1.run_id || undefined,
-                    prompt: message.trim(),
-                    format: pipelineFormat,
-                    blueprint: phase1.creative_blueprint,
-                    imageUrls: urls,
-                    error: urls.length ? null : "No image returned from pipeline.",
-                });
+                if (!urls.length) {
+                    setPipelineUi({
+                        status: "failed",
+                        runId: phase1.run_id || undefined,
+                        prompt: trimmedMessage,
+                        format: pipelineFormat,
+                        blueprint: phase1.creative_blueprint,
+                        imageUrls: [],
+                        error: "No image returned from pipeline.",
+                    });
+                    return;
+                }
+                await persistPipelineToChat(sessionId, trimmedMessage, urls);
                 return;
             }
 
@@ -2686,13 +2894,8 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                 }));
                 return;
             }
-            setPipelineUi((current) => ({
-                ...current,
-                status: "complete",
-                blueprint: phase2.creative_blueprint || edited,
-                imageUrls: urls,
-                error: null,
-            }));
+            const sessionId = await ensureSession(pipelineUi.prompt || "");
+            await persistPipelineToChat(sessionId, pipelineUi.prompt || "", urls);
         } catch (error) {
             const detail = extractApiError(
                 error,
@@ -2814,6 +3017,16 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
 
     return (
         <div className="min-h-[calc(100vh-38px)] bg-white">
+            {isBrandsLoading ? (
+                <div className="flex h-[calc(100vh-32px)] items-center justify-center text-sm text-slate-500">
+                    Loading workspace...
+                </div>
+            ) : !brand ? (
+                <div className="flex h-[calc(100vh-32px)] items-center justify-center text-sm text-slate-500">
+                    Brand Space not found.
+                </div>
+            ) : (
+                <>
             <input
                 ref={attachmentInputRef}
                 type="file"
@@ -2821,9 +3034,18 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                 multiple
                 onChange={(event) => void handleReferenceUpload(event.target.files)}
             />
-            <div className="min-h-[calc(100vh-38px)]">
-                <div className="h-full">
-
+            <div className="flex h-[calc(100vh-32px)]">
+                    <ChatHistorySidebar
+                        sessions={todaySessions}
+                        activeSessionId={resolvedActiveSessionId}
+                        isLoading={isSessionsLoading}
+                        isCreating={createSession.isPending}
+                        onSelectSession={handleSelectChatSession}
+                        onNewChat={handleNewChat}
+                        onRenameSession={handleRenameChatSession}
+                        onDeleteSession={handleDeleteChatSession}
+                    />
+                <div className="min-w-0 flex-1 overflow-hidden">
                     {workspaceError ? (
                         <div className="mx-auto mb-6 max-w-4xl rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                             {workspaceError}
@@ -2846,7 +3068,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
 
                                                     <Tooltips content="View Brand Space">
                                                     <Link
-                                                        href={`/brand_space/${brandId}/edit`}
+                                                        href={buildBrandEditHref({ id: brandId, slug: brand?.slug || brandId })}
                                                         aria-label="View Brand Space"
                                                         className="absolute -right-7 -top-1 text-sm text-[#121212] hover:underline"
                                                     >
@@ -2916,6 +3138,17 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                         onScroll={handleMessageListScroll}
                                         className="flex-1 space-y-8 overflow-y-auto px-1 py-5 thin-scrollbar"
                                     >
+                                        {showConversationLoading ? (
+                                            <div className="flex items-center justify-center gap-2 py-12 text-sm text-[#8B8B94]">
+                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                                Loading conversation...
+                                            </div>
+                                        ) : null}
+                                        {isMessagesError && !orderedMessages.length ? (
+                                            <div className="flex items-center justify-center py-12 text-sm text-red-600">
+                                                Could not load this conversation. Try selecting another chat.
+                                            </div>
+                                        ) : null}
                                         {orderedMessages.map((message, messageIndex) => {
                                             const previewAssets = message.role === "assistant" ? resolveGeneratedImageAssets(message.structured_payload) : [];
                                             const existingExportAssets = message.role === "assistant" ? resolveGeneratedExportAssets(message.structured_payload) : [];
@@ -3208,7 +3441,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                                     <h1 className="font-dmSans text-3xl font-bold text-primary">{brand.name}</h1>
                                                     <Tooltips content="View Brand Space">
                                                     <Link
-                                                        href={`/brand_space/${brandId}/edit`}
+                                                        href={buildBrandEditHref({ id: brandId, slug: brand?.slug || brandId })}
                                                         aria-label="View Brand Space"
                                                         className="absolute -right-7 -top-1 text-sm text-[#121212] hover:underline"
                                                     >
@@ -3509,6 +3742,8 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                     )}
                 </div>
             </div>
+                </>
+            )}
         </div>
     );
 }

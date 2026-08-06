@@ -281,7 +281,7 @@ def _dedupe_phrase(text: str, max_words: int = 6) -> str:
     return " ".join(cleaned[:max_words])
 
 
-# AI / LLM common garbles on ranking boards — fix before paint (infographic only)
+# AI / LLM common garbles — fix before baking into image prompts / Pillow paint
 _TEXT_FIXES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bESD\b", re.I), "USD"),
     (re.compile(r"\bESDs\b", re.I), "USD"),
@@ -298,6 +298,26 @@ _TEXT_FIXES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bgrewth\b", re.I), "growth"),
     (re.compile(r"\binfrastruture\b", re.I), "infrastructure"),
     (re.compile(r"\bmanufacuring\b", re.I), "manufacturing"),
+    # Infographic explain spelling (sample DNA) — never bake OBI / Explering / etc.
+    (re.compile(r"\bOBI\b"), "RBI"),
+    (re.compile(r"\bObi\b"), "RBI"),
+    (re.compile(r"\bExplering\b"), "Exploring"),
+    (re.compile(r"\bexplering\b"), "exploring"),
+    (re.compile(r"\bcouid\b", re.I), "could"),
+    (re.compile(r"\bduiable\b", re.I), "durable"),
+    (re.compile(r"\bGldbally\b"), "Globally"),
+    (re.compile(r"\bgldbally\b"), "globally"),
+    (re.compile(r"\bcaurious\b", re.I), "cautious"),
+    (re.compile(r"\badeption\b", re.I), "adoption"),
+    (re.compile(r"\bimplicatiohs\b", re.I), "implications"),
+    (re.compile(r"\bFinancrial\b"), "Financial"),
+    (re.compile(r"\bfinancrial\b"), "financial"),
+    (re.compile(r"\bfiexible\b", re.I), "flexible"),
+    (re.compile(r"\balready\s+eve\b", re.I), "already use"),
+    (re.compile(r"\beve\s+plastic\b", re.I), "use plastic"),
+    (re.compile(r"\b2\s+(\d[\d,]*(?:\s*[–-]\s*[\d,]*)?\s*crore)\b", re.I), r"₹\1"),
+    (re.compile(r"\b210\s+notes\b", re.I), "₹10 notes"),
+    (re.compile(r"\b2(10)\s+notes\b", re.I), r"₹\1 notes"),
 ]
 
 

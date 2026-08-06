@@ -422,22 +422,26 @@ export default function ChatPipelinePanel({
                 Sources
               </p>
               <ul className="space-y-1">
-                {(state.blueprint?.sources || []).map((src, i) => (
-                  <li key={`${src.url}-${i}`} className="text-xs text-slate-700 break-all">
-                    {src.url ? (
+                {(state.blueprint?.sources || []).map((src, i) => {
+                  const url = (src.url || "").trim();
+                  const isHttp = /^https?:\/\//i.test(url);
+                  return (
+                  <li key={`${url}-${i}`} className="text-xs text-slate-700 break-all">
+                    {isHttp ? (
                       <a
-                        href={src.url}
+                        href={url}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-emerald-800 underline underline-offset-2 hover:text-emerald-950"
                       >
-                        {src.title || src.url}
+                        {src.title || url}
                       </a>
                     ) : (
-                      src.title || "—"
+                      <span>{src.title || url || "—"}</span>
                     )}
                   </li>
-                ))}
+                  );
+                })}
               </ul>
             </div>
           ) : null}

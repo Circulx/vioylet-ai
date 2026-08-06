@@ -383,6 +383,7 @@ class DalleService:
         logo_zone_instruction: str | None = None,
         composite_sebi_footer: bool = False,
         wipe_reserved_corner: bool = False,
+        quality: str | None = None,
     ) -> str:
         """Call gpt-image-1, optionally composite the brand logo, save, and return URL path.
 
@@ -437,7 +438,10 @@ class DalleService:
                 "n": 1,
             }
             if is_gpt_image:
-                q = self.image_quality if self.image_quality in ("low", "medium", "high") else "medium"
+                default_q = self.image_quality if self.image_quality in ("low", "medium", "high") else "medium"
+                q = (quality or default_q).strip().lower()
+                if q not in ("low", "medium", "high"):
+                    q = default_q
                 kwargs["quality"] = q
             else:
                 kwargs["quality"] = "hd" if self.image_quality == "high" else "standard"

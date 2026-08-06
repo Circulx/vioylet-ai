@@ -1,7 +1,12 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-    /* config options here */
+    // Allow Cloudflare quick tunnels to hit the Next.js dev server without "Unauthorized".
+    allowedDevOrigins: [
+        "*.trycloudflare.com",
+        "storm-exams-this-plane.trycloudflare.com",
+        "appreciation-ten-vii-rarely.trycloudflare.com",
+    ],
     images: {
         remotePatterns: [
             {
@@ -15,6 +20,16 @@ const nextConfig: NextConfig = {
                 hostname: "localhost",
                 port: "8000",
                 pathname: "/storage/**",
+            },
+            {
+                protocol: "https",
+                hostname: "*.trycloudflare.com",
+                pathname: "/storage/**",
+            },
+            {
+                protocol: "https",
+                hostname: "*.trycloudflare.com",
+                pathname: "/api/v1/storage/**",
             },
         ],
     },

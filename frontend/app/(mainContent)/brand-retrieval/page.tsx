@@ -185,8 +185,9 @@ export default function BrandRetrievalPage() {
       <div className="space-y-6">
         <h1 className="text-2xl font-bold text-slate-900">Brand Retrieval</h1>
         <p className="text-sm text-slate-500">
-          Layer 1 verification — run namespace-isolated retrieval with
-          multi-signal reranking against an ingested brand.
+          Developer / QA tool for Layer 1 brand knowledge lookup. Paste a prompt, pick a Brand Space,
+          and inspect which uploaded documents the AI retrieves before generation. This is not the
+          chat Studio — use Brand Space → Open Studio for content creation.
         </p>
 
         {/* Input Form */}

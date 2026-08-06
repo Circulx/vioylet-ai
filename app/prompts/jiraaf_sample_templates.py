@@ -191,9 +191,12 @@ _TEMPLATES: dict[TemplateId, CreativeTemplate] = {
             f"{ORANGE_COVERAGE_LOCK}"
         ),
         image_stub=(
-            "DENSE infographic like sample_infographic_explain_rbi_polymer.png: "
-            "LARGE headline + intro + orange-bar sections + 3-col unique fact cards + callout. "
-            "NOT sparse poster. Perfect spelling. Topic-safe CTA. Empty logo pocket."
+            "AI-only DENSE editorial like sample_infographic_explain_rbi_polymer.png: "
+            "proper type scale (headline NOT oversized); navy headline + gray intro; "
+            "2–3 orange-bar sections with 3-col fact cards + real explanations; "
+            "text section; thin-border lightbulb callout; source footer. "
+            "Fill the canvas — NOT sparse 3-card poster. Perfect spelling (RBI). "
+            "Empty logo pocket. NOT ranking."
         ),
     ),
     "static_hub_facts": _tpl(

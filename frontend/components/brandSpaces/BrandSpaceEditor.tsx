@@ -44,7 +44,7 @@ import { BrandSpaceHistoryDrawer } from "@/components/brandSpaces/BrandSpaceHist
 import type { BrandAttachmentResponse, BrandResponse, ValidationSummaryResponse } from "@/lib/api/contracts";
 import { API } from "@/lib/api/endpoints";
 import { request } from "@/lib/api/request";
-import { buildBrandWorkspaceHref } from "@/lib/brand-routing";
+import { buildBrandChatHref, buildBrandWorkspaceHref } from "@/lib/brand-routing";
 import { brandSpaceTabs } from "@/lib/brandSpace";
 import {
     formatMissingRequiredBrandFields,
@@ -65,6 +65,7 @@ import {
 import { mapBrandFormToCreateRequest, mapBrandSections } from "@/lib/brand-mappers";
 import { cn } from "@/lib/utils";
 import { useAutofillBrandFromKnowledge, useBrands, useCreateBrand } from "@/hooks/useBrands";
+import { useChatSessions } from "@/hooks/useContentWorkspace";
 import { applyBrandAutofillToForm } from "@/lib/brand-autofill";
 import { useGetMe } from "@/hooks/useUser";
 import { useGetTenantData } from "@/hooks/tenantAdmins/useGetTenants";
@@ -722,6 +723,7 @@ export default function BrandSpaceEditor({
     const [draftBrand, setDraftBrand] = useState<BrandResponse | null>(null);
     const [draftBrandId, setDraftBrandId] = useState<string | null>(brandId ?? null);
     const autofillFromKnowledge = useAutofillBrandFromKnowledge(draftBrandId || brandId || "");
+    const { data: brandChatSessions = [] } = useChatSessions(draftBrandId || brandId || "");
     const [brandLifecycleState, setBrandLifecycleState] = useState(initialLifecycleState);
     const [validationSummary, setValidationSummary] = useState<ValidationSummaryResponse | null>(null);
     const [didHydrateDraft, setDidHydrateDraft] = useState(mode !== "create");
@@ -1536,11 +1538,19 @@ export default function BrandSpaceEditor({
         if (!hasPendingUploadItems) {
             clearBrandSpaceDraft();
         }
+        const brandRef = {
+            id: effectiveBrandId,
+            slug: draftBrand?.slug ?? effectiveBrandId,
+        };
+        const latestSession = [...brandChatSessions].sort(
+            (left, right) =>
+                new Date(right.updated_at || right.created_at).getTime() -
+                new Date(left.updated_at || left.created_at).getTime(),
+        )[0];
         router.push(
-            buildBrandWorkspaceHref({
-                id: effectiveBrandId,
-                slug: draftBrand?.slug ?? effectiveBrandId,
-            }),
+            latestSession?.id
+                ? buildBrandChatHref(brandRef, latestSession.id)
+                : buildBrandWorkspaceHref(brandRef),
         );
     };
 
@@ -1659,6 +1669,7 @@ export default function BrandSpaceEditor({
                                     createBrand.isPending ||
                                     isSubmitting ||
                                     autofillFromKnowledge.isPending ||
+                                    hasPendingUploadItems ||
                                     !(draftBrandId || brandId)
                                 }
                                 className="flex items-center justify-center gap-2 rounded-none border-primary/30 p-6 text-base text-primary hover:bg-primary/5"
@@ -1672,7 +1683,9 @@ export default function BrandSpaceEditor({
                                 <span>
                                     {autofillFromKnowledge.isPending
                                         ? "Fetching from knowledge..."
-                                        : "Auto-fill from knowledge"}
+                                        : hasPendingUploadItems
+                                            ? "Wait for uploads to finish..."
+                                            : "Auto-fill from knowledge"}
                                 </span>
                             </Button>
                         ) : null}
@@ -1760,12 +1773,15 @@ export default function BrandSpaceEditor({
 
                 <div className="pt-2">
                     {brandSpaceTabs.map((tab) => {
-                        if (tab.value !== activeTab) {
-                            return null;
-                        }
                         const TabComponent = tab.content;
+                        const isActive = tab.value === activeTab;
                         return (
-                            <TabsContent key={tab.id} value={tab.value} className="w-full">
+                            <TabsContent
+                                key={tab.id}
+                                value={tab.value}
+                                forceMount
+                                className={cn("w-full", !isActive && "hidden")}
+                            >
                                 <fieldset
                                     disabled={isReadOnly}
                                     className={cn(isReadOnly ? "pointer-events-none opacity-95" : "")}

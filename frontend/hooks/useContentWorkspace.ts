@@ -1,7 +1,7 @@
 import { InfiniteData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { API } from "@/lib/api/endpoints";
 import { request } from "@/lib/api/request";
-import type { ChatEnhancePromptRequest, ChatMessageResponse, ChatSessionResponse, ChatSessionUpdateRequest, ImageEditApplyRequest, ImageEditStateRequest, ReviewShareAccessUpdateRequest, StudioPanelSelection } from "@/lib/api/contracts";
+import type { ChatEnhancePromptRequest, ChatMessageResponse, ChatPipelineRecordRequest, ChatSessionResponse, ChatSessionUpdateRequest, ImageEditApplyRequest, ImageEditStateRequest, ReviewShareAccessUpdateRequest, StudioPanelSelection } from "@/lib/api/contracts";
 
 const CHAT_MESSAGES_PAGE_SIZE = 10;
 
@@ -134,6 +134,8 @@ export const useChatSessions = (brandId: string) =>
   useQuery({
     queryKey: ["brand", brandId, "chat-sessions"],
     enabled: Boolean(brandId),
+    staleTime: 15_000,
+    refetchOnWindowFocus: true,
     queryFn: () =>
       request(API.CHAT.LIST_SESSIONS, {
         headers: brandHeaders(brandId),
@@ -212,6 +214,8 @@ export const useChatMessages = (brandId: string, sessionId: string) =>
   useInfiniteQuery({
     queryKey: ["brand", brandId, "chat-session", sessionId, "messages"],
     enabled: Boolean(brandId && sessionId),
+    staleTime: 0,
+    retry: 1,
     initialPageParam: undefined as ChatMessageCursor | undefined,
     queryFn: ({ pageParam }) =>
       request(API.CHAT.LIST_MESSAGES, {
@@ -283,6 +287,46 @@ export const useCancelChatGeneration = (brandId: string) =>
         headers: brandHeaders(brandId),
       }),
   });
+
+export const useRecordPipelineResult = (brandId: string) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ sessionId, data }: { sessionId: string; data: ChatPipelineRecordRequest }) =>
+      request(API.CHAT.RECORD_PIPELINE_RESULT, {
+        pathParams: sessionId,
+        data,
+        headers: brandHeaders(brandId),
+      }),
+    onSuccess: async (response, variables) => {
+      queryClient.setQueryData<InfiniteData<ChatMessageResponse[]>>(
+        ["brand", brandId, "chat-session", variables.sessionId, "messages"],
+        (current) => {
+          if (!current) {
+            return {
+              pages: [[response.user_message, response.assistant_message]],
+              pageParams: [undefined],
+            };
+          }
+          const seen = new Set(current.pages.flat().map((item) => item.id));
+          const appended = [response.user_message, response.assistant_message].filter((item) => !seen.has(item.id));
+          if (!appended.length) {
+            return current;
+          }
+          const pages = current.pages.length ? [...current.pages] : [[]];
+          pages[0] = [...(pages[0] || []), ...appended];
+          return {
+            ...current,
+            pages,
+          };
+        },
+      );
+      await queryClient.invalidateQueries({
+        queryKey: ["brand", brandId, "chat-session", variables.sessionId, "messages"],
+      });
+      await queryClient.invalidateQueries({ queryKey: ["brand", brandId, "chat-sessions"] });
+    },
+  });
+};
 
 export const useCreateShareLink = (brandId: string) =>
   useMutation({

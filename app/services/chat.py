@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import logging
 import re
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,7 +20,7 @@ from app.models.content import ChatMessage, ContentSession, GeneratedAsset
 from app.repositories.brand import BrandSectionRepository, BrandSpaceRepository
 from app.repositories.content import AssetRepository, ChatMessageRepository, ContentRepository, SessionRepository
 from app.schemas.common import StudioPanelSelection
-from app.schemas.chat import ChatMessageCreateRequest, ChatSessionCreateRequest, ChatSessionUpdateRequest
+from app.schemas.chat import ChatMessageCreateRequest, ChatPipelineRecordRequest, ChatSessionCreateRequest, ChatSessionUpdateRequest
 from app.schemas.content import ContentGenerateRequest, ContentRewriteRequest, RequestInheritancePolicy
 from app.services.artifact_state import ArtifactStateService
 from app.services.brand_summary_memory import BrandSummaryMemoryService
@@ -152,7 +152,7 @@ class ChatService:
             raise NotFoundError("Brand Space not found")
 
         # Truncate title to fit database column (VARCHAR(255))
-        title = payload.title or "Chat Session"
+        title = (payload.title or "").strip() or self.derive_title_from_prompt("")
         if len(title) > 255:
             title = title[:252] + "..."
 
@@ -220,6 +220,121 @@ class ChatService:
         await self.sessions.delete(session)
         await self.session.commit()
         return {"message": "Chat session deleted", "chat_session_id": str(session_id)}
+
+    @staticmethod
+    def derive_title_from_prompt(prompt: str, *, fallback: str = "New chat") -> str:
+        cleaned = re.sub(r"\s+", " ", (prompt or "").strip())
+        if not cleaned:
+            return fallback
+        sentence = re.split(r"[.!?\n]", cleaned, maxsplit=1)[0].strip() or cleaned
+        words = " ".join(sentence.split()[:8])
+        if len(words) <= 60:
+            return words
+        return words[:57] + "..."
+
+    @staticmethod
+    def _build_pipeline_asset_refs(image_urls: list[str]) -> list[dict[str, Any]]:
+        assets: list[dict[str, Any]] = []
+        for index, raw_url in enumerate(image_urls):
+            url = str(raw_url or "").strip()
+            if not url:
+                continue
+            assets.append(
+                {
+                    "asset_id": str(uuid4()),
+                    "asset_url": url,
+                    "mime_type": "image/png",
+                    "asset_role": AssetRole.RENDER_PREVIEW if index == 0 else AssetRole.AI_IMAGE,
+                    "sequence": index,
+                    "storage_path": "",
+                }
+            )
+        return assets
+
+    async def record_pipeline_result(
+        self,
+        session_id: UUID,
+        tenant_id: UUID,
+        brand_space_id: UUID,
+        user_id: UUID,
+        payload: ChatPipelineRecordRequest,
+    ) -> tuple[ChatMessage, ChatMessage]:
+        session = await self.get_session(session_id, tenant_id=tenant_id, brand_space_id=brand_space_id)
+        if session.session_kind != "chat":
+            raise NotFoundError("Chat session not found")
+
+        cleaned_urls = [str(url).strip() for url in payload.image_urls if str(url or "").strip()]
+        if not cleaned_urls:
+            raise GenerationFailureError("No image URLs to record")
+
+        assets = self._build_pipeline_asset_refs(cleaned_urls)
+        preview_asset = assets[0] if assets else None
+        prompt = payload.prompt.strip()
+        studio_panel = (
+            payload.studio_panel.model_dump(mode="json")
+            if payload.studio_panel is not None
+            else session.studio_panel or {}
+        )
+
+        user_message = ChatMessage(
+            tenant_id=tenant_id,
+            brand_space_id=brand_space_id,
+            session_id=session.id,
+            user_id=user_id,
+            role="user",
+            message_text=prompt,
+            structured_payload=self.make_json_safe(
+                {
+                    "studio_panel": studio_panel,
+                    "intent_mode": "visual_generation",
+                    "intent_reason": "pipeline_record",
+                }
+            ),
+            citations=[],
+        )
+        assistant_payload = self.make_json_safe(
+            {
+                "mode": "visual_generation",
+                "preview_asset": preview_asset,
+                "assets": assets,
+                "export_assets": assets,
+                "image_generation_requested": True,
+                "image_generation_status": "generated",
+                "image_asset_count": len(assets),
+                "pipeline_recorded": True,
+            }
+        )
+        assistant_message = ChatMessage(
+            tenant_id=tenant_id,
+            brand_space_id=brand_space_id,
+            session_id=session.id,
+            user_id=None,
+            role="assistant",
+            message_text=payload.assistant_text or "Here's your generated creative.",
+            structured_payload=assistant_payload,
+            citations=[],
+        )
+        await self.messages.add(user_message)
+        await self.messages.add(assistant_message)
+
+        derived_title = (payload.title or "").strip() or self.derive_title_from_prompt(prompt)
+        generic_titles = {"", "Chat Session", "Untitled chat", "New chat"}
+        if (session.title or "").strip() in generic_titles:
+            session.title = derived_title[:252] + "..." if len(derived_title) > 255 else derived_title
+
+        session.studio_panel = self.make_json_safe(studio_panel)
+        session.conversational_context = {
+            **(session.conversational_context or {}),
+            "message_count": int((session.conversational_context or {}).get("message_count", 0)) + 2,
+            "last_user_prompt": prompt,
+            "last_response_mode": "visual_generation",
+        }
+        session.updated_at = datetime.now(timezone.utc)
+
+        await self.session.commit()
+        await self.session.refresh(user_message)
+        await self.session.refresh(assistant_message)
+        return user_message, assistant_message
 
     async def cancel_generation(self, session_id: UUID, tenant_id: UUID, brand_space_id: UUID) -> dict[str, str]:
         # Runs the cancel generation service flow by coordinating repositories, validators, and integrations,

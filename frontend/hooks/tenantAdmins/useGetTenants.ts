@@ -26,6 +26,8 @@ export const useGetTenantUsers = (tenantId: string, roleCodes?: string[], exclud
             excludeRoleCodes?.join(",") || "none",
         ],
         enabled: Boolean(tenantId),
+        staleTime: 30_000,
+        refetchOnWindowFocus: false,
         queryFn: () =>
             request(API.TENANTS.USERS, {
                 pathParams: tenantId,
@@ -40,6 +42,8 @@ export const useGetTenantBrandSpaces = (tenantId: string) =>
     useQuery({
         queryKey: ["tenant", tenantId, "brand-spaces"],
         enabled: Boolean(tenantId),
+        staleTime: 60_000,
+        refetchOnWindowFocus: false,
         queryFn: () => request(API.TENANTS.BRAND_SPACES, { pathParams: tenantId }),
     });
 

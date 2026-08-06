@@ -27575,8 +27575,8 @@ class AIOrchestratorService:
                 _infographic_extra_content.append(f"Process steps to render as numbered timeline: {'; '.join(_infographic_process_steps)}.")
             if _infographic_stat_highlights:
                 _infographic_extra_content.append(f"Stat highlights to render as metric cards: {'; '.join(_infographic_stat_highlights)}.")
-            if _infographic_sections:
-                _infographic_extra_content.append(f"Infographic section plan to render: {_infographic_sections}.")
+            if infographic_sections:
+                _infographic_extra_content.append(f"Infographic section plan to render: {infographic_sections}.")
             if _infographic_extra_content:
                 _infographic_extra_content.insert(0, "Infographic content authority: render ALL the following content sections directly in the image with perfect spelling, crisp legibility, and proper visual hierarchy. Every word must appear exactly as written:")
                 llm_led_text_contract.extend(_infographic_extra_content)

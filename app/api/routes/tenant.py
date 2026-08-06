@@ -180,7 +180,7 @@ async def list_users(
         else None
     )
     users = await service.list_users(tenant_id, requested_role_codes, requested_excluded_role_codes)
-    enriched = [await service.build_user_summary(user) for user in users]
+    enriched = await service.build_user_summaries(users)
     return [TenantUserResponse.model_validate(item) for item in enriched]
 
 

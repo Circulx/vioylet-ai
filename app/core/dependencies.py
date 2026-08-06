@@ -49,23 +49,25 @@ async def get_current_principal(
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from exc
 
-    user = await session.get(User, user_id)
-    if not user or not user.is_active:
+    result = await session.execute(
+        select(User, Role.code, UserRole.brand_space_id, BrandSpaceMember.brand_space_id)
+        .outerjoin(UserRole, UserRole.user_id == User.id)
+        .outerjoin(Role, Role.id == UserRole.role_id)
+        .outerjoin(BrandSpaceMember, BrandSpaceMember.user_id == User.id)
+        .where(User.id == user_id)
+    )
+    rows = result.all()
+    if not rows or not rows[0][0].is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Inactive user")
 
-    stmt = (
-        select(UserRole, Role)
-        .join(Role, Role.id == UserRole.role_id)
-        .where(UserRole.user_id == user.id)
-    )
-    result = await session.execute(stmt)
-    rows = result.all()
-    role_codes = {row[1].code for row in rows}
-    brand_space_ids = {row[0].brand_space_id for row in rows if row[0].brand_space_id}
-    member_rows = await session.execute(
-        select(BrandSpaceMember.brand_space_id).where(BrandSpaceMember.user_id == user.id)
-    )
-    brand_space_ids.update(member_rows.scalars().all())
+    user = rows[0][0]
+    role_codes = {role_code for _, role_code, _, _ in rows if role_code}
+    brand_space_ids = {
+        brand_space_id
+        for _, _, role_brand_space_id, member_brand_space_id in rows
+        for brand_space_id in (role_brand_space_id, member_brand_space_id)
+        if brand_space_id
+    }
 
     return CurrentPrincipal(
         user_id=user.id,

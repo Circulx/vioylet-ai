@@ -275,7 +275,7 @@ FLAT, FULLY SATURATED colour only — no muted/washed-out/pastel navy or orange 
 
 - Card body + paragraph text: gray {JIRAAF_BODY_GRAY} — one line each, sharp sans-serif
 
-- Callout box: white/very-pale fill, THIN orange {JIRAAF_ORANGE} border — NOT solid cream/orange
+- Callout box: white/very-pale fill, THIN orange {JIRAAF_ORANGE} border, slightly narrower and shorter than the sample — NOT solid cream/orange
 
 - Callout text: dark navy/charcoal, bold ONLY 2–3 key phrases (NOT the whole sentence orange)
 
@@ -299,7 +299,7 @@ ICON QUALITY (SAME render fidelity as oil-bar 3D barrels — premium HD studio r
 
   ends with the callout box + source line only. Keep that empty space clean, do not add extra icons.
 
-- Callout: orange circle + white lightbulb left of the thin-border callout box
+- Callout: orange circle + white lightbulb on the RIGHT side inside the thin-border callout box
 
 - Icons sharp at 100% zoom — satin clay, studio lighting, NOT clipart, NOT blurry
 
@@ -339,7 +339,7 @@ ICON QUALITY (SAME render fidelity as oil-bar 3D barrels — premium HD studio r
 
         "LAYOUT (all blocks required):\n"
 
-        "1) Header: navy headline with orange accent word(s) + gray intro line\n"
+        "1) Header: keep a clean top band, then place the navy headline slightly lower in the header area with orange accent word(s) + gray intro line below it\n"
 
         "2) Section A: orange LEFT bar + 3 columns (navy circular icon + navy title + gray body)\n"
 
@@ -347,7 +347,7 @@ ICON QUALITY (SAME render fidelity as oil-bar 3D barrels — premium HD studio r
 
         "4) Section C: orange LEFT bar + short gray paragraph (max 2 lines)\n"
 
-        "5) CALLOUT: white/pale box + thin orange border + lightbulb + dark navy insight text (bold key phrases only)\n"
+        "5) CALLOUT: make it slightly smaller and more compact than the sample, with a white/pale box + thin orange border + dark navy insight text on the left and the lightbulb icon placed on the RIGHT inside the box\n"
 
         "6) Source line bottom-left — leave remaining space clean, NO extra hero icons\n\n"
 

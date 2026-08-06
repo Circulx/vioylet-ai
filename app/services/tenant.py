@@ -548,39 +548,55 @@ class TenantService:
         # Runs the tenant brand space summaries service flow by coordinating repositories, validators, and
         # integrations, then returns domain data.
         brands = await self.brand_spaces.list_by_tenant(tenant_id)
+        if not brands:
+            return []
+
+        brand_ids = [brand.id for brand in brands]
+        content_rows = await self.session.execute(
+            select(ContentVersion.brand_space_id, func.count(ContentVersion.id))
+            .where(
+                ContentVersion.tenant_id == tenant_id,
+                ContentVersion.brand_space_id.in_(brand_ids),
+            )
+            .group_by(ContentVersion.brand_space_id)
+        )
+        visual_rows = await self.session.execute(
+            select(GeneratedAsset.brand_space_id, func.count(GeneratedAsset.id))
+            .where(
+                GeneratedAsset.tenant_id == tenant_id,
+                GeneratedAsset.brand_space_id.in_(brand_ids),
+            )
+            .group_by(GeneratedAsset.brand_space_id)
+        )
+        ocr_rows = await self.session.execute(
+            select(KnowledgeAsset.brand_space_id, func.coalesce(func.sum(KnowledgeAsset.page_count), 0))
+            .where(
+                KnowledgeAsset.tenant_id == tenant_id,
+                KnowledgeAsset.brand_space_id.in_(brand_ids),
+            )
+            .group_by(KnowledgeAsset.brand_space_id)
+        )
+        login_rows = await self.session.execute(
+            select(BrandSpaceMember.brand_space_id, func.max(User.last_login_at))
+            .join(User, User.id == BrandSpaceMember.user_id)
+            .where(
+                BrandSpaceMember.tenant_id == tenant_id,
+                BrandSpaceMember.brand_space_id.in_(brand_ids),
+            )
+            .group_by(BrandSpaceMember.brand_space_id)
+        )
+        content_by_brand = dict(content_rows.all())
+        visuals_by_brand = dict(visual_rows.all())
+        ocr_by_brand = dict(ocr_rows.all())
+        login_by_brand = dict(login_rows.all())
         active_threshold = datetime.now(timezone.utc) - timedelta(days=30)
         summaries: list[dict] = []
 
-        # Builds the grouped response or persistence payload one record at a time because later steps expect
-        # this exact shape.
         for brand in brands:
-            content_generations = await self.session.scalar(
-                select(func.count(ContentVersion.id)).where(
-                    ContentVersion.tenant_id == tenant_id,
-                    ContentVersion.brand_space_id == brand.id,
-                )
-            )
-            visual_generations = await self.session.scalar(
-                select(func.count(GeneratedAsset.id)).where(
-                    GeneratedAsset.tenant_id == tenant_id,
-                    GeneratedAsset.brand_space_id == brand.id,
-                )
-            )
-            ocr_pages = await self.session.scalar(
-                select(func.coalesce(func.sum(KnowledgeAsset.page_count), 0)).where(
-                    KnowledgeAsset.tenant_id == tenant_id,
-                    KnowledgeAsset.brand_space_id == brand.id,
-                )
-            )
-            last_login_at = await self.session.scalar(
-                select(func.max(User.last_login_at))
-                .select_from(BrandSpaceMember)
-                .join(User, User.id == BrandSpaceMember.user_id)
-                .where(
-                    BrandSpaceMember.tenant_id == tenant_id,
-                    BrandSpaceMember.brand_space_id == brand.id,
-                )
-            )
+            content_generations = content_by_brand.get(brand.id, 0)
+            visual_generations = visuals_by_brand.get(brand.id, 0)
+            ocr_pages = ocr_by_brand.get(brand.id, 0)
+            last_login_at = login_by_brand.get(brand.id)
             last_active_at = last_login_at if last_login_at and last_login_at >= active_threshold else None
 
             summaries.append(
@@ -632,6 +648,67 @@ class TenantService:
             "activation_link_attempts_left": self._activation_link_attempts_left(activation_link_sent_count),
             "notifications_enabled": in_app_notifications_enabled(getattr(user, "metadata_json", None)),
         }
+
+    async def build_user_summaries(self, users: list[User]) -> list[dict]:
+        # Loads roles, brand memberships, and activation counts once for the full user list instead of issuing
+        # several sequential queries per user.
+        if not users:
+            return []
+
+        user_ids = [user.id for user in users]
+        role_rows = await self.session.execute(
+            select(UserRole.user_id, Role.code, UserRole.brand_space_id)
+            .join(Role, Role.id == UserRole.role_id)
+            .where(UserRole.user_id.in_(user_ids))
+        )
+        membership_rows = await self.session.execute(
+            select(BrandSpaceMember.user_id, BrandSpaceMember.brand_space_id).where(
+                BrandSpaceMember.user_id.in_(user_ids)
+            )
+        )
+        activation_rows = await self.session.execute(
+            select(ActivationToken.user_id, func.count(ActivationToken.id))
+            .where(ActivationToken.user_id.in_(user_ids))
+            .group_by(ActivationToken.user_id)
+        )
+
+        role_codes_by_user: dict[UUID, set[str]] = {user_id: set() for user_id in user_ids}
+        brand_ids_by_user: dict[UUID, list[UUID]] = {user_id: [] for user_id in user_ids}
+        for user_id, role_code, brand_space_id in role_rows.all():
+            role_codes_by_user[user_id].add(role_code)
+            if brand_space_id and brand_space_id not in brand_ids_by_user[user_id]:
+                brand_ids_by_user[user_id].append(brand_space_id)
+        for user_id, brand_space_id in membership_rows.all():
+            if brand_space_id not in brand_ids_by_user[user_id]:
+                brand_ids_by_user[user_id].append(brand_space_id)
+        activation_counts = {user_id: int(count or 0) for user_id, count in activation_rows.all()}
+
+        summaries: list[dict] = []
+        for user in users:
+            activation_link_sent_count = activation_counts.get(user.id, 0)
+            summaries.append(
+                {
+                    "id": user.id,
+                    "tenant_id": user.tenant_id,
+                    "email": user.email,
+                    "full_name": user.full_name,
+                    "phone_number": user.phone_number,
+                    "is_active": user.is_active,
+                    "is_activated": user.is_activated,
+                    "role_codes": sorted(role_codes_by_user[user.id]),
+                    "brand_space_ids": brand_ids_by_user[user.id],
+                    "created_at": user.created_at,
+                    "last_login_at": user.last_login_at,
+                    "activation_link_sent_count": activation_link_sent_count,
+                    "activation_link_attempts_left": self._activation_link_attempts_left(
+                        activation_link_sent_count
+                    ),
+                    "notifications_enabled": in_app_notifications_enabled(
+                        getattr(user, "metadata_json", None)
+                    ),
+                }
+            )
+        return summaries
 
     async def _activation_link_sent_count(self, user_id: UUID) -> int:
         # Counts activation links issued to a user so UI and notification emails can show resend tracking.

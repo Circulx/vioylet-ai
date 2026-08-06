@@ -1,6 +1,9 @@
 services:
   api:
     image: violyt-backend:local
+    build:
+      context: ..
+      dockerfile: Dockerfile
     env_file:
       - .env
     environment:
@@ -9,9 +12,10 @@ services:
       OBJECT_STORAGE_BASE_PATH: /app/storage
       VECTOR_STORE_BASE_PATH: /app/vector_store
       GENERATION_TRACE_BASE_PATH: /app/storage/generation_traces
-      FRONTEND_BASE_URL: https://65.0.82.127
-      GENERATED_ASSETS_BASE_URL: https://65.0.82.127/storage
-      CORS_ORIGINS: '["https://65.0.82.127","http://localhost:3000","http://127.0.0.1:3000"]'
+      FRONTEND_BASE_URL: ${PUBLIC_BASE_URL:?Set PUBLIC_BASE_URL in deploy/.env}
+      GENERATED_ASSETS_BASE_URL: ${PUBLIC_BASE_URL:?Set PUBLIC_BASE_URL in deploy/.env}/storage
+      ASSET_DOWNLOAD_BASE_URL: ${PUBLIC_BASE_URL:?Set PUBLIC_BASE_URL in deploy/.env}/api/v1/storage/download
+      CORS_ORIGINS: '["${PUBLIC_BASE_URL:?Set PUBLIC_BASE_URL in deploy/.env}","http://localhost:3000","http://127.0.0.1:3000"]'
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
@@ -38,9 +42,10 @@ services:
       OBJECT_STORAGE_BASE_PATH: /app/storage
       VECTOR_STORE_BASE_PATH: /app/vector_store
       GENERATION_TRACE_BASE_PATH: /app/storage/generation_traces
-      FRONTEND_BASE_URL: https://65.0.82.127
-      GENERATED_ASSETS_BASE_URL: https://65.0.82.127/storage
-      CORS_ORIGINS: '["https://65.0.82.127","http://localhost:3000","http://127.0.0.1:3000"]'
+      FRONTEND_BASE_URL: ${PUBLIC_BASE_URL:?Set PUBLIC_BASE_URL in deploy/.env}
+      GENERATED_ASSETS_BASE_URL: ${PUBLIC_BASE_URL:?Set PUBLIC_BASE_URL in deploy/.env}/storage
+      ASSET_DOWNLOAD_BASE_URL: ${PUBLIC_BASE_URL:?Set PUBLIC_BASE_URL in deploy/.env}/api/v1/storage/download
+      CORS_ORIGINS: '["${PUBLIC_BASE_URL:?Set PUBLIC_BASE_URL in deploy/.env}","http://localhost:3000","http://127.0.0.1:3000"]'
     depends_on:
       postgres:
         condition: service_healthy
@@ -53,9 +58,18 @@ services:
  
   frontend:
     image: violyt-frontend:local
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_ENV: production
+        NEXT_PUBLIC_API_BASE_URI: ${PUBLIC_BASE_URL:?Set PUBLIC_BASE_URL in deploy/.env}
+        NEXT_PUBLIC_ENABLE_MOCK_UI: "false"
+        NEXT_PUBLIC_MOCK_ROLE: TENANT_ADMIN
     environment:
       NEXT_PUBLIC_ENV: production
-      NEXT_PUBLIC_API_BASE_URI: https://65.0.82.127
+      NEXT_PUBLIC_API_BASE_URI: ${PUBLIC_BASE_URL:?Set PUBLIC_BASE_URL in deploy/.env}
+      SERVER_API_BASE_URI: http://api:8000
       NEXT_PUBLIC_ENABLE_MOCK_UI: "false"
       NEXT_PUBLIC_MOCK_ROLE: TENANT_ADMIN
       NEXT_PUBLIC_DEMO_OWNER_EMAIL: ${NEXT_PUBLIC_DEMO_OWNER_EMAIL:-owner@violyt.ai}

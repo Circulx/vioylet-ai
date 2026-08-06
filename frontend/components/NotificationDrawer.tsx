@@ -16,24 +16,26 @@ import { API } from "@/lib/api/endpoints"
 import { request } from "@/lib/api/request"
 import { useGetMe } from "@/hooks/useUser"
 import { useInAppNotifications } from "@/hooks/useInAppNotifications"
-import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { ReactNode, useEffect, useMemo, useRef, useState } from "react"
 import {
+  Archive,
   BadgeCheck,
   BarChart3,
   Bell,
   CheckCircle2,
   FolderCheck,
   KeyRound,
+  LockKeyhole,
   Mail,
   MessageCircle,
   PartyPopper,
   Pencil,
   Rocket,
-  ShieldCheck,
-  ShieldOff,
+  RotateCcw,
   Siren,
   Sparkles,
   Trash2,
+  UnlockKeyhole,
   TriangleAlert,
   UserCheck,
   UserCog,
@@ -46,7 +48,6 @@ function getNotificationKey(source: "server" | "local", id: string) {
   return `${source}-${id}`
 }
 
-const WELCOME_CELEBRATION_STORAGE_KEY = "violyt:celebrated-welcome-notifications"
 type NotificationAnimationVariant = "celebration" | "welcome" | "warning" | "critical" | null
 type NotificationIconConfig = { Icon: LucideIcon; className: string }
 
@@ -76,6 +77,39 @@ function getNotificationAnimationVariant(title: string, message: string): Notifi
   return null
 }
 
+function getNotificationIconAnimationClass(title: string, message: string) {
+  const normalizedTitle = title.toLowerCase()
+  const content = `${title} ${message}`.toLowerCase()
+
+  if (isWelcomeNotification(title)) return "notification-icon-celebrate"
+  if (content.includes("usage critical") || content.includes("critical usage") || content.includes("usage exhausted") || content.includes("exhausted")) return "notification-icon-alert-shake"
+  if (content.includes("capacity usage updated") || content.includes("usage limit updated")) return "notification-icon-grow-in"
+  if (content.includes("brand capacity usage warning") || content.includes("capacity allocation warning") || content.includes("usage warning") || content.includes("capacity warning") || (content.includes("usage") && (content.includes("warning") || content.includes("approach") || content.includes("limit")))) return "notification-icon-slow-pulse"
+  if (content.includes("brand space") && content.includes("deleted")) return "notification-icon-bounce"
+  if (content.includes("brand space") && content.includes("archived")) return "notification-icon-slide-settle"
+  if (content.includes("brand space") && content.includes("restored")) return "notification-icon-rotate-in"
+  if (content.includes("brand space") && content.includes("published")) return "notification-icon-rocket-lift"
+  if (content.includes("brand space") && content.includes("created")) return "notification-icon-celebrate"
+  if (content.includes("brand space") && (content.includes("assigned") || content.includes("granted access") || content.includes("access removed"))) return "notification-icon-bounce"
+  if (content.includes("two-factor") && content.includes("disabled")) return "notification-icon-unlock-pop"
+  if (content.includes("two-factor") || content.includes("2fa") || content.includes("security update")) return "notification-icon-lock-snap"
+  if (content.includes("deactivated")) return "notification-icon-gentle-shake"
+  if (content.includes("reactivated")) return "notification-icon-rotate-in"
+  if (normalizedTitle.includes("activated")) return "notification-icon-pop-scale"
+  if (content.includes("role updated")) return "notification-icon-smooth-rotate"
+  if (content.includes("profile updated")) return "notification-icon-pencil-draw"
+  if (content.includes("password")) return "notification-icon-key-rotate"
+  if (content.includes("new comment") || content.includes("commented")) return "notification-icon-chat-pop"
+  if (content.includes("approved")) return "notification-icon-check-pop"
+  if (content.includes("file") && (content.includes("synced") || content.includes("ready"))) return "notification-icon-bounce"
+  if (content.includes("email")) return "notification-icon-envelope-pop"
+  if (content.includes("capacity") || content.includes("usage")) return "notification-icon-grow-in"
+  if (content.includes("published") || content.includes("created") || content.includes("successful") || content.includes("completed")) return "notification-icon-pop-scale"
+  if (content.includes("updated")) return "notification-icon-pencil-draw"
+
+  return "notification-icon-bell-ring"
+}
+
 function getNotificationIcon(title: string, message: string): NotificationIconConfig {
   const normalizedTitle = title.toLowerCase()
   const content = `${title} ${message}`.toLowerCase()
@@ -88,16 +122,19 @@ function getNotificationIcon(title: string, message: string): NotificationIconCo
     return { Icon: TriangleAlert, className: "text-orange-500" }
   }
   if (content.includes("brand space") && content.includes("deleted")) return { Icon: Trash2, className: "text-red-500" }
-  if (content.includes("brand space") && content.includes("published")) return { Icon: PartyPopper, className: "text-violet-500" }
-  if (content.includes("brand space") && content.includes("created")) return { Icon: Rocket, className: "text-indigo-500" }
+  if (content.includes("brand space") && content.includes("archived")) return { Icon: Archive, className: "text-slate-500" }
+  if (content.includes("brand space") && content.includes("restored")) return { Icon: RotateCcw, className: "text-emerald-600" }
+  if (content.includes("brand space") && content.includes("published")) return { Icon: Rocket, className: "text-violet-500" }
+  if (content.includes("brand space") && content.includes("created")) return { Icon: PartyPopper, className: "text-fuchsia-500" }
   if (content.includes("brand space") && (content.includes("assigned") || content.includes("granted access"))) {
     return { Icon: FolderCheck, className: "text-emerald-600" }
   }
   if (content.includes("brand space") && content.includes("access removed")) return { Icon: FolderCheck, className: "text-amber-600" }
-  if (content.includes("two-factor") && content.includes("disabled")) return { Icon: ShieldOff, className: "text-orange-500" }
-  if (content.includes("two-factor") || content.includes("2fa") || content.includes("security update")) return { Icon: ShieldCheck, className: "text-emerald-600" }
+  if (content.includes("two-factor") && content.includes("disabled")) return { Icon: UnlockKeyhole, className: "text-orange-500" }
+  if (content.includes("two-factor") || content.includes("2fa") || content.includes("security update")) return { Icon: LockKeyhole, className: "text-emerald-600" }
   if (content.includes("deactivated")) return { Icon: UserX, className: "text-red-500" }
-  if (content.includes("reactivated") || normalizedTitle.includes("activated")) return { Icon: UserCheck, className: "text-emerald-600" }
+  if (content.includes("reactivated")) return { Icon: RotateCcw, className: "text-emerald-600" }
+  if (normalizedTitle.includes("activated")) return { Icon: UserCheck, className: "text-emerald-600" }
   if (content.includes("role updated")) return { Icon: UserCog, className: "text-sky-600" }
   if (content.includes("profile updated")) return { Icon: Pencil, className: "text-blue-600" }
   if (content.includes("password")) return { Icon: KeyRound, className: "text-amber-600" }
@@ -107,32 +144,13 @@ function getNotificationIcon(title: string, message: string): NotificationIconCo
   if (content.includes("email")) return { Icon: Mail, className: "text-sky-600" }
   if (content.includes("capacity") || content.includes("usage")) return { Icon: BarChart3, className: "text-indigo-500" }
   if (content.includes("completed") || content.includes("successful")) return { Icon: CheckCircle2, className: "text-emerald-600" }
-  if (content.includes("published") || content.includes("created")) return { Icon: Sparkles, className: "text-violet-500" }
+  if (content.includes("published")) return { Icon: Rocket, className: "text-violet-500" }
+  if (content.includes("created")) return { Icon: Sparkles, className: "text-violet-500" }
   if (content.includes("updated")) return { Icon: Pencil, className: "text-blue-600" }
 
   return { Icon: Bell, className: "text-primary" }
 }
 
-function readCelebratedWelcomeKeys(userId?: string) {
-  if (typeof window === "undefined" || !userId) {
-    return new Set<string>()
-  }
-
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(`${WELCOME_CELEBRATION_STORAGE_KEY}:${userId}`) || "[]")
-    return new Set(Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [])
-  } catch {
-    return new Set<string>()
-  }
-}
-
-function writeCelebratedWelcomeKeys(userId: string, keys: Set<string>) {
-  if (typeof window === "undefined") {
-    return
-  }
-
-  window.localStorage.setItem(`${WELCOME_CELEBRATION_STORAGE_KEY}:${userId}`, JSON.stringify([...keys]))
-}
 
 function formatNotificationTimestamp(value: string) {
   const timestamp = new Date(value).getTime()
@@ -164,7 +182,6 @@ export function NotificationDrawer({ children }: { children: ReactNode }) {
   const drawerOpenRef = useRef(false)
   const hasProcessedOpenRef = useRef(false)
   const [highlightedUnreadKeys, setHighlightedUnreadKeys] = useState<Set<string>>(new Set())
-  const [animatingNotificationKeys, setAnimatingNotificationKeys] = useState<Set<string>>(new Set())
   const {
     notifications: localNotifications,
     remove: removeLocalNotification,
@@ -260,30 +277,6 @@ export function NotificationDrawer({ children }: { children: ReactNode }) {
     }
     deleteServerNotification.mutate(notification.id)
   }
-  const playNotificationCardAnimations = useCallback(() => {
-    if (!user?.id) {
-      return
-    }
-    const playedAnimationKeys = readCelebratedWelcomeKeys(user.id)
-    const animationKeysToPlay = notifications
-      .filter((notification) => notification.unread && getNotificationAnimationVariant(notification.title, notification.message))
-      .map((notification) => getNotificationKey(notification.source, notification.id))
-      .filter((notificationKey) => !playedAnimationKeys.has(notificationKey))
-    if (!animationKeysToPlay.length) {
-      return
-    }
-    const nextPlayedAnimationKeys = new Set([...playedAnimationKeys, ...animationKeysToPlay])
-    writeCelebratedWelcomeKeys(user.id, nextPlayedAnimationKeys)
-    setAnimatingNotificationKeys((current) => new Set([...current, ...animationKeysToPlay]))
-  }, [notifications, user])
-
-  useEffect(() => {
-    if (!open) {
-      return
-    }
-    playNotificationCardAnimations()
-  }, [notifications, open, playNotificationCardAnimations])
-
   useEffect(() => {
     if (
       !open ||
@@ -318,18 +311,6 @@ export function NotificationDrawer({ children }: { children: ReactNode }) {
     user?.id,
   ])
 
-  useEffect(() => {
-    if (!animatingNotificationKeys.size) {
-      return
-    }
-
-    const timeout = window.setTimeout(() => {
-      setAnimatingNotificationKeys(new Set())
-    }, 4800)
-
-    return () => window.clearTimeout(timeout)
-  }, [animatingNotificationKeys])
-
   return (
     <Sheet
       open={open}
@@ -345,7 +326,6 @@ export function NotificationDrawer({ children }: { children: ReactNode }) {
           .filter((notification) => notification.unread)
           .map((notification) => getNotificationKey(notification.source, notification.id))
         setHighlightedUnreadKeys(new Set(unreadKeys))
-        playNotificationCardAnimations()
         if (user?.id) {
           markLocalNotificationsRead()
         }
@@ -368,23 +348,15 @@ export function NotificationDrawer({ children }: { children: ReactNode }) {
               const isVisuallyUnread = notification.unread || highlightedUnreadKeys.has(notificationKey)
               const isWelcome = isWelcomeNotification(notification.title)
               const animationVariant = getNotificationAnimationVariant(notification.title, notification.message)
-              const isAnimatingNotification = animatingNotificationKeys.has(notificationKey)
-              const isCelebratoryAnimation = isAnimatingNotification && (animationVariant === "celebration" || animationVariant === "welcome")
-              const isWarningAnimation = isAnimatingNotification && animationVariant === "warning"
-              const isCriticalAnimation = isAnimatingNotification && animationVariant === "critical"
               const cardBackgroundClass = animationVariant === "critical"
                 ? "bg-[#FEF2F2] border-[#FCA5A5]"
                 : animationVariant === "warning"
                   ? "bg-[#FFF7ED] border-[#FDBA74]"
                   : isVisuallyUnread ? "bg-[#EEF0F6] border-[#DCDCDC]" : "bg-white border-[#DCDCDC]"
-              const cardAnimationClass = isCelebratoryAnimation
-                ? "notification-celebration-card"
-                : isWarningAnimation
-                  ? "notification-usage-warning-card"
-                  : isCriticalAnimation ? "notification-usage-critical-card" : ""
-              const iconAnimationClass = isWarningAnimation
-                ? "notification-warning-icon"
-                : isCriticalAnimation ? "notification-critical-icon" : ""
+              const shouldAnimateNotificationIcon = isVisuallyUnread
+              const newNotificationIconAnimationClass = shouldAnimateNotificationIcon
+                ? getNotificationIconAnimationClass(notification.title, notification.message)
+                : ""
               const notificationIcon = getNotificationIcon(notification.title, notification.message)
               const NotificationIcon = notificationIcon.Icon
               const displayTitle = isWelcome ? "Welcome to Violyt!" : notification.title
@@ -394,29 +366,14 @@ export function NotificationDrawer({ children }: { children: ReactNode }) {
               return (
                 <div
                   key={notificationKey}
-                  className={`relative overflow-hidden rounded-[6px] border p-4 shadow-sm ${cardBackgroundClass} ${cardAnimationClass}`}
+                  className={`relative overflow-hidden rounded-[6px] border p-4 shadow-sm ${cardBackgroundClass}`}
                 >
-                {isCelebratoryAnimation ? (
-                  <div className="pointer-events-none absolute inset-0" aria-hidden="true">
-                    {animationVariant === "celebration" ? (
-                      <>
-                        <span className="notification-balloon notification-balloon-a" />
-                        <span className="notification-balloon notification-balloon-b" />
-                        <span className="notification-balloon notification-balloon-c" />
-                      </>
-                    ) : null}
-                    <span className="notification-confetti notification-confetti-a">{"\u2726"}</span>
-                    <span className="notification-confetti notification-confetti-b">{"\u2022"}</span>
-                    <span className="notification-confetti notification-confetti-c">{"\u2727"}</span>
-                    <span className="notification-confetti notification-confetti-d">{"\u2726"}</span>
-                  </div>
-                ) : null}
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                       <div className="flex min-w-0 flex-1 items-start gap-2">
                         {notification.unread ? <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-primary" aria-label="Unread" /> : null}
-                        <h1 className="min-w-0 whitespace-normal break-words text-base font-manrope text-primary font-medium" title={displayTitle}><span className={`inline-flex align-[-2px] ${iconAnimationClass}`} aria-hidden="true"><NotificationIcon className={`h-4 w-4 ${notificationIcon.className}`} strokeWidth={2.2} /></span> {displayTitle}</h1>
+                        <h1 className="min-w-0 whitespace-normal break-words text-base font-manrope text-primary font-medium" title={displayTitle}><span className={`inline-flex align-[-2px] ${newNotificationIconAnimationClass}`} aria-hidden="true"><NotificationIcon className={`h-4 w-4 ${notificationIcon.className}`} strokeWidth={2.2} /></span> {displayTitle}</h1>
                       </div>
                       <span className="shrink-0 text-xs text-gray-400">{formatNotificationTimestamp(notification.createdAt)}</span>
                     </div>

@@ -114,7 +114,8 @@ async def update_profile(
 ) -> CurrentUserResponse:
     # Serves the profile update endpoint; it uses FastAPI dependencies, delegates work to services, and returns
     # the response schema.
-    user = await AuthService(session).update_profile(
+    auth_service = AuthService(session)
+    user = await auth_service.update_profile(
         principal.user_id,
         payload.full_name,
         payload.email,
@@ -135,7 +136,8 @@ async def update_profile(
             "notifications_enabled": (user.metadata_json or {}).get("notifications_enabled", True),
             "email_notifications_enabled": email_notifications_enabled(getattr(user, "metadata_json", None)),
             "in_app_notifications_enabled": in_app_notifications_enabled(getattr(user, "metadata_json", None)),
-            "two_factor_enabled": AuthService(session).is_two_factor_enabled(user),
+            "two_factor_enabled": auth_service.is_two_factor_enabled(user),
+            "support_email": auth_service.support_email(),
         },
     )
 

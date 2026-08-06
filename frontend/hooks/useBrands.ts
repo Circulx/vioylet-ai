@@ -23,6 +23,10 @@ export const useBrandOverview = (brandId: string) =>
     queryKey: ["brand", brandId, "overview"],
     enabled: Boolean(brandId),
     queryFn: () => request(API.BRANDS.OVERVIEW, { pathParams: brandId }),
+    // Keep the edit form stable — refetching overview was resetting fields mid-typing.
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
 export const useBrandUsage = (brandId: string) =>

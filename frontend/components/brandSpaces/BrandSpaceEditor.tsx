@@ -747,6 +747,8 @@ export default function BrandSpaceEditor({
         if (mode !== "edit" && mode !== "view") {
             return;
         }
+        // Hydrate once per brandId only. Depending on `initialForm` object identity caused
+        // overview refetch to wipe in-progress field edits (values appear then disappear).
         const nextLogos = normalizeBrandLogoItems(
             initialForm.core.logos.length
                 ? initialForm.core.logos
@@ -767,7 +769,8 @@ export default function BrandSpaceEditor({
         setHydratedBrandStateId(null);
         setHydratedAttachmentBrandId(null);
         setHasActivatedAttachmentTab(false);
-    }, [brandId, initialForm, initialLifecycleState, mode]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally ignore initialForm identity
+    }, [brandId, initialLifecycleState, mode]);
 
     useEffect(() => {
         if (mode !== "create") {
@@ -1276,13 +1279,20 @@ export default function BrandSpaceEditor({
 
             if (hydratedAttachmentBrandId !== currentBrand.id) {
                 const existingAttachments = await listBrandSpaceAttachments(currentBrand.id);
-                formSnapshot = syncActiveColorPaletteFields(mergeBrandAttachmentsIntoForm(formSnapshot, existingAttachments));
-                formRef.current = formSnapshot;
-                setForm(formSnapshot);
+                // Merge attachments into the *live* form — never replace typed text with a stale snapshot.
+                setForm((current) => {
+                    const merged = syncActiveColorPaletteFields(
+                        mergeBrandAttachmentsIntoForm(current, existingAttachments),
+                    );
+                    formRef.current = merged;
+                    formSnapshot = merged;
+                    return merged;
+                });
             }
             setHydratedAttachmentBrandId(currentBrand.id);
 
             setSubmissionPhase("Uploading and syncing brand files...");
+            formSnapshot = formRef.current;
             const uploadedAssets = await uploadBrandSpaceAssets(currentBrand.id, formSnapshot, (update) =>
                 applyUploadUpdate(update.itemId, {
                     uploadedAssetId: update.uploadedAssetId,
@@ -1307,12 +1317,18 @@ export default function BrandSpaceEditor({
                 }),
             );
             const latestAttachments = await listBrandSpaceAttachments(currentBrand.id);
-            formSnapshot = syncActiveColorPaletteFields(mergeBrandAttachmentsIntoForm(formRef.current, latestAttachments));
-            formRef.current = formSnapshot;
-            setForm(formSnapshot);
+            setForm((current) => {
+                const merged = syncActiveColorPaletteFields(
+                    mergeBrandAttachmentsIntoForm(current, latestAttachments),
+                );
+                formRef.current = merged;
+                formSnapshot = merged;
+                return merged;
+            });
             setHydratedAttachmentBrandId(currentBrand.id);
 
             setSubmissionPhase("Saving structured brand sections...");
+            formSnapshot = formRef.current;
             await persistSections(currentBrand, uploadedAssets, formSnapshot);
 
             let nextBrand = currentBrand;
@@ -1355,12 +1371,18 @@ export default function BrandSpaceEditor({
                 clearBrandSpaceDraft();
             }
         } catch (error) {
+            const status = axios.isAxiosError(error) ? error.response?.status : undefined;
             const detail = axios.isAxiosError(error)
                 ? error.response?.data?.detail || error.response?.data?.message || error.message
                 : error instanceof Error
                     ? error.message
                     : "Unable to save Brand Space.";
-            showErrorToast("Unable to save Brand Space", String(detail));
+            const detailText = typeof detail === "string" ? detail : JSON.stringify(detail);
+            const statusHint = status ? ` (HTTP ${status})` : "";
+            showErrorToast(
+                "Unable to save Brand Space",
+                `${detailText}${statusHint}. Your typed fields are kept — fix the issue and save again.`,
+            );
         } finally {
             setSubmissionPhase(null);
             setIsSubmitting(false);

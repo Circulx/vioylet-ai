@@ -280,7 +280,11 @@ export function saveBrandSpaceDraft(value: {
     return;
   }
 
-  window.localStorage.setItem(BRAND_SPACE_CREATE_DRAFT_STORAGE_KEY, JSON.stringify(payload));
+  try {
+    window.localStorage.setItem(BRAND_SPACE_CREATE_DRAFT_STORAGE_KEY, JSON.stringify(payload));
+  } catch {
+    // QuotaExceeded or private-mode storage failures must not break typing/autosave.
+  }
 }
 
 export function loadBrandSpaceDraft(): PersistedBrandSpaceDraft | null {
@@ -293,17 +297,20 @@ export function loadBrandSpaceDraft(): PersistedBrandSpaceDraft | null {
   }
   try {
     const parsed = JSON.parse(raw) as PersistedBrandSpaceDraft;
+    const empty = structuredClone(emptyBrandFormState);
+    const incoming = parsed.form || ({} as BrandFormState);
     const restoredForm: BrandFormState = {
-      ...structuredClone(emptyBrandFormState),
-      ...parsed.form,
-      core: {
-        ...structuredClone(emptyBrandFormState.core),
-        ...parsed.form.core,
-      },
-      visualIdentity: {
-        ...structuredClone(emptyBrandFormState.visualIdentity),
-        ...parsed.form.visualIdentity,
-      },
+      ...empty,
+      ...incoming,
+      core: { ...empty.core, ...(incoming.core || {}) },
+      voiceTone: { ...empty.voiceTone, ...(incoming.voiceTone || {}) },
+      targetAudience: { ...empty.targetAudience, ...(incoming.targetAudience || {}) },
+      brandRules: { ...empty.brandRules, ...(incoming.brandRules || {}) },
+      brandKnowledge: { ...empty.brandKnowledge, ...(incoming.brandKnowledge || {}) },
+      promptIntelligence: { ...empty.promptIntelligence, ...(incoming.promptIntelligence || {}) },
+      objectives: { ...empty.objectives, ...(incoming.objectives || {}) },
+      visualIdentity: { ...empty.visualIdentity, ...(incoming.visualIdentity || {}) },
+      additional: { ...empty.additional, ...(incoming.additional || {}) },
     };
     restoredForm.core.logos = normalizeBrandLogoItems(
       dedupeUploads(

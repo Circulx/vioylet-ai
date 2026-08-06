@@ -108,7 +108,9 @@ export function FileSyncNotifier({ user }: { user: UiUser }) {
     queryKey: ["brand-space-file-sync-snapshot", user.id, brandIdKey],
     enabled: isTenantAdmin && brandIds.length > 0,
     queryFn: () => fetchTenantFileSyncSnapshot(brandIds),
-    refetchInterval: isTenantAdmin && brandIds.length > 0 ? NOTIFICATION_REFETCH_INTERVAL_MS : false,
+    refetchInterval: isTenantAdmin && brandIds.length > 0
+      ? () => (typeof document !== "undefined" && document.hidden ? false : NOTIFICATION_REFETCH_INTERVAL_MS)
+      : false,
     refetchOnWindowFocus: false,
   });
 

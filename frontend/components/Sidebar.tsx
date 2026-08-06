@@ -60,7 +60,9 @@ export default function Sidebar() {
         enabled: Boolean(user?.id),
         queryFn: () => request(API.NOTIFICATIONS.UNREAD_COUNT),
         refetchOnWindowFocus: false,
-        refetchInterval: user?.id ? NOTIFICATION_REFETCH_INTERVAL_MS : false,
+        refetchInterval: user?.id
+            ? () => (typeof document !== "undefined" && document.hidden ? false : NOTIFICATION_REFETCH_INTERVAL_MS)
+            : false,
     });
     const { data: brands } = useBrands(user?.role !== "PLATFORM_OWNER");
     const path = usePathname();

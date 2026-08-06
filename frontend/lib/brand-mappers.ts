@@ -601,6 +601,8 @@ export function mapBrandSections(form: BrandFormState, uploads?: UploadedBrandAs
   const competitors = normalizeCompetitorBrands(form);
   const primaryCompetitor = competitors[0];
   const competitorPayloads = competitorDescriptors(form);
+  const logoPlacements = [...(normalized.logoPlacements || [])];
+  const defaultLogoPlacement = logoPlacements[0] || "top_right";
 
   return [
     {
@@ -774,7 +776,11 @@ export function mapBrandSections(form: BrandFormState, uploads?: UploadedBrandAs
       payload: {
         brand_mood: form.visualIdentity.brandMood || "",
         visual_style: form.visualIdentity.visualStyle || "",
-        logo_placements: normalized.logoPlacements,
+        logo_placements: logoPlacements,
+        logo_placement: {
+          allowed_positions: logoPlacements.length ? logoPlacements : [defaultLogoPlacement],
+          default_position: defaultLogoPlacement,
+        },
         brand_color_palette: {
           primary: form.visualIdentity.primaryColor || "",
           secondary: form.visualIdentity.secondaryColor || "",

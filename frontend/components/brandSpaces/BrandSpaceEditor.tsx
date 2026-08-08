@@ -767,7 +767,6 @@ export default function BrandSpaceEditor({
         setBrandLifecycleState(initialLifecycleState);
         setHydratedBrandStateId(null);
         setHydratedAttachmentBrandId(null);
-        setHasActivatedAttachmentTab(false);
         // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally ignore initialForm identity
     }, [brandId, initialLifecycleState, mode]);
 

@@ -13,7 +13,7 @@ import {
 import { FormSection } from "./FormFields";
 import Image from "next/image";
 
-const KNOWLEDGE_UPLOAD_FORMATS = "PDF, JPG, PNG, DOCX";
+const KNOWLEDGE_UPLOAD_FORMATS = "PDF, JPG, PNG, DOCX, PPT, PPTX, JPEG, TXT";
 const MAX_FILE_SIZE_MB = 25;
 
 type BrandKnowledgeKey = "templateFiles" | "otherDocuments";

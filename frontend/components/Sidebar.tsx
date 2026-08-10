@@ -244,7 +244,7 @@ export default function Sidebar() {
                 </div>
 
                 <div className="shrink-0 pt-2">
-                    <Tooltips content="My Profile">
+                    <Tooltips content="My Profile" contentClassName="bg-primary text-white">
                         <Link
                             href="/profile"
                             aria-label="My Profile"

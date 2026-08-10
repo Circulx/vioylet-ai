@@ -44,6 +44,7 @@ import type {
 } from "@/lib/api/contracts";
 import { buildBrandChatHref, buildBrandEditHref, buildBrandSharingHref, resolveBrandByRouteKey } from "@/lib/brand-routing";
 import { useBrandUsage, useBrands } from "@/hooks/useBrands";
+import { useGetMe } from "@/hooks/useUser";
 import { usePipeline } from "@/hooks/usePipeline";
 import ChatPipelinePanel, {
     type ChatPipelineState,
@@ -916,7 +917,7 @@ function TemplateRecommendationRail({
 }) {
     const [previewTemplate, setPreviewTemplate] = useState<TemplateRecommendationResponse | null>(null);
     const [brokenPreviewIds, setBrokenPreviewIds] = useState<Record<string, boolean>>({});
-    const [isExpanded, setIsExpanded] = useState(false);
+    const [isCollapsed, setIsCollapsed] = useState(true);
 
     if (!recommendations.length && !isLoading) {
         return null;
@@ -926,36 +927,39 @@ function TemplateRecommendationRail({
         recommendations.find((item) => item.template_id === selectedTemplateId)?.name || "Let Violyt choose";
 
     return (
-        <div className="space-y-2 rounded-[24px] border border-[#E8EBF4] bg-white/90 px-3 py-3 shadow-[0_16px_36px_-30px_rgba(15,23,42,0.35)]">
-            <button
-                type="button"
-                onClick={() => setIsExpanded((current) => !current)}
-                className="flex w-full items-center justify-between gap-2 text-left"
-                aria-expanded={isExpanded}
-            >
+        <div className={`border border-[#E8EBF4] bg-white/90 shadow-[0_16px_36px_-30px_rgba(15,23,42,0.35)] transition-all duration-200 ${isCollapsed ? "space-y-0 rounded-[18px] px-3 py-2" : "space-y-2 rounded-[24px] px-3 py-3"}`}>
+            <div className="flex items-center justify-between gap-2">
                 <div className="min-w-0">
                     <p className="text-sm font-semibold text-slate-800">Template Direction</p>
-                    {!isExpanded ? (
+                    {isCollapsed ? (
                         <p className="truncate text-[11px] font-medium text-slate-500">
-                            {selectedTemplateId ? `Pinned: ${selectedLabel}` : "Auto — tap to change"}
+                            {selectedTemplateId ? `Pinned: ${selectedLabel}` : "Auto — tap to expand"}
                         </p>
                     ) : null}
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
+                <div className="flex items-center gap-2">
                     {isLoading ? (
                         <span className="inline-flex items-center gap-2 text-xs font-medium text-primary">
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            Matching
+                            Matching templates
                         </span>
                     ) : null}
-                    <ChevronDown
-                        className={`h-4 w-4 text-slate-500 transition-transform ${isExpanded ? "rotate-180" : ""}`}
-                    />
+                    <button
+                        type="button"
+                        aria-label={isCollapsed ? "Expand Template Direction" : "Collapse Template Direction"}
+                        aria-expanded={!isCollapsed}
+                        onClick={() => setIsCollapsed((current) => !current)}
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[9px] border border-primary/70 bg-white text-primary transition hover:bg-primary/8"
+                    >
+                        <ChevronDown className={`h-4 w-4 transition-transform duration-200 ${isCollapsed ? "-rotate-90" : ""}`} />
+                    </button>
                 </div>
-            </button>
+            </div>
 
-            {isExpanded ? (
-            <div className="flex gap-2 overflow-x-auto pb-1">
+            <div
+                aria-hidden={isCollapsed}
+                className={`flex gap-2 overflow-x-auto pb-1 transition-all duration-200 ease-out ${isCollapsed ? "max-h-0 overflow-hidden pb-0 opacity-0 pointer-events-none" : "max-h-32 opacity-100"}`}
+            >
                 <button
                     type="button"
                     onClick={() => onSelect("")}
@@ -1036,7 +1040,6 @@ function TemplateRecommendationRail({
                     );
                 })}
             </div>
-            ) : null}
 
             <Dialog open={Boolean(previewTemplate)} onOpenChange={(open) => !open && setPreviewTemplate(null)}>
                 <DialogContent className="max-w-3xl border-none bg-white p-0">
@@ -2124,6 +2127,7 @@ function StudioPanel({
 export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
     const router = useRouter();
     const searchParams = useSearchParams();
+    const { data: currentUser } = useGetMe();
     const { data: brands, isLoading: isBrandsLoading } = useBrands();
     const brand = useMemo(() => resolveBrandByRouteKey(brands, brandKey), [brands, brandKey]);
     const brandId = brand?.id || "";
@@ -3408,7 +3412,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                                     value={composerDraft}
                                                     onChange={(event) => setComposerDraft(event.target.value)}
                                                     onKeyDown={handleComposerKeyDown}
-                                                    placeholder="What do you want to create today?"
+                                                    placeholder="Describe your campaign, content brief, brand challenge, or upload a reference to get started..."
                                                     className="min-h-9 max-h-55 flex-1 resize-none overflow-y-hidden border-none bg-transparent px-0 pt-3.5 text-base leading-6 text-[#6A6E8B] shadow-none outline-none focus-visible:ring-0"
                                                 />
                                                 {enhancePromptMode === "composer" ? (
@@ -3554,16 +3558,23 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                         </div>
                                     ) : null}
                                     <div className="max-w-5xl mx-auto flex flex-col items-center px-4 my-[21vh]">
-                                        <div className="flex items-center gap-5">
-                                            <Image src="/logo.svg" alt="Violyt Icon" width={40} height={40} className="" />
-                                            <h2 className="font-dmSans text-2xl md:text-3xl xl:text-4xl font-medium tracking-normal text-[#121212]">Greeting message</h2>
+                                        <div className="flex flex-col items-center">
+                                            <div className="flex items-center gap-5">
+                                                <Image src="/logo.svg" alt="Violyt Icon" width={40} height={40} className="" />
+                                                <h2 className="font-dmSans text-2xl md:text-3xl xl:text-4xl font-medium tracking-normal text-[#121212]">
+                                                    Welcome back, {currentUser?.name || "there"} {"\u{1F44B}"}
+                                                </h2>
+                                            </div>
+                                            <p className="mt-3 text-center text-sm text-[#5F6068]">
+                                                What are we building for {brand?.name || "your brand"} today?
+                                            </p>
                                         </div>
 
                                         <div ref={workspaceEnhanceContainerRef} className="relative mt-9 w-full">
                                             <SurfaceCard className="relative w-full rounded-xl border border-[#DDE1EA] bg-white px-4 py-3 shadow-[0_16px_30px_-25px_rgba(15,23,42,0.45)]">
                                                 <Textarea
                                                     ref={promptTextareaRef}
-                                                    placeholder="What do you want to create today?"
+                                                    placeholder="Describe your campaign, content brief, brand challenge, or upload a reference to get started..."
                                                     className="min-h-20 max-h-55 resize-none overflow-y-hidden border-none bg-transparent p-0 text-sm leading-6 text-[#74789A] shadow-none focus-visible:ring-0"
                                                     value={workspacePrompt}
                                                     onChange={(event) => setWorkspacePrompt(event.target.value)}

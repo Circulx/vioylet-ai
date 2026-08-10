@@ -134,7 +134,7 @@ const TargetAudience = ({ form, setForm, onRemoveUpload }: BrandTabProps) => {
                         </FormField>
                         <FileUploadCollection
                             label="Upload Audience Insights"
-                            acceptedFormats="PDF, DOC, DOCX, PPT, PPTX, PNG, JPG, JPEG, WEBP"
+                            acceptedFormats="PDF, DOC, DOCX, PPT, PPTX, PNG, JPG, JPEG, WEBP, TXT"
                             bgColor="bg-[#FFFFFF]"
                             items={form.targetAudience.audienceInsights}
                             onAdd={addAudienceInsights}

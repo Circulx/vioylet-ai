@@ -42,6 +42,7 @@ function getRequiredBrandFieldChecks(form: BrandFormState) {
     complete: hasUpload(form.core.logos.length ? form.core.logos : form.core.logo ? [form.core.logo] : []),
   });
   requireText("core_brand_signals", "Brand Name", form.core.name);
+  requireText("core_brand_signals", "Tagline", form.core.tagline);
   requireText("core_brand_signals", "Brand Description", form.core.description);
   requireText("core_brand_signals", "Industry Category", form.core.industryCategory);
 

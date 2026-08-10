@@ -82,6 +82,7 @@ const BrandReview = ({ brandId, form }: BrandTabProps) => {
             color: "primary",
             items: [
                 { label: "Brand Name", filled: Boolean(f.core.name) },
+                { label: "Tagline", filled: Boolean(f.core.tagline) },
                 { label: "Brand Description", filled: Boolean(f.core.description) },
                 { label: "Industry Category", filled: Boolean(f.core.industryCategory) },
                 { label: "Key Differentiators", filled: Boolean(f.core.differentiators) },

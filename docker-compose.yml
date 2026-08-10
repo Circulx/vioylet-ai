@@ -12,6 +12,8 @@ services:
       OBJECT_STORAGE_BASE_PATH: /app/storage
       VECTOR_STORE_BASE_PATH: /app/vector_store
       GENERATION_TRACE_BASE_PATH: /app/storage/generation_traces
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
       GENERATED_ASSETS_BASE_URL: ${GENERATED_ASSETS_BASE_URL:-http://localhost:8000/storage}
       ASSET_DOWNLOAD_BASE_URL: ${ASSET_DOWNLOAD_BASE_URL:-http://localhost:8000/api/v1/storage/download}
     ports:
@@ -19,10 +21,12 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
       - ./storage:/app/storage
       - ./vector_store:/app/vector_store
-    command: ["sh", "-c", "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 8000"]
+    command: ["sh", "-c", "alembic upgrade heads && uvicorn main:app --host 0.0.0.0 --port 8000"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health').read()"]
       interval: 5s
@@ -40,10 +44,14 @@ services:
       OBJECT_STORAGE_BASE_PATH: /app/storage
       VECTOR_STORE_BASE_PATH: /app/vector_store
       GENERATION_TRACE_BASE_PATH: /app/storage/generation_traces
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
       GENERATED_ASSETS_BASE_URL: ${GENERATED_ASSETS_BASE_URL:-http://localhost:8000/storage}
       ASSET_DOWNLOAD_BASE_URL: ${ASSET_DOWNLOAD_BASE_URL:-http://localhost:8000/api/v1/storage/download}
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       api:
         condition: service_healthy

@@ -175,7 +175,7 @@ _TEMPLATES: dict[TemplateId, CreativeTemplate] = {
     ),
     "infographic_explain_editorial": _tpl(
         "infographic_explain_editorial",
-        "sample_infographic_explain_rbi_polymer.png",
+        "sample_infographic_explain_rbi_plastic_perfect.png",
         "carousel_story",
         "infographic",
         "infographic_explain",
@@ -191,12 +191,11 @@ _TEMPLATES: dict[TemplateId, CreativeTemplate] = {
             f"{ORANGE_COVERAGE_LOCK}"
         ),
         image_stub=(
-            "AI-only DENSE editorial like sample_infographic_explain_rbi_polymer.png: "
-            "proper type scale (headline NOT oversized); navy headline + gray intro; "
-            "2–3 orange-bar sections with 3-col fact cards + real explanations; "
-            "text section; thin-border lightbulb callout; source footer. "
-            "Fill the canvas — NOT sparse 3-card poster. Perfect spelling (RBI). "
-            "Empty logo pocket. NOT ranking."
+            "AI-only DENSE editorial like sample_infographic_explain_rbi_plastic_perfect.png: "
+            "navy ALL-CAPS headline + orange slogan pill + hero ₹500 note; "
+            "why band with bank icon + RBI seal; navy reasons bar + 2x4 numbered 3D icon grid; "
+            "trial row; navy footer with lightbulb tagline. "
+            "Jiraaf ice-blue/navy/orange only. Perfect spelling (RBI). Empty logo pocket. NOT ranking."
         ),
     ),
     "static_hub_facts": _tpl(
@@ -267,9 +266,34 @@ _TEMPLATES: dict[TemplateId, CreativeTemplate] = {
 }
 
 
+def _is_jiraaf_brand(brand_name: str | None) -> bool:
+    return "jiraaf" in (brand_name or "").casefold()
+
+
+def _neutralize_for_brand(template: CreativeTemplate, brand_name: str) -> CreativeTemplate:
+    """Strip Jiraaf-only sample DNA so other brands use their own visual identity."""
+    brand_label = brand_name.strip() or "this brand"
+    return replace(
+        template,
+        copy_lock=(
+            f"Brand: {brand_label}. Use this brand's voice, topic, and category. "
+            "Do NOT copy Jiraaf finance templates, RBI plastic carousel DNA, or SEBI disclaimers."
+        ),
+        visual_lock=(
+            f"Brand: {brand_label}. Use ONLY this brand's Brand Space colors and visual mood. "
+            "Never use Jiraaf navy #003975, orange #FFA400, or ice-blue #E8F0F8 unless this IS Jiraaf."
+        ),
+        image_stub=(
+            f"Premium connected-infographic creative for {brand_label}. "
+            "Brand palette only — not Jiraaf sample colors or finance icon defaults."
+        ),
+    )
+
+
 def resolve_creative_template(
     user_prompt: str,
     selected_format: str | None = None,
+    brand_name: str | None = None,
 ) -> CreativeTemplate:
     """Authoritative template picker — same logic at L7, L7c, and L8."""
     decision = classify_layout(user_prompt, selected_format)
@@ -279,24 +303,29 @@ def resolve_creative_template(
         fmt = decision.suggested_format or "static"
 
     if layout == "static_hub_facts":
-        return _TEMPLATES["static_hub_facts"]
-
-    if layout == "static_ranking":
+        template = _TEMPLATES["static_hub_facts"]
+    elif layout == "static_ranking":
         if is_trade_data_board(user_prompt):
-            return replace(_TEMPLATES["trade_deficit_board"], format=fmt)  # type: ignore[arg-type]
-        style = static_ranking_style(user_prompt)
-        if style == "horizontal_bar" and fmt == "static":
-            return _TEMPLATES["horizontal_bar_ranking"]
-        return replace(_TEMPLATES["vertical_country_ranking"], format=fmt)  # type: ignore[arg-type]
-
-    if layout == "carousel_story":
+            template = replace(_TEMPLATES["trade_deficit_board"], format=fmt)  # type: ignore[arg-type]
+        else:
+            style = static_ranking_style(user_prompt)
+            if style == "horizontal_bar" and fmt == "static":
+                template = _TEMPLATES["horizontal_bar_ranking"]
+            else:
+                template = replace(_TEMPLATES["vertical_country_ranking"], format=fmt)  # type: ignore[arg-type]
+    elif layout == "carousel_story":
         if fmt == "infographic":
-            return _TEMPLATES["infographic_explain_editorial"]
-        if fmt == "static":
-            return _TEMPLATES["static_explain_poster"]
-        return _TEMPLATES["carousel_story"]
+            template = _TEMPLATES["infographic_explain_editorial"]
+        elif fmt == "static":
+            template = _TEMPLATES["static_explain_poster"]
+        else:
+            template = _TEMPLATES["carousel_story"]
+    else:
+        template = _TEMPLATES["carousel_story"]
 
-    return _TEMPLATES["carousel_story"]
+    if brand_name and not _is_jiraaf_brand(brand_name):
+        return _neutralize_for_brand(template, brand_name)
+    return template
 
 
 def list_locked_samples() -> list[dict[str, str]]:

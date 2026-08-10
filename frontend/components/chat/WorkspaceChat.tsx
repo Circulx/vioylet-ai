@@ -48,6 +48,8 @@ import { usePipeline } from "@/hooks/usePipeline";
 import ChatPipelinePanel, {
     type ChatPipelineState,
 } from "@/components/chat/ChatPipelinePanel";
+import PostCaptionBlock from "@/components/chat/PostCaptionBlock";
+import { buildPostCaption } from "@/lib/post-caption";
 import {
     useChatMessages,
     useChatSessions,
@@ -914,23 +916,45 @@ function TemplateRecommendationRail({
 }) {
     const [previewTemplate, setPreviewTemplate] = useState<TemplateRecommendationResponse | null>(null);
     const [brokenPreviewIds, setBrokenPreviewIds] = useState<Record<string, boolean>>({});
+    const [isExpanded, setIsExpanded] = useState(false);
 
     if (!recommendations.length && !isLoading) {
         return null;
     }
 
+    const selectedLabel =
+        recommendations.find((item) => item.template_id === selectedTemplateId)?.name || "Let Violyt choose";
+
     return (
         <div className="space-y-2 rounded-[24px] border border-[#E8EBF4] bg-white/90 px-3 py-3 shadow-[0_16px_36px_-30px_rgba(15,23,42,0.35)]">
-            <div className="flex items-center justify-between gap-2">
-                <p className="text-sm font-semibold text-slate-800">Template Direction</p>
-                {isLoading ? (
-                    <span className="inline-flex items-center gap-2 text-xs font-medium text-primary">
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        Matching templates
-                    </span>
-                ) : null}
-            </div>
+            <button
+                type="button"
+                onClick={() => setIsExpanded((current) => !current)}
+                className="flex w-full items-center justify-between gap-2 text-left"
+                aria-expanded={isExpanded}
+            >
+                <div className="min-w-0">
+                    <p className="text-sm font-semibold text-slate-800">Template Direction</p>
+                    {!isExpanded ? (
+                        <p className="truncate text-[11px] font-medium text-slate-500">
+                            {selectedTemplateId ? `Pinned: ${selectedLabel}` : "Auto — tap to change"}
+                        </p>
+                    ) : null}
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                    {isLoading ? (
+                        <span className="inline-flex items-center gap-2 text-xs font-medium text-primary">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            Matching
+                        </span>
+                    ) : null}
+                    <ChevronDown
+                        className={`h-4 w-4 text-slate-500 transition-transform ${isExpanded ? "rotate-180" : ""}`}
+                    />
+                </div>
+            </button>
 
+            {isExpanded ? (
             <div className="flex gap-2 overflow-x-auto pb-1">
                 <button
                     type="button"
@@ -1012,6 +1036,7 @@ function TemplateRecommendationRail({
                     );
                 })}
             </div>
+            ) : null}
 
             <Dialog open={Boolean(previewTemplate)} onOpenChange={(open) => !open && setPreviewTemplate(null)}>
                 <DialogContent className="max-w-3xl border-none bg-white p-0">
@@ -1137,6 +1162,7 @@ function GeneratedImageViewer({
     onExport,
     onExportForType,
     sourcePrompt,
+    postCaption,
 }: {
     brandId: string;
     assets: AssetReference[];
@@ -1147,6 +1173,7 @@ function GeneratedImageViewer({
     onExport: (contentVersionId: string) => Promise<AssetReference[]>;
     onExportForType: (contentVersionId: string, fileType: FileType) => Promise<AssetReference[]>;
     sourcePrompt: string;
+    postCaption?: string;
 }) {
     const [activeIndex, setActiveIndex] = useState(0);
     const [isSaving, setIsSaving] = useState(false);
@@ -1677,6 +1704,11 @@ function GeneratedImageViewer({
                     </div>
                 ) : null}
             </div>
+            {postCaption ? (
+                <div className="mt-4">
+                    <PostCaptionBlock caption={postCaption} platform={platform} />
+                </div>
+            ) : null}
             <div className="mt-4 flex items-center gap-3">
                 <Button
                     type="button"
@@ -2798,6 +2830,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                     status: "running",
                     prompt: message.trim(),
                     format: pipelineFormat,
+                    platform: pipelinePlatform,
                     blueprint: null,
                     imageUrls: [],
                     error: null,
@@ -2821,6 +2854,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                         runId: phase1.run_id || undefined,
                         prompt: message.trim(),
                         format: pipelineFormat,
+                        platform: pipelinePlatform,
                         blueprint: phase1.creative_blueprint,
                         imageUrls: [],
                         error: null,
@@ -2833,6 +2867,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                         status: "failed",
                         prompt: message.trim(),
                         format: pipelineFormat,
+                        platform: pipelinePlatform,
                         error: phase1.error || "Pipeline failed before blueprint approval.",
                     });
                     return;
@@ -2846,6 +2881,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                     runId: phase1.run_id || undefined,
                     prompt: message.trim(),
                     format: pipelineFormat,
+                    platform: pipelinePlatform,
                     blueprint: phase1.creative_blueprint,
                     imageUrls: urls,
                     error: urls.length ? null : "No image returned from pipeline.",
@@ -3177,6 +3213,24 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                                 "";
                                             const previewUrl = previewAssets[0]?.asset_url || undefined;
                                             const generationDecision = message.role === "assistant" ? resolveGenerationDecision(message.structured_payload) : null;
+                                            const generatedPayload =
+                                                message.role === "assistant"
+                                                    ? (message.structured_payload as ChatAssistantStructuredPayload)?.generated_payload
+                                                    : undefined;
+                                            const blueprintPayload =
+                                                message.role === "assistant"
+                                                    ? ((message.structured_payload as ChatAssistantStructuredPayload)?.blueprint_payload as
+                                                          | CreativeBlueprintResponse
+                                                          | undefined)
+                                                    : undefined;
+                                            const postCaption =
+                                                message.role === "assistant"
+                                                    ? buildPostCaption({
+                                                          platform: studioPlatform,
+                                                          blueprint: blueprintPayload,
+                                                          generatedPayload,
+                                                      })
+                                                    : "";
                                             const imageStatus =
                                                 message.role === "assistant" &&
                                                     !previewUrl &&
@@ -3232,6 +3286,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                                             onExport={exportGeneratedAssets}
                                                             onExportForType={exportGeneratedAssetsForType}
                                                             sourcePrompt={sourcePrompt}
+                                                            postCaption={postCaption}
                                                         />
                                                     ) : null}
                                                     {imageStatus === "not_generated" ? <p className="mt-3 text-sm text-slate-500">Image generation was requested, but no generated image asset was returned for this message.</p> : null}

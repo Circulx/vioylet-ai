@@ -329,7 +329,9 @@ class BrandAssetService:
             await self._clear_reusable_assets(asset.id)
             await self._persist_category_records(asset, outcome)
             await self._index_asset(asset, outcome)
-            billable_ocr_pages = 0 if is_typography_guide else max(asset.page_count, 1)
+            billable_ocr_pages = 0
+            if not is_typography_guide and not str(asset.mime_type or "").startswith("image/"):
+                billable_ocr_pages = max(asset.page_count, 1)
             if billable_ocr_pages:
                 await self.usage.enforce(asset.tenant_id, UsageMetricCode.OCR_PAGES, billable_ocr_pages)
                 await self.usage.increment(

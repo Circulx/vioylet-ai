@@ -531,7 +531,7 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
 
     layout_decision = classify_layout(user_prompt, fmt)
     layout_type = layout_decision.layout_type
-    creative_template = resolve_creative_template(user_prompt, fmt)
+    creative_template = resolve_creative_template(user_prompt, fmt, brand_name=brand_name)
     if creative_template.layout_type != layout_type:
         layout_type = creative_template.layout_type
     is_infographic_explain = (
@@ -617,8 +617,14 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
             + f"source_footer={source_footer}\nsources={sources_note}\n"
             + "CRITICAL: Generate a FINISHED creative. Render the approved strings as sharp typography in the image. "
             "Do not leave empty shells. Do not invent alternate copy. "
-            "REQUIRED: navy #003975 + orange #FFA400 accents (orange text+accents >=~2% of image); "
-            "ULTRA-PREMIUM clay-3D icons; content must fit fully. "
+            + (
+                "REQUIRED: navy #003975 + orange #FFA400 accents (orange text+accents >=~2% of image); "
+                if is_jiraaf_brand
+                else (
+                    f"REQUIRED: use {brand_name}'s Brand Space colors only — NOT Jiraaf navy/orange/ice-blue; "
+                )
+            )
+            + "ULTRA-PREMIUM clay-3D icons; content must fit fully. "
             + (
                 f'Bake compact footer text EXACTLY as: "{source_footer}". '
                 if source_footer
@@ -899,10 +905,20 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
             s.slide_number: s for s in ((blueprint.slides if blueprint else None) or [])
         }
         # SHORT style stub ONLY — mega-locks were ~16k chars and wiped slide content at [:6500]
-        style_stub = (
-            f"Finished {platform} carousel, canvas {canvas_desc}. "
-            f"{CAROUSEL_IMAGE_STYLE_STUB}"
-        )
+        if is_jiraaf_brand:
+            style_stub = (
+                f"Finished {platform} carousel, canvas {canvas_desc}. "
+                f"{CAROUSEL_IMAGE_STYLE_STUB}"
+            )
+        else:
+            color_hint = ""
+            if brand_intelligence and brand_intelligence.visual_behavior:
+                color_hint = str(brand_intelligence.visual_behavior.color_behavior or "").strip()
+            style_stub = (
+                f"Finished {platform} carousel for {brand_name}, canvas {canvas_desc}. "
+                f"Brand colors: {color_hint or 'from Brand Space visual identity'}. "
+                "NOT Jiraaf template colors."
+            )
         total = len(carousel_slides)
         # Build ordered storyline from blueprint for swipe continuity
         ordered_bp = sorted(
@@ -1050,75 +1066,70 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
             prior = "; ".join(used_headlines[-3:]) if used_headlines else "(none yet)"
             used_headlines.append(str(slide_headline or "")[:60])
 
-            icon_rule = (
-                "ICON: ONE premium HD clay-3D object (~12–16% height) bottom-right "
-                "(wallet/coins/doc/lock/shield). Sharp studio render — not blurry toy.\n"
-                "TEXT: ≥8% margins; content ABOVE bottom ~14% SEBI zone; "
-                "headline LEFT 75% width; NEVER truncate mid-word; wrap to 2 FULL lines.\n"
+            from app.services.image_generation.carousel_image_prompt import (
+                build_brand_carousel_slide_image_prompt,
+                build_carousel_slide_image_prompt,
+                strip_carousel_heading_numbers,
             )
 
-            # Role-based layout — MATCH SAMPLE PAGE DENSITY
-            if role == "hook":
-                layout_block = (
-                    "LAYOUT (HOOK):\n"
-                    f"- Headline + supporting. Two white cards: {f0} | {f1}\n"
-                    "- Premium clay-3D icon bottom-right.\n"
-                )
-            elif role in ("define", "insight"):
-                layout_block = (
-                    "LAYOUT (SCENARIO — 3 story blocks like Sweep-In ₹2 lakh page):\n"
-                    f"- Block1: {f0}\n- Block2: {f1}\n- Block3: {f2}\n"
-                    "- Premium clay-3D icon mid/bottom-right. NO sparse empty slide.\n"
-                )
-            elif role in ("impact", "implication"):
-                layout_block = (
-                    "LAYOUT (HOW IT WORKS / CHOICE):\n"
-                    f"- Cards: {f0} | {f1} | {f2}\n"
-                    "- Premium clay-3D icon bottom-right.\n"
-                )
-            elif role in ("proof", "myth"):
-                layout_block = (
-                    "LAYOUT (PROS/CONS WITH REASONS):\n"
-                    f"- A: {f0}\n- B: {f1}\n- Extra: {f2}\n"
-                    "- Premium clay-3D icon bottom-right.\n"
-                )
-            else:
-                layout_block = (
-                    "LAYOUT (CTA):\n"
-                    "- Question headline + invite line + one reason card.\n"
-                    "- Premium clay-3D icon bottom-right.\n"
-                    "- CTA BUTTON (if any): COMPACT — max 28% canvas width, ~4% height, "
-                    "2–3 word label, small padding. NEVER a wide/tall orange bar.\n"
-                )
+            story_blocks = [
+                str(x).strip('"')
+                for x in (f0, f1, f2)
+                if str(x).strip() and str(x).strip() != '""'
+            ]
+            story_blocks = [b.strip('"') for b in story_blocks if b.strip('"')]
+            slide_headline = strip_carousel_heading_numbers(str(slide_headline or ""))
 
-            # CONTENT FIRST — then short style. Never put mega-locks before headline.
-            content_core = (
-                f"=== RENDER SLIDE {n} of {total} — BEAT [{role}] ===\n"
-                f"TONE: plain retail language on all baked text — short sentences, ₹/% facts, NO jargon.\n"
-                f"TOPIC (context only, NOT headline): {topic_lock}\n"
-                f"STORYLINE:\n{storyline_block}\n"
-                f"Prior headlines (do not repeat): {prior}\n"
-                f"HEADLINE (MANDATORY COMPLETE navy top-left): {hl}\n"
-                f"SUPPORTING: {sup}\n"
-                f"BODY: {body_txt}\n"
-                f"STORY BLOCK 1: {f0}\n"
-                f"STORY BLOCK 2: {f1}\n"
-                f"STORY BLOCK 3: {f2}\n"
-                f"ICON: {hero}\n"
-                f"{layout_block}"
-                f"{icon_rule}"
-                + (
-                    f"CTA LABEL (compact button only): {_q(slide_cta, 24)}\n"
-                    "CTA SIZE LOCK: orange button ≤28% canvas width, ≤4.5% canvas height, "
-                    "centered above SEBI zone, small padding — NEVER oversized wide bar.\n"
-                    if is_last and slide_cta
-                    else ""
+            color_behavior = ""
+            if brand_intelligence and brand_intelligence.visual_behavior:
+                color_behavior = str(brand_intelligence.visual_behavior.color_behavior or "")
+
+            if is_jiraaf_brand:
+                slide_prompt = build_carousel_slide_image_prompt(
+                    slide_number=n,
+                    total_slides=total,
+                    role=role,
+                    headline=str(slide_headline or ""),
+                    supporting=str(slide_supporting or ""),
+                    body=str(slide_body or ""),
+                    story_blocks=story_blocks,
+                    cta=str(slide_cta or "") if is_last else "",
+                    canvas_desc=canvas_desc,
+                    topic=str(topic_lock or ""),
+                    is_last=is_last,
+                    prior_headlines=list(used_headlines[:-1]) if used_headlines else [],
                 )
-                + "FAIL if: missing/truncated headline, sparse empty slide, cheap icon, empty Pros/Cons, oversized CTA, technical jargon on cards."
+                carousel_style_extra = style_stub + "\n" + CAROUSEL_TONE_IMAGE_STUB
+            else:
+                slide_prompt = build_brand_carousel_slide_image_prompt(
+                    slide_number=n,
+                    total_slides=total,
+                    role=role,
+                    headline=str(slide_headline or ""),
+                    supporting=str(slide_supporting or ""),
+                    body=str(slide_body or ""),
+                    story_blocks=story_blocks,
+                    cta=str(slide_cta or "") if is_last else "",
+                    canvas_desc=canvas_desc,
+                    topic=str(topic_lock or ""),
+                    is_last=is_last,
+                    prior_headlines=list(used_headlines[:-1]) if used_headlines else [],
+                    brand_name=brand_name,
+                    color_behavior=color_behavior,
+                )
+                carousel_style_extra = (
+                    f"Brand carousel — use {brand_name} colours only. NOT Jiraaf template.\n"
+                    + CAROUSEL_TONE_IMAGE_STUB
+                )
+            # Keep continuity + prior-headline guard under budget without wiping locked DNA
+            continuity = (
+                f"\nSTORYLINE:\n{storyline_block}\n"
+                f"Prior headlines (do not repeat): {prior}\n"
+                f"Hero cue: {hero}\n"
             )
             slide_prompt = _budget_prompt(
-                content_core,
-                style_stub + "\n" + CAROUSEL_TONE_IMAGE_STUB,
+                slide_prompt,
+                continuity + "\n" + carousel_style_extra,
                 _IMAGE_PROMPT_BUDGET,
             )
             logger.info(

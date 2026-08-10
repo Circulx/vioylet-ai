@@ -25,14 +25,16 @@ class ContentPrepPromptBuilder(BasePromptBuilder):
     def build_system(self, format_name: str = "static", **kwargs: Any) -> str:
         layout_type = str(kwargs.get("layout_type") or "carousel_story")
         user_p = str(kwargs.get("user_prompt") or "")
-        template = resolve_creative_template(user_p, format_name)
+        brand_name = str(kwargs.get("brand_name") or "")
+        is_jiraaf = "jiraaf" in brand_name.casefold()
+        template = resolve_creative_template(user_p, format_name, brand_name=brand_name or None)
         hub = layout_type == "static_hub_facts"
 
         from app.prompts.jiraaf_layout import requested_rank_count
 
         rank_n = requested_rank_count(user_p) if layout_type == "static_ranking" else None
         layout_block = template.l7c_layout_block(rank_n=rank_n)
-        if template.template_id == "carousel_story":
+        if template.template_id == "carousel_story" and is_jiraaf:
             layout_block += f"""
 {CAROUSEL_AUDIENCE_TONE_LOCK}
 - 5–6 slides STORY: hook → ₹ scenario (3 blocks) → how it works → choice → pros/cons WITH short reasons → CTA

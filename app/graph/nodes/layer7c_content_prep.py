@@ -37,10 +37,12 @@ async def layer7c_content_prep(state: ViolytState) -> dict:
             "are required for Layer 7c"
         )
 
+    brand_name = (brand_intelligence.brand_core.brand_name or "").strip()
     system = _prompt_builder.build_system(
         format_name=fmt,
         user_prompt=user_prompt,
         layout_type=layout.layout_type,
+        brand_name=brand_name,
     )
     user = _prompt_builder.build_user(
         user_prompt=user_prompt,

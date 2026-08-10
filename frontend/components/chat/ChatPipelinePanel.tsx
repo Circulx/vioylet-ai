@@ -13,7 +13,9 @@ import {
 } from "lucide-react";
 import { SurfaceCard } from "@/components/common/DesignPrimitives";
 import BlueprintApprovalCard from "@/components/brandSpaces/tabs/BlueprintApprovalCard";
+import PostCaptionBlock from "@/components/chat/PostCaptionBlock";
 import type { CreativeBlueprintResponse } from "@/lib/api/contracts";
+import { buildPostCaption } from "@/lib/post-caption";
 import { usePipeline } from "@/hooks/usePipeline";
 import { apiOrigin } from "@/lib/env";
 import { cn } from "@/lib/utils";
@@ -32,6 +34,7 @@ export type ChatPipelineState = {
   runId?: string;
   prompt?: string;
   format?: string;
+  platform?: string;
   blueprint?: CreativeBlueprintResponse | null;
   imageUrls?: string[];
   error?: string | null;
@@ -349,6 +352,14 @@ export default function ChatPipelinePanel({
   onImagesChange,
 }: Props) {
   const completeUrls = useMemo(() => state.imageUrls || [], [state.imageUrls]);
+  const postCaption = useMemo(
+    () =>
+      buildPostCaption({
+        platform: state.platform || "instagram",
+        blueprint: state.blueprint,
+      }),
+    [state.blueprint, state.platform],
+  );
 
   if (state.status === "idle" || state.status === "cancelled") {
     return null;
@@ -416,6 +427,7 @@ export default function ChatPipelinePanel({
             blueprint={state.blueprint}
             onImagesChange={onImagesChange}
           />
+          <PostCaptionBlock caption={postCaption} platform={state.platform} />
           {(state.blueprint?.sources?.length ?? 0) > 0 ? (
             <div className="rounded-lg border border-emerald-100 bg-white/70 p-3 space-y-1">
               <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-800">

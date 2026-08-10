@@ -40,13 +40,6 @@ export const sidebarItems: SidebarItemProps[] = [
     module: "USER_MANAGEMENT",
   },
   {
-    id: 7,
-    name: "Brand Retrieval",
-    href: "/brand-retrieval",
-    icon: "/box",
-    module: "BRAND_SPACE",
-  },
-  {
     id: 6,
     name: "Notification",
     icon: "/notification",

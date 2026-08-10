@@ -318,18 +318,21 @@ class BrandSpaceService:
             brand.geography_city = target_geography.get("city")
             brand.audience_type = payload.payload.get("audience_type")
         if payload.section_code == "foundations":
+            snapshot = brand.overview_snapshot if isinstance(brand.overview_snapshot, dict) else {}
             brand.overview_snapshot = {
-                **brand.overview_snapshot,
+                **snapshot,
                 "foundations": payload.payload,
             }
         if payload.section_code == "voice_tone":
+            snapshot = brand.overview_snapshot if isinstance(brand.overview_snapshot, dict) else {}
             brand.overview_snapshot = {
-                **brand.overview_snapshot,
+                **snapshot,
                 "voice_tone": payload.payload,
             }
         if payload.section_code == "visual_identity":
+            snapshot = brand.overview_snapshot if isinstance(brand.overview_snapshot, dict) else {}
             brand.overview_snapshot = {
-                **brand.overview_snapshot,
+                **snapshot,
                 "visual_identity": payload.payload,
             }
 
@@ -422,7 +425,18 @@ class BrandSpaceService:
         }
         await self._apply_section_upsert(tenant_id, brand_space_id, brand, payload, existing_sections, section_versions)
         await self.session.commit()
-        return await self.refresh_context(brand_space_id)
+        try:
+            return await self.refresh_context(brand_space_id)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "refresh_context failed after single section save brand_id=%s",
+                brand_space_id,
+                exc_info=True,
+            )
+            await self.session.refresh(brand)
+            return brand
 
     async def upsert_sections(
         self,
@@ -457,15 +471,23 @@ class BrandSpaceService:
             updated_brand = brand
         normalized_actor_roles = {str(role_code) for role_code in (actor_role_codes or set())}
         if was_published and actor_user_id and RoleCode.TENANT_ADMIN.value in normalized_actor_roles:
-            emails_scheduled = await self._dispatch_published_brand_space_updated_emails(updated_brand, actor_user_id)
-            if emails_scheduled:
-                await self.create_history_entry(
-                    tenant_id=tenant_id,
-                    brand_space_id=brand_space_id,
-                    activity_type="brand_space_updated",
-                    message="Brand Space updated.",
-                    performed_by=actor_user_id,
-                    metadata={"brand_space_name": updated_brand.name},
+            try:
+                emails_scheduled = await self._dispatch_published_brand_space_updated_emails(updated_brand, actor_user_id)
+                if emails_scheduled:
+                    await self.create_history_entry(
+                        tenant_id=tenant_id,
+                        brand_space_id=brand_space_id,
+                        activity_type="brand_space_updated",
+                        message="Brand Space updated.",
+                        performed_by=actor_user_id,
+                        metadata={"brand_space_name": updated_brand.name},
+                    )
+            except Exception:
+                import logging
+
+                logging.getLogger(__name__).exception(
+                    "post-save history/email failed brand_id=%s",
+                    brand_space_id,
                 )
         return updated_brand
 

@@ -57,7 +57,7 @@ const BrandRules = ({ brandId, form, setForm, onRemoveUpload }: BrandTabProps) =
                         </FormField>
                         <FileUploadCollection
                             label="Upload Positive Word Bank"
-                            acceptedFormats="PDF, DOC, DOCX, PNG, JPG, JPEG"
+                            acceptedFormats="PDF, DOC, DOCX, PNG, JPG, JPEG, PPT, PPTX, TXT"
                             bgColor="bg-section-input-field"
                             items={form.brandRules.positiveWordBankUploads}
                             onAdd={(files) => addUploads("positiveWordBankUploads", files)}
@@ -84,7 +84,7 @@ const BrandRules = ({ brandId, form, setForm, onRemoveUpload }: BrandTabProps) =
                         </FormField>
                         <FileUploadCollection
                             label="Upload Replaceable Words"
-                            acceptedFormats="PDF, DOC, DOCX, PNG, JPG, JPEG"
+                            acceptedFormats="PDF, DOC, DOCX, PNG, JPG, JPEG, PPT, PPTX, TXT"
                             bgColor="bg-section-input-field"
                             items={form.brandRules.replaceableWordUploads}
                             onAdd={(files) => addUploads("replaceableWordUploads", files)}
@@ -112,7 +112,7 @@ const BrandRules = ({ brandId, form, setForm, onRemoveUpload }: BrandTabProps) =
                         </FormField>
                         <FileUploadCollection
                             label="Upload Negative Word Bank"
-                            acceptedFormats="PDF, DOC, DOCX, PNG, JPG, JPEG"
+                            acceptedFormats="PDF, DOC, DOCX, PNG, JPG, JPEG, PPT, PPTX, TXT"
                             bgColor="bg-section-input-field"
                             items={form.brandRules.negativeWordBankUploads}
                             onAdd={(files) => addUploads("negativeWordBankUploads", files)}

@@ -31,6 +31,7 @@ export function applyBrandAutofillToForm(
     core: {
       ...form.core,
       name: pickText(form.core.name, suggestion.brand_name),
+      tagline: pickText(form.core.tagline, suggestion.brand_tagline),
       description: pickText(form.core.description, suggestion.brand_description),
       industryCategory: pickText(form.core.industryCategory, suggestion.industry_category),
       differentiators: pickText(form.core.differentiators, suggestion.differentiators),

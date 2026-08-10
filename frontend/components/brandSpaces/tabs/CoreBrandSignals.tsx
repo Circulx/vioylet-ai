@@ -39,7 +39,7 @@ const CoreBrandSignals = ({ brandId, form, setForm, onRemoveUpload }: BrandTabPr
         <FormSection title="Brand Details" className="bg-[#E9E9E966] p-2 px-6 pb-6">
             <FileUploadCollection
                 label="Upload Brand Logo"
-                acceptedFormats="SVG, PNG, JPG, PDF"
+                acceptedFormats="SVG, PNG, JPG, PDF, PPT, PPTX, JPEG, TXT, DOCX"
                 bgColor="bg-[#FFFFFF]"
                 items={logoItems}
                 onAdd={addLogos}
@@ -63,6 +63,14 @@ const CoreBrandSignals = ({ brandId, form, setForm, onRemoveUpload }: BrandTabPr
                         className="bg-section-input-field"
                         value={form.core.name}
                         onChange={(e) => updateField("name", e.target.value)}
+                    />
+                </FormField>
+                <FormField label="Tagline" required>
+                    <StyledInput
+                        placeholder="Brand tagline"
+                        className="bg-section-input-field"
+                        value={form.core.tagline}
+                        onChange={(e) => updateField("tagline", e.target.value)}
                     />
                 </FormField>
 

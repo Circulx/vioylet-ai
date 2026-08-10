@@ -255,6 +255,7 @@ export interface BrandResponse {
   tenant_id: UUID;
   name: string;
   slug: string;
+  tagline?: string | null;
   description: string;
   lifecycle_state: string;
   is_finalized: boolean;
@@ -391,6 +392,7 @@ export interface BrandOverviewResponse {
 
 export interface BrandAutofillResponse {
   brand_name?: string;
+  brand_tagline?: string;
   brand_description?: string;
   industry_category?: string;
   differentiators?: string;

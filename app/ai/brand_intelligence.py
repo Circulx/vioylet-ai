@@ -33,6 +33,7 @@ class BrandIntelligenceService:
         }
         identity_context = merged_sections.get("identity", {})
         brand_name = identity_context.get("brand_name") or brand_space.name
+        brand_tagline = identity_context.get("brand_tagline") or brand_space.tagline
         brand_description = identity_context.get("brand_description") or brand_space.description
         industry_category = identity_context.get("industry_category") or brand_space.industry_category
 
@@ -40,6 +41,7 @@ class BrandIntelligenceService:
         return {
             "brand_id": str(brand_space.id),
             "brand_name": brand_name,
+            "brand_tagline": brand_tagline,
             "brand_description": brand_description,
             "industry_category": industry_category,
             "identity": identity_context,

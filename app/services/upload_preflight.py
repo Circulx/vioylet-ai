@@ -134,19 +134,16 @@ class UploadPreflightService:
                     f"{filename} has {page_count} pages, which exceeds the PDF limit of {self.settings.upload_max_pdf_pages}."
                 )
         elif extension in {".pptx", ".ppt"}:
-            actual_extension = extension
-            if extension == ".ppt":
-                actual_extension = self._resolve_office_suffix(content, extension)
-                if actual_extension != ".pptx":
+            actual_extension = self._resolve_office_suffix(content, extension)
+            if actual_extension == ".pptx":
+                presentation = Presentation(BytesIO(content))
+                page_count = len(presentation.slides)
+                if page_count > self.settings.upload_max_presentation_pages:
                     raise UploadValidationError(
-                        f"{filename} is a legacy PowerPoint file. Please upload PPTX instead."
+                        f"{filename} has {page_count} slides, which exceeds the presentation limit of {self.settings.upload_max_presentation_pages}."
                     )
-            presentation = Presentation(BytesIO(content))
-            page_count = len(presentation.slides)
-            if page_count > self.settings.upload_max_presentation_pages:
-                raise UploadValidationError(
-                    f"{filename} has {page_count} slides, which exceeds the presentation limit of {self.settings.upload_max_presentation_pages}."
-                )
+            else:
+                hints["legacy_presentation"] = True
             hints["resolved_extension"] = actual_extension
         elif extension in {".docx", ".doc"}:
             actual_extension = extension

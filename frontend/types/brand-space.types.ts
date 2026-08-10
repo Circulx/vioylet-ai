@@ -37,6 +37,7 @@ export interface CoreBrandFields {
   logo: BrandUploadItem | null;
   logos: BrandUploadItem[];
   name: string;
+  tagline: string;
   description: string;
   industryCategory: string;
   differentiators: string;
@@ -187,6 +188,7 @@ export const emptyBrandFormState: BrandFormState = {
     logo: null,
     logos: [],
     name: "",
+    tagline: "",
     description: "",
     industryCategory: "",
     differentiators: "",

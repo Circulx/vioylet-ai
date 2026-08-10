@@ -187,6 +187,7 @@ class BrandSummaryMemoryService:
         overall_summary = cls._clean_text(
             (
                 f"Brand summary for {getattr(brand, 'name', '')}. "
+                f"Tagline: {getattr(brand, 'tagline', None) or identity.get('brand_tagline') or identity_payload.get('brand_tagline') or ''}. "
                 f"Description: {getattr(brand, 'description', '')}. "
                 f"Industry: {getattr(brand, 'industry_category', None) or identity_payload.get('industry_category') or ''}. "
                 f"Sub-industry: {getattr(brand, 'sub_industry', None) or identity_payload.get('sub_industry') or ''}. "

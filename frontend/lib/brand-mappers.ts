@@ -278,6 +278,7 @@ export function mapBrandOverviewToForm(overview: BrandOverviewResponse): BrandFo
     logo: null,
     logos: [],
     name: String(identity.brand_name || overview.brand.name || ""),
+    tagline: String(identity.brand_tagline || overview.brand.tagline || ""),
     description: String(identity.brand_description || overview.brand.description || ""),
     industryCategory: String(identity.industry_category || ""),
     differentiators: toTextarea(identity.key_differentiators),
@@ -560,6 +561,7 @@ export function mapBrandFormToCreateRequest(form: BrandFormState, uploads?: Uplo
   return {
     identity: {
       brand_name: form.core.name || "",
+      brand_tagline: form.core.tagline || "",
       brand_description: form.core.description || "",
       industry_category: normalized.industryCategory || undefined,
       target_geography: {
@@ -609,6 +611,7 @@ export function mapBrandSections(form: BrandFormState, uploads?: UploadedBrandAs
       section_code: "identity",
       payload: {
         brand_name: form.core.name || "",
+        brand_tagline: form.core.tagline || "",
         brand_description: form.core.description || "",
         industry_category: normalized.industryCategory || "",
         key_differentiators: splitList(form.core.differentiators),

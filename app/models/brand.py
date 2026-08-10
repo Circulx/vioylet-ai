@@ -22,6 +22,7 @@ class BrandSpace(UUIDPrimaryKeyMixin, TenantScopedMixin, TimestampMixin, SoftDel
     data_version: Mapped[int] = mapped_column(Integer, default=1, server_default="1", nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     slug: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    tagline: Mapped[str | None] = mapped_column(Text, nullable=True)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     industry_category: Mapped[str | None] = mapped_column(String(255), nullable=True)
     sub_industry: Mapped[str | None] = mapped_column(String(255), nullable=True)

@@ -13,6 +13,7 @@ from app.schemas.common import APIModel
 class BrandIdentityPayload(APIModel):
     # Shared schema for brand IDentity; it keeps route payloads, service data, and serialized responses aligned.
     brand_name: str
+    brand_tagline: str | None = None
     brand_description: str
     industry_category: str | None = None
     sub_industry: str | None = None
@@ -238,6 +239,7 @@ class BrandResponse(APIModel):
     tenant_id: UUID
     name: str
     slug: str
+    tagline: str | None = None
     description: str
     lifecycle_state: str
     is_finalized: bool
@@ -290,6 +292,7 @@ class BrandAutofillResponse(APIModel):
     """Suggested Brand Space form values extracted from vector knowledge."""
 
     brand_name: str = ""
+    brand_tagline: str = ""
     brand_description: str = ""
     industry_category: str = ""
     differentiators: str = ""

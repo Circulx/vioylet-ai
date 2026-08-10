@@ -17,6 +17,7 @@ class BrandAutofillSuggestion(BaseModel):
     """Flat suggestion payload mapped onto BrandFormState on the frontend."""
 
     brand_name: str = ""
+    brand_tagline: str = ""
     brand_description: str = ""
     industry_category: str = ""
     differentiators: str = ""
@@ -105,6 +106,7 @@ Return ONLY a JSON object matching the schema. Infer sensible marketing defaults
 Rules:
 - Prefer facts from the documents over generic marketing fluff.
 - core_tone_attributes: 3-6 short adjectives (e.g. Professional, Trustworthy, Approachable).
+- brand_tagline: the official or best-supported tagline if one appears in the documents; otherwise leave blank.
 - selected_audiences: 1-4 short audience labels (e.g. Retail Investors, HNIs, CXOs).
 - logo_placements: choose from Top-left, Top-right, Bottom-left, Bottom-right, Center (pick 1-2).
 - selected_rules: 2-5 short rule labels the brand should follow.

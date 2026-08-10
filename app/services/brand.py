@@ -142,6 +142,7 @@ class BrandSpaceService:
             tenant_id=tenant_id,
             name=payload.identity.brand_name,
             slug=slug,
+            tagline=payload.identity.brand_tagline,
             description=payload.identity.brand_description,
             industry_category=payload.identity.industry_category,
             sub_industry=payload.identity.sub_industry,
@@ -310,6 +311,7 @@ class BrandSpaceService:
         # fields.
         if payload.section_code == "identity":
             brand.name = payload.payload.get("brand_name", brand.name)
+            brand.tagline = payload.payload.get("brand_tagline", brand.tagline)
             brand.description = payload.payload.get("brand_description", brand.description)
             brand.industry_category = payload.payload.get("industry_category")
             brand.sub_industry = payload.payload.get("sub_industry")
@@ -607,6 +609,10 @@ class BrandSpaceService:
         identity_section = next((section for section in sections if section.section_code == "identity"), None)
         if not identity_section or not identity_section.payload.get("brand_name"):
             raise LifecycleError("Brand Space cannot be published without a brand identity.")
+        if not str(identity_section.payload.get("brand_tagline") or "").strip():
+            raise LifecycleError("Brand Space cannot be published without a brand tagline.")
+        if not str(identity_section.payload.get("brand_description") or "").strip():
+            raise LifecycleError("Brand Space cannot be published without a brand description.")
         brand = await self.refresh_context(brand_space_id)
         brand.lifecycle_state = BrandSpaceLifecycle.ACTIVE
         brand.is_finalized = True

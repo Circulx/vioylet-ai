@@ -655,17 +655,26 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
             )
         user = (
             user
-            + "\n\nAPPROVED CREATIVE BLUEPRINT (bake this EXACT text into the image — no Pillow overlay):\n"
-            + f"purpose={blueprint.purpose}\nlayout_type={layout_type}\nlayout={blueprint.layout_archetype}\n"
-            + f"text_density={blueprint.text_density}\nhierarchy={blueprint.visual_hierarchy}\n"
-            + f"hook={blueprint.hook}\nstory_flow={story}\n"
-            + f"headline={headline}\nsupporting_line={supporting}\nbody={body}\ncta={cta}\n"
-            + f"problem={problem_statement}\nsolution={solution_statement}\n"
-            + f"sections={sections}\nstats={stat_highlights}\nproof={proof_points}\n"
-            + f"process_steps={process_steps}\nquote={customer_quote}\nquote_by={customer_name}\n"
-            + f"source_footer={source_footer}\nsources={sources_note}\n"
+            + "\n\n════════════════════════════════════════\n"
+            + "USER-APPROVED CREATIVE BLUEPRINT — LOCK THIS EXACTLY\n"
+            + "════════════════════════════════════════\n"
+            + "The user reviewed and approved these EXACT strings. Render them word-for-word in the image.\n"
+            + "DO NOT paraphrase, summarise, or replace ANY approved text with your own wording.\n"
+            + "DO NOT change the topic, facts, or messaging from what is listed below.\n"
+            + f"HEADLINE (render EXACTLY): \"{headline}\"\n"
+            + (f"SUPPORTING LINE (render EXACTLY): \"{supporting}\"\n" if supporting else "")
+            + (f"BODY TEXT (render EXACTLY): \"{body}\"\n" if body else "")
+            + (f"CTA (render EXACTLY): \"{cta}\"\n" if cta else "")
+            + (f"HOOK: \"{blueprint.hook}\"\n" if blueprint.hook else "")
+            + (f"STORY FLOW: {story}\n" if story else "")
+            + (f"SECTIONS (render these section labels/facts): {sections}\n" if sections else "")
+            + (f"PROOF POINTS: {proof_points}\n" if proof_points else "")
+            + (f"STAT HIGHLIGHTS: {stat_highlights}\n" if stat_highlights else "")
+            + (f"SOURCE FOOTER: \"{source_footer}\"\n" if source_footer else "")
+            + f"layout_type={layout_type} layout={blueprint.layout_archetype} purpose={blueprint.purpose}\n"
+            + "════════════════════════════════════════\n"
             + "CRITICAL: Generate a FINISHED creative. Render the approved strings as sharp typography in the image. "
-            "Do not leave empty shells. Do not invent alternate copy. "
+            "Do not leave empty shells. Do not invent alternate copy. The approved headline/body/sections are FINAL — do not rewrite them. "
             + (
                 "REQUIRED: navy #003975 + orange #FFA400 accents (orange text+accents >=~2% of image); "
                 if is_jiraaf_brand
@@ -720,6 +729,7 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
         expander_system = _prompt_builder.build_expander_system(
             dominant_visual_system=output.dominant_visual_system,
             fmt=fmt,
+            brand_name=brand_name,
         )
         expander_user = _prompt_builder.build_expander_user(
             brand_name=brand_intelligence.brand_core.brand_name,

@@ -444,11 +444,18 @@ Think like a world-class fintech art director. Plan a scannable educational layo
 Return ONLY raw JSON."""
 
     def build_expander_system(
-        self, dominant_visual_system: str = "generated_image", fmt: str = "static"
+        self, dominant_visual_system: str = "generated_image", fmt: str = "static", **kwargs: Any
     ) -> str:
+        brand_name = str(kwargs.get("brand_name") or "")
+        brand_style = (
+            "Match the locked Jiraaf fintech sample design system."
+            if _is_jiraaf_brand(brand_name)
+            else f"Use ONLY {brand_name or 'this brand'}'s visual identity — never Jiraaf fintech DNA."
+        )
         return (
-            "You are a senior fintech Art Director writing the FINAL image-generation prompt for gpt-image-1. "
-            "Match the locked sample design system for the requested format. "
+            f"You are a senior Art Director writing the FINAL image-generation prompt for gpt-image-1. "
+            f"{brand_style} "
+            "CRITICAL: The approved headline, body, sections and CTA text are FINAL — reproduce them WORD-FOR-WORD in the image prompt. Do NOT rephrase, summarise or replace them. "
             "Output ONLY the expanded prompt text — no preamble, no markdown headers."
         )
 

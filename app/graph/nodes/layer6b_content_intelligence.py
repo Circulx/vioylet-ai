@@ -2,8 +2,8 @@ from __future__ import annotations
 
 """Layer 6b — Content Intelligence spine.
 
-Intent decompose → research/verify → insight → narrative → format architecture.
-Runs after L5/L6 and before L7 copy.
+Understand → Retrieve → Verify → Prioritize → Interpret → Reason → Insight.
+Runs after L4 and BEFORE L5/L6 so Conceptualize/Plan are insight-led.
 """
 
 from app.core.logging import get_logger

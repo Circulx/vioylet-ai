@@ -18,6 +18,7 @@ DIVERSITY_THRESHOLD = 0.5
 async def layer5_concept_engine(state: ViolytState) -> dict:
     strategic_reasoning = state.get("strategic_reasoning")
     brand_intelligence = state.get("brand_intelligence")
+    content_intelligence = state.get("content_intelligence")
 
     if not strategic_reasoning or not brand_intelligence:
         logger.error("concept_engine.missing_inputs")
@@ -27,7 +28,25 @@ async def layer5_concept_engine(state: ViolytState) -> dict:
     user = _prompt_builder.build_user(
         strategic_reasoning=strategic_reasoning,
         brand_intelligence=brand_intelligence,
+        content_intelligence=content_intelligence,
     )
+    # Insight-led conceptualize lock
+    if content_intelligence:
+        from app.services.content_intelligence import content_intelligence_prompt_block
+
+        intel = content_intelligence_prompt_block(content_intelligence)
+        if intel:
+            user = (
+                user
+                + "\n\n"
+                + intel
+                + "\nCONCEPTUALIZE LOCK: Every concept must express the PRIMARY INSIGHT. "
+                "Do not invent a generic 'more X is happening' angle when an insight exists. "
+                "Prefer curiosity / contrast / reversal that makes the insight interesting for THIS brand.\n"
+            )
+    repair_instructions = state.get("repair_instructions") or []
+    if repair_instructions:
+        user = user + "\n\nREPAIR INSTRUCTIONS:\n" + "\n".join(f"- {i}" for i in repair_instructions)
 
     service = _router.get_service("l5_concept_engine")
 

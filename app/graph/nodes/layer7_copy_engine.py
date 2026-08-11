@@ -122,6 +122,9 @@ async def layer7_copy_engine(state: ViolytState) -> dict:
             "Prefer APPROVED EVIDENCE statistics. Do not invent numbers. "
             "Answer the CORE QUESTION (especially WHY when required).\n"
         )
+    repair_instructions = state.get("repair_instructions") or []
+    if repair_instructions:
+        user = user + "\n\nREPAIR INSTRUCTIONS:\n" + "\n".join(f"- {i}" for i in repair_instructions)
 
     service = _router.get_service("l7_copy_engine")
 

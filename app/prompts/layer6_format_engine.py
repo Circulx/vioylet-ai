@@ -57,7 +57,7 @@ OUTPUT FORMAT — return ONLY this JSON, no preamble, no markdown:
         format: str,
         **kwargs: Any,
     ) -> str:
-        return f"""\
+        base = f"""\
 STRATEGIC DIRECTION:
 Problem: {strategic_reasoning.strategic_problem}
 Brand truth: {strategic_reasoning.brand_truth}
@@ -75,6 +75,21 @@ PLATFORM: {platform}
 FORMAT: {format}
 
 Build the format-native content structure with a complete slide_plan. Keep all text fields under 25 words. Return ONLY the JSON object."""
+        ci = kwargs.get("content_intelligence")
+        if ci is not None:
+            primary = getattr(ci, "primary_insight", None) or getattr(ci, "insight_thesis", "") or ""
+            fa = getattr(ci, "format_architecture", None)
+            hero = getattr(fa, "hero_statistic", "") if fa else ""
+            core = getattr(fa, "core_insight", "") if fa else ""
+            if primary or hero:
+                base += f"""
+
+PRIMARY INSIGHT: {primary}
+HERO STATISTIC: {hero}
+CORE INSIGHT: {core}
+Plan hierarchy around the hero statistic; supporting evidence secondary.
+"""
+        return base
 
     @staticmethod
     def _format_specific_instructions(fmt: str) -> str:

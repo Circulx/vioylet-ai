@@ -2,7 +2,7 @@ from app.graph.state import ViolytState
 
 
 def route_evaluation(state: ViolytState) -> str:
-    """Route from L10 evaluation to renderer (pass) or repair (fail)."""
+    """Route from L10 evaluation to pass (END/renderer) or repair."""
     evaluation = state.get("evaluation")
 
     if state.get("force_repair"):
@@ -35,6 +35,21 @@ def route_evaluation(state: ViolytState) -> str:
 
 
 def route_repair(state: ViolytState) -> str:
-    """Route from repair layer back to concept_engine (retry) or END (fail)."""
+    """Route repair to the failed layer (max 2), else fail/deliver."""
     repair_count = state.get("repair_count", 0)
-    return "retry" if repair_count < 2 else "fail"
+    if repair_count >= 2:
+        return "fail"
+
+    target = (state.get("repair_target") or "l5").strip().lower()
+    mapping = {
+        "l6b": "retry_l6b",
+        "content_intelligence": "retry_l6b",
+        "insight": "retry_l6b",
+        "l5": "retry_l5",
+        "concept": "retry_l5",
+        "l7": "retry_l7",
+        "copy": "retry_l7",
+        "l7c": "retry_l7c",
+        "blueprint": "retry_l7c",
+    }
+    return mapping.get(target, "retry_l5")

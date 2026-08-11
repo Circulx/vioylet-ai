@@ -22,7 +22,7 @@ from app.graph.routing import route_evaluation, route_repair
 
 
 def _add_shared_upstream(g: StateGraph) -> None:
-    """L1 → L7c shared chain used by Phase 1 and the full graph."""
+    """L1 → L7c shared chain: insight-first spine then conceptualize/plan/generate."""
     g.add_node("l1_brand_retrieval", layer1_retrieval)
     g.add_node("l2_brand_intelligence", layer2_brand_intelligence)
     g.add_node("l3_brief_interpreter", layer3_brief_interpreter)
@@ -38,21 +38,40 @@ def _add_shared_upstream(g: StateGraph) -> None:
     g.add_edge("l1_brand_retrieval", "l2_brand_intelligence")
     g.add_edge("l2_brand_intelligence", "l3_brief_interpreter")
     g.add_edge("l3_brief_interpreter", "l4_strategic_reasoning")
-    g.add_edge("l4_strategic_reasoning", "l5_concept_engine")
-    g.add_edge("l4_strategic_reasoning", "l6_format_engine")
-    # Content intelligence waits for both concept + format, then drives copy
-    g.add_edge("l5_concept_engine", "l6b_content_intelligence")
-    g.add_edge("l6_format_engine", "l6b_content_intelligence")
-    g.add_edge("l6b_content_intelligence", "l7_copy_engine")
+    # Intelligence before concept/format so Conceptualize is insight-led
+    g.add_edge("l4_strategic_reasoning", "l6b_content_intelligence")
+    g.add_edge("l6b_content_intelligence", "l5_concept_engine")
+    g.add_edge("l6b_content_intelligence", "l6_format_engine")
+    g.add_edge("l5_concept_engine", "l7_copy_engine")
+    g.add_edge("l6_format_engine", "l7_copy_engine")
     g.add_edge("l7_copy_engine", "l7b_content_validator")
     g.add_edge("l7b_content_validator", "l7c_content_prep")
 
 
 def build_phase1_graph() -> StateGraph:
-    """Phase 1: L1 → L7c Creative Blueprint, then pause for approval."""
+    """Phase 1: L1 → L7c → Evaluate → (pass | targeted repair ≤2) → blueprint approval."""
     g = StateGraph(ViolytState)
     _add_shared_upstream(g)
-    g.add_edge("l7c_content_prep", END)
+    g.add_node("l10_evaluation", layer10_evaluation)
+    g.add_node("repair", repair_layer)
+
+    g.add_edge("l7c_content_prep", "l10_evaluation")
+    g.add_conditional_edges(
+        "l10_evaluation",
+        route_evaluation,
+        {"pass": END, "repair": "repair"},
+    )
+    g.add_conditional_edges(
+        "repair",
+        route_repair,
+        {
+            "retry_l6b": "l6b_content_intelligence",
+            "retry_l5": "l5_concept_engine",
+            "retry_l7": "l7_copy_engine",
+            "retry_l7c": "l7c_content_prep",
+            "fail": END,
+        },
+    )
     return g
 
 
@@ -91,7 +110,13 @@ def build_violyt_graph() -> StateGraph:
     g.add_conditional_edges(
         "repair",
         route_repair,
-        {"retry": "l5_concept_engine", "fail": END},
+        {
+            "retry_l6b": "l6b_content_intelligence",
+            "retry_l5": "l5_concept_engine",
+            "retry_l7": "l7_copy_engine",
+            "retry_l7c": "l7c_content_prep",
+            "fail": END,
+        },
     )
     g.add_edge("renderer", END)
     return g

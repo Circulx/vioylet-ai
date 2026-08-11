@@ -98,7 +98,7 @@ OUTPUT FORMAT — return ONLY this JSON, no preamble, no markdown:
         avoids = ", ".join(brand_intelligence.creative_territory.get("avoids", [])[:4])
         guardrails = "; ".join(brand_intelligence.guardrails[:4])
 
-        return f"""\
+        base = f"""\
 STRATEGIC DIRECTION:
 Problem: {strategic_reasoning.strategic_problem}
 Brand truth: {strategic_reasoning.brand_truth}
@@ -120,4 +120,19 @@ Creative fits: {fits}
 Creative avoids: {avoids}
 Guardrails: {guardrails}
 
-Generate exactly 3 distinct concepts. Keep ALL text fields under the word limits. Return ONLY the JSON object."""
+Generate exactly 3 distinct concepts. Keep ALL text fields under the word limits. Return ONLY the JSON object.
+Concepts must express the PRIMARY INSIGHT when Content Intelligence is present — not a generic fact dump."""
+        ci = kwargs.get("content_intelligence")
+        if ci is not None:
+            primary = getattr(ci, "primary_insight", None) or getattr(ci, "insight_thesis", "") or ""
+            thesis = getattr(ci, "insight_thesis", "") or ""
+            reasoning = getattr(ci, "reasoning_map", "") or ""
+            if primary or thesis:
+                base += f"""
+
+PRIMARY INSIGHT TO EXPRESS: {primary or thesis}
+INSIGHT THESIS: {thesis}
+REASONING (use for concept logic, not as copy):
+{reasoning[:800]}
+"""
+        return base

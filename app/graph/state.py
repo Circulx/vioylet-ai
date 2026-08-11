@@ -51,6 +51,7 @@ class ViolytState(TypedDict):
     # ── Control fields ─────────────────────────────────────────
     repair_count: NotRequired[int]
     repair_instructions: NotRequired[Optional[List[str]]]
+    repair_target: NotRequired[Optional[str]]  # l6b | l5 | l7 | l7c
     force_repair: NotRequired[bool]
     final_output: NotRequired[Optional[dict]]
     retrieval_log: NotRequired[Optional[dict]]

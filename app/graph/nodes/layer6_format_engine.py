@@ -15,6 +15,7 @@ _prompt_builder = FormatEnginePromptBuilder()
 async def layer6_format_engine(state: ViolytState) -> dict:
     strategic_reasoning = state.get("strategic_reasoning")
     brand_intelligence = state.get("brand_intelligence")
+    content_intelligence = state.get("content_intelligence")
     fmt = state.get("format", "static")
     platform = state.get("platform", "linkedin")
 
@@ -28,7 +29,23 @@ async def layer6_format_engine(state: ViolytState) -> dict:
         brand_intelligence=brand_intelligence,
         platform=platform,
         format=fmt,
+        content_intelligence=content_intelligence,
     )
+    if content_intelligence:
+        from app.services.content_intelligence import content_intelligence_prompt_block
+
+        intel = content_intelligence_prompt_block(content_intelligence)
+        fa = getattr(content_intelligence, "format_architecture", None)
+        if intel:
+            user = (
+                user
+                + "\n\n"
+                + intel
+                + "\nPLAN LOCK: Structure the format around the PRIMARY INSIGHT and FORMAT ARCHITECTURE. "
+                "Hero statistic must dominate hierarchy. Supporting data secondary.\n"
+            )
+        if fa and getattr(fa, "hero_statistic", None):
+            user = user + f"\nHero statistic to feature: {fa.hero_statistic}\n"
 
     service = _router.get_service("l6_format_engine")
     output, metadata = await service.complete_structured(

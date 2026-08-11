@@ -1352,6 +1352,196 @@ def editorial_qa_repair_instructions(scores: dict[str, int], user_prompt: str = 
     return "\n".join(lines)
 
 
+def evaluate_blueprint_gate(
+    blueprint: CreativeBlueprint,
+    *,
+    user_prompt: str = "",
+    content_intelligence: Any | None = None,
+    brand_intelligence: Any | None = None,
+) -> tuple[Any, str | None]:
+    """Phase-1 Evaluate gate → EvaluationOutput + optional repair_target.
+
+    Hard failures never pass. Soft failures set targeted repair_target.
+    Returns (EvaluationOutput, repair_target|None).
+    """
+    from app.graph.models.layer10_models import EvaluationOutput, RepairInstruction
+
+    scores = score_blueprint_editorial_qa(
+        blueprint, user_prompt=user_prompt, content_intelligence=content_intelligence
+    )
+    text_blob = " ".join(
+        [
+            blueprint.headline or "",
+            blueprint.supporting_line or "",
+            blueprint.body or "",
+            " ".join(s.section_label or "" for s in (blueprint.sections or [])),
+            " ".join(s.body or "" for s in (blueprint.sections or [])),
+        ]
+    )
+    prompt_l = (user_prompt or "").casefold()
+    has_adan = bool(re.search(r"\badan\b", text_blob, re.I))
+    dangling = any(
+        re.search(r"\b(with|and|the|hit|-)$", (s.section_label or s.body or "").strip(), re.I)
+        for s in (blueprint.sections or [])
+    )
+    number_count = len(re.findall(r"\d", text_blob))
+    must_why = bool(re.search(r"\bwhy\b", prompt_l))
+    primary = ""
+    approved = 0
+    if content_intelligence:
+        primary = (
+            getattr(content_intelligence, "primary_insight", "")
+            or getattr(content_intelligence, "insight_thesis", "")
+            or ""
+        )
+        approved = sum(
+            1
+            for e in (content_intelligence.evidence or [])
+            if getattr(e, "approved_for_creative", False)
+        )
+
+    # Dimension scores 0-1
+    brief_alignment = 0.9
+    if must_why and scores.get("answers_why", 0) < 6:
+        brief_alignment = 0.55
+    factual = min(1.0, 0.4 + number_count * 0.08 + approved * 0.05)
+    if has_adan:
+        factual = min(factual, 0.4)
+    insight_q = 0.85 if primary and any(
+        tok in text_blob.casefold()
+        for tok in ("economic", "connect", "regional", "hub", "because", "strateg")
+    ) else (0.7 if primary else 0.5)
+    brand = 0.82
+    if brand_intelligence and getattr(brand_intelligence, "brand_core", None):
+        bname = (brand_intelligence.brand_core.brand_name or "").strip()
+        if bname and bname.casefold() not in text_blob.casefold():
+            # Logo/brand may be visual-only — soft penalty only
+            brand = 0.78
+    # Distinctiveness: generic headline penalty
+    distinct = 0.8
+    if re.search(r"^(india is building|more airports|airport boom)\b", (blueprint.headline or ""), re.I):
+        distinct = 0.55
+    narrative = min(1.0, scores.get("narrative_coherent", 5) / 10)
+    format_fit = 0.85 if (blueprint.sections and len(blueprint.sections) >= 3) or blueprint.slides else 0.6
+    visual = 0.3 if (has_adan or dangling) else min(1.0, scores.get("copy_complete", 5) / 10)
+    originality = distinct
+
+    repairs: list[RepairInstruction] = []
+    repair_target: str | None = None
+
+    # Hard failures
+    if has_adan:
+        repairs.append(
+            RepairInstruction(
+                target_layer="l7c_content_prep",
+                failure_reason="Misspelling ADAN (must be UDAN)",
+                repair_action="Correct all ADAN → UDAN; regenerate affected copy",
+                priority="critical",
+            )
+        )
+        repair_target = "l7c"
+    if dangling:
+        repairs.append(
+            RepairInstruction(
+                target_layer="l7c_content_prep",
+                failure_reason="Truncated / incomplete sentence in blueprint",
+                repair_action="Rewrite sections as complete sentences; never end on with/and/the",
+                priority="critical",
+            )
+        )
+        repair_target = "l7c"
+    if must_why and scores.get("answers_why", 0) < 6:
+        repairs.append(
+            RepairInstruction(
+                target_layer="l6b_content_intelligence",
+                failure_reason="Does not answer WHY from the user brief",
+                repair_action="Rebuild insight + ranked evidence so narrative answers economic rationale",
+                priority="critical",
+            )
+        )
+        repair_target = repair_target or "l6b"
+    if number_count < 2 and (must_why or "data" in prompt_l):
+        repairs.append(
+            RepairInstruction(
+                target_layer="l6b_content_intelligence",
+                failure_reason="Insufficient quantitative evidence",
+                repair_action="Re-retrieve/verify must_know statistics before creative",
+                priority="critical",
+            )
+        )
+        repair_target = repair_target or "l6b"
+
+    # Soft failures
+    if insight_q < 0.75 and not repairs:
+        repairs.append(
+            RepairInstruction(
+                target_layer="l5_concept_engine",
+                failure_reason="Weak or generic insight expression",
+                repair_action="Conceptualize around PRIMARY INSIGHT with brand-specific tension",
+                priority="major",
+            )
+        )
+        repair_target = "l5"
+    elif distinct < 0.7 and not repairs:
+        repairs.append(
+            RepairInstruction(
+                target_layer="l5_concept_engine",
+                failure_reason="Generic headline/angle interchangeable across brands",
+                repair_action="Create a sharper brand-specific communication angle",
+                priority="major",
+            )
+        )
+        repair_target = "l5"
+    elif scores.get("has_real_data", 0) < 6 and not repairs:
+        repairs.append(
+            RepairInstruction(
+                target_layer="l7_copy_engine",
+                failure_reason="Copy lacks real data density",
+                repair_action="Rewrite using must_know/useful ranked evidence only",
+                priority="major",
+            )
+        )
+        repair_target = "l7"
+
+    hard_fail = has_adan or dangling or (must_why and scores.get("answers_why", 0) < 6)
+    editorial_pass = blueprint_passes_editorial_qa(scores)
+    overall_pass = (
+        editorial_pass
+        and not hard_fail
+        and not repairs
+        and factual >= 0.75
+        and brief_alignment >= 0.75
+        and visual >= 0.75
+    )
+    # If only soft repairs and editorial already passed after L7c loop, allow pass
+    if editorial_pass and not hard_fail and all(r.priority != "critical" for r in repairs):
+        # Soft: still repair once if insight/generic weak
+        overall_pass = not repairs
+
+    if overall_pass:
+        repairs = []
+        repair_target = None
+
+    evaluation = EvaluationOutput(
+        brand_alignment_score=round(brand, 2),
+        prompt_match_score=round(brief_alignment, 2),
+        audience_relevance_score=round(max(0.7, insight_q), 2),
+        originality_score=round(originality, 2),
+        visual_quality_score=round(visual, 2),
+        format_fit_score=round(format_fit, 2),
+        brand_uniqueness_score=round(distinct, 2),
+        strategic_quality_score=round(insight_q, 2),
+        contamination_risk="high" if has_adan else "low",
+        overall_pass=overall_pass,
+        required_repairs=repairs,
+        evaluator_reasoning=(
+            f"editorial={scores}; factual={factual:.2f}; insight={insight_q:.2f}; "
+            f"hard_fail={hard_fail}; target={repair_target}"
+        ),
+    )
+    return evaluation, repair_target
+
+
 def enforce_intelligence_on_blueprint(
     blueprint: CreativeBlueprint,
     *,

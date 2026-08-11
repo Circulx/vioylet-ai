@@ -72,11 +72,11 @@ class LiveResearchService:
         "ten": 10,
     }
     CURRENT_SIGNAL_PATTERN = re.compile(
-        r"\b(?:latest|current|today|recent|as of|202[4-9]|repo rate|policy rate|market size|fdi|inflow|cagr|xirr|returns?)\b",
+        r"\b(?:latest|current|today|recent|as of|202[4-9]|repo rate|policy rate|market size|fdi|inflow|cagr|xirr|returns?|real data|data points?|statistics?|stats|numbers?|figures?|facts?|how many|growth|crore|lakh|billion|million|percent|%)\b",
         re.IGNORECASE,
     )
     DATA_SURFACE_SIGNAL_PATTERN = re.compile(
-        r"\b(rank(?:ed|ing)?|table|scorecard|matrix|compar(?:e|ing|ison)|versus|vs\.?|list|top)\b",
+        r"\b(rank(?:ed|ing)?|table|scorecard|matrix|compar(?:e|ing|ison)|versus|vs\.?|list|top|why|how|infographic|trends?|report|analysis|sector|industry|scheme|policy|government|invest(?:ment|ing)?|build(?:ing)?|expand(?:ing)?|grow(?:ing|th)?)\b",
         re.IGNORECASE,
     )
     URL_PATTERN = re.compile(r"https?://[^\s)>\]]+", re.IGNORECASE)
@@ -451,8 +451,16 @@ class LiveResearchService:
         # orchestration instead of low-level shaping.
         if isinstance(node, dict):
             source = None
-            source_blob = node.get("url_citation")
-            if isinstance(source_blob, dict):
+            # New OpenAI Responses API: annotations[] with type="url_citation"
+            if node.get("type") == "url_citation" and node.get("url"):
+                source = {
+                    "url": cls._normalize_text(node.get("url"), limit=400),
+                    "title": cls._normalize_text(node.get("title"), limit=180),
+                    "snippet": cls._normalize_text(node.get("text") or node.get("snippet"), limit=320),
+                }
+            # Legacy format: url_citation as a nested dict
+            elif isinstance(node.get("url_citation"), dict):
+                source_blob = node["url_citation"]
                 source = {
                     "url": cls._normalize_text(source_blob.get("url"), limit=400),
                     "title": cls._normalize_text(source_blob.get("title"), limit=180),
@@ -507,7 +515,7 @@ class LiveResearchService:
             input=query,
             tools=[
                 {
-                    "type": "web_search",
+                    "type": "web_search_preview",
                     "search_context_size": self.settings.live_research_search_context_size,
                 }
             ],
@@ -520,10 +528,47 @@ class LiveResearchService:
         if usage:
             usage["query"] = self._normalize_text(query, limit=180)
             self.last_usage_events.append(usage)
-        results: list[dict[str, str]] = []
+
+        # Extract the synthesized answer text from the response (web_search_preview returns
+        # a synthesized answer with inline citations — use this directly as a source document
+        # so we don't need to re-fetch pages that are often behind paywalls).
         payload: Any = response.model_dump() if hasattr(response, "model_dump") else response
-        self._collect_web_search_sources(payload, results)
-        return self._normalize_search_results(results)
+        synthesized_text = ""
+        citation_results: list[dict[str, str]] = []
+        for item in (payload.get("output") or []):
+            if not isinstance(item, dict):
+                continue
+            for content_block in (item.get("content") or []):
+                if not isinstance(content_block, dict):
+                    continue
+                if content_block.get("type") == "output_text":
+                    synthesized_text += content_block.get("text") or ""
+                    for ann in (content_block.get("annotations") or []):
+                        if isinstance(ann, dict) and ann.get("type") == "url_citation":
+                            url = self._normalize_text(ann.get("url"), limit=400)
+                            title = self._normalize_text(ann.get("title"), limit=180)
+                            if url:
+                                citation_results.append({
+                                    "url": url,
+                                    "title": title or url,
+                                    "snippet": self._normalize_text(synthesized_text, limit=600),
+                                })
+
+        # If we extracted citation results, inject the synthesized text as a first-class source
+        if synthesized_text:
+            # Return a synthetic "page" that contains the AI-synthesized answer
+            # so the fact-extraction step gets the full answer without re-fetching URLs
+            synthetic_source = {
+                "url": f"openai://web_search/{query[:60].replace(' ', '_')}",
+                "title": f"Web Search: {query[:80]}",
+                "snippet": self._normalize_text(synthesized_text, limit=1200),
+            }
+            return [synthetic_source] + self._normalize_search_results(citation_results)
+
+        # Fallback: collect any url citations from the full payload tree
+        fallback: list[dict[str, str]] = []
+        self._collect_web_search_sources(payload, fallback)
+        return self._normalize_search_results(fallback)
 
     async def _openai_web_search(self, query: str) -> list[dict[str, str]]:
         # Internal helper for openai web search; it keeps the public service method focused on orchestration
@@ -721,6 +766,9 @@ class LiveResearchService:
                 for url in discovered_urls[
                     : max(4, self.settings.live_research_max_results_per_query * self.settings.live_research_max_queries)
                 ]:
+                    # Skip synthetic OpenAI search result URLs — their content is already in the snippet
+                    if url.startswith("openai://"):
+                        continue
                     fetched = await self._fetch_url_text(client, url)
                     if fetched:
                         raw_sources.append(fetched)

@@ -1,372 +1,206 @@
 from __future__ import annotations
 
+"""Build AI image prompts for INFOGRAPHIC EXPLAIN / paragraph-information layouts ONLY.
 
-
-"""Build AI image prompts for infographic EXPLAIN (polymer sample DNA).
-
-
-
-AI-only - no Pillow text overlay. Copy is hard-locked, spelling-sanitized, and
-
-kept SHORT. Visual quality matches oil-bar ranking sample (text colours + HD icons).
-
+LOCKED premium LinkedIn editorial DNA (Apple + Stripe + Notion + McKinsey + Bloomberg).
+Do NOT use for ranking / top-N list boards — those stay on ranking_board.py.
 """
 
-
-
 import re
-
 from typing import Any
-
-
-
-from app.prompts.brand_copy_tone import (
-
-    EXPLAIN_COLOR_VIBRANCY_LOCK,
-
-    ICON_STYLE_LOCK,
-
-    INFOGRAPHIC_EXPLAIN_SPELLING_LOCK,
-
-    JIRAAF_BG,
-
-    JIRAAF_BODY_GRAY,
-
-    JIRAAF_INSIGHT_CREAM,
-
-    JIRAAF_NAVY,
-
-    JIRAAF_ORANGE,
-
-    JIRAAF_PARAGRAPH_INSIGHT_LOCK,
-
-    JIRAAF_SAMPLE_VISUAL_DNA,
-
-)
 
 from app.services.image_generation.ranking_board import sanitize_ranking_text
 
-
+# Explain-only palette (does not change ranking board colours)
+EXPLAIN_BG = "#87CEFA"
+EXPLAIN_HEADING = "#033B5E"
+EXPLAIN_ORANGE = "#F7931A"
+EXPLAIN_SECONDARY_BLUE = "#2D8CFF"
+EXPLAIN_CARD = "#F8FBFF"
+EXPLAIN_BORDER = "#DCEAF5"
+EXPLAIN_BODY = "#4E6272"
 
 _SAFE_CHARS = re.compile(r"[^\w\s₹%&.,'\"?!():;\-–/×+]")
 
 
-
-
-
-def _scrub_bake_text(text: str, *, max_words: int = 24) -> str:
-
-    """Sanitize and trim for image bake - ASCII-safe, no garbled tokens."""
-
+def _scrub(text: str, *, max_words: int = 16) -> str:
     t = sanitize_ranking_text(str(text or ""))
-
     t = _SAFE_CHARS.sub("", t)
-
     t = re.sub(r"\s+", " ", t).strip()
-
-    words = t.split()
-
-    return " ".join(words[:max_words]).strip()
+    return " ".join(t.split()[:max_words]).strip()
 
 
+def _split_fact(raw: str) -> tuple[str, str]:
+    fact = sanitize_ranking_text(raw)
+    if "|" in fact:
+        title, rest = [p.strip() for p in fact.split("|", 1)]
+    elif ". " in fact and len(fact.split(". ")[0].split()) <= 5:
+        title, rest = fact.split(". ", 1)
+    else:
+        parts = fact.split()
+        title = " ".join(parts[:3])
+        rest = " ".join(parts[3:])
+    return _scrub(title, max_words=4).upper(), _scrub(rest, max_words=14)
 
 
-
-def _orange_words_line(words: list[str]) -> str:
-
+def _headline_three_lines(headline: str) -> str:
+    """Split headline into 3-line layout with middle word largest."""
+    words = (headline or "").upper().split()
     if not words:
-
-        return ""
-
-    quoted = ", ".join(f'"{w}"' for w in words if w)
-
-    return f"  ORANGE TEXT ({JIRAAF_ORANGE}): paint these words orange → {quoted}\n"
-
-
-
-
-
-def _headline_orange_hint(headline: str) -> str:
-
-    """Pick 1–2 words in headline to paint orange (oil-bar style)."""
-
-    words = (headline or "").split()
-
-    if not words:
-
-        return ""
-
-    if len(words) <= 3:
-
-        return _orange_words_line([words[0]])
-
-    # Prefer topic words: plastic, polymer, RBI, currency, notes, etc.
-
-    for w in words:
-
-        low = w.lower().strip("?.,!")
-
-        if low in ("plastic", "polymer", "currency", "notes", "rbi", "oil", "investing"):
-
-            return _orange_words_line([w.strip("?.,!")])
-
-    return _orange_words_line([words[2] if len(words) > 2 else words[1]])
-
-
-
+        return 'Line1: ""\nLine2: "" (LARGEST)\nLine3: ""'
+    if len(words) <= 2:
+        return f'Line1: "{words[0]}"\nLine2: "{" ".join(words[1:])}" (LARGEST)'
+    third = max(1, len(words) // 3)
+    return (
+        f'Line1: "{" ".join(words[:third])}"\n'
+        f'Line2: "{" ".join(words[third : third * 2])}" (LARGEST)\n'
+        f'Line3: "{" ".join(words[third * 2 :])}"'
+    )
 
 
 def build_explain_infographic_prompt(
-
     blueprint: Any,
-
     *,
-
     canvas_desc: str,
-
     supporting: str = "",
-
     customer_quote: str = "",
-
 ) -> str:
+    """LOCKED premium paragraph/info LinkedIn infographic prompt (not ranking).
 
-    """Single prompt for gpt-image: sample layout + oil-bar quality + short typo-free copy."""
-
-    sec_blocks: list[str] = []
-
-    orange_notes: list[str] = []
-
+    Uses the actual blueprint content — headline, sections, CTA — NOT hardcoded defaults.
+    The layout and aesthetic are locked (Jiraaf premium), but ALL copy comes from the blueprint.
+    """
     sections = getattr(blueprint, "sections", None) or []
 
-
-
-    for i, sec in enumerate(sections[:3], start=1):
-
-        label = _scrub_bake_text(getattr(sec, "section_label", None) or f"Section {i}", max_words=8)
-
-        sec_blocks.append(f'SECTION {i} HEADING: "{label}"')
-
-        includes = getattr(sec, "includes", None) or []
-
-        facts = [str(x).strip() for x in includes if str(x).strip()][:3]
-
-        body_raw = _scrub_bake_text(getattr(sec, "body", None) or "", max_words=14)
-
-
-
-        if facts:
-
-            if body_raw:
-
-                sec_blocks.append(f'SECTION {i} INTRO: "{body_raw}"')
-
-                if i == 2:
-
-                    orange_notes.append(_orange_words_line(["cautious", "before"]))
-
-            for j, raw in enumerate(facts, start=1):
-
-                fact = sanitize_ranking_text(raw)
-
-                if "|" in fact:
-
-                    title, rest = [p.strip() for p in fact.split("|", 1)]
-
-                elif ". " in fact and len(fact.split(". ")[0].split()) <= 5:
-
-                    title, rest = fact.split(". ", 1)
-
-                else:
-
-                    parts = fact.split()
-
-                    title = " ".join(parts[:3])
-
-                    rest = " ".join(parts[3:])
-
-                title = _scrub_bake_text(title, max_words=4)
-
-                rest = _scrub_bake_text(rest, max_words=8)
-
-                sec_blocks.append(f'SECTION {i} CARD {j} TITLE: "{title}" BODY: "{rest}"')
-
-        elif body_raw:
-
-            sec_blocks.append(f'SECTION {i} BODY: "{body_raw}"')
-
-            if i == 3:
-
-                orange_notes.append(_orange_words_line(["₹10", "₹20", "adoption"]))
-
-
-
-    hl = _scrub_bake_text(
-
+    # ── Extract headline, supporting, CTA from blueprint ──────────────────────
+    hl = _scrub(
         getattr(blueprint, "headline", None) or getattr(blueprint, "title", None) or "",
-
-        max_words=10,
-
-    )
-
-    intro = _scrub_bake_text(
-
+        max_words=12,
+    ).upper()
+    sub_headline = _scrub(
         getattr(blueprint, "supporting_line", None) or supporting or "",
-
-        max_words=14,
-
+        max_words=18,
     )
-
-    quote = _scrub_bake_text(
-
-        getattr(blueprint, "customer_quote", None) or customer_quote or "",
-
-        max_words=16,
-
-    )
-
-    src = _scrub_bake_text(
-
-        getattr(blueprint, "source_footer", None) or "Source: rbi.org.in",
-
+    cta_text = _scrub(
+        getattr(blueprint, "cta", None) or "",
         max_words=8,
-
+    ).upper()
+    source_footer = _scrub(
+        getattr(blueprint, "source_footer", None) or customer_quote or "",
+        max_words=14,
     )
 
-    if not src.lower().startswith("source"):
+    # ── Extract section cards from blueprint sections ──────────────────────────
+    cards: list[tuple[str, str, str]] = []  # (TITLE, body, icon_hint)
+    for sec in sections[:8]:
+        raw_label = _scrub(getattr(sec, "section_label", None) or "", max_words=5).upper()
+        raw_body = _scrub(getattr(sec, "body", None) or "", max_words=18)
+        includes = [str(x).strip() for x in (getattr(sec, "includes", None) or []) if str(x).strip()]
+        stat = _scrub(getattr(sec, "stat", None) or "", max_words=6)
 
-        src = f"Source: {src}"
+        # Use includes as body if body is empty
+        if not raw_body and includes:
+            raw_body = _scrub(includes[0], max_words=18)
 
+        # Use stat as suffix if available
+        if stat and stat not in raw_body:
+            raw_body = f"{raw_body} ({stat})" if raw_body else stat
 
+        if raw_label or raw_body:
+            # Pick a generic icon hint based on label content
+            icon_hint = _pick_icon_hint(raw_label + " " + raw_body)
+            cards.append((raw_label or "POINT", raw_body, icon_hint))
 
-    orange_notes.insert(0, _headline_orange_hint(hl))
+    # ── Build card lines for the prompt ───────────────────────────────────────
+    card_lines = "\n".join(
+        f'{i}. TITLE "{title}" | BODY "{body}" | ICON {icon}'
+        for i, (title, body, icon) in enumerate(cards, start=1)
+    ) if cards else "(Use the topic facts to generate relevant card content.)"
 
-
-
-    copy_block = (
-
-        f'HEADLINE: "{hl}"\n'
-
-        + (f'INTRO: "{intro}"\n' if intro else "")
-
-        + "\n".join(sec_blocks)
-
-        + "\n"
-
-        + (f'CALLOUT: "{quote}"\n' if quote else "")
-
-        + (f'SOURCE: "{src}"\n' if src else "")
-
-    )
-
-
-
-    text_colour_lock = f"""
-
-TEXT COLOURS (headline/body = oil-bar sample; callout = polymer sample EXACTLY):
-FLAT, FULLY SATURATED colour only — no muted/washed-out/pastel navy or orange (see vibrancy lock above).
-
-- BG ice-blue {JIRAAF_BG}
-
-- Headline: navy {JIRAAF_NAVY} bold — paint 1–2 accent words ORANGE {JIRAAF_ORANGE} inside headline only
-
-- Intro / supporting: gray {JIRAAF_BODY_GRAY} — smaller than headline
-
-- Section headings + card titles: navy {JIRAAF_NAVY} bold
-
-- Card body + paragraph text: gray {JIRAAF_BODY_GRAY} — one line each, sharp sans-serif
-
-- Callout box: white/very-pale fill, THIN orange {JIRAAF_ORANGE} border, slightly narrower and shorter than the sample — NOT solid cream/orange
-
-- Callout text: dark navy/charcoal, bold ONLY 2–3 key phrases (NOT the whole sentence orange)
-
-- Source footer: light gray, small
-
-{"".join(orange_notes)}
-
-"""
-
-
-
-    icon_lock = f"""
-
-ICON QUALITY (SAME render fidelity as oil-bar 3D barrels — premium HD studio render):
-
-- Section 1: 3 LARGE navy circular badges, crisp white line-art (rupee-arrow, shield/clock, globe)
-
-- Section 2: 3 LARGE clay-3D props with gold/navy accents — container, ATM, wallet with notes
-
-- NO bottom-right hero icon cluster on this layout — sample_infographic_explain_rbi_polymer.png
-
-  ends with the callout box + source line only. Keep that empty space clean, do not add extra icons.
-
-- Callout: orange circle + white lightbulb on the RIGHT side inside the thin-border callout box
-
-- Icons sharp at 100% zoom — satin clay, studio lighting, NOT clipart, NOT blurry
-
-{ICON_STYLE_LOCK}
-
-"""
-
-
+    headline_lines = _headline_three_lines(hl)
+    num_cards = len(cards) or 4
+    grid_desc = f"2 rows x {(num_cards + 1) // 2} columns" if num_cards > 2 else f"{num_cards} cards"
 
     return (
-
-        "=== RENDER THIS EXACT HEADLINE (verbatim, character-perfect) ===\n"
-
-        f'"{hl}"\n'
-
-        "=== END HEADLINE — this is the ONLY headline text. Everything below this line is a\n"
-
-        "DESIGN BRIEF for an infographic image — none of these instruction words (INFOGRAPHIC,\n"
-
-        "LinkedIn, educational, sample, layout, canvas, etc.) are content to render. ===\n\n"
-
-        "Design a premium finance-education INFOGRAPHIC image. English only. Zero spelling mistakes.\n"
-
-        "Visual quality reference = sample_static_oil_consumption_bars.png (text colours + HD icons).\n"
-
-        "Layout reference = sample_infographic_explain_rbi_polymer.png (multi-section editorial).\n"
-
-        f"Canvas {canvas_desc}.\n"
-
-        "Empty top-right logo pocket — NEVER draw JIRAAF wordmark.\n\n"
-
-        f"{JIRAAF_SAMPLE_VISUAL_DNA}\n"
-
-        f"{EXPLAIN_COLOR_VIBRANCY_LOCK}\n"
-
-        f"{JIRAAF_PARAGRAPH_INSIGHT_LOCK}\n"
-
-        "LAYOUT (all blocks required):\n"
-
-        "1) Header: keep a clean top band, then place the navy headline slightly lower in the header area with orange accent word(s) + gray intro line below it\n"
-
-        "2) Section A: orange LEFT bar + 3 columns (navy circular icon + navy title + gray body)\n"
-
-        "3) Section B: orange LEFT bar + intro with orange highlights + 3 clay-3D columns\n"
-
-        "4) Section C: orange LEFT bar + short gray paragraph (max 2 lines)\n"
-
-        "5) CALLOUT: make it slightly smaller and more compact than the sample, with a white/pale box + thin orange border + dark navy insight text on the left and the lightbulb icon placed on the RIGHT inside the box\n"
-
-        "6) Source line bottom-left — leave remaining space clean, NO extra hero icons\n\n"
-
-        f"{text_colour_lock}\n"
-
-        f"{icon_lock}\n"
-
-        f"{INFOGRAPHIC_EXPLAIN_SPELLING_LOCK}\n"
-
-        "RENDER ONLY the quoted copy below — character-perfect, no invented headline, no extra text.\n"
-
-        "The HEADLINE line below MUST match the exact headline stated at the very top of this brief.\n\n"
-
-        "=== EXACT COPY TO BAKE (this is the ONLY text allowed in the image) ===\n"
-
-        f"{copy_block}"
-
-        "=== END COPY — do not add, invent, or substitute any other headline/body text ===\n"
-
+        "=== LOCKED FORMAT: PREMIUM LINKEDIN INFOGRAPHIC EXPLAIN (PARAGRAPH / INFORMATION ONLY) ===\n"
+        "NOT a ranking board. NOT a top-N list chart. This is an educational/explanatory poster.\n"
+        f"Canvas: {canvas_desc or '1080x1350'} portrait 4:5. Ultra HD / 4K LinkedIn-ready.\n"
+        "Aesthetic: Apple + Stripe + Notion + McKinsey + Bloomberg — expensive, elegant, minimal.\n"
+        "Spacious layout, lots of breathing room, invisible grid, equal spacing, ≥6% margins.\n\n"
+        f"BACKGROUND: full-bleed {EXPLAIN_BG} with very subtle radial gradient + soft lighting. "
+        "No textures, patterns, noise, or dark BG.\n\n"
+        "BRANDING: empty TOP-RIGHT corner (~7% canvas width) — COMPLETELY BLANK, background colour only. "
+        "NEVER draw any logo, leaf, compass, badge, icon, or wordmark in the top-right. "
+        "Brand logo is composited in post-processing.\n"
+        "NO SEBI / legal disclaimer on this infographic.\n\n"
+        "COLOUR PALETTE:\n"
+        f"- Heading text: {EXPLAIN_HEADING}\n"
+        f"- Accent orange (highlights ONLY, 2-3 elements max): {EXPLAIN_ORANGE}\n"
+        f"- Secondary blue: {EXPLAIN_SECONDARY_BLUE}\n"
+        f"- Soft white cards: {EXPLAIN_CARD}\n"
+        f"- Card border: {EXPLAIN_BORDER}\n"
+        f"- Body/caption text: {EXPLAIN_BODY}\n"
+        "Orange ONLY for accents / CTA fill / key title highlights — never overuse.\n\n"
+        "TYPOGRAPHY: bold geometric sans (SF Pro / Inter / Helvetica Now / Gilroy / Poppins SemiBold). "
+        "Hierarchy = huge title > medium section titles > body > captions. Corporate, readable.\n"
+        "COMPLETE SENTENCES — never truncate mid-word or mid-sentence. Shrink font if needed.\n\n"
+        "TITLE (3-line layout, key middle word LARGEST):\n"
+        f"{headline_lines}\n\n"
+        "HERO (top-right area, under logo pocket — NO text on hero):\n"
+        "Premium photoreal 3D floating object relevant to the topic — clean studio lighting, "
+        "soft shadow, reflections. Physically rendered, NOT cartoon, NOT clipart.\n\n"
+        "CARDS: rounded ~24px, soft shadow, light borders, large padding, float above BG.\n\n"
+        "ICON STYLE (NON-NEGOTIABLE): Pixar-quality 3D ONLY — matte/ceramic/metal/glass. "
+        "Studio lighting, soft reflections, GI, AO, ultra detailed. "
+        "NOT flat, NOT emoji, NOT outline, NOT clipart.\n\n"
+        "LAYOUT:\n"
+        "1) TOP-LEFT: 3-line title + optional compact orange CTA pill under title\n"
+        f'   Supporting line: "{sub_headline}"\n'
+        "2) TOP-RIGHT: premium 3D hero object relevant to topic (no text on hero)\n"
+        f"3) MIDDLE GRID: {grid_desc} of explanation cards (REQUIRED — do not leave empty)\n"
+        f"4) BOTTOM: source footer / CTA strip\n"
+        "5) NEVER empty cards. NEVER invented placeholder text.\n\n"
+        "RENDER QUALITY: Octane/Redshift/Cinema4D look — ray tracing, GI, crisp edges, HDR.\n"
+        "NEGATIVE: no clipart, cartoons, flat icons, pixelation, busy BG, watermark, "
+        "random gradients, inconsistent spacing, handwritten fonts, neon, cheap clutter.\n\n"
+        "=== BAKE ONLY THIS COPY (letter-perfect, zero typos, COMPLETE sentences) ===\n"
+        f'HEADLINE: "{hl}"\n'
+        + (f'CTA (orange fill, white text, compact pill): "{cta_text}"\n' if cta_text else "")
+        + f'SUPPORTING LINE: "{sub_headline}"\n'
+        f"SECTION CARDS ({num_cards} cards total):\n"
+        f"{card_lines}\n"
+        + (f'SOURCE FOOTER: "{source_footer}"\n' if source_footer else "")
+        + "=== END LOCKED EXPLAIN INFOGRAPHIC PROMPT ===\n"
     )
 
 
+def _pick_icon_hint(text: str) -> str:
+    """Pick a relevant 3D icon hint based on keywords in the label/body."""
+    t = text.lower()
+    if any(k in t for k in ("airport", "flight", "air", "runway", "terminal", "plane", "udan")):
+        return "3D glossy airplane or airport tower with soft shadow"
+    if any(k in t for k in ("money", "invest", "fund", "crore", "lakh", "₹", "revenue", "cost")):
+        return "3D gold coins or rising bar chart"
+    if any(k in t for k in ("job", "employ", "work", "labour", "skill")):
+        return "3D briefcase or handshake"
+    if any(k in t for k in ("connect", "route", "region", "city", "map", "network")):
+        return "3D location pin or network nodes"
+    if any(k in t for k in ("growth", "expand", "develop", "build", "construct", "infra")):
+        return "3D building or construction crane"
+    if any(k in t for k in ("trade", "export", "import", "global", "international")):
+        return "3D cargo ship or globe"
+    if any(k in t for k in ("tech", "digital", "data", "software", "cloud")):
+        return "3D chip or circuit board"
+    if any(k in t for k in ("health", "medical", "hospital", "care")):
+        return "3D medical cross or stethoscope"
+    if any(k in t for k in ("learn", "education", "school", "skill", "train")):
+        return "3D book or graduation cap"
+    if any(k in t for k in ("secure", "safe", "protect", "lock")):
+        return "3D shield with checkmark"
+    if any(k in t for k in ("environment", "green", "eco", "sustain", "solar", "energy")):
+        return "3D green leaf or solar panel"
+    if any(k in t for k in ("time", "fast", "speed", "quick")):
+        return "3D clock or lightning bolt"
+    if any(k in t for k in ("passenger", "tourist", "travel", "trip")):
+        return "3D suitcase or passport"
+    return "Premium 3D icon relevant to the topic with soft studio lighting"

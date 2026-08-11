@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from app.core.logging import get_logger
 from app.db.session import AsyncSessionLocal
@@ -486,6 +486,52 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
     # Prefer approved Creative Blueprint text for art direction cues
     brand_name = (brand_intelligence.brand_core.brand_name or "").strip()
     is_jiraaf_brand = "jiraaf" in brand_name.casefold()
+    brand_primary_color = ""
+    brand_secondary_color = ""
+    brand_additional_colors: list[dict] = []
+    brand_typography_font = ""
+    try:
+        brand_uuid_early = UUID(str(brand_id)) if not isinstance(brand_id, UUID) else brand_id
+        async with AsyncSessionLocal() as session:
+            brand_row = await session.get(BrandSpace, brand_uuid_early)
+            if brand_row and isinstance(brand_row.overview_snapshot, dict):
+                visual_identity = brand_row.overview_snapshot.get("visual_identity") or {}
+                if isinstance(visual_identity, dict):
+                    palette = visual_identity.get("brand_color_palette") or {}
+                    if isinstance(palette, dict):
+                        brand_primary_color = str(palette.get("primary") or "").strip()
+                        brand_secondary_color = str(palette.get("secondary") or "").strip()
+                        brand_additional_colors = list(palette.get("additional") or [])
+                    typo = visual_identity.get("typography") or {}
+                    if isinstance(typo, dict):
+                        brand_typography_font = str(typo.get("primary_style") or "").strip()
+    except Exception as exc:
+        logger.warning("visual_reasoning.brand_palette_load_failed", error=str(exc)[:120])
+
+    if not is_jiraaf_brand:
+        from app.prompts.brand_visual_palette import resolve_brand_palette_lock
+        from app.prompts.cognixia_brand_dna import cognixia_default_palette, is_cognixia_brand
+
+        if is_cognixia_brand(brand_name) and not brand_primary_color:
+            defaults = cognixia_default_palette()
+            brand_primary_color = defaults["primary"]
+            brand_secondary_color = defaults["secondary"]
+
+        locked_palette = resolve_brand_palette_lock(
+            brand_name=brand_name,
+            color_behavior=brand_intelligence.visual_behavior.color_behavior,
+            visual_mood=brand_intelligence.visual_behavior.visual_mood,
+            primary_color=brand_primary_color,
+            secondary_color=brand_secondary_color,
+            additional_colors=brand_additional_colors or None,
+        )
+        brand_intelligence = brand_intelligence.model_copy(
+            update={
+                "visual_behavior": brand_intelligence.visual_behavior.model_copy(
+                    update={"color_behavior": locked_palette}
+                )
+            }
+        )
     headline = (blueprint.headline if blueprint and blueprint.headline else copy.headline)
     body = (blueprint.body if blueprint and blueprint.body else copy.body)
     supporting = (
@@ -586,6 +632,9 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
         fmt=fmt,
         layout_type=layout_type,
         brand_name=brand_name,
+        brand_primary_color=brand_primary_color,
+        brand_secondary_color=brand_secondary_color,
+        brand_typography_font=brand_typography_font,
     )
     user = _prompt_builder.build_user(
         brand_intelligence=brand_intelligence,
@@ -621,7 +670,13 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
                 "REQUIRED: navy #003975 + orange #FFA400 accents (orange text+accents >=~2% of image); "
                 if is_jiraaf_brand
                 else (
-                    f"REQUIRED: use {brand_name}'s Brand Space colors only — NOT Jiraaf navy/orange/ice-blue; "
+                    f"REQUIRED: use {brand_name}'s EXACT Brand Space palette — "
+                    + (f"PRIMARY {brand_primary_color}" if brand_primary_color else "brand primary colour")
+                    + (f", SECONDARY {brand_secondary_color}" if brand_secondary_color else "")
+                    + (f", ACCENT {brand_additional_colors[2]['hex'] if len(brand_additional_colors) > 2 else ''}" if brand_additional_colors and len(brand_additional_colors) > 2 else "")
+                    + " — NOT Jiraaf navy #003975/orange #FFA400/ice-blue #E8F0F8; "
+                    + (f"FONT: {brand_typography_font} — use this font for all headlines; " if brand_typography_font else "")
+                    + "AUDIENCE: depict the EXACT target audience (correct age group/demographics) — do NOT show wrong age group; "
                 )
             )
             + "ULTRA-PREMIUM clay-3D icons; content must fit fully. "
@@ -812,11 +867,29 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
     ) -> str:
         extra = ""
         if not skip_extra_locks:
-            extra = (
-                CAROUSEL_IMAGE_EXTRA_LOCKS
-                if composite_sebi_footer
-                else STATIC_IMAGE_EXTRA_LOCKS
-            )
+            if composite_sebi_footer:
+                extra = CAROUSEL_IMAGE_EXTRA_LOCKS
+            elif is_jiraaf_brand:
+                extra = STATIC_IMAGE_EXTRA_LOCKS
+            else:
+                color_hint = ""
+                if brand_intelligence and brand_intelligence.visual_behavior:
+                    color_hint = str(brand_intelligence.visual_behavior.color_behavior or "").strip()
+                _primary_lock = brand_primary_color or ""
+                _secondary_lock = brand_secondary_color or ""
+                _font_lock = brand_typography_font or ""
+                _accent_lock = (brand_additional_colors[2]["hex"] if len(brand_additional_colors) > 2 else "") if brand_additional_colors else ""
+                extra = (
+                    f"\nBRAND VISUAL LOCK for {brand_name or 'this brand'}: "
+                    + (f"PRIMARY colour {_primary_lock} — headlines, key elements. " if _primary_lock else "")
+                    + (f"SECONDARY colour {_secondary_lock} — accents, icons. " if _secondary_lock else "")
+                    + (f"ACCENT colour {_accent_lock}. " if _accent_lock else "")
+                    + (f"FONT: {_font_lock} — use for all text. " if _font_lock else "")
+                    + f"Use ONLY this brand's palette. "
+                    "NEVER Jiraaf navy #003975, orange #FFA400, or ice-blue #E8F0F8. "
+                    "NO SEBI footer. NO finance/wallet/rupee/bond icons unless the topic requires them. "
+                    "AUDIENCE: depict the correct demographic — right age group matching brand persona.\n"
+                )
         safe_prompt = _budget_prompt(prompt, extra, _IMAGE_PROMPT_BUDGET)
         logger.info(
             "visual_reasoning.image_prompt_budget",
@@ -851,14 +924,45 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
                 f"visual_reasoning.dalle_failed{fallback_suffix}, falling back to SDXL: {type(e).__name__}: {e}"
             )
             try:
+                from app.integrations.object_storage import get_object_storage
+                from app.services.image_generation.dalle_service import apply_brand_image_overlays
+
                 sdxl = SdxlService()
-                url = await sdxl.generate_and_save(
+                sdxl_url = await sdxl.generate_and_save(
                     tenant_id=tenant_id,
                     brand_space_id=brand_id,
                     prompt=safe_prompt,
                     size=image_size,
                 )
-                logger.info("visual_reasoning.sdxl_success", url=url, suffix=fallback_suffix)
+                if logo_storage_path or composite_sebi_footer or wipe_reserved_corner:
+                    storage = get_object_storage()
+                    rel_path = sdxl_url.removeprefix("/storage/").lstrip("/")
+                    raw_bytes = storage.read_bytes(rel_path)
+                    processed = apply_brand_image_overlays(
+                        raw_bytes,
+                        storage=storage,
+                        logo_storage_path=logo_storage_path,
+                        logo_zone_instruction=logo_zone_instruction,
+                        composite_sebi_footer=composite_sebi_footer,
+                        wipe_reserved_corner=wipe_reserved_corner,
+                    )
+                    filename = f"sdxl-branded-{uuid4().hex[:8]}.png"
+                    stored = storage.save_bytes(
+                        tenant_id=UUID(str(tenant_id)),
+                        brand_space_id=UUID(str(brand_id)),
+                        category="generated",
+                        filename=filename,
+                        content=processed,
+                    )
+                    url = f"/storage/{stored.storage_path}"
+                else:
+                    url = sdxl_url
+                logger.info(
+                    "visual_reasoning.sdxl_success",
+                    url=url,
+                    suffix=fallback_suffix,
+                    logo_composited=bool(logo_storage_path),
+                )
                 return url
             except Exception as e_sdxl:
                 logger.error(f"visual_reasoning.sdxl_failed{fallback_suffix}: {e_sdxl}")
@@ -914,10 +1018,19 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
             color_hint = ""
             if brand_intelligence and brand_intelligence.visual_behavior:
                 color_hint = str(brand_intelligence.visual_behavior.color_behavior or "").strip()
+            _pc = brand_primary_color or ""
+            _sc = brand_secondary_color or ""
+            _fc = brand_typography_font or ""
+            _ac = (brand_additional_colors[2]["hex"] if len(brand_additional_colors) > 2 else "") if brand_additional_colors else ""
             style_stub = (
                 f"Finished {platform} carousel for {brand_name}, canvas {canvas_desc}. "
-                f"Brand colors: {color_hint or 'from Brand Space visual identity'}. "
-                "NOT Jiraaf template colors."
+                + (f"PRIMARY brand colour: {_pc}. " if _pc else "")
+                + (f"SECONDARY brand colour: {_sc}. " if _sc else "")
+                + (f"ACCENT colour: {_ac}. " if _ac else "")
+                + (f"FONT: {_fc}. " if _fc else "")
+                + "Use ONLY this brand's palette — NOT Jiraaf navy/orange/ice-blue. "
+                "Depict EXACT brand audience demographics (correct age group). "
+                "No fintech/SEBI/bond visuals unless brand is in finance."
             )
         total = len(carousel_slides)
         # Build ordered storyline from blueprint for swipe continuity
@@ -1116,6 +1229,8 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
                     prior_headlines=list(used_headlines[:-1]) if used_headlines else [],
                     brand_name=brand_name,
                     color_behavior=color_behavior,
+                    primary_color=brand_primary_color,
+                    secondary_color=brand_secondary_color,
                 )
                 carousel_style_extra = (
                     f"Brand carousel — use {brand_name} colours only. NOT Jiraaf template.\n"
@@ -1153,16 +1268,63 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
         from app.services.image_generation.ranking_board import sanitize_ranking_text
 
         if is_infographic_explain and blueprint:
-            from app.services.image_generation.explain_image_prompt import (
-                build_explain_infographic_prompt,
-            )
+            color_behavior = ""
+            if brand_intelligence and brand_intelligence.visual_behavior:
+                color_behavior = str(brand_intelligence.visual_behavior.color_behavior or "")
 
-            explain_prompt = build_explain_infographic_prompt(
-                blueprint,
-                canvas_desc=canvas_desc,
-                supporting=supporting or "",
-                customer_quote=customer_quote or "",
-            )
+            if is_jiraaf_brand:
+                from app.services.image_generation.explain_image_prompt import (
+                    build_explain_infographic_prompt,
+                )
+
+                explain_prompt = build_explain_infographic_prompt(
+                    blueprint,
+                    canvas_desc=canvas_desc,
+                    supporting=supporting or "",
+                    customer_quote=customer_quote or "",
+                )
+            else:
+                explain_prompt = _prompt_builder.build_expander_user(
+                    brand_name=brand_name,
+                    visual_mood=brand_intelligence.visual_behavior.visual_mood,
+                    color_behavior=color_behavior,
+                    image_behavior=brand_intelligence.visual_behavior.image_behavior,
+                    design_sophistication=brand_intelligence.visual_behavior.design_sophistication,
+                    concept_name=concept_dict.get("concept_name", ""),
+                    core_idea=concept_dict.get("core_idea", ""),
+                    visual_angle=concept_dict.get("visual_angle", ""),
+                    copy_headline=headline,
+                    copy_body=body,
+                    supporting_line=supporting,
+                    cta=cta,
+                    infographic_sections=sections,
+                    proof_points=proof_points,
+                    stat_highlights=stat_highlights,
+                    problem_statement=problem_statement,
+                    solution_statement=solution_statement,
+                    customer_quote=customer_quote,
+                    customer_name=customer_name,
+                    process_steps=process_steps,
+                    format_strategy=format_plan.format_strategy,
+                    layout_archetype=(
+                        blueprint.layout_archetype if blueprint and blueprint.layout_archetype else format_plan.layout_archetype
+                    ),
+                    platform=platform,
+                    initial_prompt=output.image_prompt_direction,
+                    user_prompt=user_prompt,
+                    dominant_visual_system=output.dominant_visual_system,
+                    fmt="infographic",
+                    layout_type=layout_type,
+                    hook=(blueprint.hook if blueprint else "") or getattr(copy, "hook", None) or "",
+                    story_flow=list(blueprint.story_flow) if blueprint and blueprint.story_flow else [],
+                    slides=[],
+                    canvas=canvas_desc,
+                )
+                explain_prompt = (
+                    explain_prompt
+                    + f"\n\nBRAND DNA LOCK: Use ONLY {brand_name} Brand Space colors ({color_behavior or 'from visual identity'}). "
+                    "NEVER Jiraaf navy #003975, orange #FFA400, or ice-blue #E8F0F8. NO SEBI footer.\n"
+                )
             logger.info(
                 "visual_reasoning.explain_ai_prompt",
                 prompt_len=len(explain_prompt),

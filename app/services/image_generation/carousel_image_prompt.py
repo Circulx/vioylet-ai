@@ -242,10 +242,38 @@ def build_brand_carousel_slide_image_prompt(
     topic_clean = _scrub(topic, max_words=12)
     priors = [strip_carousel_heading_numbers(p) for p in (prior_headlines or []) if str(p).strip()][:9]
     prior_line = "; ".join(f'"{p}"' for p in priors) if priors else "(first slide)"
-    palette = color_behavior or (
-        f"primary {primary_color or CAROUSEL_NAVY}, secondary {secondary_color or CAROUSEL_BODY}, "
-        f"accent {accent_color or CAROUSEL_ORANGE}"
-    )
+
+    from app.prompts.cognixia_brand_dna import cognixia_carousel_palette_line, is_cognixia_brand
+
+    if is_cognixia_brand(brand_name):
+        palette = cognixia_carousel_palette_line(
+            primary_color=primary_color,
+            secondary_color=secondary_color,
+        )
+        bg_note = f"Background: {palette.split(';')[0].replace('BG ', '')} — official Cognixia website palette."
+        typography_note = "Typography: Outfit sans-serif — bold navy headlines, gray body copy."
+    elif brand_name and "jiraaf" in brand_name.casefold():
+        palette = color_behavior or (
+            f"primary {primary_color or CAROUSEL_NAVY}, secondary {secondary_color or CAROUSEL_BODY}, "
+            f"accent {accent_color or CAROUSEL_ORANGE}"
+        )
+        bg_note = "Background: Jiraaf ice-blue carousel canvas."
+        typography_note = "Typography: bold navy sans headlines."
+    else:
+        palette = color_behavior or (
+            f"primary {primary_color or '#333333'}, secondary {secondary_color or '#666666'}, "
+            f"accent {accent_color or secondary_color or '#888888'}"
+        )
+        # Derive a subtle brand-tinted background from primary color if available
+        bg_note = (
+            f"Background: very soft tint or WHITE #FFFFFF — NEVER Jiraaf ice-blue #E8F0F8."
+            + (f" Brand primary {primary_color} for headlines and key elements." if primary_color else "")
+        )
+        typography_note = (
+            f"Typography: clean modern sans-serif. "
+            + (f"Use brand primary {primary_color} for bold headlines. " if primary_color else "")
+            + "Complete sentences — no truncated bullets. Perfect spelling."
+        )
     nodes = ""
     if blocks:
         nodes = "\n".join(
@@ -257,9 +285,12 @@ def build_brand_carousel_slide_image_prompt(
         "=== BRAND CAROUSEL SLIDE — CONNECTED INFOGRAPHIC (NOT JIRAAF TEMPLATE) ===\n"
         f"Brand: {brand_name or 'this brand'}. Use ONLY this brand's visual identity colours.\n"
         f"DO NOT use Jiraaf ice-blue #E8F0F8, Jiraaf navy #003975, or Jiraaf orange #FFA400 unless this IS Jiraaf.\n"
+        "AUDIENCE: depict the EXACT brand target audience in all visuals — correct age group, correct demographics.\n"
+        "ILLUSTRATIONS: use brand-appropriate visual style (NOT generic fintech/finance). No SEBI/bond/wallet icons unless brand is financial.\n"
         f"Canvas {canvas_desc} 1080×1350. Beat {slide_number}/{total_slides}. Role: {role}.\n\n"
         f"BRAND COLOURS: {palette}\n"
-        "Light clean background using brand primary/secondary tints — not Jiraaf sample colours.\n\n"
+        f"{bg_note}\n"
+        f"{typography_note}\n\n"
         f"{INFOGRAPHIC_LAYOUT_LOCK}\n"
         "BANS: NO numbers in headline (no 1. 2. 6.), NO page badges, NO logo baked, NO disclaimer baked.\n"
         "Use connected small-icon infographic layout to show depth content.\n\n"

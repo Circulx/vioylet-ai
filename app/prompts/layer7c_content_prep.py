@@ -88,6 +88,7 @@ CONTENT RULES
 
 MUST FILL
 - hook + story_flow + headline + supporting_line + body + cta (body often empty for data posts)
+- post_caption: 4–6 short paragraphs for {format_name} on the selected platform — this is the SOCIAL MEDIA caption users paste below the image (NOT text baked into the creative). Write like a human brand manager: educational, conversational, line breaks between paragraphs, end with one engagement question. Do NOT repeat slide/box copy verbatim.
 - layout_type + sources + source_footer when stats present
 
 FORMAT-SPECIFIC
@@ -118,6 +119,8 @@ If L7 returned a teaser, REWRITE it into the sample hub/data/story structure bef
         layout_type = str(kwargs.get("layout_type") or "carousel_story")
         live_research = kwargs.get("live_research") or {}
         brand = brand_intelligence.brand_core
+        is_jiraaf = "jiraaf" in (brand.brand_name or "").casefold()
+        is_cognixia = "cognixia" in (brand.brand_name or "").casefold() or "cognia" in (brand.brand_name or "").casefold()
         behavior = brand_intelligence.communication_behavior
         audience = brand_intelligence.audience_model
         brief_block = ""
@@ -220,13 +223,13 @@ VALIDATED COPY (L7/L7b) — SIMPLIFY IF HEAVY:
 - process_steps: {copy.process_steps}
 {research_block}
 Produce the Creative Blueprint JSON for {format_name} with layout_type={layout_type}.
-Prefer L7 facts/numbers, but REWRITE to Jiraaf SAMPLE tone:
+Prefer L7 facts/numbers and REWRITE to sample quality:
 short headlines, ranked/hub numbers OR carousel story beats — almost no paragraphs.
-Currency: India retail → ₹; rates → %; Japan commits → ¥; DPIIT FDI → USD labeled clearly.
-Countries/flags/banks must be real and matched. Totals must add up.
-Brand accents must include orange #FFA400 with navy #003975.
-If L7 looks like "What Are Your FD Penalty Rates?" teaser, replace with
-"Bank's Penalty Rates and Key Rules" + 5 bank sections.
+{"Currency: India retail → ₹; rates → %; Japan commits → ¥; DPIIT FDI → USD labeled clearly. Countries/flags/banks must be real and matched. Totals must add up." if is_jiraaf else f"Use {brand.brand_name}'s brand voice and real facts — no Jiraaf finance jargon, no ₹/SEBI/bond references unless the brand is in finance."}
+Brand accents: {"orange #FFA400 with navy #003975 for Jiraaf only" if is_jiraaf else ("Cognixia official: primary #0952A9, deep navy #00387A, card #F3F9FF, accent teal #74ADBA, body #707070, font Outfit — NEVER Jiraaf orange/ice-blue" if is_cognixia else f"use {brand.brand_name} Brand Space palette — NEVER Jiraaf orange/ice-blue/navy")}.
+{"If L7 looks like 'What Are Your FD Penalty Rates?' teaser, replace with 'Bank Penalty Rates and Key Rules' + 5 bank sections." if is_jiraaf else f"Write complete, publication-ready sentences — no fragment text, no truncated bullets. Every sentence must be grammatically complete."}
 For rankings: if the user asked for top-N, keep EXACTLY that many section rows (top 10 → 10, not 5).
+AUDIENCE: Use the EXACT audience from the brand persona — age group, demographics, pain points. NEVER substitute with a different audience (e.g. if TG is children/teens, never show toddlers/babies/adults).
+TYPOGRAPHY: Use brand font from Brand Space visual identity if specified.
 Lock final short strings for image baking. Fill sources + source_footer when research URLs exist.
 """

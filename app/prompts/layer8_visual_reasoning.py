@@ -6,6 +6,12 @@ from app.graph.models.layer2_models import BrandIntelligenceOutput
 from app.graph.models.layer6_models import FormatPlanOutput
 from app.graph.models.layer7_models import CopyOutput
 from app.prompts.base import BasePromptBuilder
+from app.prompts.brand_visual_palette import (
+    JIRAAF_FORBIDDEN,
+    is_jiraaf_brand as _is_jiraaf_brand,
+    resolve_brand_palette_lock,
+    static_background_instruction,
+)
 from app.prompts.brand_copy_tone import (
     JIRAAF_BG,
     JIRAAF_CARD,
@@ -51,17 +57,39 @@ class VisualReasoningPromptBuilder(BasePromptBuilder):
     PROMPT_VERSION = "5.1-infographic-explain-static-bar-samples"
 
     # Locked design tokens from Brand Space + PDF samples
-    CAROUSEL_BG = JIRAAF_BG  # ice-blue #E8F0F8
+    # Carousel sky-blue DNA (ranking/static keep JIRAAF_* ice-blue separately)
+    CAROUSEL_BG = "#D9ECF8"
     INFO_BG = JIRAAF_BG
-    NAVY = JIRAAF_NAVY  # #003975
+    NAVY = JIRAAF_NAVY  # #003975 — ranking/static; carousel overrides to #033B5E in slide bake
+    CAROUSEL_NAVY = "#033B5E"
+    CAROUSEL_ORANGE = "#FF8C24"
     BODY_GRAY = "#4A5568"
-    ORANGE = JIRAAF_ORANGE  # #FFA400 — REQUIRED accent
+    ORANGE = JIRAAF_ORANGE  # #FFA400 — REQUIRED accent for ranking/static
     GOLD = JIRAAF_GOLD
     CARD_BLUE = JIRAAF_CARD
     BANNER_NAVY = JIRAAF_NAVY
 
     def build_system(self, fmt: str = "", **kwargs: Any) -> str:
         layout_type = str(kwargs.get("layout_type") or "")
+        brand_name = str(kwargs.get("brand_name") or "")
+        is_jiraaf_brand = _is_jiraaf_brand(brand_name)
+        _primary = str(kwargs.get("brand_primary_color") or "")
+        _secondary = str(kwargs.get("brand_secondary_color") or "")
+        palette_lock = resolve_brand_palette_lock(
+            brand_name=brand_name,
+            primary_color=_primary,
+            secondary_color=_secondary,
+        )
+        color_json_example = (
+            f"Navy {JIRAAF_NAVY} headlines on ice-blue {JIRAAF_BG} with REQUIRED orange {JIRAAF_ORANGE} accents"
+            if is_jiraaf_brand
+            else palette_lock
+        )
+        icon_style_note = (
+            "Prefer soft matte clay-3D iconography matching Jiraaf samples."
+            if is_jiraaf_brand
+            else "Use premium 3D icons matching this brand's tech/category — not Jiraaf fintech samples."
+        )
         layout_lock = ""
         if layout_type == "carousel_story":
             if fmt in ("static", "infographic"):
@@ -78,59 +106,89 @@ class VisualReasoningPromptBuilder(BasePromptBuilder):
         elif layout_type == "static_ranking":
             layout_lock = "LAYOUT_TYPE=static_ranking: ranked Name|%|amount rows; almost no paragraphs."
 
+        # Dynamically build brand-specific color/typography instructions for carousel/infographic
+        _brand_primary = kwargs.get("brand_primary_color") or ""
+        _brand_secondary = kwargs.get("brand_secondary_color") or ""
+        _brand_font = kwargs.get("brand_typography_font") or ""
+        _carousel_bg = self.CAROUSEL_BG if is_jiraaf_brand else (
+            f"#F5F0FF" if _brand_primary and "9000ff" in _brand_primary.lower().replace("#","") else "#FFFFFF"
+        )
+        _carousel_headline_color = self.NAVY if is_jiraaf_brand else (_brand_primary or "#1A1A2E")
+        _carousel_accent_color = self.ORANGE if is_jiraaf_brand else (_brand_secondary or _brand_primary or "#4BCA0E")
+        _font_note = (
+            f"Typography: bold {_brand_font} font headlines; clean sans body text; ALL copy baked."
+            if _brand_font and not is_jiraaf_brand
+            else f"Typography: bold navy ({self.NAVY}) headlines; gray supporting; ALL copy baked."
+        )
+
         if fmt == "carousel":
-            format_instructions = f"""
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-CAROUSEL — SAMPLE DESIGN SYSTEM (LOCKED)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Canvas: 1080x1350 portrait (4:5) educational LinkedIn carousel slide.
-ABSOLUTE BOUNDARY: every element fully inside the 1080x1350 canvas — nothing bleeds or clips past edges.
-Safe margin ≥6% all sides. Reduce/drop content rather than clip.
-Background: SOLID {self.CAROUSEL_BG} FULL BLEED edge-to-edge — same hex everywhere.
+            if is_jiraaf_brand:
+                carousel_color_rules = f"""Background: SOLID {self.CAROUSEL_BG} FULL BLEED edge-to-edge — same hex everywhere.
 NO white side panels. NO second background. NO framed white page inside the canvas.
 Style: Clean corporate fintech education matching Jiraaf sample carousels.
 {CAROUSEL_AUDIENCE_TONE_LOCK}
-Soft ULTRA-PREMIUM HD clay-3D icons (4K-sharp studio product renders, satin + gold accents, strong shadows — NOT flat, NOT blurry, NOT low-poly).
 Typography: bold navy ({self.NAVY}) headlines; gray supporting; ALL copy baked.
-Text must render as clean printed sans-serif, not embossed, not glowing, not outlined, not metallic.
+Brand colours: navy {self.NAVY} + orange accents {self.ORANGE}.
 {HEADLINE_COLOR_LOCK}
+{ORANGE_COVERAGE_LOCK}
+- NEVER invent Follow-Jiraaf lines; top-right corner stays plain empty ice-blue.
+- India market: prefer ₹ / %; USD only when source is USD.
+- Bake copy in plain retail tone — no Vostro/hedge/sector-exposure jargon on slides."""
+                carousel_icon_hint = "wallet/coins/doc/lock"
+                carousel_depth_hint = "EACH card = short bold label + one clear explanation (6–12 plain English words) with ₹/%/rule."
+                sebi_note = "8. Bottom ~24% EMPTY for legal footer composite — do not bake SEBI text.\n\n   Exact SEBI legal footer is composited in post (same as logo). Never invent SEBI text.\n"
+            else:
+                carousel_color_rules = f"""Background: SOLID {_carousel_bg} FULL BLEED edge-to-edge — same hex everywhere.
+NO white side panels. NO second background.
+Style: Clean premium education carousel for {brand_name or 'this brand'} — NOT Jiraaf fintech DNA.
+{_font_note}
+Brand colours LOCKED — PRIMARY: {_brand_primary or 'from Brand Space'}; SECONDARY: {_brand_secondary or 'brand accent'}.
+FORBIDDEN: Jiraaf navy #003975, orange #FFA400, ice-blue #E8F0F8 — these are NOT {brand_name}'s colours.
+AUDIENCE: Use EXACT brand audience demographics — reflect the correct age group/persona visually and in copy tone.
+ILLUSTRATIONS: Use the brand's own visual style — modern vector or clean 3D that fits the brand category. NOT generic fintech.
+- Perfect spelling. Complete sentences. No truncated bullets.
+- EACH SLIDE UNIQUE: different headline, different content, different visual angle."""
+                carousel_icon_hint = f"category-appropriate 3D icons matching {brand_name}'s industry"
+                carousel_depth_hint = "EACH card = short bold label + one clear explanation (6–15 plain English words)."
+                sebi_note = ""
 
-SLIDE ANATOMY — TEXT DOMINANT (carousel only — match Sweep-In / Capital / Gains):
-1. TOP-RIGHT: plain empty ice-blue corner only — never draw logo, wordmark, or "Brand Logo" placeholder.
-2. MANDATORY UNIQUE navy headline at top-left on EVERY slide — never omit, never repeat topic title.
+            format_instructions = f"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CAROUSEL — BRAND DESIGN SYSTEM (LOCKED)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Canvas: 1080x1350 portrait (4:5) educational carousel slide.
+ABSOLUTE BOUNDARY: every element fully inside the 1080x1350 canvas — nothing bleeds or clips past edges.
+Safe margin ≥6% all sides. Reduce/drop content rather than clip.
+{carousel_color_rules}
+Soft ULTRA-PREMIUM HD clay-3D icons (4K-sharp studio product renders, strong shadows — NOT flat, NOT blurry, NOT low-poly).
+Text must render as clean printed sans-serif, not embossed, not glowing, not outlined, not metallic.
+
+SLIDE ANATOMY — TEXT DOMINANT:
+1. TOP-RIGHT: plain empty corner only — never draw logo, wordmark, or "Brand Logo" placeholder.
+2. MANDATORY UNIQUE headline at top-left on EVERY slide — never omit, never repeat topic title.
 3. Supporting line with mechanism or real number (required).
-4. DEPTH BLOCK (REQUIRED, ~35–45% of slide height): max TWO white cards with soft shadow.
-   EACH card = short bold label + one clear explanation (6–12 plain English words) with ₹/%/rule.
-5. ICONS/AVATARS: premium HD clay-3D object (~12–16% height) bottom-right — wallet/coins/doc/lock. NEVER omit. NEVER giant hero.
-6. Thin orange divider optional between cards — never a stack of orange lines as the layout.
+4. DEPTH BLOCK (REQUIRED, ~35–45% of slide height): max TWO cards with soft shadow.
+   {carousel_depth_hint}
+5. ICONS/AVATARS: premium HD 3D object (~12–16% height) bottom-right — {carousel_icon_hint}. NEVER omit. NEVER giant hero.
+6. Accent divider optional between cards — never a stack of lines as the layout.
 7. NEVER empty Pros/Cons/Examples/Advantages navigation buttons.
-8. Bottom ~24% EMPTY for legal footer composite — do not bake SEBI text.
-
-   Exact SEBI legal footer is composited in post (same as logo). Never invent SEBI text.
-
+{sebi_note}
 {ICON_STYLE_LOCK}
 {CAROUSEL_ICON_LOCK}
 {CAROUSEL_TEXT_FIT_LOCK}
 {CAROUSEL_FIT_LOCK}
-{CAROUSEL_SAMPLE_DNA_COMPACT}
+{CAROUSEL_SAMPLE_DNA_COMPACT if is_jiraaf_brand else ""}
 
 RULES:
 - Required every slide: mandatory unique headline + supporting + max 2 explained fact cards.
 - Icons must stay tiny. If unsure, prefer MORE text and SMALLER icons.
-- FULL-BLEED ice-blue only — never white side bars / dual backgrounds.
 - Text style must be plain printed sans-serif with perfect English spelling — no stylized chrome/glow outlines.
 - EACH SLIDE UNIQUE: different headline, different facts, different look.
-- Brand colours: navy {self.NAVY} + orange accents {self.ORANGE}.
-{HEADLINE_COLOR_LOCK}
-{ORANGE_COVERAGE_LOCK}
-- NEVER invent Follow-Jiraaf lines; top-right corner stays plain empty ice-blue.
-- Perfect spelling. Do not invent SEBI text.
-- India market: prefer ₹ / %; USD only when source is USD.
-- Bake copy in plain retail tone — no Vostro/hedge/sector-exposure jargon on slides.
 - FAIL if: repeated headlines, empty Pros/Cons chips, giant icons, thin one-line content, clipped text.
 """
         elif fmt == "infographic":
-            format_instructions = f"""
+            if is_jiraaf_brand:
+                infographic_instructions = f"""
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 INFOGRAPHIC — MATCH JIRAAF SAMPLE POSTERS (LOCKED)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -169,17 +227,49 @@ POSTER RULES:
 8. No textbook essay paragraphs under every card.
 9. No empty shells. No purple AI aesthetic.
 """
+            else:
+                infographic_instructions = f"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+INFOGRAPHIC — BRAND-SPECIFIC ({brand_name or 'active brand'}) POSTER
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Canvas: 1080x1350 portrait educational poster.
+ABSOLUTE BOUNDARY: every element fully inside the 1080x1350 canvas — nothing bleeds or clips past edges.
+Safe margin ≥6% all sides. Reduce/drop content rather than clip.
+Background: WHITE #FFFFFF or very soft brand-tinted white — NEVER Jiraaf ice-blue.
+{_font_note}
+{palette_lock}
+
+CHOOSE LAYOUT BY TOPIC (pick ONE):
+A) EDUCATION / WHY / BENEFITS: Hero icon + 3–5 BENEFIT/REASON cards
+B) RANKING LIST (only if user asked top-N): Vertical ranked rows with brand-coloured bars
+C) HUB + SHORT FACTS: Center hub + 4–5 short fact cards
+
+POSTER RULES:
+1. TOP-RIGHT: tiny empty pocket only — NEVER draw logo/wordmark or brand-name text.
+2. Prefer short labels over paragraphs.
+3. {palette_lock}
+4. Soft matte 3D icons matching the brand's category — NOT fintech/bond/SEBI.
+5. Bake exact approved short strings; spelling must be perfect.
+6. AUDIENCE: represent the EXACT brand audience in visuals — correct age group, demographics.
+7. No textbook paragraphs. Complete sentences only.
+8. No empty shells. No Jiraaf orange/ice-blue/navy.
+"""
+            format_instructions = infographic_instructions
         else:
+            bg_note = static_background_instruction(brand_name=brand_name)
+            palette_note = (
+                f"Brand colours REQUIRED: navy {self.NAVY} + visible orange accents {self.ORANGE}.\n{ORANGE_COVERAGE_LOCK}"
+                if is_jiraaf_brand
+                else f"{palette_lock}\n{JIRAAF_FORBIDDEN}"
+            )
             format_instructions = f"""
-STATIC SOCIAL FORMAT — MATCH JIRAAF SAMPLE TONE:
+STATIC SOCIAL FORMAT — {"MATCH JIRAAF SAMPLE TONE" if is_jiraaf_brand else f"BRAND-SPECIFIC ({brand_name or 'active brand'})"}:
 - Canvas: exact format×platform size (LinkedIn static 1200x627, Instagram 1080x1080, X 1200x675).
 - ABSOLUTE BOUNDARY: every element fully inside the canvas — nothing bleeds or clips past edges.
 - Safe margin ≥6% all sides. Reduce/drop content rather than clip.
-- Background ice-blue {self.CAROUSEL_BG}.
-- Brand colours REQUIRED: navy {self.NAVY} + visible orange accents {self.ORANGE}.
-{ORANGE_COVERAGE_LOCK}
-- Trade deficit / export-import → dual-bar year table (NOT bond education cards).
-- Education / why topics → benefit cards + hero icon (NOT country comparisons).
+- Background: {bg_note}.
+- {palette_note}
+- Education / explain topics → hub + icon cards with short facts (NOT Jiraaf bond posters unless Jiraaf).
 - Ranking / comparison ONLY when the user asked for top-N / country-wise / vs ranks.
 - Tiny TOP-RIGHT pocket only for Brand Space logo — never AI-draw brand-name text.
 - Headline + 1 support line + short facts. NO textbook paragraphs.
@@ -193,8 +283,8 @@ CRITICAL:
 - dominant_visual_system: generated_image | type_led | illustration | infographic | data_visual | product_visual
 - visual_format_type: comparison | timeline | chart | matrix | process_flow | hero_scene | data_grid
 - Bake approved Creative Blueprint copy into the image as sharp typography (exact strings).
-- Prefer soft matte clay-3D iconography (rounded soft-touch fintech icons) matching Jiraaf samples.
-- NEVER draw logos/wordmarks or brand-name text (no JIRAAF letters); Brand Space logo is composited later into a tiny top-right pocket.
+- {icon_style_note}
+- NEVER draw logos/wordmarks or brand-name text; Brand Space logo is composited later into a tiny top-right pocket.
 - Spelling of every planned text string must be perfect.
 - generated_image_url must be "".
 - image_prompt_direction: 600–900 words describing layout, soft matte 3D icons, colors, AND exact text to render.
@@ -207,7 +297,7 @@ REQUIRED JSON SHAPE (fill every field; do not rename keys):
   "composition_logic": "Top-down educational hierarchy with hero visual and structured rows",
   "focal_point": "Central soft matte clay-3D icon cluster",
   "negative_space_plan": "Generous margins; tiny logo-safe top-right pocket only — headline fully clear",
-  "color_behavior": "Navy #003975 headlines on ice-blue #E8F0F8 with REQUIRED orange #FFA400 accents",
+  "color_behavior": "{color_json_example}",
   "logo_zone_instruction": "Tiny top-right pocket (~12% width x 7% height), 20px padding; never draw brand-name text",
   "typography_behavior": "Bold navy sans headlines, readable gray body, baked into image",
   "image_prompt_direction": "Detailed image prompt covering layout, icons, colors, and exact text...",
@@ -493,50 +583,51 @@ Return ONLY raw JSON."""
 
         user_block = f'\nUSER TOPIC REQUEST:\n"{user_prompt}"\n' if user_prompt else ""
 
-        return f"""Create ONE finished LinkedIn educational CAROUSEL SLIDE matching this locked sample design system.
+        from app.services.image_generation.carousel_image_prompt import (
+            build_carousel_style_stub,
+        )
+
+        return f"""Create ONE finished LinkedIn educational CAROUSEL SLIDE — ultra-premium editorial DNA.
 
 {CAROUSEL_AUDIENCE_TONE_LOCK}
+{build_carousel_style_stub()}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 CANVAS BOUNDARY LOCK (NON-NEGOTIABLE)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Canvas: {canvas}.
-ABSOLUTE BOUNDARY: Every pixel of every element (text, icon, chip, divider, CTA) MUST be
-fully inside the canvas rectangle. Nothing may be cropped, clipped, or bleed off any edge.
-Outer safe margin ≥6% on ALL four sides. Content that does not fit must be shortened or dropped.
+Canvas: {canvas} (1080×1350 vertical).
+ABSOLUTE BOUNDARY: Every pixel inside the canvas. Outer safe margin ≥8% on ALL sides.
+Content that does not fit must be shortened or dropped — never clip.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-LOCKED VISUAL SYSTEM (FROM SAMPLE)
+LOCKED VISUAL SYSTEM (PREMIUM AGENCY)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Canvas: {canvas}.
-BACKGROUND (NON-NEGOTIABLE): Solid flat {self.CAROUSEL_BG} across the entire canvas.
-- Same background color on every slide in the set. No gradients. No textured paper. No photo backgrounds. No pure white.
-- NEVER pure black, charcoal, dark navy, or grainy dark backgrounds — instant fail.
-Color accents: Navy text {self.NAVY}, body gray {self.BODY_GRAY}, orange divider accents {self.ORANGE}, gold metallic 3D accents {self.GOLD}, soft card tint {self.CARD_BLUE}.
-{ICON_STYLE_LOCK}
-{PREMIUM_HD_ICON_LOCK}
-Icon style: ULTRA-PREMIUM HD clay-3D — 4K-sharp studio product renders, satin + gold accents, rich shadows
-(NOT flat, NOT low-poly, NOT blurry, NOT washed-out). ONE tiny HD premium accent in corner (never giant hero cluster).
-Typography: Bold navy sans-serif headline; readable supporting lines; all text baked sharply into the image. Perfect English spelling — never invent gibberish on props.
+BACKGROUND: solid {self.CAROUSEL_BG} only (soft alt #F7FAFC ok). Soft vignette/particles almost invisible.
+NO full-page heavy gradients. NO PowerPoint / Canva look.
+Colors: navy titles {self.CAROUSEL_NAVY}; body gray {self.BODY_GRAY}; orange accents {self.CAROUSEL_ORANGE}
+ONLY for numbers/key words/tiny CTA/icons — never overuse.
+White floating cards 22px radius, tiny soft shadow.
+Icons: Pixar-quality photoreal 3D (glass/ceramic/chrome) — NO flat icons, NO emoji, NO text baked inside icons.
+Typography: Extra Bold UPPERCASE navy headline ≤12 words; body ≤20 words / max 2 lines. Perfect spelling.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-LOCKED LAYOUT STRUCTURE (TOP → BOTTOM)
+LOCKED LAYOUT (TOP → BOTTOM)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-1) TOP-RIGHT: tiny empty pocket only (~12%×7%) — do NOT draw any logo/wordmark AND do NOT write "{brand_name}" / JIRAAF as text. Real logo icon is composited later. Keep the full headline clear left/center — never clip it for the logo.
-2) HEADLINE: MEDIUM bold navy (max 2 lines, ≤10 words) — never cut mid-word.
-3) SUPPORTING LINE: one short answer / subhead.
-4) CALLOUT BOX (optional): soft rounded ({self.CARD_BLUE}) — one short insight OR omit if crowded.
-5) PREMIUM HD clay-3D avatar icons (~12–16% height) bottom-right — sharp studio render — NEVER omit, NEVER giant hero cluster.
-6) DEPTH BLOCK: 2–3 white cards / rows with label + full explanation sentence each.
-7) DIVIDER: thin horizontal orange line optional.
-8) FOOTER SAFE ZONE (MANDATORY): leave bottom ~22% EMPTY ice-blue — do NOT bake SEBI text
-   (exact legal footer is Pillow-composited after, same as logo — larger readable type).
-   Content cards must never enter the footer zone.
+1) TOP-RIGHT: empty logo pocket (~7%) — NEVER draw logo/wordmark/"{brand_name}"/JIRAAF letters.
+2) HEADLINE: Extra Bold navy UPPERCASE — max 12 words — never cut mid-word.
+3) SUPPORTING LINE: one short subhead.
+4) Hero 3D visual (storytelling object — coins/graphs/shield/docs/lock).
+5) 2–3 white floating cards with short labels only (quoted copy).
+6) Tiny takeaway ABOVE footer zone.
+7) FOOTER SAFE ZONE (MANDATORY EVERY SLIDE): leave bottom ~14–18% EMPTY sky-blue —
+   do NOT bake SEBI/legal text (exact disclaimer Pillow-composited after).
+8) CTA: ONLY if provided on closing slide — compact orange pill ≤28% width ≤4.5% height 2–4 words.
+   NEVER invent CTAs. NEVER bake CTA/icon gibberish text.
 
 {CAROUSEL_FIT_LOCK}
 {CAROUSEL_SAMPLE_DNA_COMPACT}
 
-Content must feel educational AND perfectly fitted — prefer less content that fits over more that breaks.
+Prefer less content that fits over more that breaks. One visual focus per slide.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 EXACT COPY TO BAKE (verbatim — do not paraphrase)
@@ -546,7 +637,7 @@ Hook: {hook or '(optional)'}
 Headline: {headline}
 Supporting line: {supporting_line or '(optional)'}
 Body / callout source: {body}
-CTA (use on closing slides only if provided): {cta or '(omit)'}
+CTA (closing slides only if provided — never invent): {cta or '(omit)'}
 Storyline beats:
 {story}
 Proof / bottom-card labels source:
@@ -555,7 +646,7 @@ Stats:
 {stats}
 Process cues:
 {steps}
-Slide pack context (for multi-slide consistency — keep SAME background {self.CAROUSEL_BG}):
+Slide pack context (SAME background {self.CAROUSEL_BG}):
 {slides_block}
 Visual mood: {visual_mood}
 Brand color behavior: {color_behavior}
@@ -566,13 +657,13 @@ Initial art direction (refine, do not ignore locked system):
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 NON-NEGOTIABLE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-1. Background MUST be solid {self.CAROUSEL_BG} — identical slide-to-slide. NEVER black/charcoal.
-2. Use multiple ULTRA-PREMIUM clay-3D icons — LARGE, sharp, high-detail; still leave SEBI footer room.
-3. Bake all listed text as legible typography; no empty shells; no mid-word cuts; perfect spelling.
-4. Hierarchy: headline → supporting → DEPTH explanation cards (most of slide) → tiny accents → SEBI footer.
-5. No flat 2D clipart. No cheap low-poly blobs. No purple neon AI look. No watermark slogans.
-6. NEVER draw logos or brand-name text (no JIRAAF letters) — tiny top-right pocket only.
-7. NEVER invent SEBI/registration text in the image — leave bottom safe zone empty for post-composite.
+1. Background solid {self.CAROUSEL_BG} — identical slide-to-slide. NEVER black/charcoal.
+2. Pixar-quality 3D icons; leave SEBI disclaimer zone empty.
+3. Bake ONLY quoted copy letter-perfect — no mid-word cuts; no invented CTA/icon text.
+4. Hierarchy: headline → hero 3D → cards → takeaway → empty disclaimer zone.
+5. No flat clipart. No neon AI look. No watermark.
+6. NEVER draw logos or brand-name text — top-right pocket only.
+7. ALWAYS leave bottom for SEBI disclaimer composite — carousel always needs disclaimer.
 
 Return ONLY the finished image-generation prompt."""
 
@@ -603,6 +694,7 @@ Return ONLY the finished image-generation prompt."""
         title = headline or "Untitled"
         subtitle = supporting_line or ""
         layout_type = str(layout_type or "").strip()
+        is_jiraaf_brand = "jiraaf" in (brand_name or "").casefold()
         from app.prompts.jiraaf_layout import is_trade_data_board
 
         is_rank = layout_type == "static_ranking"
@@ -682,21 +774,74 @@ Language like: "Top investor in India" / "Strong economic ties" — NOT textbook
             layout_section = """LOCKED LAYOUT — HUB + SHORT FACTS (layout_type=static_hub_facts):
 Center hub + 4–5 bank/rule fact cards with distinct clay-3D icons."""
         else:
-            layout_section = f"""LOCKED LAYOUT — DENSE INFOGRAPHIC EXPLAIN (layout_type=carousel_story):
+            if is_jiraaf_brand:
+                layout_section = f"""LOCKED LAYOUT — DENSE INFOGRAPHIC EXPLAIN (layout_type=carousel_story):
 {INFOGRAPHIC_EXPLAIN_LAYOUT_LOCK}
 {INFOGRAPHIC_EXPLAIN_ORANGE_STUB}
 {INFOGRAPHIC_EXPLAIN_QUALITY_LOCK}
 {ORANGE_COVERAGE_LOCK}
-Match sample_infographic_explain_rbi_polymer.png EXACTLY:
-1) Navy headline (NOT oversized) + gray intro with ₹/% fact
-2) Orange-bar section + 3 circular-icon fact columns with real explanations
-3) Orange-bar section + orange highlight words + 3 clay-3D fact columns
-4) Orange-bar text section (short paragraphs)
-5) Thin orange-border callout + lightbulb (NOT solid orange slab)
-6) Source footer · empty top-right logo pocket
-FAIL if: sparse giant-headline poster, empty ice-blue void, typos, ranking rows"""
+Match sample_infographic_explain_rbi_plastic_perfect.png + locked explain_image_prompt DNA:
+1) 3-line navy title (middle keyword LARGEST) + compact orange CTA pill + short intro
+2) Photoreal 3D hero: transparent polymer note on podium + shield/coins/leaves
+3) Soft why card
+4) Up to 8 benefit cards (prefer 2×4) with Pixar-quality 3D icons
+5) Trial before rollout cues + optional slim footer — NO SEBI wall
+6) Empty top-right logo pocket · BG #87CEFA · spacious corporate editorial
+FAIL if: ranking rows, sparse giant-headline poster, flat icons, neon, clutter"""
+            else:
+                from app.prompts.cognixia_brand_dna import (
+                    COGNIXIA_CARD_BG,
+                    COGNIXIA_TEXT_DARK,
+                    COGNIXIA_VISUAL_LOCK,
+                    is_cognixia_brand as _is_cognixia,
+                )
 
-        return f"""Create ONE finished LinkedIn educational INFOGRAPHIC matching Jiraaf sample tone.
+                if _is_cognixia(brand_name):
+                    layout_section = f"""LOCKED LAYOUT — COGNIXIA EDUCATION POSTER for {brand_name} (layout_type=carousel_story):
+{COGNIXIA_VISUAL_LOCK}
+1) Bold Outfit headline in {COGNIXIA_TEXT_DARK} + supporting line
+2) White/{COGNIXIA_CARD_BG} cards with teal accent borders
+3) 3D blue→teal tech icons (cloud, AI, network, learning)
+4) CTA pill primary blue #0952A9 with white label
+5) Empty top-right logo pocket only
+FAIL if: Jiraaf palette, finance icons, orange accents, ice-blue BG."""
+                else:
+                    layout_section = f"""LOCKED LAYOUT — BRAND EDUCATION POSTER for {brand_name} (layout_type=carousel_story):
+Background: clean WHITE #FFFFFF — never ice-blue.
+Central hub OR hero icon + 4–6 white cards with teal/cyan accent borders.
+1) Bold navy/teal headline + short supporting line
+2) Icon-led fact cards with short explanations (6–12 words each)
+3) Compact teal CTA pill — NO orange
+4) Empty top-right logo pocket only
+FAIL if: Jiraaf ice-blue/orange palette, bond/finance poster DNA, ranking rows, clipped text."""
+
+        if is_jiraaf_brand:
+            visual_system_block = f"""LOCKED VISUAL SYSTEM (FROM JIRAAF SAMPLES)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Canvas: {canvas}.
+BACKGROUND: Soft off-white / light ice-blue {self.INFO_BG}. Clean, airy, premium.
+NEVER pure black, charcoal, dark navy, grainy, or textured dark backgrounds.
+Colors: Navy headings {self.NAVY}, body {self.BODY_GRAY}, REQUIRED orange accents {self.ORANGE}, gold {self.GOLD}. Never navy-only.
+{ORANGE_COVERAGE_LOCK}
+{ICON_STYLE_LOCK}
+Typography: Bold navy sans headlines; short labels. ALL text baked into pixels. Perfect spelling.
+CTA (if any): COMPACT ≤28% width, ≤4.5% height, 2–4 words — never a wide paragraph button.
+{STATIC_IMAGE_EXTRA_LOCKS}"""
+            tone_line = "Create ONE finished LinkedIn educational INFOGRAPHIC matching Jiraaf sample tone."
+        else:
+            visual_system_block = f"""LOCKED VISUAL SYSTEM (FROM BRAND SPACE — NOT JIRAAF)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Brand: {brand_name}
+Canvas: {canvas}.
+BACKGROUND + palette: {color_behavior or visual_mood or 'Use Brand Space visual identity only'}.
+NEVER Jiraaf navy #003975, orange #FFA400, ice-blue #E8F0F8/#87CEFA, or Jiraaf sample layouts.
+{ICON_STYLE_LOCK}
+Typography: Bold headlines; short labels. ALL text baked into pixels. Perfect spelling.
+CTA (if any): COMPACT pill — 2–4 words max.
+NO SEBI footer. NO finance/wallet/rupee icons unless the topic requires them."""
+            tone_line = f"Create ONE finished educational INFOGRAPHIC for {brand_name} using its Brand Space colors and mood."
+
+        return f"""{tone_line}
 
 {INFOGRAPHIC_AUDIENCE_TONE_LOCK}
 
@@ -710,17 +855,7 @@ Safe margin ≥6% on ALL four sides. If content does not fit, shorten labels or 
 No mid-word breaks. Perfect spelling (USD not ESD; Import not Emp; UAE not HAE).
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-LOCKED VISUAL SYSTEM (FROM JIRAAF SAMPLES)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Canvas: {canvas}.
-BACKGROUND: Soft off-white / light ice-blue {self.INFO_BG}. Clean, airy, premium.
-NEVER pure black, charcoal, dark navy, grainy, or textured dark backgrounds.
-Colors: Navy headings {self.NAVY}, body {self.BODY_GRAY}, REQUIRED orange accents {self.ORANGE}, gold {self.GOLD}. Never navy-only.
-{ORANGE_COVERAGE_LOCK}
-{ICON_STYLE_LOCK}
-Typography: Bold navy sans headlines; short labels. ALL text baked into pixels. Perfect spelling.
-CTA (if any): COMPACT ≤28% width, ≤4.5% height, 2–4 words — never a wide paragraph button.
-{STATIC_IMAGE_EXTRA_LOCKS}
+{visual_system_block}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 {layout_section}
@@ -758,14 +893,14 @@ NON-NEGOTIABLE
 1. layout_type={layout_type or 'auto'} — follow the LOCKED LAYOUT above; do NOT switch to ranking for explain topics.
 2. Bake exact short strings; never paraphrase into heavier textbook wording.
 3. Spelling perfect — never invent gibberish on cards (USD/Import/UAE correct).
-4. Brand colours: navy {self.NAVY} + REQUIRED visible orange {self.ORANGE} accents.
-{ORANGE_COVERAGE_LOCK}
+4. {"Brand colours: navy " + self.NAVY + " + REQUIRED visible orange " + self.ORANGE + " accents." if is_jiraaf_brand else f"Brand colours: ONLY {brand_name} palette — {color_behavior or visual_mood}."}
+{ORANGE_COVERAGE_LOCK if is_jiraaf_brand else ""}
 5. India market: ₹/% only when numbers belong; never invent foreign yield comparison tables.
 6. NEVER invent country flags / India-USA-Germany-Japan boards for education prompts.
 {UNIVERSAL_FIT_LOCK}
-7. NEVER draw logos/wordmarks or brand-name text (no JIRAAF) — tiny top-right pocket only.
+7. NEVER draw logos/wordmarks or brand-name text — tiny top-right pocket only.
 8. No purple neon AI aesthetic. No empty shells. No text breaking / mid-word cuts.
-9. {NO_SEBI_STATIC_RULE}
+9. {NO_SEBI_STATIC_RULE if is_jiraaf_brand else "NO SEBI footer or regulatory disclaimer strip."}
 
 Return ONLY the finished image-generation prompt."""
 
@@ -794,6 +929,13 @@ Return ONLY the finished image-generation prompt."""
         user_block = f'\nUSER TOPIC REQUEST:\n"{user_prompt}"\n' if user_prompt else ""
         topic = (user_prompt or "").lower()
         layout_type = str(layout_type or "").strip()
+        is_jiraaf_brand = _is_jiraaf_brand(brand_name)
+        brand_palette = resolve_brand_palette_lock(
+            brand_name=brand_name,
+            color_behavior=color_behavior,
+            visual_mood=visual_mood,
+        )
+        bg_note = static_background_instruction(brand_name=brand_name)
         is_bank_hub = layout_type == "static_hub_facts" or any(
             k in topic
             for k in (
@@ -904,7 +1046,8 @@ Return ONLY the finished image-generation prompt."""
         # Education / explain poster — headings + explanation cards (NOT ranking)
         education_block = ""
         if layout_type == "carousel_story" and not is_bank_hub:
-            education_block = f"""
+            if is_jiraaf_brand:
+                education_block = f"""
 LAYOUT LOCK — STATIC EXPLAIN POSTER (layout_type=carousel_story on static):
 {STATIC_EXPLAIN_LAYOUT_LOCK}
 {STATIC_EXPLAIN_QUALITY_LOCK}
@@ -914,6 +1057,19 @@ Canvas: {ratio}. Soft ice-blue {self.INFO_BG}.
 - ONE premium clay-3D hero + 3–5 cards (icon + heading + explanation each)
 - Orange dividers + orange CTA button
 Exact cards (letter-perfect, no missing text):
+{rows_text or '(use sections below)'}
+"""
+            else:
+                education_block = f"""
+LAYOUT LOCK — STATIC EXPLAIN POSTER for {brand_name} (layout_type=carousel_story):
+Canvas: {ratio}. Background: {bg_note}.
+{brand_palette}
+{JIRAAF_FORBIDDEN}
+- Bold navy/teal headline + supporting line — fully baked
+- Central hub OR hero icon + 4–6 white cards with teal/cyan accent borders
+- Hexagonal or rounded tech-education cards (Cognixia-style when brand is Cognixia)
+- Teal/cyan CTA pill — NO orange
+Exact cards (letter-perfect):
 {rows_text or '(use sections below)'}
 """
 
@@ -967,7 +1123,28 @@ Exact ranked rows (letter-perfect):
 {rows_text}
 """
 
-        return f"""Create a finished premium LinkedIn/social STATIC creative matching Jiraaf sample DNA.
+        static_tone = (
+            "matching Jiraaf sample DNA"
+            if is_jiraaf_brand
+            else f"for {brand_name} using Brand Space colours (NOT Jiraaf)"
+        )
+        static_bg = (
+            f"solid ice-blue {self.CAROUSEL_BG} or soft {self.INFO_BG} — NEVER dark navy / black"
+            if is_jiraaf_brand
+            else f"{bg_note} — NEVER ice-blue, NEVER dark full-bleed unless brand requires"
+        )
+        static_colours = (
+            f"Brand colours REQUIRED: navy {self.NAVY} + visible orange accents {self.ORANGE}.\n{ORANGE_COVERAGE_LOCK}\n{STATIC_ORANGE_STUB}\n{STATIC_IMAGE_EXTRA_LOCKS}"
+            if is_jiraaf_brand
+            else f"{brand_palette}\n{JIRAAF_FORBIDDEN}"
+        )
+        static_orange_line = (
+            f"Colors: {color_behavior} — must include orange {self.ORANGE}"
+            if is_jiraaf_brand
+            else f"Colors: {brand_palette}"
+        )
+
+        return f"""Create a finished premium LinkedIn/social STATIC creative {static_tone}.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 CANVAS BOUNDARY LOCK (NON-NEGOTIABLE)
@@ -977,18 +1154,15 @@ ABSOLUTE BOUNDARY: Every pixel of every element (headline, icon, card, CTA, sour
 fully inside the {ratio} canvas. Nothing may bleed, clip, or extend past any edge.
 Safe margin ≥6% on ALL four sides. Shorten or drop content before clipping occurs.
 
-Background: solid ice-blue {self.CAROUSEL_BG} or soft {self.INFO_BG} — NEVER dark navy / black.
-Style: premium fintech creative with glossy 3D accents + sharp baked typography (like Top Countries sample).
-Brand colours REQUIRED: navy {self.NAVY} + visible orange accents {self.ORANGE}.
-{ORANGE_COVERAGE_LOCK}
-{STATIC_ORANGE_STUB}
-{STATIC_IMAGE_EXTRA_LOCKS}
+Background: {static_bg}.
+Style: premium educational creative with glossy 3D accents + sharp baked typography.
+{static_colours}
 Logo: tiny top-right empty pocket only — never draw brand-name text.
 Layout: Bold large headline, supporting line, ranked rows OR fact cards, compact CTA.
 {education_block}
 {ranking_block}
 If sections/facts are provided below and this is NOT a ranking, prefer education cards or hub layout.
-{NO_SEBI_STATIC_RULE}
+{NO_SEBI_STATIC_RULE if is_jiraaf_brand else "NO SEBI footer or regulatory disclaimer strip."}
 Never use $ or US $ — prefer ₹ / ¥ / USD letters / %.
 
 Exact text (bake letter-perfect — never invent gibberish):
@@ -1000,7 +1174,7 @@ Quote (omit if empty): {customer_quote} {customer_name}
 Fact / rank rows:
 {rows_text or '(none)'}
 Mood: {visual_mood}
-Colors: {color_behavior} — must include orange {self.ORANGE}
+{static_orange_line}
 {user_block}
 
 Return ONLY the finished image-generation prompt."""

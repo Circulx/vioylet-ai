@@ -617,12 +617,11 @@ def repair_bank_hub_sections(
             includes = [_fix_text(src.stat or "", india_retail=True)]
         if not includes and (src.body or "").strip():
             includes = [_fix_text((src.body or "")[:120], india_retail=True)]
-        # Keep card lines SHORT — long lines cause AI image gibberish
+        # Keep card lines short but COMPLETE — never cut mid-phrase
         short_includes: list[str] = []
         for line in includes[:2]:
-            words = str(line).replace("£", "₹").split()
-            short_includes.append(" ".join(words[:10]))
-        includes = short_includes
+            short_includes.append(_clip_complete(str(line).replace("£", "₹"), 16))
+        includes = [x for x in short_includes if x]
         rebuilt.append(
             BlueprintInfographicSection(
                 section_label=bank,
@@ -687,16 +686,18 @@ def repair_data_layout(
         body = (sec.body or "").strip()
         if body and not includes:
             includes = [body[:140]]
-        # Short facts only — long card text causes AI image gibberish
+        # Short facts only — but COMPLETE sentences (never mid-phrase cuts)
         short_incs = []
         for x in includes:
             if not x:
                 continue
             cleaned = _fix_text(str(x), india_retail=True).replace("£", "₹")
-            short_incs.append(" ".join(cleaned.split()[:10]))
+            short_incs.append(_clip_complete(cleaned, 18))
         cleaned_sections.append(
             BlueprintInfographicSection(
-                section_label=_fix_text(sec.section_label or "", india_retail=True),
+                section_label=_clip_complete(
+                    _fix_text(sec.section_label or "", india_retail=True), 12
+                ),
                 stat=_fix_text(sec.stat or "", india_retail=True) or None,
                 includes=short_incs[:2],
                 body="",
@@ -910,47 +911,44 @@ def repair_explain_infographic_copy(
     if not _is_polymer_explain_topic(user_prompt, blueprint):
         return blueprint
 
-    blueprint.headline = "Why is the RBI testing plastic currency notes?"
+    blueprint.headline = "RBI TO TEST PLASTIC CURRENCY NOTES"
     blueprint.title = blueprint.headline
     blueprint.supporting_line = (
-        "RBI will trial polymer ₹10 and ₹20 notes — switching from paper is not simple."
+        "Testing plastic notes for durability, security and sustainability."
     )
     blueprint.sections = [
         BlueprintInfographicSection(
-            section_label="Why polymer notes?",
+            section_label="Why is RBI planning this?",
+            includes=[],
+            body="More durable, secure, cost-effective and eco-friendly currency.",
+            icon_hint="bank building, RBI seal",
+        ),
+        BlueprintInfographicSection(
+            section_label="Top reasons for switching",
             includes=[
-                "Lower costs | Save ₹4,000–5,000 crore yearly on replacements",
-                "Longer life | Lasts 2.5–4× longer than paper notes",
-                "Global proof | Already used in 50+ countries",
+                "Longer Life | Notes last much longer than paper",
+                "Cost Effective | Lower printing and logistics costs",
+                "Stronger Security | Harder to counterfeit",
+                "Water Resistant | Stays cleaner in daily use",
+                "Eco Friendly | Less paper waste over time",
+                "Future Ready | Modern durable currency system",
             ],
             body="",
-            icon_hint="rupee cycle, shield, globe",
+            icon_hint="shield, coins, padlock, droplets, recycle, leaf shield",
         ),
         BlueprintInfographicSection(
-            section_label="Why start with a trial?",
-            includes=[
-                "Import risk | Substrate comes from few global suppliers",
-                "ATM upgrades | Machines need polymer-ready hardware",
-                "Cash habits | Notes are folded and handled daily",
-            ],
-            body="RBI is cautious before a wider rollout:",
-            icon_hint="container, ATM, wallet",
-        ),
-        BlueprintInfographicSection(
-            section_label="Why only ₹10 and ₹20?",
+            section_label="Trial before rollout",
             includes=[],
-            body="₹10 wears fastest — a smart small-scale test before wider adoption.",
-            icon_hint="note",
+            body="Tests in select cities before a nationwide launch.",
+            icon_hint="map pins, clipboard checklist",
         ),
     ]
-    blueprint.customer_quote = (
-        "A note must survive real use — that is exactly what RBI is testing."
-    )
-    blueprint.cta = "Learn more"
+    blueprint.customer_quote = "Innovating today for a stronger tomorrow"
+    blueprint.cta = "A SMARTER STEP TOWARDS A STRONGER INDIA"
     blueprint.source_footer = "Source: rbi.org.in"
     blueprint = apply_text_hygiene(blueprint, user_prompt=user_prompt)
     notes = list(blueprint.brand_alignment_notes or [])
-    notes.insert(0, "Locked: polymer explain copy matches sample_infographic_explain_rbi_polymer.png")
+    notes.insert(0, "Locked: clean explain pattern from sample_infographic_explain_rbi_plastic_perfect.png")
     blueprint.brand_alignment_notes = notes[:8]
     return blueprint
 
@@ -1016,9 +1014,65 @@ def repair_generic_headline(
     return blueprint
 
 
+_DANGLING_ENDS = {
+    "a", "an", "the", "and", "or", "but", "with", "of", "to", "for", "by", "in",
+    "on", "at", "from", "into", "as", "is", "are", "was", "were", "be", "will",
+    "hit", "reach", "about", "than", "that", "this", "these", "those", "their",
+    "its", "our", "your", "vs", "versus",
+}
+
+
 def _truncate_words(text: str, max_words: int) -> str:
+    """Backward-compatible hard clip — prefer `_clip_complete` for user-facing copy."""
     words = re.sub(r"\s+", " ", (text or "").strip()).split()
     return " ".join(words[:max_words]).strip()
+
+
+def _clip_complete(text: str, max_words: int, *, min_words: int = 4) -> str:
+    """Clip text without leaving mid-sentence / dangling fragments.
+
+    Prefer a full sentence ending (.!?) within the budget. If none, keep up to
+    max_words but never end on a dangling connector word (with/and/the/…).
+    """
+    cleaned = re.sub(r"\s+", " ", (text or "").strip())
+    if not cleaned:
+        return ""
+    words = cleaned.split()
+    if len(words) <= max_words:
+        # Still reject dangling endings on already-short fragments
+        if words and words[-1].rstrip(".,;:").casefold() in _DANGLING_ENDS:
+            return " ".join(words[:-1]).rstrip(".,;:")
+        return cleaned
+
+    window = words[:max_words]
+    # Prefer last sentence end inside the window
+    joined = " ".join(window)
+    for sep in (". ", "! ", "? "):
+        idx = joined.rfind(sep)
+        if idx >= min_words:
+            candidate = joined[: idx + 1].strip()
+            if len(candidate.split()) >= min_words:
+                return candidate
+
+    # Drop trailing dangling words
+    while window and window[-1].rstrip(".,;:").casefold() in _DANGLING_ENDS:
+        window = window[:-1]
+    result = " ".join(window).rstrip(".,;:")
+    # If we still look like a fragment, try one more word from original if it closes
+    if result and result[-1] not in ".!?" and len(words) > max_words:
+        # Prefer ending with a number+unit pair (e.g. "450 million")
+        extra = words[max_words : max_words + 2]
+        probe = (result + " " + " ".join(extra)).strip()
+        if any(u in probe.casefold() for u in ("million", "billion", "crore", "lakh", "%", "₹")):
+            # Take until unit word
+            probe_words = probe.split()
+            for i, w in enumerate(probe_words):
+                if w.casefold().rstrip(".,") in {
+                    "million", "billion", "crore", "lakh", "percent", "passengers",
+                    "airports", "routes",
+                } or w.endswith("%"):
+                    return " ".join(probe_words[: i + 1]).rstrip(".,;:")
+    return result
 
 
 def condense_explain_blueprint_copy(
@@ -1026,16 +1080,19 @@ def condense_explain_blueprint_copy(
     *,
     layout_type: LayoutType,
 ) -> CreativeBlueprint:
-    """Trim explain infographic copy so image model can bake it without overflow."""
+    """Trim explain infographic copy so image model can bake it without overflow.
+
+    Never leave mid-sentence fragments on the approval card.
+    """
     from app.graph.models.layer7c_models import BlueprintInfographicSection
 
     if blueprint.format not in ("infographic",) or layout_type != "carousel_story":
         return blueprint
 
-    blueprint.headline = _truncate_words(blueprint.headline or blueprint.title or "", 10)
+    blueprint.headline = _clip_complete(blueprint.headline or blueprint.title or "", 12)
     blueprint.title = blueprint.headline
-    blueprint.supporting_line = _truncate_words(blueprint.supporting_line or "", 14)
-    blueprint.customer_quote = _truncate_words(blueprint.customer_quote or "", 16)
+    blueprint.supporting_line = _clip_complete(blueprint.supporting_line or "", 20)
+    blueprint.customer_quote = _clip_complete(blueprint.customer_quote or "", 22)
 
     condensed: list[BlueprintInfographicSection] = []
     for sec in blueprint.sections or []:
@@ -1044,19 +1101,18 @@ def condense_explain_blueprint_copy(
             fact = str(raw).strip()
             if "|" in fact:
                 title, rest = [p.strip() for p in fact.split("|", 1)]
+                includes_out.append(
+                    f"{_clip_complete(title, 6)} | {_clip_complete(rest, 16)}"
+                )
             else:
-                parts = fact.split()
-                title = " ".join(parts[:3])
-                rest = " ".join(parts[3:])
-            includes_out.append(
-                f"{_truncate_words(title, 4)} | {_truncate_words(rest, 8)}"
-            )
+                includes_out.append(_clip_complete(fact, 20))
         condensed.append(
             BlueprintInfographicSection(
-                section_label=_truncate_words(sec.section_label or "", 8),
+                section_label=_clip_complete(sec.section_label or "", 12),
                 includes=includes_out,
-                body=_truncate_words(sec.body or "", 14),
+                body=_clip_complete(sec.body or "", 24),
                 icon_hint=sec.icon_hint,
+                stat=sec.stat,
             )
         )
     blueprint.sections = condensed
@@ -1084,44 +1140,53 @@ def ensure_explain_sections(
     if is_polymer:
         seeded = [
             BlueprintInfographicSection(
-                section_label="Why polymer notes?",
+                section_label="Why is RBI planning this?",
+                includes=[],
+                body=(
+                    "RBI aims to modernize Indian currency by making it more durable, "
+                    "secure, cost-effective and eco-friendly."
+                ),
+                icon_hint="bank building, RBI seal",
+            ),
+            BlueprintInfographicSection(
+                section_label="Top reasons for switching to plastic currency",
                 includes=[
-                    "Lower costs | Save ₹4,000–5,000 crore yearly on replacements",
-                    "Longer life | Lasts 2.5–4× longer than paper notes",
-                    "Global proof | Already used in 50+ countries",
+                    "Longer Life | Plastic notes last much longer than paper",
+                    "Cost Effective | Lower printing, storage and logistics costs",
+                    "Stronger Security | Advanced features make counterfeiting harder",
+                    "Water & Dirt Resistant | Resists moisture and dirt, stays cleaner",
+                    "Environment Friendly | Longer life reduces paper use and waste",
+                    "Better for the Economy | Fewer replacements save public money",
+                    "Consumer Convenience | Cleaner notes that are easier to handle",
+                    "Future Ready | Supports a modern, durable currency system",
                 ],
                 body="",
-                icon_hint="rupee cycle, shield, globe",
+                icon_hint="shield, coins, padlock, droplets, recycle, chart, wallet, leaf shield",
             ),
             BlueprintInfographicSection(
-                section_label="Why start with a trial?",
-                includes=[
-                    "Import risk | Substrate comes from few global suppliers",
-                    "ATM upgrades | Machines need polymer-ready hardware",
-                    "Cash habits | Notes are folded and handled daily",
-                ],
-                body="RBI is cautious before a wider rollout:",
-                icon_hint="container, ATM, wallet",
-            ),
-            BlueprintInfographicSection(
-                section_label="Why only ₹10 and ₹20?",
+                section_label="Trial before rollout",
                 includes=[],
-                body="₹10 wears fastest — a smart small-scale test before wider adoption.",
-                icon_hint="note",
+                body="RBI will run closed-door tests in select cities before a nationwide launch.",
+                icon_hint="map pins, clipboard checklist",
             ),
         ]
         if not (blueprint.customer_quote or "").strip():
             blueprint.customer_quote = (
-                "A note must survive real use — that is exactly what RBI is testing."
+                "Innovating today for a stronger, smarter and sustainable tomorrow"
             )
         if not (blueprint.source_footer or "").strip():
             blueprint.source_footer = "Source: rbi.org.in"
         if not (blueprint.supporting_line or "").strip():
             blueprint.supporting_line = (
-                "RBI will trial polymer ₹10 and ₹20 notes — switching from paper is not simple."
+                "RBI is testing plastic notes in select cities to improve durability, security and sustainability."
             )
-        if not (blueprint.headline or "").strip() or "obi" in (blueprint.headline or "").lower():
-            blueprint.headline = "Why is the RBI testing plastic currency notes?"
+        if not (blueprint.cta or "").strip():
+            blueprint.cta = "A SMARTER STEP TOWARDS A STRONGER INDIA"
+        if not (blueprint.headline or "").strip():
+            blueprint.headline = "RBI TO TEST PLASTIC CURRENCY NOTES"
+            blueprint.title = blueprint.headline
+        elif "obi" in (blueprint.headline or "").lower():
+            blueprint.headline = "RBI TO TEST PLASTIC CURRENCY NOTES"
             blueprint.title = blueprint.headline
     else:
         facts = list(blueprint.proof_points or [])[:6]

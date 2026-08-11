@@ -227,9 +227,10 @@ Prefer L7 facts/numbers and REWRITE to sample quality:
 short headlines, ranked/hub numbers OR carousel story beats — almost no paragraphs.
 {"Currency: India retail → ₹; rates → %; Japan commits → ¥; DPIIT FDI → USD labeled clearly. Countries/flags/banks must be real and matched. Totals must add up." if is_jiraaf else f"Use {brand.brand_name}'s brand voice and real facts — no Jiraaf finance jargon, no ₹/SEBI/bond references unless the brand is in finance."}
 Brand accents: {"orange #FFA400 with navy #003975 for Jiraaf only" if is_jiraaf else ("Cognixia official: primary #0952A9, deep navy #00387A, card #F3F9FF, accent teal #74ADBA, body #707070, font Outfit — NEVER Jiraaf orange/ice-blue" if is_cognixia else f"use {brand.brand_name} Brand Space palette — NEVER Jiraaf orange/ice-blue/navy")}.
-{"If L7 looks like 'What Are Your FD Penalty Rates?' teaser, replace with 'Bank Penalty Rates and Key Rules' + 5 bank sections." if is_jiraaf else f"Write complete, publication-ready sentences — no fragment text, no truncated bullets. Every sentence must be grammatically complete."}
+{"If L7 looks like 'What Are Your FD Penalty Rates?' teaser, replace with 'Bank Penalty Rates and Key Rules' + 5 bank sections." if is_jiraaf else f"Use {brand.brand_name} Brand Space voice."}
+COMPLETE SENTENCES ONLY: every section_label and body must be a finished thought — never end mid-word or on dangling words (with/and/the/hit/about). Example BAD: "demand will hit 450". Example GOOD: "By 2030, demand will hit 450 million passengers." Put real numbers in STAT when available; put supporting facts in includes[].
 For rankings: if the user asked for top-N, keep EXACTLY that many section rows (top 10 → 10, not 5).
 AUDIENCE: Use the EXACT audience from the brand persona — age group, demographics, pain points. NEVER substitute with a different audience (e.g. if TG is children/teens, never show toddlers/babies/adults).
 TYPOGRAPHY: Use brand font from Brand Space visual identity if specified.
-Lock final short strings for image baking. Fill sources + source_footer when research URLs exist.
+Lock final short strings for image baking — short but COMPLETE. Fill sources + source_footer when research URLs exist.
 """

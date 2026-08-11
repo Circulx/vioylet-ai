@@ -919,7 +919,9 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
                 logo_zone_instruction=logo_zone_instruction
                 or "plain empty top-right corner — no text, no box, no logo drawn",
                 composite_sebi_footer=composite_sebi_footer,
-                wipe_reserved_corner=composite_sebi_footer,
+                # Always wipe the top-right corner before pasting the logo
+                # so AI-drawn decorative icons (leaf, compass, etc.) are removed.
+                wipe_reserved_corner=True,
                 quality=image_quality,
             )
             logger.info(
@@ -1434,12 +1436,14 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
                     if is_education_layout:
                         card_lines.append(f'CARD {i} HEADING: "{label}"\n')
                         for j, fact in enumerate(facts, start=1):
-                            short = " ".join(fact.split()[:14])
+                            # Keep up to 20 words — enough for a complete sentence
+                            short = " ".join(fact.split()[:20])
                             card_lines.append(f'CARD {i} EXPLANATION {j}: "{short}"\n')
                     else:
                         card_lines.append(f'CARD {i} name: "{label}"\n')
                         for j, fact in enumerate(facts, start=1):
-                            short = " ".join(fact.split()[:8])
+                            # Keep up to 15 words — complete sentence, not truncated bullets
+                            short = " ".join(fact.split()[:15])
                             card_lines.append(f'CARD {i} line {j}: "{short}"\n')
                 card_lines.append(f"Layout: {creative_template.image_stub}\n")
                 card_bake = "".join(card_lines)

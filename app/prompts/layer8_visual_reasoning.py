@@ -164,7 +164,7 @@ Soft ULTRA-PREMIUM HD clay-3D icons (4K-sharp studio product renders, strong sha
 Text must render as clean printed sans-serif, not embossed, not glowing, not outlined, not metallic.
 
 SLIDE ANATOMY — TEXT DOMINANT:
-1. TOP-RIGHT: plain empty corner only — never draw logo, wordmark, or "Brand Logo" placeholder.
+1. TOP-RIGHT CORNER: leave it COMPLETELY BLANK — solid background colour only, zero elements. NEVER draw a logo, wordmark, leaf icon, compass icon, circular badge, brand symbol, decorative icon, or ANY graphic in the top-right. Brand logo is composited in post-processing. This corner must be 100% empty.
 2. MANDATORY UNIQUE headline at top-left on EVERY slide — never omit, never repeat topic title.
 3. Supporting line with mechanism or real number (required).
 4. DEPTH BLOCK (REQUIRED, ~35–45% of slide height): max TWO cards with soft shadow.
@@ -215,17 +215,18 @@ D) HUB + SHORT FACTS (ONLY bank penalties / key rules):
    - Center hub + 4–5 bank fact cards
 
 POSTER RULES:
-1. TOP-RIGHT: tiny empty pocket only — NEVER draw logo/wordmark OR brand-name text (JIRAAF).
+1. TOP-RIGHT CORNER: leave COMPLETELY BLANK — background colour only. NEVER draw logo, wordmark, leaf, compass, circular badge, decorative icon, or ANY graphic here. Real Jiraaf logo is composited in post.
 2. Prefer short labels over paragraphs. If blueprint has long body, IGNORE it visually.
 3. Brand colours REQUIRED: navy {self.NAVY} + visible orange accents {self.ORANGE}
 {ORANGE_COVERAGE_LOCK}
    (section dashes, highlight bars, CTA arrows, dividers). Never navy-only.
 4. Trade boards = flat bars + typography. Soft matte clay-3D ONLY for education/hub — never on trade tables.
-5. Bake exact approved short strings; spelling must be perfect.
+5. Bake exact approved short strings; spelling must be PERFECT — zero typos.
 6. NEVER invent bond/FD benefit cards for a trade-deficit topic.
 7. Currency: USD labeled for trade boards; ₹ for India retail topics.
-8. No textbook essay paragraphs under every card.
+8. No textbook essay paragraphs. COMPLETE SENTENCES — never cut off mid-word or mid-sentence.
 9. No empty shells. No purple AI aesthetic.
+10. CARD TEXT FULLY VISIBLE — reduce font size if needed; never clip or hide text.
 """
             else:
                 infographic_instructions = f"""
@@ -245,14 +246,15 @@ B) RANKING LIST (only if user asked top-N): Vertical ranked rows with brand-colo
 C) HUB + SHORT FACTS: Center hub + 4–5 short fact cards
 
 POSTER RULES:
-1. TOP-RIGHT: tiny empty pocket only — NEVER draw logo/wordmark or brand-name text.
+1. TOP-RIGHT CORNER: leave COMPLETELY BLANK — background colour only. NEVER draw logo, wordmark, leaf, compass, circular badge, decorative icon, or ANY graphic here. Brand logo is composited in post.
 2. Prefer short labels over paragraphs.
 3. {palette_lock}
 4. Soft matte 3D icons matching the brand's category — NOT fintech/bond/SEBI.
-5. Bake exact approved short strings; spelling must be perfect.
+5. Bake exact approved strings; spelling must be PERFECT — zero typos.
 6. AUDIENCE: represent the EXACT brand audience in visuals — correct age group, demographics.
-7. No textbook paragraphs. Complete sentences only.
+7. COMPLETE SENTENCES REQUIRED — every card must end with a full sentence. NEVER cut off mid-word or mid-sentence. If text is too long, reduce font size rather than truncate.
 8. No empty shells. No Jiraaf orange/ice-blue/navy.
+9. CARD TEXT MUST BE FULLY VISIBLE — shrink font if needed, do not clip or hide any text.
 """
             format_instructions = infographic_instructions
         else:
@@ -271,9 +273,10 @@ STATIC SOCIAL FORMAT — {"MATCH JIRAAF SAMPLE TONE" if is_jiraaf_brand else f"B
 - {palette_note}
 - Education / explain topics → hub + icon cards with short facts (NOT Jiraaf bond posters unless Jiraaf).
 - Ranking / comparison ONLY when the user asked for top-N / country-wise / vs ranks.
-- Tiny TOP-RIGHT pocket only for Brand Space logo — never AI-draw brand-name text.
+- TOP-RIGHT CORNER: leave COMPLETELY BLANK — background only. NEVER draw logo, leaf, compass, badge, or decorative icon here. Brand logo is composited in post.
 - Headline + 1 support line + short facts. NO textbook paragraphs.
-- Perfect spelling on all baked text.
+- COMPLETE SENTENCES — never truncate mid-word. Shrink font if needed; never clip text.
+- Perfect spelling on all baked text. Zero typos.
 """
 
         return f"""You are Violyt's Visual Reasoning Engine. Plan composition for a finished AI image with baked-in typography.

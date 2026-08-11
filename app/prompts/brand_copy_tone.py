@@ -32,9 +32,9 @@ JIRAAF_SEBI_DISCLAIMER = (
 
 # Carousel-only — never inject into static/infographic prompts
 SEBI_FOOTER_HINT = (
-    "CAROUSEL ONLY: Reserve bottom ~14% EMPTY ice-blue on EVERY carousel slide for the legal footer. "
-    "Do NOT invent SEBI/registration text in the image — exact footer is Pillow-composited after "
-    f"(same reliability as Brand Space logo) at readable size:\n{JIRAAF_SEBI_DISCLAIMER}"
+    "CAROUSEL ONLY: Reserve bottom ~14–18% EMPTY sky-blue (#87CEFA / soft alt) on EVERY carousel slide "
+    "for the legal disclaimer. Do NOT invent SEBI/registration text in the image — exact footer is "
+    f"Pillow-composited after (same reliability as Brand Space logo) at readable size:\n{JIRAAF_SEBI_DISCLAIMER}"
 )
 
 NO_SEBI_STATIC_RULE = (
@@ -79,26 +79,27 @@ ICON STYLE LOCK (NON-NEGOTIABLE — ULTRA-PREMIUM HD 3D, same quality family as 
 # Shared text + icon quality — oil bar ranking AND infographic explain use SAME family
 JIRAAF_SAMPLE_VISUAL_DNA = f"""
 JIRAAF SAMPLE VISUAL DNA (oil bar + infographic explain — SAME quality bar):
-Reference: sample_static_oil_consumption_bars.png + sample_infographic_explain_rbi_polymer.png
+Reference: sample_static_oil_consumption_bars.png + sample_infographic_explain_rbi_plastic_perfect.png
+(fallback: sample_infographic_explain_rbi_polymer.png)
 
 COLOURS:
 - BG soft ice-blue {JIRAAF_BG}
-- Headline: bold navy {JIRAAF_NAVY} with 1–2 KEY WORDS in orange {JIRAAF_ORANGE} inside the title
+- Headline: bold navy {JIRAAF_NAVY} with optional KEY WORD accent in orange {JIRAAF_ORANGE}
 - Supporting line: medium gray {JIRAAF_BODY_GRAY} — clearly smaller than headline
-- Section headings / card titles: navy bold {JIRAAF_NAVY}
+- Section headings / card titles: navy bold {JIRAAF_NAVY} or orange titles on reason cards
 - Body / paragraph lines: gray {JIRAAF_BODY_GRAY} — crisp, readable, NOT oversized
-- Insight / callout box: soft cream {JIRAAF_INSIGHT_CREAM} fill + orange {JIRAAF_ORANGE} text
-- Bars / focal row / left bars / CTA: orange {JIRAAF_ORANGE}
+- Slogan pill / CTA accents: solid orange {JIRAAF_ORANGE} with white text
+- Reasons header + footer bars: solid navy {JIRAAF_NAVY} with white text
 
 TYPOGRAPHY:
 - Clean geometric sans-serif (Inter / Helvetica) — vector-sharp, perfect kerning
 - No warped, melted, hand-drawn, or blurry baked text
 - Hierarchy: headline > section heading > card title > body (each ~30% smaller)
 
-ICONS (premium HD — match oil-bar barrel quality):
-- Clay-3D studio render: satin materials, gold/navy accents, soft shadows on ice-blue BG
+ICONS (premium HD — match perfect sample glossy 3D quality):
+- Clay-3D / glossy plastic studio render: satin materials, gold/navy/orange accents, soft shadows on ice-blue BG
 - Section icons LARGE and sharp at 100% zoom — NOT clipart, NOT emoji, NOT blurry blobs
-- Bottom-right hero cluster: 1–2 topic-matched 3D props (barrels, coins, notes) with depth + shadow
+- Hero cluster top-right for explain: holographic note + coins + shield (perfect sample)
 {ICON_STYLE_LOCK}
 """
 
@@ -121,12 +122,12 @@ that same punch — colours currently come out muted/washed-out are a FAIL.
 """
 
 JIRAAF_PARAGRAPH_INSIGHT_LOCK = f"""
-PARAGRAPH / INSIGHT BLOCK (SAME as sample_infographic_explain_rbi_polymer.png callout):
-- Callout box: white/very-pale fill, THIN orange {JIRAAF_ORANGE} border (1–2px) — NOT a solid cream slab
-- Orange circle + white lightbulb icon on the left of the box
-- Callout text: dark navy/charcoal (NOT orange) — bold ONLY 2–3 key phrases in the same dark colour
-- Short paragraph max 2–3 lines, generous line spacing; never a wall of tiny text
-- Oil-bar annotation paragraphs (outside callout box) may use 1–3 orange highlight words instead
+FOOTER / INSIGHT BLOCK (PERFECT sample_infographic_explain_rbi_plastic_perfect.png):
+- Bottom navy {JIRAAF_NAVY} full-width bar with WHITE tagline
+- Orange circle + white lightbulb on the LEFT of the footer bar (match perfect sample)
+- Optional compact quote only if blueprint provides one — never a solid cream slab wall of text
+- Short paragraph max 2–3 lines; never a wall of tiny text
+- Oil-bar annotation paragraphs may use 1–3 orange highlight words instead
 """
 
 CAROUSEL_ICON_LOCK = f"""
@@ -271,69 +272,43 @@ CAROUSEL CONTENT DEPTH (plain language — still teach, never textbook):
 - Include ONE honest caveat somewhere (penalty, condition, illustrative note) in plain English
 """
 
-# Infographic EXPLAIN — LOCK to sample_infographic_explain_rbi_polymer.png
-# Real dense editorial infographic (NOT a sparse 3-card poster with giant headline)
+# Infographic EXPLAIN — LOCKED premium LinkedIn paragraph/info DNA
+# Ranking / top-N boards stay on ranking_board.py — DO NOT route lists here.
 INFOGRAPHIC_EXPLAIN_LAYOUT_LOCK = f"""
 ════════════════════════════════════════════════════════
-INFOGRAPHIC EXPLAIN — SAMPLE LOCK (NON-NEGOTIABLE)
-File: app/prompts/references/jiraaf_samples/sample_infographic_explain_rbi_polymer.png
-Same text colour + icon quality family as sample_static_oil_consumption_bars.png
-{JIRAAF_SAMPLE_VISUAL_DNA}
-{JIRAAF_PARAGRAPH_INSIGHT_LOCK}
-This is a REAL multi-section educational infographic. NEVER output a sparse poster.
+INFOGRAPHIC EXPLAIN — PREMIUM LINKEDIN LOCK (PARAGRAPH / INFORMATION ONLY)
+Canonical bake builder: app/services/image_generation/explain_image_prompt.py
+Visual sample: sample_infographic_explain_rbi_plastic_perfect.png
+NOT a poster. NOT a ranking board. NOT a top-N chart.
 ════════════════════════════════════════════════════════
 
-COLORS (locked):
-- BG soft ice-blue/off-white {JIRAAF_BG}
-- Headlines/titles navy {JIRAAF_NAVY}
-- Body gray; accents orange {JIRAAF_ORANGE} only
+FORMAT: 1080×1350 portrait (4:5). Spacious corporate editorial.
+Aesthetic: Apple + Stripe + Notion + McKinsey + Bloomberg — expensive, minimal, LinkedIn-ready.
 
-TYPE SCALE (CRITICAL — fail if wrong):
-- Headline: medium-large navy — ~4–6% of canvas height, wraps 1–2 lines MAX
-- Intro: clearly SMALLER than headline (~40% of headline size), 1 line only
-- Section headings: medium bold navy (~55% of headline size)
-- Card mini-titles: short bold (~40% of headline) — 2–4 words max
-- Card body: ONE short line (~30% of headline) — 6–10 words max, gray
-- Icons: LARGE — each icon ~25–30% of column width, hero of the column
-- FAIL if headline eats the top third OR if body text runs 3+ lines per card
+BG: #87CEFA with subtle radial gradient + soft lighting (no noise/texture/dark BG).
+Logo: empty TOP-RIGHT pocket (~7% width) — never draw wordmark (composited later).
+NO SEBI disclaimer on infographic (carousel only).
 
-LAYOUT ANATOMY (match sample exactly):
-Canvas 1080x1350 portrait. Clean grid — icons prominent, text minimal.
+Palette:
+- Heading #033B5E · Accent orange #F7931A (highlights only) · Secondary blue #2D8CFF
+- Soft cards #F8FBFF · Border #DCEAF5 · Body #4E6272
 
-1) HEADER
-   - EMPTY top-right logo pocket (never draw JIRAAF wordmark)
-   - Navy headline with 1–2 ORANGE highlight words inside title (oil-bar style) + gray intro line
+Typography: bold geometric sans; huge title > section > body > caption; generous spacing.
 
-2) SECTION A — THIN orange LEFT vertical bar (NOT full-width orange header) + navy heading
-   - 3-COLUMN grid: LARGE navy circular icon + short mini-title + ONE line body
-   - Mini-titles unique (Lower costs | Longer life | Global proof)
+LAYOUT:
+1) 3-line title (middle keyword LARGEST) + compact orange CTA pill + short intro
+2) Premium photoreal 3D hero (transparent polymer note on podium + shield/coins/leaves)
+3) Large soft "Why …" card
+4) Benefit grid up to 8 cards (prefer 2×4) — Pixar-quality 3D icons, rounded floating cards
+5) Trial before rollout (map pin / clipboard / city cues)
+6) Optional slim footer tagline — never crowded
 
-3) SECTION B — THIN orange LEFT bar + navy heading + 1-line intro (1–2 orange highlight words)
-   - 3-COLUMN: LARGE clay-3D icons (container | ATM | wallet) + mini-title + ONE line
-
-4) SECTION C (optional) — THIN orange LEFT bar + ONE short paragraph (max 2 lines, gray body)
-
-5) CALLOUT — cream {JIRAAF_INSIGHT_CREAM} rounded box, thin orange border + lightbulb + orange insight text
-
-6) FOOTER — tiny gray Source line; premium clay-3D hero icons bottom-right (topic-matched, oil-barrel quality)
-
-ORANGE {JIRAAF_ORANGE} REQUIRED: LEFT vertical bars only, highlight words, callout border (~2%+)
+ICONS: photoreal 3D ONLY (plastic/glass/metal) — never flat/emoji/clipart.
+Render: Octane/Redshift/Cinema4D look, GI, soft studio light, crisp edges.
 {ORANGE_COVERAGE_LOCK}
 
-COPY (SHORT — image model cannot render long paragraphs):
-- Card body: 6–10 words max per card — punchy, with ₹/% where possible
-- includes[] = "Mini-title | short explanation" (explanation ≤10 words)
-- customer_quote = ONE sentence callout (≤16 words)
-- Topic-safe CTA only
-
-FORBIDDEN:
-- Full-width solid ORANGE section header bars (sample uses LEFT bars beside headings)
-- Extra invented text beyond blueprint copy — no paraphrasing, no Hindi, no gibberish
-- Sparse poster OR overcrowded wall-of-text — balance icons + short copy
-- Oversized headline dominating the canvas
-- Solid full-width orange slogan bar instead of bordered callout
-- Typos / OBI / ranking boards / off-topic bond cards
-- Blurry, clipart, or emoji icons
+COPY: short only. includes[] = "Title | short explanation".
+FORBIDDEN: ranking rows, country flags charts, sparse giant-headline poster, neon, clutter, SEBI wall.
 """
 
 INFOGRAPHIC_EXPLAIN_SPELLING_LOCK = """
@@ -365,9 +340,9 @@ INFOGRAPHIC EXPLAIN QUALITY LOCK:
 {JIRAAF_SAMPLE_VISUAL_DNA}
 {JIRAAF_PARAGRAPH_INSIGHT_LOCK}
 - ZERO spelling mistakes — character-perfect quoted strings only
-- SAME icon quality as oil-bar sample: sharp clay-3D, gold/navy accents, bottom-right hero cluster
-- Headline: navy + 1–2 orange accent words (like "Oil-" in oil bar sample)
-- Paragraph/callout: cream insight box + orange text — NOT a solid orange slab
+- SAME icon quality as perfect sample: glossy clay-3D, gold/navy/orange accents, hero note cluster
+- Headline: navy ALL CAPS + solid orange slogan pill (WHITE text)
+- Footer: navy bar + lightbulb LEFT + white tagline — NOT a sparse empty void
 {ICON_STYLE_LOCK}
 {UNIVERSAL_FIT_LOCK}
 """
@@ -678,35 +653,32 @@ BRAND_COLOR_LOCK_RULE = f"""
 # SHORT locks for IMAGE API only (gpt-image-1 hard ~6000 char budget).
 # NEVER paste mega-locks (CAROUSEL_FIT_LOCK / BRAND_COLOR_LOCK_RULE) into image prompts —
 # they alone exceed 6000 chars and wipe the slide headline/body.
+# Carousel-only tokens — locked to RBI plastic sample template
+_CAROUSEL_BG = "#D9ECF8"
+_CAROUSEL_NAVY = "#033B5E"
+_CAROUSEL_ORANGE = "#FF8C24"
+
 CAROUSEL_IMAGE_STYLE_STUB = f"""
-CAROUSEL STYLE (match Sweep-In / Capital / Gains samples):
-- Canvas portrait ice-blue BG {JIRAAF_BG} full-bleed.
-- Headlines navy {JIRAAF_NAVY} ONLY, COMPLETE words (never mid-word cut like "o..").
-- Orange {JIRAAF_ORANGE} accents only (dividers/stats). Body gray.
-- TONE: plain retail language on baked text — short sentences, ₹/% facts, NO jargon.
-- Layout: FULL headline top-left + 2–3 white story cards with simple ₹/% lines + ONE premium HD clay-3D
-  avatar icon (~12–16% height) bottom-right (wallet/coins/doc/lock/shield).
-- CTA button (if any): COMPACT — ≤28% canvas width, ≤4.5% height, 2–3 words — NEVER a wide orange bar.
-- Bottom ~14% EMPTY for SEBI footer (composited later). Margins ≥8%. Nothing clipped.
-- Top-right: plain empty ice-blue — NO logo, NO JIRAAF text, NO "Brand Logo" box.
-- Story density like samples — NOT sparse empty slides. Perfect spelling. Plain sans-serif.
+CAROUSEL CONNECTED INFOGRAPHIC (Magnific-style):
+- BG {_CAROUSEL_BG}; navy {_CAROUSEL_NAVY}; orange {_CAROUSEL_ORANGE}.
+- Small premium icons CONNECTED by lines/arrows + short text labels — show content flow.
+- NO numbers in headline (never 1. 2. 6. or 01 badges). NO page counters.
+- Logo pocket empty top-right. Footer empty for SEBI composite.
 """
 
 CAROUSEL_TONE_IMAGE_STUB = """
-TONE on baked text: plain retail — short sentences, ₹/% facts. NO Vostro/hedge/sector-exposure jargon.
+Connected infographic layout: 2–4 small icon nodes linked by paths. Labels from copy only.
+NO digits in headlines. Logo/disclaimer composited — never baked.
 """
 
 CAROUSEL_IMAGE_EXTRA_LOCKS = f"""
-BRAND/LOGO BAN: never draw JIRAAF wordmark, giraffe, "Brand Logo", dashed logo box, watermark.
-SEBI: leave bottom ~14% empty ice-blue — do NOT bake legal footer text.
-INDIA: prefer ₹/%; never £ or $ / US $. Real numbers only. Plain retail tone — no hedge/Vostro jargon.
-SPELLING: bake ONLY quoted strings letter-perfect. Never truncate headline with "…" or "o..".
-ICON: one HD clay-3D object only — sharp, studio-lit — not blurry toy.
-CTA: compact orange pill only (≤28% width, ≤4.5% height) — never oversized wide bar.
+NO NUMBERS in headline text. NO page numbers/badges. Connected icon+label infographic flow.
+BG {_CAROUSEL_BG}. Logo composited. SEBI composited. Letter-perfect copy.
 """
 
 STATIC_IMAGE_EXTRA_LOCKS = f"""
-BRAND/LOGO BAN: never draw brand wordmark / watermark / "Brand Logo" placeholder.
+TOP-RIGHT CORNER: leave COMPLETELY BLANK (background colour only). NEVER draw a logo, leaf icon, compass icon, circular badge, decorative symbol, or ANY graphic element in the top-right corner. The brand logo is composited in post-processing — this area MUST be empty.
+BRAND/LOGO BAN: never draw brand wordmark / watermark / "Brand Logo" placeholder anywhere.
 {NO_SEBI_STATIC_RULE}
 {STATIC_ORANGE_STUB}
 INDIA: ₹/% retail · ¥ Japan · USD letters if source USD — NEVER $ / US $ / ESD / £.

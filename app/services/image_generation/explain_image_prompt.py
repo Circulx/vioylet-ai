@@ -9,12 +9,13 @@ Do NOT use for ranking / top-N list boards — those stay on ranking_board.py.
 import re
 from typing import Any
 
+from app.prompts.brand_copy_tone import JIRAAF_BG, JIRAAF_NAVY, JIRAAF_ORANGE
 from app.services.image_generation.ranking_board import sanitize_ranking_text
 
-# Explain-only palette (does not change ranking board colours)
-EXPLAIN_BG = "#87CEFA"
-EXPLAIN_HEADING = "#033B5E"
-EXPLAIN_ORANGE = "#F7931A"
+# LOCKED Jiraaf sample DNA — match sample_infographic_explain_rbi_polymer.png exactly
+EXPLAIN_BG = JIRAAF_BG          # #E8F0F8 ice-blue (NOT white, NOT #87CEFA)
+EXPLAIN_HEADING = JIRAAF_NAVY   # #003975
+EXPLAIN_ORANGE = JIRAAF_ORANGE  # #FFA400 vivid orange (NOT yellow/gold/amber)
 EXPLAIN_SECONDARY_BLUE = "#2D8CFF"
 EXPLAIN_CARD = "#F8FBFF"
 EXPLAIN_BORDER = "#DCEAF5"
@@ -127,20 +128,20 @@ def build_explain_infographic_prompt(
         f"Canvas: {canvas_desc or '1080x1350'} portrait 4:5. Ultra HD / 4K LinkedIn-ready.\n"
         "Aesthetic: Apple + Stripe + Notion + McKinsey + Bloomberg — expensive, elegant, minimal.\n"
         "Spacious layout, lots of breathing room, invisible grid, equal spacing, ≥6% margins.\n\n"
-        f"BACKGROUND: full-bleed {EXPLAIN_BG} with very subtle radial gradient + soft lighting. "
+        f"BACKGROUND: full-bleed ice-blue {EXPLAIN_BG} ONLY — NEVER pure white #FFFFFF, NEVER grey, NEVER #87CEFA.\n"
         "No textures, patterns, noise, or dark BG.\n\n"
         "BRANDING: empty TOP-RIGHT corner (~7% canvas width) — COMPLETELY BLANK, background colour only. "
         "NEVER draw any logo, leaf, compass, badge, icon, or wordmark in the top-right. "
         "Brand logo is composited in post-processing.\n"
         "NO SEBI / legal disclaimer on this infographic.\n\n"
-        "COLOUR PALETTE:\n"
-        f"- Heading text: {EXPLAIN_HEADING}\n"
-        f"- Accent orange (highlights ONLY, 2-3 elements max): {EXPLAIN_ORANGE}\n"
-        f"- Secondary blue: {EXPLAIN_SECONDARY_BLUE}\n"
-        f"- Soft white cards: {EXPLAIN_CARD}\n"
+        "COLOUR PALETTE (JIRAAF SAMPLE LOCK — exact hexes):\n"
+        f"- Heading text: navy {EXPLAIN_HEADING} — NEVER light blue, NEVER orange headlines\n"
+        f"- Accent orange {EXPLAIN_ORANGE} ONLY (#FFA400) — icons, CTA fill, thin dividers, highlight words\n"
+        "  NEVER yellow, gold, amber, mustard, or tan substitutes for orange.\n"
+        f"- Soft white cards: {EXPLAIN_CARD} floating on ice-blue BG\n"
         f"- Card border: {EXPLAIN_BORDER}\n"
         f"- Body/caption text: {EXPLAIN_BODY}\n"
-        "Orange ONLY for accents / CTA fill / key title highlights — never overuse.\n\n"
+        "Orange accents MUST cover ≥2% of image. Icons use #FFA400 orange — not yellow.\n\n"
         "TYPOGRAPHY: bold geometric sans (SF Pro / Inter / Helvetica Now / Gilroy / Poppins SemiBold). "
         "Hierarchy = huge title > medium section titles > body > captions. Corporate, readable.\n"
         "COMPLETE SENTENCES — never truncate mid-word or mid-sentence. Shrink font if needed.\n\n"

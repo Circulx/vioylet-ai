@@ -291,6 +291,8 @@ _TEXT_FIXES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bImpp\b", re.I), "Import"),
     (re.compile(r"\bHAE\b"), "UAE"),
     (re.compile(r"\bASA\b"), "USA"),
+    (re.compile(r"\bADAN\b", re.I), "UDAN"),
+    (re.compile(r"\bADAN\s+Scheme\b", re.I), "UDAN Scheme"),
     (re.compile(r"\bCONUTY\b", re.I), "Country"),
     (re.compile(r"\bhadge\b", re.I), "hedge"),
     (re.compile(r"\betch\b", re.I), "tech"),

@@ -425,6 +425,23 @@ def needs_live_research(user_prompt: str, layout_type: LayoutType | None = None)
         "export",
         "import",
         "russia",
+        "real data",
+        "data points",
+        "statistics",
+        "airport",
+        "airports",
+        "udan",
+        "why ",
+        "how ",
+        "building",
+        "crore",
+        "lakh",
+        "million",
+        "billion",
+        "growth",
+        "scheme",
+        "government",
+        "infra",
     )
     return any(k in text for k in keys)
 

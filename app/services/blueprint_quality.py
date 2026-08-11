@@ -1243,6 +1243,127 @@ def ensure_explain_sections(
     return blueprint
 
 
+def enrich_blueprint_with_research_insights(
+    blueprint: CreativeBlueprint,
+    *,
+    live_research: dict[str, Any] | None,
+    user_prompt: str = "",
+) -> CreativeBlueprint:
+    """Insight pass: inject verified research numbers into shallow sections.
+
+    Turns slogan cards into FACT + STAT + so-what body using live research.
+    """
+    from app.graph.models.layer7c_models import BlueprintInfographicSection
+
+    research = live_research or {}
+    verified = research.get("verified_facts") or []
+    if not verified:
+        return blueprint
+
+    # Normalize research rows into (label, value, insight)
+    facts: list[tuple[str, str, str]] = []
+    for raw in verified[:8]:
+        if not isinstance(raw, dict):
+            continue
+        label = str(raw.get("label") or raw.get("claim") or "").strip()
+        value = str(raw.get("value") or raw.get("fact") or "").strip()
+        if not label and not value:
+            continue
+        # Prefer rows that contain a number
+        blob = f"{label} {value}"
+        if not re.search(r"\d", blob):
+            continue
+        insight = str(raw.get("insight") or raw.get("implication") or "").strip()
+        if not insight:
+            insight = _clip_complete(
+                f"{value or label} — reshaping connectivity, capacity and investment.",
+                22,
+            )
+        title = label
+        if not title:
+            title = " ".join(value.split()[:4]) or "Key fact"
+        facts.append(
+            (
+                _clip_complete(title, 8),
+                _clip_complete(value or label, 14),
+                _clip_complete(insight, 22),
+            )
+        )
+
+    if not facts:
+        return blueprint
+
+    sections = list(blueprint.sections or [])
+    _SHALLOW = re.compile(
+        r"^(more|boosts?|changing|makes?|helps?|growing|easier|lower|travel)\b",
+        re.I,
+    )
+
+    def _is_shallow(sec: Any) -> bool:
+        body = str(getattr(sec, "body", "") or "")
+        includes = " ".join(str(x) for x in (getattr(sec, "includes", None) or []))
+        blob = f"{body} {includes}"
+        has_number = bool(re.search(r"\d", blob))
+        return (not has_number) or bool(_SHALLOW.search(body.strip()))
+
+    # Replace shallow sections with research-backed insight cards
+    enriched: list[BlueprintInfographicSection] = []
+    fact_i = 0
+    for sec in sections:
+        if fact_i < len(facts) and _is_shallow(sec):
+            label, value, insight = facts[fact_i]
+            fact_i += 1
+            # Keep UDAN spelling if scheme mentioned
+            label = re.sub(r"\bADAN\b", "UDAN", label, flags=re.I)
+            value = re.sub(r"\bADAN\b", "UDAN", value, flags=re.I)
+            insight = re.sub(r"\bADAN\b", "UDAN", insight, flags=re.I)
+            enriched.append(
+                BlueprintInfographicSection(
+                    section_label=label or (sec.section_label or "Insight"),
+                    stat=value if re.search(r"\d", value) else (sec.stat or None),
+                    includes=[value] if value else list(sec.includes or [])[:1],
+                    body=insight,
+                    icon_hint=sec.icon_hint,
+                )
+            )
+        else:
+            # Still force ADAN→UDAN on kept sections
+            if sec.section_label:
+                sec.section_label = re.sub(r"\bADAN\b", "UDAN", sec.section_label, flags=re.I)
+            if sec.body:
+                sec.body = re.sub(r"\bADAN\b", "UDAN", sec.body, flags=re.I)
+            if sec.includes:
+                sec.includes = [re.sub(r"\bADAN\b", "UDAN", str(x), flags=re.I) for x in sec.includes]
+            enriched.append(sec)
+
+    # If still fewer than 4 cards, append remaining research facts
+    while len(enriched) < 4 and fact_i < len(facts):
+        label, value, insight = facts[fact_i]
+        fact_i += 1
+        enriched.append(
+            BlueprintInfographicSection(
+                section_label=re.sub(r"\bADAN\b", "UDAN", label, flags=re.I),
+                stat=value if re.search(r"\d", value) else None,
+                includes=[value],
+                body=insight,
+            )
+        )
+
+    blueprint.sections = enriched[:6]
+    notes = list(blueprint.brand_alignment_notes or [])
+    notes.append("Insight pass: enriched sections from live research facts")
+    blueprint.brand_alignment_notes = notes[:8]
+
+    # Headline hygiene for aviation
+    if blueprint.headline:
+        blueprint.headline = re.sub(r"\bADAN\b", "UDAN", blueprint.headline, flags=re.I)
+    if blueprint.supporting_line:
+        blueprint.supporting_line = re.sub(
+            r"\bADAN\b", "UDAN", blueprint.supporting_line or "", flags=re.I
+        )
+    return blueprint
+
+
 def finalize_blueprint_for_card(
     blueprint: CreativeBlueprint,
     *,
@@ -1253,13 +1374,14 @@ def finalize_blueprint_for_card(
     """Single gate: check + fix ALL safe LLM mistakes, then show on the card.
 
     Order:
-    1) text hygiene (typos, ₹, FDR→FDI, no trailing ...)
+    1) text hygiene (typos, ₹, FDR→FDI, ADAN→UDAN, no trailing ...)
     2) attach research sources
-    3) bank hub name lock
-    4) data-layout repairs (no teaser / fake quote / long body)
-    5) carousel 4–7 pad/trim
-    6) fill purpose/audience/tone
-    7) leftover gaps only in missing_critical
+    3) insight enrichment from verified research facts
+    4) bank hub name lock
+    5) data-layout repairs (no teaser / fake quote / long body)
+    6) carousel 4–7 pad/trim
+    7) fill purpose/audience/tone
+    8) leftover gaps only in missing_critical
     """
     blueprint.layout_type = layout_type
     if not blueprint.layout_archetype:
@@ -1268,6 +1390,9 @@ def finalize_blueprint_for_card(
     blueprint = apply_text_hygiene(blueprint, user_prompt=user_prompt)
     blueprint = attach_sources_from_research(
         blueprint, live_research, user_prompt=user_prompt
+    )
+    blueprint = enrich_blueprint_with_research_insights(
+        blueprint, live_research=live_research, user_prompt=user_prompt
     )
 
     if layout_type == "static_hub_facts":
@@ -1288,6 +1413,8 @@ def finalize_blueprint_for_card(
     blueprint = condense_explain_blueprint_copy(
         blueprint, layout_type=layout_type
     )
+    # Hygiene again after enrichment/condense (catch ADAN etc.)
+    blueprint = apply_text_hygiene(blueprint, user_prompt=user_prompt)
     blueprint = polish_blueprint_meta(
         blueprint, layout_type=layout_type, user_prompt=user_prompt
     )

@@ -679,6 +679,12 @@ BG {_CAROUSEL_BG}. Logo composited. SEBI composited. Letter-perfect copy.
 STATIC_IMAGE_EXTRA_LOCKS = f"""
 TOP-RIGHT CORNER: leave COMPLETELY BLANK (background colour only). NEVER draw a logo, leaf icon, compass icon, circular badge, decorative symbol, or ANY graphic element in the top-right corner. The brand logo is composited in post-processing — this area MUST be empty.
 BRAND/LOGO BAN: never draw brand wordmark / watermark / "Brand Logo" placeholder anywhere.
+JIRAAF COLOUR LOCK (exact hex — match sample creatives):
+- Background MUST be ice-blue {JIRAAF_BG} full bleed — NEVER pure white #FFFFFF, NEVER grey.
+- Headlines navy {JIRAAF_NAVY} only.
+- Accent orange MUST be vivid {JIRAAF_ORANGE} (#FFA400) — NEVER yellow, gold, amber, mustard, or tan.
+- Orange icons/dividers/CTA accents ≥2% of image.
+Spell UDAN correctly — never ADAN.
 {NO_SEBI_STATIC_RULE}
 {STATIC_ORANGE_STUB}
 INDIA: ₹/% retail · ¥ Japan · USD letters if source USD — NEVER $ / US $ / ESD / £.

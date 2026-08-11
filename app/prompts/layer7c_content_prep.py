@@ -186,11 +186,15 @@ CAMPAIGN BRIEF (L3):
                 for f in verified
             )
             research_block = f"""
-LIVE RESEARCH (use facts; attach source URLs into sources[]):
+LIVE RESEARCH — INSIGHT LAYER (MANDATORY USE):
 Summary: {live_research.get('summary') or 'N/A'}
-Verified:
+Verified facts (EACH section MUST use at least one number from here):
 {facts_str or 'none'}
-Do NOT invent numbers if research is empty — flag missing_critical instead.
+RULES:
+- Prefer these verified numbers over vague slogans.
+- Every section: STAT = number, includes = fact, body = so-what insight.
+- Spell UDAN correctly (never ADAN). Attach source URLs into sources[].
+- Do NOT invent numbers if research is empty — flag missing_critical instead.
 """
 
         return f"""USER PROMPT:

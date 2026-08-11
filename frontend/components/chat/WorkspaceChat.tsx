@@ -39,6 +39,7 @@ import type {
     ImageEditVariant,
     ImageEditStateResponse,
     KnowledgeAssetResponse,
+    PipelineRunResponse,
     StudioPanelSelection,
     TemplateRecommendationResponse,
 } from "@/lib/api/contracts";
@@ -88,6 +89,22 @@ type FormatMode = "static" | "carousel" | "infographic" | "video";
 type FileType = "doc" | "pdf" | "jpg" | "png";
 
 const IDLE_PIPELINE_STATE: ChatPipelineState = { status: "idle" };
+
+function mergePipelineAnalytics(
+    phase1?: Pick<PipelineRunResponse, "layer_latencies" | "token_usage"> | null,
+    phase2?: Pick<PipelineRunResponse, "layer_latencies" | "token_usage"> | null,
+) {
+    return {
+        layerLatencies: {
+            ...(phase1?.layer_latencies || {}),
+            ...(phase2?.layer_latencies || {}),
+        },
+        tokenUsage: {
+            ...(phase1?.token_usage || {}),
+            ...(phase2?.token_usage || {}),
+        },
+    };
+}
 
 type ActionMode = "none" | "idea" | "social" | "repurpose" | "alignment";
 
@@ -2740,9 +2757,15 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
 
     const cancelActiveGeneration = () => {
         const sessionId = activeGenerationSessionRef.current || resolvedActiveSessionId;
+        // Abort any in-flight fetch
         activeGenerationControllerRef.current?.abort();
         activeGenerationControllerRef.current = null;
         activeGenerationSessionRef.current = "";
+        // Cancel pending pipeline mutations so their .isPending clears immediately
+        runPipeline.reset();
+        approveBlueprint.reset();
+        // Reset pipeline UI so the composer reappears
+        setPipelineUi({ status: "idle" });
         if (sessionId) {
             cancelChatGeneration.mutate(sessionId);
         }
@@ -2853,6 +2876,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                 });
 
                 if (phase1.status === "awaiting_blueprint_approval" && phase1.creative_blueprint) {
+                    const phase1Analytics = mergePipelineAnalytics(phase1);
                     setPipelineUiForSession(generationSessionId, {
                         status: "awaiting_blueprint_approval",
                         runId: phase1.run_id || undefined,
@@ -2862,6 +2886,8 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                         blueprint: phase1.creative_blueprint,
                         imageUrls: [],
                         error: null,
+                        layerLatencies: phase1Analytics.layerLatencies,
+                        tokenUsage: phase1Analytics.tokenUsage,
                     });
                     return;
                 }
@@ -2880,6 +2906,7 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                 const urls =
                     phase1.final_output?.asset_urls?.filter(Boolean) ||
                     (phase1.final_output?.asset_url ? [phase1.final_output.asset_url] : []);
+                const phase1Analytics = mergePipelineAnalytics(phase1);
                 setPipelineUiForSession(generationSessionId, {
                     status: urls.length ? "complete" : "failed",
                     runId: phase1.run_id || undefined,
@@ -2889,6 +2916,8 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                     blueprint: phase1.creative_blueprint,
                     imageUrls: urls,
                     error: urls.length ? null : "No image returned from pipeline.",
+                    layerLatencies: phase1Analytics.layerLatencies,
+                    tokenUsage: phase1Analytics.tokenUsage,
                 });
                 return;
             }
@@ -2961,13 +2990,21 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                 }));
                 return;
             }
-            setPipelineUi((current) => ({
-                ...current,
-                status: "complete",
-                blueprint: phase2.creative_blueprint || edited,
-                imageUrls: urls,
-                error: null,
-            }));
+            setPipelineUi((current) => {
+                const merged = mergePipelineAnalytics(
+                    { layer_latencies: current.layerLatencies, token_usage: current.tokenUsage },
+                    phase2,
+                );
+                return {
+                    ...current,
+                    status: "complete",
+                    blueprint: phase2.creative_blueprint || edited,
+                    imageUrls: urls,
+                    error: null,
+                    layerLatencies: merged.layerLatencies,
+                    tokenUsage: merged.tokenUsage,
+                };
+            });
         } catch (error) {
             const detail = extractApiError(
                 error,
@@ -3393,9 +3430,20 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                         ) : null}
                                         {attachmentError ? <p className="mb-2 text-sm text-red-500">{attachmentError}</p> : null}
                                         {pipelineBusy ? (
-                                            <p className="mb-2 text-center text-xs text-[#6A6E8B]">
-                                                Pipeline in progress — Approve or Cancel on the blueprint card. Composer unlocks when done.
-                                            </p>
+                                            <div className="mb-3 flex flex-col items-center gap-2">
+                                                <div className="flex items-center gap-2 text-sm text-[#6A6E8B]">
+                                                    <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                                                    <span>Brand intelligence is working…</span>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={cancelActiveGeneration}
+                                                    className="flex items-center gap-1.5 rounded-full border border-slate-300 bg-white px-4 py-1.5 text-xs font-medium text-slate-600 shadow-sm hover:border-red-300 hover:bg-red-50 hover:text-red-600 transition-colors"
+                                                >
+                                                    <Square className="h-3 w-3 fill-current" />
+                                                    Stop generation
+                                                </button>
+                                            </div>
                                         ) : (
                                         <div ref={composerEnhanceContainerRef} className="relative">
                                             <SurfaceCard className={`relative flex items-end gap-3 rounded-xl border border-[#E1E4ED] bg-white px-3 pb-2 shadow-[0_14px_28px_-24px_rgba(15,23,42,0.45)]`}>
@@ -3613,12 +3661,12 @@ export default function WorkspaceChat({ brandKey }: WorkspaceChatProps) {
                                                         ) : null}
                                                         <button
                                                             type="button"
-                                                            onClick={sendMessage.isPending ? cancelActiveGeneration : () => void dispatchGeneration(workspacePrompt)}
-                                                            disabled={!canGenerateInWorkspace || createSession.isPending || (!sendMessage.isPending && !workspacePrompt.trim())}
-                                                            aria-label={sendMessage.isPending ? "Stop generation" : "Send message"}
+                                                            onClick={(sendMessage.isPending || pipelineBusy) ? cancelActiveGeneration : () => void dispatchGeneration(workspacePrompt)}
+                                                            disabled={!canGenerateInWorkspace || createSession.isPending || (!(sendMessage.isPending || pipelineBusy) && !workspacePrompt.trim())}
+                                                            aria-label={(sendMessage.isPending || pipelineBusy) ? "Stop generation" : "Send message"}
                                                             className="flex h-8 min-w-8 items-center justify-center bg-primary px-2 text-white disabled:cursor-not-allowed disabled:bg-slate-200"
                                                         >
-                                                            {sendMessage.isPending ? (
+                                                            {(sendMessage.isPending || pipelineBusy) ? (
                                                                 <Square className="h-4 w-4" />
                                                             ) : createSession.isPending ? (
                                                                 <Loader2 className="h-4 w-4 animate-spin" />

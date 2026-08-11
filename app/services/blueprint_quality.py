@@ -51,6 +51,12 @@ _BANK_ALIASES: dict[str, str] = {
 
 # (pattern, replacement) — applied to every blueprint text field
 _GLOBAL_TEXT_FIXES: list[tuple[re.Pattern[str], str]] = [
+    # India schemes / proper nouns the LLM routinely misspells
+    (re.compile(r"\bADAN\b"), "UDAN"),
+    (re.compile(r"\bAdan\b"), "UDAN"),
+    (re.compile(r"\badan\b"), "UDAN"),
+    (re.compile(r"\bADAN\s+Scheme\b", re.I), "UDAN Scheme"),
+    (re.compile(r"\bUdan\b"), "UDAN"),
     (re.compile(r"\bAds\b"), "FDs"),
     (re.compile(r"\bads\b"), "FDs"),
     (re.compile(r"\bAD\b"), "FD"),

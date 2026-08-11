@@ -84,7 +84,18 @@ CONTENT RULES
 - Data layouts only: sections[] with real bank/country names + short ₹/% facts when user asked for ranks/rules.
 - Visual-first: education benefit cards OR hub+fact cards OR ranking rows OR carousel story — not paragraphs.
 - SPELLING & GRAMMAR: publication-ready English — zero typos.
+- India aviation: always spell UDAN (not ADAN). Prefer verified scheme names, airport counts, passenger figures.
 - If live research sources exist, fill sources:[{{title,url}}] and source_footer like "Source: domain.com".
+
+INSIGHT LOCK (MANDATORY — this is the "insight intelligence" pass)
+Every section must answer: FACT → SO-WHAT → WHY IT MATTERS.
+- section_label: short insight title (not a vague category)
+- stat: the concrete number/metric when available (₹ / % / crore / count)
+- includes[]: 1–2 hard facts with numbers
+- body: 1 complete insight sentence — implication for the reader (investor / traveller / policymaker). NEVER a flat restatement of the label.
+BAD body: "More airports make travel easier for millions."
+GOOD body: "Regional airports cut multi-leg journeys, unlocking tourism and job growth in tier-2/3 cities."
+Reject empty STAT when a number exists in research. Prefer depth over slogans.
 
 MUST FILL
 - hook + story_flow + headline + supporting_line + body + cta (body often empty for data posts)
@@ -94,8 +105,8 @@ MUST FILL
 FORMAT-SPECIFIC
 - static hub: headline + sections[4–5] fact cards; body=""; no fake testimonial
 - static ranking: ranked sections — row count = user's top-N (e.g. top 10 → 10 rows, not 5)
-- education poster (static/infographic story): 3–5 benefit/reason cards — no country ranks
-- carousel story: 4–7 short slides
+- education poster (static/infographic story): 3–5 benefit/reason cards — each with FACT + INSIGHT body — no country ranks
+- carousel story: 4–7 short slides — each slide teaches one insight, not a slogan
 
 OUTPUT
 Return a single JSON object matching CreativeBlueprint.
@@ -229,6 +240,7 @@ short headlines, ranked/hub numbers OR carousel story beats — almost no paragr
 Brand accents: {"orange #FFA400 with navy #003975 for Jiraaf only" if is_jiraaf else ("Cognixia official: primary #0952A9, deep navy #00387A, card #F3F9FF, accent teal #74ADBA, body #707070, font Outfit — NEVER Jiraaf orange/ice-blue" if is_cognixia else f"use {brand.brand_name} Brand Space palette — NEVER Jiraaf orange/ice-blue/navy")}.
 {"If L7 looks like 'What Are Your FD Penalty Rates?' teaser, replace with 'Bank Penalty Rates and Key Rules' + 5 bank sections." if is_jiraaf else f"Use {brand.brand_name} Brand Space voice."}
 COMPLETE SENTENCES ONLY: every section_label and body must be a finished thought — never end mid-word or on dangling words (with/and/the/hit/about). Example BAD: "demand will hit 450". Example GOOD: "By 2030, demand will hit 450 million passengers." Put real numbers in STAT when available; put supporting facts in includes[].
+INSIGHT PASS: each section body must explain WHY the fact matters (so-what), not repeat the label. Spell India schemes correctly — UDAN not ADAN.
 For rankings: if the user asked for top-N, keep EXACTLY that many section rows (top 10 → 10, not 5).
 AUDIENCE: Use the EXACT audience from the brand persona — age group, demographics, pain points. NEVER substitute with a different audience (e.g. if TG is children/teens, never show toddlers/babies/adults).
 TYPOGRAPHY: Use brand font from Brand Space visual identity if specified.

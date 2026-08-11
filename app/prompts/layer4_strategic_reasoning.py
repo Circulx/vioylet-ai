@@ -25,10 +25,12 @@ You MUST evaluate:
 - What visual behavior is most suitable
 - What platform behavior matters
 - What should be avoided for this brand
+- What 3–5 non-obvious INSIGHTS the creative must teach (fact + so-what implication) — not slogans
 
 Consider multiple possible strategic approaches internally.
 Document the ones you REJECTED and explain why.
 Select the single strongest direction.
+Bake the insight list into recommended_approach so Layer 7/7c can turn them into section cards.
 
 DO NOT generate final copy.
 DO NOT generate design directions.

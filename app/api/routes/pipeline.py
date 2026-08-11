@@ -18,6 +18,7 @@ from app.graph.models.layer3_models import CampaignBriefOutput
 from app.graph.models.layer4_models import StrategicReasoningOutput
 from app.graph.models.layer5_models import CreativeConceptsOutput
 from app.graph.models.layer6_models import FormatPlanOutput
+from app.graph.models.content_intelligence_models import ContentIntelligenceOutput
 from app.graph.models.layer7_models import CopyOutput
 from app.graph.models.layer7b_models import ContentValidationOutput
 from app.graph.models.layer7c_models import CreativeBlueprint
@@ -75,6 +76,7 @@ def _hydrate_state(raw: dict) -> ViolytState:
         ("strategic_reasoning", StrategicReasoningOutput),
         ("creative_concepts", CreativeConceptsOutput),
         ("format_plan", FormatPlanOutput),
+        ("content_intelligence", ContentIntelligenceOutput),
         ("copy", CopyOutput),
         ("content_validation", ContentValidationOutput),
         ("creative_blueprint", CreativeBlueprint),
@@ -121,6 +123,7 @@ def _response_from_state(
         strategic_reasoning=_dump(state.get("strategic_reasoning")),
         creative_concepts=_dump(state.get("creative_concepts")),
         format_plan=_dump(state.get("format_plan")),
+        content_intelligence=_dump(state.get("content_intelligence")),
         copy=_dump(state.get("copy")),
         content_validation=_dump(state.get("content_validation")),
         creative_blueprint=_dump(state.get("creative_blueprint")),

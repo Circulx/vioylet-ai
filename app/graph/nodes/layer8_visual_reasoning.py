@@ -645,6 +645,34 @@ async def layer8_visual_reasoning(state: ViolytState) -> dict:
         fmt=fmt,
         layout_type=layout_type,
     )
+
+    # Visual-semantic blueprint from Content Intelligence (Phase-1 package)
+    content_intelligence = state.get("content_intelligence")
+    if content_intelligence and getattr(content_intelligence, "format_architecture", None):
+        fa = content_intelligence.format_architecture
+        thesis = getattr(content_intelligence, "insight_thesis", "") or ""
+        beats = getattr(content_intelligence, "narrative_beats", None) or []
+        beat_lines = "; ".join(
+            f"[{getattr(b, 'role', '')}] {getattr(b, 'message', '')}"
+            for b in beats[:6]
+        )
+        user = (
+            user
+            + "\n\n════════════════════════════════════════\n"
+            + "VISUAL-SEMANTIC BLUEPRINT (EXECUTE THIS HIERARCHY)\n"
+            + "════════════════════════════════════════\n"
+            + f"INSIGHT THESIS: {thesis}\n"
+            + f"HERO STATISTIC (largest visual number): {fa.hero_statistic}\n"
+            + f"SUPPORTING DATA POINTS: {fa.supporting_data_points}\n"
+            + f"CORE INSIGHT: {fa.core_insight}\n"
+            + f"HIERARCHY: {fa.hierarchy_notes}\n"
+            + f"VISUAL PLAN: {fa.visual_plan}\n"
+            + (f"NARRATIVE BEATS: {beat_lines}\n" if beat_lines else "")
+            + "Hero statistic must dominate. Supporting cards secondary. "
+            "Do not give equal visual weight to every box. "
+            "Complete sentences only. Spell UDAN correctly (never ADAN).\n"
+        )
+
     if blueprint:
         story = "; ".join(blueprint.story_flow or [])
         source_footer = (blueprint.source_footer or "").strip()

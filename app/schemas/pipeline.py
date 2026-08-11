@@ -55,6 +55,7 @@ class PipelineRunResponse(BaseModel):
     strategic_reasoning: dict | None = Field(default=None)
     creative_concepts: dict | None = Field(default=None)
     format_plan: dict | None = Field(default=None)
+    content_intelligence: dict | None = Field(default=None)
     copy: dict | None = Field(default=None)
     content_validation: dict | None = Field(default=None)
     creative_blueprint: dict | None = Field(default=None)

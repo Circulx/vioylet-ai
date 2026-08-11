@@ -1315,6 +1315,43 @@ _SLOGANISH = re.compile(
 )
 
 
+def blueprint_passes_editorial_qa(scores: dict[str, int], *, min_score: int = 6) -> bool:
+    """True when Phase-1 blueprint is good enough to show the user."""
+    critical = (
+        "answers_why",
+        "has_real_data",
+        "claims_verified",
+        "copy_complete",
+        "narrative_coherent",
+    )
+    if any(int(scores.get(k, 0) or 0) < min_score for k in critical):
+        return False
+    # Overall average soft gate
+    vals = [int(v) for v in scores.values() if isinstance(v, (int, float))]
+    if vals and (sum(vals) / len(vals)) < min_score:
+        return False
+    return True
+
+
+def editorial_qa_repair_instructions(scores: dict[str, int], user_prompt: str = "") -> str:
+    """Feedback string fed back into L7c regenerate attempts."""
+    fails = [k for k, v in scores.items() if int(v or 0) < 6]
+    lines = [
+        "PREVIOUS BLUEPRINT FAILED EDITORIAL QA — REGENERATE BEFORE SHOWING USER.",
+        f"Weak scores: {fails or scores}",
+        "REQUIREMENTS:",
+        "- Prefer APPROVED statistics with real numbers (crore/lakh/%/counts).",
+        "- Answer WHY if the prompt asks why — thesis + evidence, not slogans.",
+        "- Complete sentences only — never truncate mid-word (no 'Transfor-', no ending on 'with').",
+        "- Spell UDAN correctly (never ADAN).",
+        "- Infographic: 1 hero statistic + 3–5 supporting data cards + 1 insight body each.",
+        "- Do NOT invent precise numbers not in the Content Intelligence evidence pack.",
+    ]
+    if re.search(r"\bwhy\b", (user_prompt or ""), re.I):
+        lines.append("- Explicitly explain the economic rationale, not just 'more airports'.")
+    return "\n".join(lines)
+
+
 def enforce_intelligence_on_blueprint(
     blueprint: CreativeBlueprint,
     *,

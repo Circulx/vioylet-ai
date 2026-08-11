@@ -6,6 +6,7 @@ from app.graph.models.layer3_models import CampaignBriefOutput
 from app.graph.models.layer4_models import StrategicReasoningOutput
 from app.graph.models.layer5_models import CreativeConceptsOutput
 from app.graph.models.layer6_models import FormatPlanOutput
+from app.graph.models.content_intelligence_models import ContentIntelligenceOutput
 from app.graph.models.layer7_models import CopyOutput
 from app.graph.models.layer7b_models import ContentValidationOutput
 from app.graph.models.layer7c_models import CreativeBlueprint
@@ -38,6 +39,7 @@ class ViolytState(TypedDict):
     strategic_reasoning: NotRequired[Optional[StrategicReasoningOutput]]
     creative_concepts: NotRequired[Optional[CreativeConceptsOutput]]
     format_plan: NotRequired[Optional[FormatPlanOutput]]
+    content_intelligence: NotRequired[Optional[ContentIntelligenceOutput]]
     copy: NotRequired[Optional[CopyOutput]]
     content_validation: NotRequired[Optional[ContentValidationOutput]]
     creative_blueprint: NotRequired[Optional[CreativeBlueprint]]

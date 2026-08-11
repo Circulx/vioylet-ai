@@ -24,6 +24,7 @@ async def layer7c_content_prep(state: ViolytState) -> dict:
     user_prompt = state.get("user_prompt", "")
     platform = state.get("platform", "linkedin")
     live_research = state.get("live_research") or {}
+    content_intelligence = state.get("content_intelligence")
     fmt = str(state.get("format", "static") or "static").strip().lower()
     if fmt not in ("static", "carousel", "infographic"):
         fmt = "static"
@@ -55,6 +56,21 @@ async def layer7c_content_prep(state: ViolytState) -> dict:
         layout_type=layout.layout_type,
         live_research=live_research,
     )
+    try:
+        from app.services.content_intelligence import content_intelligence_prompt_block
+
+        intel_block = content_intelligence_prompt_block(content_intelligence)
+        if intel_block:
+            user = (
+                user
+                + "\n\n"
+                + intel_block
+                + "\nBlueprint MUST follow narrative architecture + approved evidence. "
+                "Hero statistic + supporting data points from format architecture. "
+                "Section bodies = so-what insights, not slogans. UDAN never ADAN.\n"
+            )
+    except Exception as exc:
+        logger.warning("content_prep.intel_block_failed", error=str(exc)[:120])
 
     service = _router.get_service("l7c_content_prep")
     output, metadata = await service.complete_structured(
@@ -153,6 +169,10 @@ async def layer7c_content_prep(state: ViolytState) -> dict:
         output.stat_highlights = list(copy.stat_highlights or [])
     if not output.proof_points:
         output.proof_points = list(copy.proof_points or [])
+    if not str(output.post_caption or "").strip():
+        from app.services.post_caption import build_post_caption_from_blueprint
+
+        output.post_caption = build_post_caption_from_blueprint(output, platform=platform)
 
     # Gate: auto-check + fix ALL safe LLM mistakes BEFORE the approval card
     output = finalize_blueprint_for_card(
@@ -160,6 +180,7 @@ async def layer7c_content_prep(state: ViolytState) -> dict:
         layout_type=layout.layout_type,
         user_prompt=user_prompt,
         live_research=live_research,
+        content_intelligence=content_intelligence,
     )
 
     try:
@@ -173,6 +194,7 @@ async def layer7c_content_prep(state: ViolytState) -> dict:
             layout_type=layout.layout_type,
             user_prompt=user_prompt,
             live_research=live_research,
+            content_intelligence=content_intelligence,
         )
     except Exception as exc:
         logger.warning("content_prep.proofread_failed", error=str(exc))

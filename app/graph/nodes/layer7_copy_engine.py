@@ -47,6 +47,7 @@ async def layer7_copy_engine(state: ViolytState) -> dict:
     format_plan = state.get("format_plan")
     creative_concepts = state.get("creative_concepts")
     brand_context = state.get("brand_context")
+    content_intelligence = state.get("content_intelligence")
     user_prompt = state.get("user_prompt", "")
     platform = state.get("platform", "linkedin")
     fmt = str(state.get("format", "static") or "static").strip().lower()
@@ -66,10 +67,12 @@ async def layer7_copy_engine(state: ViolytState) -> dict:
         "visual_angle": recommended.visual_angle,
     }
 
-    # Live web research for news/data/top-N/rates (Jiraaf sourced creatives)
+    # Prefer Content Intelligence research (L6b). Fallback to local research only if missing.
     layout = classify_layout(user_prompt, fmt)
-    live_research: dict = {}
-    if needs_live_research(user_prompt, layout.layout_type):
+    live_research: dict = dict(state.get("live_research") or {})
+    if content_intelligence and getattr(content_intelligence, "live_research", None):
+        live_research = content_intelligence.live_research or live_research
+    elif needs_live_research(user_prompt, layout.layout_type) and not live_research:
         try:
             knowledge_brief = [
                 {"content": chunk.content_summary, "source": chunk.source}
@@ -94,6 +97,10 @@ async def layer7_copy_engine(state: ViolytState) -> dict:
             logger.warning(f"copy_engine.live_research_failed: {e}")
             live_research = {}
 
+    from app.services.content_intelligence import content_intelligence_prompt_block
+
+    intel_block = content_intelligence_prompt_block(content_intelligence)
+
     system = _prompt_builder.build_system(
         format_name=fmt,
         user_prompt=user_prompt,
@@ -108,6 +115,13 @@ async def layer7_copy_engine(state: ViolytState) -> dict:
         user_prompt=user_prompt,
         layout_type=layout.layout_type,
     )
+    if intel_block:
+        user = user + "\n\n" + intel_block
+        user += (
+            "\nWrite copy that SERVES the insight thesis and narrative architecture. "
+            "Prefer APPROVED EVIDENCE statistics. Do not invent numbers. "
+            "Answer the CORE QUESTION (especially WHY when required).\n"
+        )
 
     service = _router.get_service("l7_copy_engine")
 

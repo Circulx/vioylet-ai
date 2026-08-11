@@ -8,6 +8,7 @@ from app.graph.nodes import (
     layer4_strategic_reasoning,
     layer5_concept_engine,
     layer6_format_engine,
+    layer6b_content_intelligence,
     layer7_copy_engine,
     layer7b_content_validator,
     layer7c_content_prep,
@@ -28,6 +29,7 @@ def _add_shared_upstream(g: StateGraph) -> None:
     g.add_node("l4_strategic_reasoning", layer4_strategic_reasoning)
     g.add_node("l5_concept_engine", layer5_concept_engine)
     g.add_node("l6_format_engine", layer6_format_engine)
+    g.add_node("l6b_content_intelligence", layer6b_content_intelligence)
     g.add_node("l7_copy_engine", layer7_copy_engine)
     g.add_node("l7b_content_validator", layer7b_content_validator)
     g.add_node("l7c_content_prep", layer7c_content_prep)
@@ -38,8 +40,10 @@ def _add_shared_upstream(g: StateGraph) -> None:
     g.add_edge("l3_brief_interpreter", "l4_strategic_reasoning")
     g.add_edge("l4_strategic_reasoning", "l5_concept_engine")
     g.add_edge("l4_strategic_reasoning", "l6_format_engine")
-    g.add_edge("l5_concept_engine", "l7_copy_engine")
-    g.add_edge("l6_format_engine", "l7_copy_engine")
+    # Content intelligence waits for both concept + format, then drives copy
+    g.add_edge("l5_concept_engine", "l6b_content_intelligence")
+    g.add_edge("l6_format_engine", "l6b_content_intelligence")
+    g.add_edge("l6b_content_intelligence", "l7_copy_engine")
     g.add_edge("l7_copy_engine", "l7b_content_validator")
     g.add_edge("l7b_content_validator", "l7c_content_prep")
 

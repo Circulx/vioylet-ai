@@ -1243,6 +1243,166 @@ def ensure_explain_sections(
     return blueprint
 
 
+def score_blueprint_editorial_qa(
+    blueprint: CreativeBlueprint,
+    *,
+    user_prompt: str,
+    content_intelligence: Any | None = None,
+) -> dict[str, int]:
+    """Self-critique scores (0-10) before showing the approval card."""
+    _sloganish = re.compile(
+        r"^(more|boosts?|changing|makes?|helps?|growing|easier|lower|travel|connect)\b",
+        re.I,
+    )
+    text_blob = " ".join(
+        [
+            blueprint.headline or "",
+            blueprint.supporting_line or "",
+            blueprint.body or "",
+            " ".join(s.section_label or "" for s in (blueprint.sections or [])),
+            " ".join(s.body or "" for s in (blueprint.sections or [])),
+            " ".join(" ".join(s.includes or []) for s in (blueprint.sections or [])),
+        ]
+    )
+    prompt_l = (user_prompt or "").casefold()
+
+    has_adan = bool(re.search(r"\badan\b", text_blob, re.I))
+    dangling = any(
+        re.search(r"\b(with|and|the|hit|-)$", (s.section_label or s.body or "").strip(), re.I)
+        for s in (blueprint.sections or [])
+    )
+    number_count = len(re.findall(r"\d", text_blob))
+    sloganish = sum(
+        1
+        for s in (blueprint.sections or [])
+        if _sloganish.search((s.body or "").strip()) and not re.search(r"\d", s.body or "")
+    )
+
+    answers_why = 7 if re.search(r"\bwhy\b", prompt_l) and (
+        "because" in text_blob.casefold()
+        or "economic" in text_blob.casefold()
+        or "connect" in text_blob.casefold()
+    ) else (8 if not re.search(r"\bwhy\b", prompt_l) else 4)
+    has_real_data = min(10, 3 + number_count // 2)
+    if sloganish >= 2:
+        has_real_data = max(0, has_real_data - 3)
+    claims_verified = 7 if content_intelligence and getattr(content_intelligence, "evidence", None) else 4
+    if content_intelligence:
+        approved = sum(1 for e in content_intelligence.evidence if e.approved_for_creative)
+        claims_verified = min(10, 4 + approved)
+    narrative = 7 if (blueprint.sections and len(blueprint.sections) >= 3) else 4
+    copy_complete = 2 if (has_adan or dangling) else 8
+    visual_usable = 7
+    on_brand = 6
+    if content_intelligence and (content_intelligence.insight_thesis or ""):
+        on_brand = 7
+        answers_why = max(answers_why, 6)
+
+    return {
+        "answers_why": answers_why,
+        "has_real_data": has_real_data,
+        "claims_verified": claims_verified,
+        "narrative_coherent": narrative,
+        "copy_complete": copy_complete,
+        "visually_usable": visual_usable,
+        "on_brand_beyond_aesthetics": on_brand,
+    }
+
+
+_SLOGANISH = re.compile(
+    r"^(more|boosts?|changing|makes?|helps?|growing|easier|lower|travel|connect)\b",
+    re.I,
+)
+
+
+def enforce_intelligence_on_blueprint(
+    blueprint: CreativeBlueprint,
+    *,
+    content_intelligence: Any | None,
+    user_prompt: str = "",
+) -> CreativeBlueprint:
+    """If editorial QA is weak, rebuild sections from Content Intelligence package."""
+    from app.graph.models.layer7c_models import BlueprintInfographicSection
+
+    if not content_intelligence:
+        return blueprint
+
+    scores = score_blueprint_editorial_qa(
+        blueprint, user_prompt=user_prompt, content_intelligence=content_intelligence
+    )
+    notes = list(blueprint.brand_alignment_notes or [])
+    notes.append(f"editorial_qa={scores}")
+    weak = (
+        scores.get("has_real_data", 0) < 6
+        or scores.get("answers_why", 0) < 6
+        or scores.get("copy_complete", 0) < 6
+    )
+    if not weak:
+        blueprint.brand_alignment_notes = notes[:8]
+        return blueprint
+
+    fa = content_intelligence.format_architecture
+    approved = [e for e in content_intelligence.evidence if e.approved_for_creative][:5]
+    if not approved and fa.supporting_data_points:
+        # synthesize from format architecture strings
+        rebuilt = []
+        hero = fa.hero_statistic or ""
+        points = list(fa.supporting_data_points or [])[:5]
+        if hero:
+            points = [hero] + [p for p in points if p != hero]
+        for i, point in enumerate(points[:5]):
+            point = re.sub(r"\bADAN\b", "UDAN", str(point), flags=re.I)
+            rebuilt.append(
+                BlueprintInfographicSection(
+                    section_label=_clip_complete(point, 8) or f"Data point {i+1}",
+                    stat=point if re.search(r"\d", point) else None,
+                    includes=[point],
+                    body=_clip_complete(
+                        content_intelligence.insight_thesis
+                        or fa.core_insight
+                        or "Connectivity expands economic opportunity beyond metros.",
+                        22,
+                    ),
+                )
+            )
+        if rebuilt:
+            blueprint.sections = rebuilt
+    elif approved:
+        rebuilt = []
+        for e in approved:
+            claim = re.sub(r"\bADAN\b", "UDAN", e.claim, flags=re.I)
+            value = re.sub(r"\bADAN\b", "UDAN", e.value or claim, flags=re.I)
+            rebuilt.append(
+                BlueprintInfographicSection(
+                    section_label=_clip_complete(claim, 8),
+                    stat=value if re.search(r"\d", value) else None,
+                    includes=[value],
+                    body=_clip_complete(
+                        content_intelligence.insight_thesis
+                        or fa.core_insight
+                        or "This expansion unlocks regional economic activity.",
+                        22,
+                    ),
+                )
+            )
+        blueprint.sections = rebuilt
+
+    if fa.hero_statistic and not re.search(r"\d", blueprint.headline or ""):
+        # Keep headline human; put hero into supporting if empty
+        if not (blueprint.supporting_line or "").strip():
+            blueprint.supporting_line = _clip_complete(
+                re.sub(r"\bADAN\b", "UDAN", fa.hero_statistic, flags=re.I), 18
+            )
+    if content_intelligence.insight_thesis:
+        # Prefer thesis as supporting when current supporting is slogan-like
+        if not blueprint.supporting_line or _SLOGANISH.search(blueprint.supporting_line.strip()):
+            blueprint.supporting_line = _clip_complete(content_intelligence.insight_thesis, 20)
+
+    notes.append("editorial_qa_repaired_from_content_intelligence")
+    blueprint.brand_alignment_notes = notes[:8]
+    return blueprint
+
+
 def enrich_blueprint_with_research_insights(
     blueprint: CreativeBlueprint,
     *,
@@ -1370,6 +1530,7 @@ def finalize_blueprint_for_card(
     layout_type: LayoutType,
     user_prompt: str,
     live_research: dict[str, Any] | None = None,
+    content_intelligence: Any | None = None,
 ) -> CreativeBlueprint:
     """Single gate: check + fix ALL safe LLM mistakes, then show on the card.
 
@@ -1377,11 +1538,12 @@ def finalize_blueprint_for_card(
     1) text hygiene (typos, ₹, FDR→FDI, ADAN→UDAN, no trailing ...)
     2) attach research sources
     3) insight enrichment from verified research facts
-    4) bank hub name lock
-    5) data-layout repairs (no teaser / fake quote / long body)
-    6) carousel 4–7 pad/trim
-    7) fill purpose/audience/tone
-    8) leftover gaps only in missing_critical
+    4) editorial QA + rebuild from Content Intelligence if weak
+    5) bank hub name lock
+    6) data-layout repairs (no teaser / fake quote / long body)
+    7) carousel 4–7 pad/trim
+    8) fill purpose/audience/tone
+    9) leftover gaps only in missing_critical
     """
     blueprint.layout_type = layout_type
     if not blueprint.layout_archetype:
@@ -1393,6 +1555,11 @@ def finalize_blueprint_for_card(
     )
     blueprint = enrich_blueprint_with_research_insights(
         blueprint, live_research=live_research, user_prompt=user_prompt
+    )
+    blueprint = enforce_intelligence_on_blueprint(
+        blueprint,
+        content_intelligence=content_intelligence,
+        user_prompt=user_prompt,
     )
 
     if layout_type == "static_hub_facts":

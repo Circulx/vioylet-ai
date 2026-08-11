@@ -4,6 +4,7 @@ from app.graph.nodes.layer3_brief_interpreter import layer3_brief_interpreter
 from app.graph.nodes.layer4_strategic_reasoning import layer4_strategic_reasoning
 from app.graph.nodes.layer5_concept_engine import layer5_concept_engine
 from app.graph.nodes.layer6_format_engine import layer6_format_engine
+from app.graph.nodes.layer6b_content_intelligence import layer6b_content_intelligence
 from app.graph.nodes.layer7_copy_engine import layer7_copy_engine
 from app.graph.nodes.layer7b_content_validator import layer7b_content_validator
 from app.graph.nodes.layer7c_content_prep import layer7c_content_prep
@@ -20,6 +21,7 @@ __all__ = [
     "layer4_strategic_reasoning",
     "layer5_concept_engine",
     "layer6_format_engine",
+    "layer6b_content_intelligence",
     "layer7_copy_engine",
     "layer7b_content_validator",
     "layer7c_content_prep",

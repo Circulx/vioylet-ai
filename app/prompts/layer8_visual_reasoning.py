@@ -796,7 +796,7 @@ Match sample_infographic_explain_rbi_plastic_perfect.png + locked explain_image_
 3) Soft why card
 4) Up to 8 benefit cards (prefer 2×4) with Pixar-quality 3D icons
 5) Trial before rollout cues + optional slim footer — NO SEBI wall
-6) Empty top-right logo pocket · BG #87CEFA · spacious corporate editorial
+6) Empty top-right logo pocket · BG {JIRAAF_BG} ice-blue · spacious corporate editorial
 FAIL if: ranking rows, sparse giant-headline poster, flat icons, neon, clutter"""
             else:
                 from app.prompts.cognixia_brand_dna import (

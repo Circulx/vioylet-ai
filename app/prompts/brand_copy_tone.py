@@ -2,13 +2,38 @@ from __future__ import annotations
 
 """Shared creative-copy + visual locks from Jiraaf Brand Space + sample PDFs/PNGs."""
 
+# ═══════════════════════════════════════════════════════════════
+# CANONICAL JIRAAF PALETTE — ONE palette for ALL assets
+# Locked from sample_top_countries_investing.png +
+# sample_infographic_explain_why_airports.png / rbi plastic perfect.
+# Use EXACTLY these hexes for paragraphs, infographics, lists, rankings.
+# ═══════════════════════════════════════════════════════════════
 JIRAAF_NAVY = "#003975"
 JIRAAF_ORANGE = "#FFA400"
 JIRAAF_BG = "#E8F0F8"
-JIRAAF_CARD = "#D8E8F0"
+JIRAAF_CARD = "#FFFFFF"
+JIRAAF_CARD_SOFT = "#F8FBFF"
 JIRAAF_GOLD = "#AE8235"
 JIRAAF_BODY_GRAY = "#5A6A7A"
 JIRAAF_INSIGHT_CREAM = "#FFF5E8"
+JIRAAF_DIVIDER = "#DCEAF5"
+
+UNIVERSAL_JIRAAF_PALETTE_LOCK = f"""
+════════════════════════════════════════════════════════
+UNIVERSAL JIRAAF COLOUR LOCK (ALL FORMATS — NON-NEGOTIABLE)
+Applies identically to: paragraphs, explain infographics, lists, rankings,
+hub facts, static posters, carousels accents. NO format may invent a new palette.
+════════════════════════════════════════════════════════
+BG (full-bleed):        {JIRAAF_BG}  ice-blue — NEVER cream #FBF8F3, NEVER pure white #FFFFFF as page BG, NEVER #87CEFA, NEVER yellow
+HEADLINES / TITLES:     {JIRAAF_NAVY} navy — NEVER black, NEVER orange, NEVER teal/cyan headings
+BODY / SUPPORTING:      {JIRAAF_BODY_GRAY} gray
+ACCENTS / CTA / BADGES: {JIRAAF_ORANGE} vivid orange — NEVER gold-only #E1A644, NEVER mustard, NEVER yellow as primary accent
+CARDS:                  white {JIRAAF_CARD} or soft {JIRAAF_CARD_SOFT} floating on ice-blue BG
+DIVIDERS:               {JIRAAF_DIVIDER}
+FOOTER BAR (explain):   solid navy {JIRAAF_NAVY} + WHITE tagline
+LOGO:                   Brand Space composite top-right ONLY — never draw JIRAAF / giraffe / fake logo
+FORBIDDEN substitutes: teal/cyan section titles, gold-as-orange, cream page BG, muted washed navy.
+"""
 
 ORANGE_COVERAGE_LOCK = f"""
 ORANGE COVERAGE LOCK (NON-NEGOTIABLE):
@@ -276,39 +301,53 @@ CAROUSEL CONTENT DEPTH (plain language — still teach, never textbook):
 # Ranking / top-N boards stay on ranking_board.py — DO NOT route lists here.
 INFOGRAPHIC_EXPLAIN_LAYOUT_LOCK = f"""
 ════════════════════════════════════════════════════════
-INFOGRAPHIC EXPLAIN — PREMIUM LINKEDIN LOCK (PARAGRAPH / INFORMATION ONLY)
-Canonical bake builder: app/services/image_generation/explain_image_prompt.py
-Visual sample: sample_infographic_explain_rbi_plastic_perfect.png
-NOT a poster. NOT a ranking board. NOT a top-N chart.
+INFOGRAPHIC EXPLAIN — STORYTELLING LOCK (NOT TEXTBOOK)
+Canonical bake: app/services/image_generation/explain_image_prompt.py
+Visual DNA: sample_infographic_explain_why_airports.png +
+            sample_infographic_explain_rbi_plastic_perfect.png
+NOT a hub-and-spoke web-search collage. NOT a ranking board.
 ════════════════════════════════════════════════════════
+{UNIVERSAL_JIRAAF_PALETTE_LOCK}
 
-FORMAT: 1080×1350 portrait (4:5). Spacious corporate editorial.
-Aesthetic: Apple + Stripe + Notion + McKinsey + Bloomberg — expensive, minimal, LinkedIn-ready.
+FORMAT: 1080×1350 portrait (4:5). Data-led editorial storytelling.
+Aesthetic: Jiraaf sample DNA — ice-blue canvas, navy hierarchy, orange accents, 3D icons.
 
-BG: #87CEFA with subtle radial gradient + soft lighting (no noise/texture/dark BG).
-Logo: empty TOP-RIGHT pocket (~7% width) — never draw wordmark (composited later).
-NO SEBI disclaimer on infographic (carousel only).
+COLOURS (EXACT — same as ranking / lists / paragraphs):
+- BG full-bleed ice-blue {JIRAAF_BG} — NEVER #87CEFA, NEVER cream, NEVER white page
+- Headlines / section titles: navy {JIRAAF_NAVY} ONLY
+- Accent orange {JIRAAF_ORANGE} ONLY (#FFA400) — never #F7931A, never gold/mustard
+- Body gray {JIRAAF_BODY_GRAY}
+- Soft cards white/{JIRAAF_CARD_SOFT} on ice-blue
+- Footer: solid navy bar + WHITE tagline
 
-Palette:
-- Heading #033B5E · Accent orange #F7931A (highlights only) · Secondary blue #2D8CFF
-- Soft cards #F8FBFF · Border #DCEAF5 · Body #4E6272
+LOGO: empty TOP-RIGHT pocket (~10% width × ~8% height) — never draw wordmark (Brand Space composite).
 
-Typography: bold geometric sans; huge title > section > body > caption; generous spacing.
+STORY STRUCTURE (must feel like a narrative, not a textbook dump):
+1) Hook headline (navy) with ONE orange keyword highlight allowed
+2) One short supporting thesis line (gray) — the INSIGHT, not a definition
+3) Optional hero photo/3D cluster under logo pocket
+4) "At a glance" 3–4 stat chips (numbers + short labels) — proof, not essays
+5) 4–6 KEY REASON cards: short TITLE + 1–2 line so-what (NOT paragraphs, NOT "Web Search:")
+6) One chart / growth visual that advances the story
+7) Closing insight / economic implication + navy footer tagline
 
-LAYOUT:
-1) 3-line title (middle keyword LARGEST) + compact orange CTA pill + short intro
-2) Premium photoreal 3D hero (transparent polymer note on podium + shield/coins/leaves)
-3) Large soft "Why …" card
-4) Benefit grid up to 8 cards (prefer 2×4) — Pixar-quality 3D icons, rounded floating cards
-5) Trial before rollout (map pin / clipboard / city cues)
-6) Optional slim footer tagline — never crowded
+COPY RULES:
+- Everyday investor language. Insight-led. Complete sentences.
+- Each card body ≤18 words. NO textbook essays. NO policy jargon walls.
+- FORBIDDEN baked strings: "Web Search:", "Answer WHY", research meta-labels, truncated mid-sentence.
+- Spell UDAN correctly (never ADAN). CTA ≤3 words ("Explore more").
 
-ICONS: photoreal 3D ONLY (plastic/glass/metal) — never flat/emoji/clipart.
-Render: Octane/Redshift/Cinema4D look, GI, soft studio light, crisp edges.
+ICONS: glossy clay-3D navy/orange/gold — never flat emoji, never teal UI chrome.
 {ORANGE_COVERAGE_LOCK}
+"""
 
-COPY: short only. includes[] = "Title | short explanation".
-FORBIDDEN: ranking rows, country flags charts, sparse giant-headline poster, neon, clutter, SEBI wall.
+JIRAAF_STORYTELLING_LOCK = f"""
+JIRAAF STORYTELLING LOCK (NON-NEGOTIABLE):
+- Lead with INSIGHT (why it matters), then proof numbers — never fact-dump then shrug.
+- Narrative arc: hook → scale → why → effect → takeaway.
+- Ban textbook tone, ban repeated identical card titles, ban "Web Search:" labels in creative.
+- Each section must add a new beat of the story; never repeat the same WHY line 3×.
+- Prefer one memorable thesis (e.g. "airports as regional economic anchors") over generic "India is building airports".
 """
 
 INFOGRAPHIC_EXPLAIN_SPELLING_LOCK = """
@@ -484,6 +523,7 @@ COLOURS:
 - BG ice-blue {JIRAAF_BG}
 - Navy text {JIRAAF_NAVY}
 - Orange {JIRAAF_ORANGE}: rank squares, accent line under subtitle, coin/chart icons, CTA
+{UNIVERSAL_JIRAAF_PALETTE_LOCK}
 {ORANGE_COVERAGE_LOCK}
 {HEADLINE_COLOR_LOCK}
 
@@ -564,9 +604,14 @@ Never ranking rows. Never bond benefit cards. Never teaser-only headline.
 
 SIMPLIFIED_CREATIVE_TONE_RULES = f"""
 JIRAAF SAMPLE SYSTEM LOCK (NON-NEGOTIABLE)
+{UNIVERSAL_JIRAAF_PALETTE_LOCK}
+{JIRAAF_STORYTELLING_LOCK}
 
-Match PDF/PNG samples in app/prompts/references/jiraaf_samples/.
+Match PNG samples in app/prompts/references/jiraaf_samples/:
+- Ranking/lists: sample_top_countries_investing.png
+- Explain/why stories: sample_infographic_explain_why_airports.png + rbi plastic perfect
 Educate-first, short human lines — NEVER textbook paragraphs, NEVER empty teaser ads.
+NEVER bake "Web Search:" or research meta-labels into the creative.
 {INFOGRAPHIC_AUDIENCE_TONE_LOCK}
 
 ════════════════════════════════════════
@@ -579,7 +624,7 @@ LAYOUT ROUTER (follow layout_type)
 - static_ranking + oil/consumption/data bars + format=static → horizontal bar (sample_static_oil_consumption_bars.png)
 - static_ranking + country/FDI top-N → vertical rank rows (sample_top_countries_investing.png)
 - static_ranking + trade deficit → dual-bar board (sample_india_russia_trade_deficit.png)
-- carousel_story + format=infographic → DENSE sample editorial (sample_infographic_explain_rbi_polymer.png)
+- carousel_story + format=infographic → DENSE sample editorial (sample_infographic_explain_why_airports.png)
 - carousel_story + format=static → simple hero + heading cards (STATIC_EXPLAIN_LAYOUT_LOCK)
 
 ════════════════════════════════════════
@@ -596,9 +641,11 @@ If user asks rates / rules / top-N / comparison / FDI / inflation / bank penalti
 
 BAD: "What Are Your FD Penalty Rates?" + "Learn more" + fake quote
 BAD: "Why bonds for income?" + India/USA/Germany/Japan comparison nobody asked for
+BAD: hub-spoke collage with "Web Search:" labels + truncated text + missing logo
 GOOD: "Bonds: Path to Predictable Income" + 4 benefit cards (income, capital, wealth, liquidity)
 GOOD: "Bank's Penalty Rates and Key Rules" + 5 bank cards with ₹/% rules
 GOOD: "Top 6 Countries Investing in India" + ranked flag rows + plain phrases + amounts
+GOOD: "WHY INDIA IS BUILDING AIRPORTS" storytelling editorial with navy/orange ice-blue DNA
 
 ════════════════════════════════════════
 CONTENT DEPTH
@@ -611,7 +658,7 @@ BRAND COLOURS + ICONS + FIT
 - Navy {JIRAAF_NAVY} + REQUIRED orange accents {JIRAAF_ORANGE} every creative
 {HEADLINE_COLOR_LOCK}
 {ORANGE_COVERAGE_LOCK}
-- BG ice-blue {JIRAAF_BG}; cream/soft cards OK
+- BG ice-blue {JIRAAF_BG}; cream/soft cards OK as cards only — page BG stays ice-blue
 - Icons: ULTRA-PREMIUM clay-3D / soft-touch studio renders (high detail, subtle gloss, strong shadows)
   — never flat clipart, never cheap low-poly, never washed-out blobs
 {ICON_STYLE_LOCK}

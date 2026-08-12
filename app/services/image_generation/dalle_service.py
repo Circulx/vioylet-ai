@@ -23,16 +23,23 @@ from app.prompts.brand_copy_tone import JIRAAF_SEBI_DISCLAIMER
 
 logger = get_logger(__name__)
 
-# Keep logo compact — Brand Space assets often ship with large empty padding.
-_LOGO_MAX_WIDTH_RATIO = 0.11
+# Keep logo clearly visible in top-right (samples show readable wordmark).
+_LOGO_MAX_WIDTH_RATIO = 0.26
 # Minimum logo short-side in pixels (prevents tiny, unreadable logos).
-_LOGO_MIN_PX = 36
+_LOGO_MIN_PX = 72
 # Padding from the canvas edge when placing the logo (in pixels).
-_LOGO_EDGE_PADDING = 12
+_LOGO_EDGE_PADDING = 18
 # Logo background fill color (used only for solid-background logos without transparency).
 _LOGO_BG_COLOR = (255, 255, 255, 0)  # transparent
 _SEBI_FOOTER_COLOR = (55, 70, 95, 255)  # darker navy-gray — readable on ice-blue
-_SEBI_FOOTER_BG = (232, 240, 248, 255)  # ice-blue #E8F0F8
+_SEBI_FOOTER_BG = (232, 240, 248, 255)  # ice-blue #E8F0F8 (ranking / static flatten)
+# Carousel sample DNA: navy brand bar (RBI plastic template)
+_CAROUSEL_FOOTER_BG = (3, 59, 94, 255)  # #033B5E
+_CAROUSEL_FOOTER_TEXT = (255, 255, 255, 255)
+_CAROUSEL_FOOTER_ACCENT = (255, 140, 36, 255)  # #FF8C24
+_CAROUSEL_BRAND_TAGLINE = (
+    "Innovating today for a stronger, smarter and sustainable tomorrow"
+)
 
 
 def _flatten_rgba_to_brand_bg(img: Image.Image) -> Image.Image:
@@ -171,12 +178,12 @@ def _wipe_top_right_corner(
     canvas_width: int,
     canvas_height: int,
     *,
-    width_ratio: float = 0.14,
-    height_ratio: float = 0.09,
+    width_ratio: float = 0.18,
+    height_ratio: float = 0.11,
 ) -> Image.Image:
     """Remove AI-hallucinated logos / 'Brand Logo' placeholders before compositing.
 
-    Keep wipe SMALL so it never eats into the headline (user saw 'o..' truncation).
+    Pocket sized to fit the Brand Space logo composite without eating the headline.
     """
     from PIL import ImageDraw
 
@@ -207,7 +214,7 @@ def _composite_logo(
         logo_img = logo_img.crop(content_box)
 
     max_logo_w = max(int(canvas_width * _LOGO_MAX_WIDTH_RATIO), _LOGO_MIN_PX)
-    max_logo_h = max(int(canvas_height * 0.065), _LOGO_MIN_PX)
+    max_logo_h = max(int(canvas_height * 0.095), _LOGO_MIN_PX)
     logo_w, logo_h = logo_img.size
     scale = min(max_logo_w / max(logo_w, 1), max_logo_h / max(logo_h, 1), 1.0)
     new_w = max(int(logo_w * scale), 1)
@@ -272,8 +279,10 @@ def _composite_sebi_footer(
     canvas_width: int,
     canvas_height: int,
     footer_text: str | None = None,
+    *,
+    carousel_sample_chrome: bool = True,
 ) -> bytes:
-    """Paint exact SEBI disclaimer into a bottom safe strip — never rely on the image model."""
+    """Paint footer strip. Carousel uses sample navy brand bar + SEBI; else light SEBI strip."""
     from PIL import ImageDraw
 
     text = (footer_text or JIRAAF_SEBI_DISCLAIMER).strip()
@@ -283,47 +292,89 @@ def _composite_sebi_footer(
     base_img = Image.open(BytesIO(base_bytes)).convert("RGBA")
     draw = ImageDraw.Draw(base_img)
 
-    # Larger, readable disclaimer (was ~9–11px and nearly invisible).
-    font_size = max(13, min(16, int(canvas_width * 0.0135)))
-    font = _load_footer_font(font_size)
-    side_pad = max(16, int(canvas_width * 0.035))
-    max_text_w = canvas_width - side_pad * 2
-    lines = _wrap_footer_lines(text, font, max_text_w, draw)
-    line_gap = max(2, int(font_size * 0.28))
-    line_heights = []
-    for line in lines:
-        bbox = draw.textbbox((0, 0), line, font=font)
-        line_heights.append(max(bbox[3] - bbox[1], font_size))
-    text_block_h = sum(line_heights) + line_gap * max(len(lines) - 1, 0)
-    band_pad_y = max(8, int(canvas_height * 0.007))
-    band_h = text_block_h + band_pad_y * 2
-    # Hard cap: footer band up to ~14% so larger type still fits
-    max_band = int(canvas_height * 0.14)
-    if band_h > max_band:
-        font_size = max(11, font_size - 2)
+    if carousel_sample_chrome:
+        # Match RBI-plastic sample: navy bar + tagline row + SEBI fine print
+        band_h = max(int(canvas_height * 0.12), 110)
+        y0 = canvas_height - band_h
+        draw.rectangle((0, y0, canvas_width, canvas_height), fill=_CAROUSEL_FOOTER_BG)
+
+        side_pad = max(18, int(canvas_width * 0.04))
+        # Tiny lightbulb accent (circle + rays) left
+        bulb_r = max(8, int(band_h * 0.12))
+        bx = side_pad + bulb_r
+        by = y0 + int(band_h * 0.28)
+        draw.ellipse(
+            (bx - bulb_r, by - bulb_r, bx + bulb_r, by + bulb_r),
+            fill=_CAROUSEL_FOOTER_ACCENT,
+        )
+
+        tag_font = _load_footer_font(max(13, min(18, int(canvas_width * 0.016))))
+        tag = _CAROUSEL_BRAND_TAGLINE
+        # Emphasize stronger/smarter visually by keeping one line
+        tag_bbox = draw.textbbox((0, 0), tag, font=tag_font)
+        tag_w = tag_bbox[2] - tag_bbox[0]
+        tag_x = max(side_pad + bulb_r * 3, (canvas_width - tag_w) // 2)
+        draw.text((tag_x, y0 + int(band_h * 0.12)), tag, font=tag_font, fill=_CAROUSEL_FOOTER_TEXT)
+
+        # Orange dots grid far right (sample chrome)
+        dot = max(3, int(canvas_width * 0.006))
+        grid_x0 = canvas_width - side_pad - dot * 10
+        grid_y0 = y0 + int(band_h * 0.14)
+        for row in range(3):
+            for col in range(4):
+                dx = grid_x0 + col * (dot * 2 + 2)
+                dy = grid_y0 + row * (dot * 2 + 2)
+                draw.ellipse((dx, dy, dx + dot, dy + dot), fill=_CAROUSEL_FOOTER_ACCENT)
+
+        # SEBI legal under tagline in smaller white
+        sebi_font = _load_footer_font(max(10, min(13, int(canvas_width * 0.011))))
+        max_text_w = canvas_width - side_pad * 2
+        lines = _wrap_footer_lines(text, sebi_font, max_text_w, draw)[:4]
+        y = y0 + int(band_h * 0.48)
+        for line in lines:
+            bbox = draw.textbbox((0, 0), line, font=sebi_font)
+            tw = bbox[2] - bbox[0]
+            x = max(side_pad, (canvas_width - tw) // 2)
+            draw.text((x, y), line, font=sebi_font, fill=(220, 230, 240, 255))
+            y += max(bbox[3] - bbox[1], 11) + 2
+    else:
+        font_size = max(13, min(16, int(canvas_width * 0.0135)))
         font = _load_footer_font(font_size)
+        side_pad = max(16, int(canvas_width * 0.035))
+        max_text_w = canvas_width - side_pad * 2
         lines = _wrap_footer_lines(text, font, max_text_w, draw)
-        line_heights = [
-            max(
-                draw.textbbox((0, 0), l, font=font)[3] - draw.textbbox((0, 0), l, font=font)[1],
-                font_size,
-            )
-            for l in lines
-        ]
+        line_gap = max(2, int(font_size * 0.28))
+        line_heights = []
+        for line in lines:
+            bbox = draw.textbbox((0, 0), line, font=font)
+            line_heights.append(max(bbox[3] - bbox[1], font_size))
         text_block_h = sum(line_heights) + line_gap * max(len(lines) - 1, 0)
-        band_h = min(text_block_h + band_pad_y * 2, max_band)
+        band_pad_y = max(8, int(canvas_height * 0.007))
+        band_h = text_block_h + band_pad_y * 2
+        max_band = int(canvas_height * 0.14)
+        if band_h > max_band:
+            font_size = max(11, font_size - 2)
+            font = _load_footer_font(font_size)
+            lines = _wrap_footer_lines(text, font, max_text_w, draw)
+            line_heights = [
+                max(
+                    draw.textbbox((0, 0), l, font=font)[3] - draw.textbbox((0, 0), l, font=font)[1],
+                    font_size,
+                )
+                for l in lines
+            ]
+            text_block_h = sum(line_heights) + line_gap * max(len(lines) - 1, 0)
+            band_h = min(text_block_h + band_pad_y * 2, max_band)
 
-    # Wipe footer strip only — leave chips / ranking rows above intact
-    y0 = canvas_height - band_h
-    draw.rectangle((0, y0, canvas_width, canvas_height), fill=_SEBI_FOOTER_BG)
-
-    y = y0 + band_pad_y
-    for i, line in enumerate(lines):
-        bbox = draw.textbbox((0, 0), line, font=font)
-        tw = bbox[2] - bbox[0]
-        x = max(side_pad, (canvas_width - tw) // 2)
-        draw.text((x, y), line, font=font, fill=_SEBI_FOOTER_COLOR)
-        y += line_heights[i] + line_gap
+        y0 = canvas_height - band_h
+        draw.rectangle((0, y0, canvas_width, canvas_height), fill=_SEBI_FOOTER_BG)
+        y = y0 + band_pad_y
+        for i, line in enumerate(lines):
+            bbox = draw.textbbox((0, 0), line, font=font)
+            tw = bbox[2] - bbox[0]
+            x = max(side_pad, (canvas_width - tw) // 2)
+            draw.text((x, y), line, font=font, fill=_SEBI_FOOTER_COLOR)
+            y += line_heights[i] + line_gap
 
     out = BytesIO()
     fixed = _ensure_light_brand_background(base_img)
@@ -351,6 +402,72 @@ def _resize_to_export(image_bytes: bytes, target_w: int, target_h: int) -> bytes
     out = BytesIO()
     _flatten_rgba_to_brand_bg(img).convert("RGB").save(out, format="PNG", optimize=False)
     return out.getvalue()
+
+
+def apply_brand_image_overlays(
+    image_bytes: bytes,
+    *,
+    storage,
+    logo_storage_path: str | None = None,
+    logo_zone_instruction: str | None = None,
+    composite_sebi_footer: bool = False,
+    wipe_reserved_corner: bool = False,
+) -> bytes:
+    """Apply corner wipe, brand logo, and optional SEBI footer to generated image bytes."""
+    if wipe_reserved_corner and not logo_storage_path:
+        try:
+            base_img = Image.open(BytesIO(image_bytes))
+            real_w, real_h = base_img.size
+            wiped = _wipe_top_right_corner(base_img.convert("RGBA"), real_w, real_h)
+            out = BytesIO()
+            _flatten_rgba_to_brand_bg(wiped).convert("RGB").save(out, format="PNG", optimize=False)
+            image_bytes = out.getvalue()
+            logger.info("dalle.corner_wiped", canvas=f"{real_w}x{real_h}")
+        except Exception as wipe_exc:
+            logger.warning("dalle.corner_wipe_failed", error=str(wipe_exc)[:200])
+
+    if logo_storage_path:
+        try:
+            logo_bytes = storage.read_bytes(logo_storage_path)
+            if logo_bytes:
+                base_img = Image.open(BytesIO(image_bytes))
+                real_w, real_h = base_img.size
+                image_bytes = _composite_logo(
+                    base_bytes=image_bytes,
+                    logo_bytes=logo_bytes,
+                    logo_zone_instruction=logo_zone_instruction,
+                    canvas_width=real_w,
+                    canvas_height=real_h,
+                )
+                logger.info(
+                    "dalle.logo_composited",
+                    logo_path=logo_storage_path,
+                    zone="top-right",
+                    canvas=f"{real_w}x{real_h}",
+                )
+            else:
+                logger.warning("dalle.logo_empty_bytes", logo_path=logo_storage_path)
+        except Exception as logo_exc:
+            logger.warning(
+                "dalle.logo_composite_failed",
+                logo_path=logo_storage_path,
+                error=str(logo_exc)[:300],
+            )
+
+    if composite_sebi_footer:
+        try:
+            base_img = Image.open(BytesIO(image_bytes))
+            real_w, real_h = base_img.size
+            image_bytes = _composite_sebi_footer(
+                base_bytes=image_bytes,
+                canvas_width=real_w,
+                canvas_height=real_h,
+            )
+            logger.info("dalle.sebi_footer_composited", canvas=f"{real_w}x{real_h}")
+        except Exception as footer_exc:
+            logger.warning("dalle.sebi_footer_failed", error=str(footer_exc)[:300])
+
+    return image_bytes
 
 
 class DalleService:
@@ -502,69 +619,15 @@ class DalleService:
         except Exception as resize_exc:
             logger.warning("dalle.resize_failed", error=str(resize_exc)[:200])
 
-        # Strip AI-hallucinated corner logos even when no Brand Space asset is available.
-        if wipe_reserved_corner and not logo_storage_path:
-            try:
-                base_img = Image.open(BytesIO(image_bytes))
-                real_w, real_h = base_img.size
-                wiped = _wipe_top_right_corner(
-                    base_img.convert("RGBA"), real_w, real_h
-                )
-                out = BytesIO()
-                _flatten_rgba_to_brand_bg(wiped).convert("RGB").save(out, format="PNG", optimize=False)
-                image_bytes = out.getvalue()
-                logger.info("dalle.corner_wiped", canvas=f"{real_w}x{real_h}")
-            except Exception as wipe_exc:
-                logger.warning("dalle.corner_wipe_failed", error=str(wipe_exc)[:200])
-
-        # Logo composite using REAL image dimensions after resize
-        if logo_storage_path:
-            try:
-                logo_bytes = self.storage.read_bytes(logo_storage_path)
-                if logo_bytes:
-                    base_img = Image.open(BytesIO(image_bytes))
-                    real_w, real_h = base_img.size
-                    image_bytes = _composite_logo(
-                        base_bytes=image_bytes,
-                        logo_bytes=logo_bytes,
-                        logo_zone_instruction=logo_zone_instruction,
-                        canvas_width=real_w,
-                        canvas_height=real_h,
-                    )
-                    logger.info(
-                        "dalle.logo_composited",
-                        logo_path=logo_storage_path,
-                        zone="top-right",
-                        canvas=f"{real_w}x{real_h}",
-                    )
-                else:
-                    logger.warning("dalle.logo_empty_bytes", logo_path=logo_storage_path)
-            except Exception as logo_exc:
-                logger.warning(
-                    "dalle.logo_composite_failed",
-                    logo_path=logo_storage_path,
-                    error=str(logo_exc)[:300],
-                )
-
-        # Exact SEBI footer via Pillow (AI text bake alone drops it constantly)
-        if composite_sebi_footer:
-            try:
-                base_img = Image.open(BytesIO(image_bytes))
-                real_w, real_h = base_img.size
-                image_bytes = _composite_sebi_footer(
-                    base_bytes=image_bytes,
-                    canvas_width=real_w,
-                    canvas_height=real_h,
-                )
-                logger.info(
-                    "dalle.sebi_footer_composited",
-                    canvas=f"{real_w}x{real_h}",
-                )
-            except Exception as footer_exc:
-                logger.warning(
-                    "dalle.sebi_footer_failed",
-                    error=str(footer_exc)[:300],
-                )
+        # Strip AI logos / composite brand logo / SEBI footer
+        image_bytes = apply_brand_image_overlays(
+            image_bytes,
+            storage=self.storage,
+            logo_storage_path=logo_storage_path,
+            logo_zone_instruction=logo_zone_instruction,
+            composite_sebi_footer=composite_sebi_footer,
+            wipe_reserved_corner=wipe_reserved_corner,
+        )
 
         # ── Save final image to object storage ───────────────────────────────────
         filename = f"dalle-{uuid4().hex[:8]}.png"

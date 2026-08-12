@@ -17,21 +17,33 @@ Samples live in this folder. Used as permanent creative DNA for Violyt L7/L7c/L8
 | `sample_bank_penalties.png` | `static_hub_facts` | Bank penalties / key rules |
 | `sample_india_russia_trade_deficit.png` | `trade_deficit_board` | Trade deficit data |
 
-### Infographic explain (locked — sample_infographic_explain_rbi_polymer.png)
-1. Navy headline (**not oversized**) + gray intro  
-2. Orange-bar section + **3 circular-icon fact columns** with real explanations  
-3. Orange-bar section + orange highlight words + **3 clay-3D fact columns**  
-4. Orange-bar text section (short paragraphs)  
-5. Thin orange-border callout + lightbulb (**not** solid orange slab)  
-6. Source footer · empty top-right logo pocket  
+### Infographic explain (locked — sample_infographic_explain_why_airports.png)
+1. Navy headline + gray insight thesis  
+2. At-a-glance stats + reason cards (story beats)  
+3. Proof chart + navy footer tagline  
+4. Empty top-right logo pocket (Brand Space composite)
 
-Colors: BG `#E8F0F8` · navy `#003975` · orange `#FFA400`  
-AI-only. Ranking boards unchanged.
+**Universal colours (ALL Jiraaf assets):** BG `#E8F0F8` · navy `#003975` · orange `#FFA400` · body gray `#5A6A7A`  
+Same palette for explain, ranking, lists, paragraphs — no format invents a new palette.
+AI-only. Ranking boards use the same hexes.
 
 Code: `INFOGRAPHIC_EXPLAIN_LAYOUT_LOCK` in `brand_copy_tone.py`
 
-## Carousel PDFs
-Sweep-In FD / Capital Controls / Unrealized Gains → `carousel_sample_dna.py`
+## Carousel (LOCKED — RBI plastic sample grid)
+| Sample | Path |
+|--------|------|
+| Full grid | `sample_carousel_rbi_plastic_grid.png` |
+| Cropped slides 01–10 | `carousel_rbi_plastic_slides/sample_slide_XX.png` |
+
+**Exact template DNA** (code: `carousel_image_prompt.py`):
+1. Soft sky BG `#D9ECF8` · navy `#033B5E` · orange `#FF8C24`
+2. **NO page numbers** in generated images (no 01 badge, no 1 of N)
+3. Top-right Brand Space logo composite · bottom navy bar + SEBI composite
+4. 10-slide story arc with locked layout + 3D hero per slide position (see `SAMPLE_SLIDE_SPECS`)
+5. Left-aligned unique UPPERCASE headline + orange underline + short body
+
+## Carousel PDFs (story arc — Sweep-In / Capital / Gains)
+Still used for educational story shape via `carousel_sample_dna.py`
 
 ## Shared DNA
 - Navy `#003975` · Orange `#FFA400` · soft BG  

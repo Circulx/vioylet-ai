@@ -309,6 +309,36 @@ def apply_text_hygiene(
         cleaned["sources"] = sources
     bp = type(blueprint).model_validate(cleaned)
 
+    def _strip_research_meta(text: str) -> str:
+        t = text or ""
+        t = re.sub(r"^\s*Web\s*Search\s*:\s*", "", t, flags=re.I)
+        t = re.sub(r"^\s*Answer\s+WHY\b[:\s]*", "", t, flags=re.I)
+        t = re.sub(r"\s+", " ", t).strip()
+        return t
+
+    for field in ("headline", "supporting_line", "body", "hook", "cta", "customer_quote", "title", "purpose"):
+        val = getattr(bp, field, None)
+        if isinstance(val, str) and val:
+            setattr(bp, field, _strip_research_meta(val))
+    for sec in bp.sections or []:
+        if sec.section_label:
+            cleaned_label = _strip_research_meta(sec.section_label)
+            if len(cleaned_label.split()) < 3 and (sec.body or "").strip():
+                # Recover a usable title from body when research meta wiped the label
+                cleaned_label = " ".join((sec.body or "").split()[:6]).rstrip(".,;:")
+            sec.section_label = cleaned_label
+        if sec.body:
+            sec.body = _strip_research_meta(sec.body)
+        if sec.includes:
+            sec.includes = [_strip_research_meta(str(x)) for x in sec.includes]
+    # Drop sections that are empty after stripping research meta
+    if bp.sections:
+        bp.sections = [
+            s
+            for s in bp.sections
+            if (s.section_label or "").strip() or (s.body or "").strip()
+        ]
+
     # RBI topics: never bake "OBI" (common AI typo for RBI)
     prompt_l = (user_prompt or "").lower()
     if "rbi" in prompt_l or "reserve bank" in prompt_l or "polymer" in prompt_l or "plastic" in prompt_l:

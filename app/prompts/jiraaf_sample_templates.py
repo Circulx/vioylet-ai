@@ -19,6 +19,7 @@ from app.prompts.brand_copy_tone import (
     INFOGRAPHIC_EXPLAIN_QUALITY_LOCK,
     INFOGRAPHIC_RANKING_FORMAT_LOCK,
     INFOGRAPHIC_TRADE_BOARD_LOCK,
+    JIRAAF_STORYTELLING_LOCK,
     NO_SEBI_STATIC_RULE,
     ORANGE_COVERAGE_LOCK,
     RANKING_IMAGE_STUB,
@@ -32,6 +33,7 @@ from app.prompts.brand_copy_tone import (
     STATIC_ORANGE_STUB,
     STATIC_RANKING_INSIGHT_LOCK,
     UNIVERSAL_FIT_LOCK,
+    UNIVERSAL_JIRAAF_PALETTE_LOCK,
 )
 from app.prompts.carousel_sample_dna import CAROUSEL_SAMPLE_DNA, CAROUSEL_SAMPLE_DNA_COMPACT
 from app.prompts.jiraaf_layout import (
@@ -175,27 +177,29 @@ _TEMPLATES: dict[TemplateId, CreativeTemplate] = {
     ),
     "infographic_explain_editorial": _tpl(
         "infographic_explain_editorial",
-        "sample_infographic_explain_rbi_plastic_perfect.png",
+        "sample_infographic_explain_why_airports.png",
         "carousel_story",
         "infographic",
         "infographic_explain",
         copy_lock=(
+            f"{UNIVERSAL_JIRAAF_PALETTE_LOCK}\n"
+            f"{JIRAAF_STORYTELLING_LOCK}\n"
             f"{INFOGRAPHIC_EXPLAIN_LAYOUT_LOCK}\n"
             f"{INFOGRAPHIC_EXPLAIN_ORANGE_STUB}\n"
             f"{INFOGRAPHIC_EXPLAIN_QUALITY_LOCK}"
         ),
         visual_lock=(
+            f"{UNIVERSAL_JIRAAF_PALETTE_LOCK}\n"
             f"{INFOGRAPHIC_EXPLAIN_LAYOUT_LOCK}\n"
             f"{INFOGRAPHIC_EXPLAIN_ORANGE_STUB}\n"
             f"{INFOGRAPHIC_EXPLAIN_QUALITY_LOCK}\n"
             f"{ORANGE_COVERAGE_LOCK}"
         ),
         image_stub=(
-            "AI-only DENSE editorial like sample_infographic_explain_rbi_plastic_perfect.png: "
-            "navy ALL-CAPS headline + orange slogan pill + hero ₹500 note; "
-            "why band with bank icon + RBI seal; navy reasons bar + 2x4 numbered 3D icon grid; "
-            "trial row; navy footer with lightbulb tagline. "
-            "Jiraaf ice-blue/navy/orange only. Perfect spelling (RBI). Empty logo pocket. NOT ranking."
+            "AI-only storytelling editorial like sample_infographic_explain_why_airports.png: "
+            "ice-blue BG #E8F0F8, navy #003975 headlines, orange #FFA400 accents, "
+            "hook→stats→reason cards→chart→navy footer. Empty top-right logo pocket. "
+            "Insight-led — NEVER textbook, NEVER 'Web Search:' labels, NEVER hub-spoke collage."
         ),
     ),
     "static_hub_facts": _tpl(
@@ -215,11 +219,13 @@ _TEMPLATES: dict[TemplateId, CreativeTemplate] = {
         "infographic",  # default; caller may override format
         "vertical_countries",
         copy_lock=(
+            f"{UNIVERSAL_JIRAAF_PALETTE_LOCK}\n"
             f"{INFOGRAPHIC_AUDIENCE_TONE_LOCK}\n"
             f"{INFOGRAPHIC_RANKING_FORMAT_LOCK}\n"
             f"{RANKING_SAMPLE_DNA_LOCK}"
         ),
         visual_lock=(
+            f"{UNIVERSAL_JIRAAF_PALETTE_LOCK}\n"
             f"{RANKING_IMAGE_STUB}\n"
             f"{RANKING_SAMPLE_DNA_LOCK}\n"
             f"{STATIC_ORANGE_STUB}"
@@ -272,20 +278,30 @@ def _is_jiraaf_brand(brand_name: str | None) -> bool:
 
 def _neutralize_for_brand(template: CreativeTemplate, brand_name: str) -> CreativeTemplate:
     """Strip Jiraaf-only sample DNA so other brands use their own visual identity."""
+    from app.prompts.brand_visual_palette import resolve_brand_palette_lock
+    from app.prompts.cognixia_brand_dna import COGNIXIA_VOICE_LOCK, is_cognixia_brand
+
     brand_label = brand_name.strip() or "this brand"
-    return replace(
-        template,
-        copy_lock=(
+    palette = resolve_brand_palette_lock(brand_name=brand_label)
+    style_note = (
+        "Cognixia official layout: white/card-tint background, blue-teal tech icons, Outfit typography, hub + connected nodes."
+        if is_cognixia_brand(brand_label)
+        else f"Premium connected-infographic creative for {brand_label}."
+    )
+    copy_lock = (
+        f"Brand: {brand_label}. {COGNIXIA_VOICE_LOCK} Use Cognixia B2B digital transformation voice."
+        if is_cognixia_brand(brand_label)
+        else (
             f"Brand: {brand_label}. Use this brand's voice, topic, and category. "
             "Do NOT copy Jiraaf finance templates, RBI plastic carousel DNA, or SEBI disclaimers."
-        ),
-        visual_lock=(
-            f"Brand: {brand_label}. Use ONLY this brand's Brand Space colors and visual mood. "
-            "Never use Jiraaf navy #003975, orange #FFA400, or ice-blue #E8F0F8 unless this IS Jiraaf."
-        ),
+        )
+    )
+    return replace(
+        template,
+        copy_lock=copy_lock,
+        visual_lock=palette,
         image_stub=(
-            f"Premium connected-infographic creative for {brand_label}. "
-            "Brand palette only — not Jiraaf sample colors or finance icon defaults."
+            f"{style_note} Official brand palette only — never Jiraaf ice-blue/orange/navy."
         ),
     )
 
